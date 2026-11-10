@@ -325,6 +325,8 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     { version: 106, name: "operator_issuance" },
     { version: 107, name: "certops_issuance_job_identity" },
     { version: 108, name: "certops_issuance_identity_transfer" },
+    { version: 109, name: "certops_period_creator_delete" },
+    { version: 110, name: "recipient_member_verification" },
   ]);
   assert.equal(
     (

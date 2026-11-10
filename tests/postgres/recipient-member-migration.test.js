@@ -39,12 +39,13 @@ test("normal runner appends member verification to the released ledger and resta
     await admin.query(`CREATE DATABASE ${database}`);
     migrate(true);
     const before = (await target.query("SELECT * FROM migrations ORDER BY version")).rows;
-    assert.equal(before.at(-1).version, 108);
+    assert.equal(before.at(-1).version, 109);
+    assert.equal(before.at(-1).name, "certops_period_creator_delete");
     migrate();
     const after = (await target.query("SELECT * FROM migrations ORDER BY version")).rows;
     assert.deepEqual(after.slice(0, -1), before);
     assert.equal(after.at(-1).name, "recipient_member_verification");
-    assert.equal(after.at(-1).version, 109);
+    assert.equal(after.at(-1).version, 110);
     assert.ok((await target.query("SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='recipient_verified_email'")).rowCount);
     assert.ok((await target.query("SELECT 1 FROM pg_trigger WHERE tgname='recipient_member_verification_preserve_revocation'")).rowCount);
     migrate();

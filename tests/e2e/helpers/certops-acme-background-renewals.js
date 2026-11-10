@@ -170,6 +170,8 @@ async function qualifyBackgroundRenewals({
   workDir,
   ownedWorkers,
   onMilestone = () => {},
+  onPhaseStart = () => {},
+  onJobFailure = () => {},
 }) {
   assert.equal(process.platform, "linux");
   assert.ok(["certbot", "acme.sh"].includes(acmeKind));
@@ -311,6 +313,7 @@ async function qualifyBackgroundRenewals({
   let resource, lifecycle;
   const jobs = [];
   try {
+    try { onPhaseStart(0); } catch { /* Diagnostics are optional. */ }
     resource = await runner.startOwnedRunner({
       root: workDir,
       repoRoot,
@@ -322,6 +325,7 @@ async function qualifyBackgroundRenewals({
     });
     onMilestone("worker-started", null);
     for (let cycle = 0; cycle < 2; cycle++) {
+      if (cycle === 1) { try { onPhaseStart(cycle); } catch { /* Diagnostics are optional. */ } }
       const inventory =
         cycle === 0
           ? initialInventory
@@ -362,11 +366,12 @@ async function qualifyBackgroundRenewals({
           ].includes(row.status)
         ) {
           onMilestone(`worker-cycle-job-${row.status}`, cycle);
-          if (row.status === "blocked") {
-            try {
-              const diagnostic = (await query("SELECT error_code,error_message FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, row.id])).rows[0];
-              onMilestone(`worker-block-${workerBlockedReason(diagnostic)}`, cycle);
-            } catch { onMilestone("worker-block-diagnostic-unavailable", cycle); }
+          try {
+            const diagnostic = (await query("SELECT status,error_code,error_message FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, row.id])).rows[0];
+            if (row.status === "blocked") onMilestone(`worker-block-${workerBlockedReason(diagnostic)}`, cycle);
+            try { onJobFailure(diagnostic, cycle); } catch { /* Preserve the native failure. */ }
+          } catch {
+            if (row.status === "blocked") onMilestone("worker-block-diagnostic-unavailable", cycle);
           }
           throw new Error("Actual cron renewal terminated unsuccessfully");
         }

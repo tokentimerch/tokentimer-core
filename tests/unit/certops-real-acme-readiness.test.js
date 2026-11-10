@@ -32,3 +32,15 @@ test("owned HTTPS readiness requires the actual certificate and matching server 
     fs.rmSync(directory,{recursive:true,force:true});
   }
 });
+
+
+test("random nonce isolation is opt-in and never bypasses DNS validation",()=>{
+  const {pebbleEnvironment}=require("../../scripts/certops-real-acme");
+  const base={PEBBLE_WFE_NONCEREJECT:"17",PEBBLE_VA_ALWAYS_VALID:"1"};
+  const ordinary=pebbleEnvironment(base,false), controlled=pebbleEnvironment(base,true);
+  assert.equal(ordinary.PEBBLE_WFE_NONCEREJECT,"17");
+  assert.equal(controlled.PEBBLE_WFE_NONCEREJECT,"0");
+  assert.equal(ordinary.PEBBLE_VA_ALWAYS_VALID,"0");
+  assert.equal(controlled.PEBBLE_VA_ALWAYS_VALID,"0");
+  assert.throws(()=>pebbleEnvironment(base,"true"));
+});

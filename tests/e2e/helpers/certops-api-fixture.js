@@ -8,7 +8,32 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 const { createRequire } = require("node:module");
 const apiRequire = createRequire(path.resolve(__dirname, "../../../apps/api/package.json"));
-async function createApiFixture(baseUrl) {
+async function cleanupApiFixture({ pool, workspaceId, userId, onCleanupFailure }) {
+  const failures = [];
+  let ownedWorkspaceIds = [workspaceId];
+  const report = kind => { try { onCleanupFailure?.(kind); } catch { /* Preserve cleanup failures. */ } };
+  try {
+    // A login can create another personal workspace owned by this fixture user.
+    if (userId) {
+      try { ownedWorkspaceIds = [...new Set([workspaceId, ...(await pool.query("SELECT id FROM workspaces WHERE created_by=$1", [userId])).rows.map((row) => row.id)])]; }
+      catch (error) { failures.push(error); report("workspace-discovery"); }
+    }
+    try { await pool.query("DELETE FROM audit_events WHERE workspace_id=ANY($1::uuid[]) OR actor_user_id=$2 OR subject_user_id=$2", [ownedWorkspaceIds, userId || null]); }
+    catch (error) { failures.push(error); report("audit-delete"); }
+    for (const id of ownedWorkspaceIds) {
+      try { await pool.query("DELETE FROM workspaces WHERE id=$1", [id]); }
+      catch (error) { failures.push(error); report("workspace-delete"); }
+    }
+    if (userId) {
+      try { await pool.query("DELETE FROM users WHERE id=$1", [userId]); }
+      catch (error) { failures.push(error); report("user-delete"); }
+    }
+    if (failures.length) throw new AggregateError(failures, "Run-owned API fixture cleanup failed");
+  } finally {
+    try { await pool.end(); } catch (error) { report("pool-close"); throw error; }
+  }
+}
+async function createApiFixture(baseUrl, { onCleanupFailure } = {}) {
   if (process.env.CERTOPS_CSR_DISPOSABLE_STACK !== "1") throw new Error("Disposable API stack authorization required");
   const { Pool } = apiRequire("pg");
   const pool = new Pool({ host: process.env.DB_HOST || "localhost", port: Number(process.env.DB_PORT || 5432), user: process.env.DB_USER || "tokentimer", password: process.env.DB_PASSWORD || "password", database: process.env.DB_NAME || "tokentimer", connectionTimeoutMillis: 5000 });
@@ -22,28 +47,7 @@ async function createApiFixture(baseUrl) {
     return { status: response.status, body: response.status === 204 ? null : await response.json() };
   }
   async function cleanup() {
-    const failures = [];
-    let ownedWorkspaceIds = [workspaceId];
-    try {
-      // A real login may create another personal workspace when a role fixture
-      // removes the user's only admin membership. Its creator is this unique
-      // run-owned user; discover those IDs before deleting the user.
-      if (userId) {
-        try { ownedWorkspaceIds = [...new Set([workspaceId, ...(await pool.query("SELECT id FROM workspaces WHERE created_by=$1", [userId])).rows.map((row) => row.id)])]; }
-        catch (error) { failures.push(error); }
-      }
-      try { await pool.query("DELETE FROM audit_events WHERE workspace_id=ANY($1::uuid[]) OR actor_user_id=$2 OR subject_user_id=$2", [ownedWorkspaceIds, userId || null]); }
-      catch (error) { failures.push(error); }
-      for (const id of ownedWorkspaceIds) {
-        try { await pool.query("DELETE FROM workspaces WHERE id=$1", [id]); }
-        catch (error) { failures.push(error); }
-      }
-      if (userId) {
-        try { await pool.query("DELETE FROM users WHERE id=$1", [userId]); }
-        catch (error) { failures.push(error); }
-      }
-      if (failures.length) throw new AggregateError(failures, "Run-owned API fixture cleanup failed");
-    } finally { await pool.end(); }
+    return cleanupApiFixture({ pool, workspaceId, userId, onCleanupFailure });
   }
   try {
     await pool.query("SELECT 1 FROM certificate_instances LIMIT 1");
@@ -60,4 +64,4 @@ async function createApiFixture(baseUrl) {
     return { workspaceId, userId, email, password, pool, request, cleanup };
   } catch (error) { try { await cleanup(); } catch (cleanupError) { throw new AggregateError([error, cleanupError], "API fixture setup and cleanup failed"); } throw error; }
 }
-module.exports = { createApiFixture };
+module.exports = { createApiFixture, cleanupApiFixture };

@@ -4938,6 +4938,11 @@ const migrations = [
   },
   {
     version: 109,
+    name: "certops_period_creator_delete",
+    sql: fs.readFileSync(require("path").join(__dirname, "109-certops-period-creator-delete.sql"), "utf8"),
+  },
+  {
+    version: 110,
     name: "recipient_member_verification",
     sql: fs.readFileSync(require("path").join(__dirname, "../../../packages/recipient-verification/member-verification-migration.sql"), "utf8"),
   },

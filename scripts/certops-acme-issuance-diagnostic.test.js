@@ -65,3 +65,22 @@ test("manual-renewal failure diagnostics use fixed categories only",()=>{
  assert.ok(labels.includes("real-acme-diagnostic-error-acme-step"));
  assert.ok(labels.every(label=>!label.includes("private")));
 });
+
+
+test("key-reuse CA progress stays fixed and phase scoped",()=>{
+ const before={perStage:{"new-order":{forwarded:1},finalize:{forwarded:0}},acceptedOrders:2,rateLimitedResponses:0};
+ const after={perStage:{"new-order":{forwarded:2},finalize:{forwarded:1}},acceptedOrders:3,rateLimitedResponses:1};
+ const labels=issuanceDiagnosticLabels({status:"failed",error_message:"acme step failed: secret"},{exitCode:null,signalCode:null},before,after,"reuse-manual");
+ for(const label of ["real-acme-diagnostic-reuse-manual-status-failed","real-acme-diagnostic-proxy-new-order-forwarded","real-acme-diagnostic-proxy-finalize-forwarded","real-acme-diagnostic-ca-observed-order-accepted","real-acme-diagnostic-ca-observed-rate-limited"])assert.ok(labels.includes(label));
+ assert.ok(labels.every(label=>!label.includes("secret")));
+});
+
+
+test("worker-cycle CA progress emits only fixed categories",()=>{
+ const before={perStage:{"new-order":{forwarded:0},finalize:{forwarded:0}},acceptedOrders:0,dnsProblemResponses:0};
+ const after={perStage:{"new-order":{forwarded:1},finalize:{forwarded:0}},acceptedOrders:1,dnsProblemResponses:1};
+ const labels=issuanceDiagnosticLabels({status:"failed",error_message:"acme step failed: secret"},{exitCode:null,signalCode:null},before,after,"worker-2");
+ for(const label of ["real-acme-diagnostic-worker-2-status-failed","real-acme-diagnostic-error-acme-step","real-acme-diagnostic-proxy-new-order-forwarded","real-acme-diagnostic-ca-observed-dns-problem"])assert.ok(labels.includes(label));
+ assert.ok(labels.every(label=>!label.includes("secret")));
+ assert.throws(()=>issuanceDiagnosticLabels({},null,{}, {},"worker-secret"));
+});

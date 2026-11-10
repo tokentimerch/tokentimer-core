@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-10 against main e1e7f302 and verified-member email reuse.
+Last reviewed: 2026-11-10 against main 8a484245 and verified-member email reuse.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
