@@ -135,10 +135,15 @@ module.exports = async function qualifyLeaseLoss({
     // The arm remains present throughout: only native lease-abort cancellation,
     // not a fixture release, can terminate this genuine executing command.
     assert.equal(JSON.parse(fs.readFileSync(arm, "utf8")).token, token);
+    onMilestone("lease-arm-retained");
     await verifyDnsCleanup();
+    onMilestone("lease-dns-clean");
     assert.ok(fs.readFileSync(certPath).equals(beforeCert));
+    onMilestone("lease-cert-unchanged");
     assert.ok(fs.readFileSync(keyPath).equals(beforeKey));
+    onMilestone("lease-key-unchanged");
     assert.equal(await servedFingerprint(), fingerprint);
+    onMilestone("lease-tls-unchanged");
     assert.equal(
       (
         await pool.query(
