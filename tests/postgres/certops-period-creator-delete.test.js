@@ -1,0 +1,47 @@
+"use strict";
+const { test, after } = require("node:test");
+const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
+assert.equal(process.env.DB_HOST, "127.0.0.1");
+assert.match(process.env.DB_NAME || "", /^pr329_.*_test$/);
+assert.equal(process.env.NODE_ENV, "test");
+const { pool } = require("../../apps/api/db/database");
+after(() => pool.end());
+
+test("deleting a creator nullifies only its retained closed period attribution", async () => {
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    const nonce = crypto.randomUUID(), ws = crypto.randomUUID(), source = crypto.randomUUID();
+    const users = (await db.query("INSERT INTO users(email,display_name,password_hash,auth_method) VALUES($1,'owner','x','local'),($2,'creator','x','local') RETURNING id", [`${nonce}-owner@example.test`,`${nonce}-creator@example.test`])).rows;
+    await db.query("INSERT INTO workspaces(id,name,created_by) VALUES($1,'period fixture',$2)", [ws, users[0].id]);
+    await db.query("INSERT INTO managed_certificates(id,workspace_id,source,created_by) VALUES($1,$2,'api',$3)", [source,ws,users[1].id]);
+    const period = (await db.query("SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2", [ws,source])).rows[0].id;
+    await db.query("UPDATE certops_management_periods SET ended_at=NOW(),ended_reason='probe' WHERE id=$1", [period]);
+    await db.query("DELETE FROM managed_certificates WHERE workspace_id=$1 AND id=$2", [ws,source]);
+    const before = (await db.query("SELECT to_jsonb(p)-'created_by' AS state FROM certops_management_periods p WHERE id=$1", [period])).rows[0].state;
+    async function rejectUpdate(sql, args) {
+      await db.query("SAVEPOINT reject_edit");
+      await assert.rejects(db.query(sql,args), error => error.code === "23514");
+      await db.query("ROLLBACK TO SAVEPOINT reject_edit");
+    }
+    await rejectUpdate("UPDATE certops_management_periods SET created_by=NULL WHERE id=$1", [period]);
+    await rejectUpdate("UPDATE certops_management_periods SET ended_reason='rewritten' WHERE id=$1", [period]);
+    await rejectUpdate("UPDATE certops_management_periods SET automation_enabled=NOT automation_enabled WHERE id=$1", [period]);
+    // A nested user-defined trigger is not an FK delete: the referenced user
+    // still exists, so its attempt to clear attribution must also fail.
+    await db.query("CREATE TEMP TABLE fake_period_update (id uuid)");
+    await db.query(`CREATE FUNCTION pg_temp.try_clear_period_creator() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN UPDATE certops_management_periods SET created_by=NULL WHERE id=NEW.id; RETURN NEW; END $$`);
+    await db.query("CREATE TRIGGER fake_period_update BEFORE INSERT ON fake_period_update FOR EACH ROW EXECUTE FUNCTION pg_temp.try_clear_period_creator()");
+    await rejectUpdate("INSERT INTO fake_period_update(id) VALUES($1)", [period]);
+    // Even an actual FK action cannot change another historical field.
+    await db.query(`CREATE FUNCTION pg_temp.alter_period_during_fk() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.created_by IS NULL THEN NEW.ended_reason := 'tampered'; END IF; RETURN NEW; END $$`);
+    await db.query("CREATE TRIGGER aaa_period_tamper BEFORE UPDATE ON certops_management_periods FOR EACH ROW EXECUTE FUNCTION pg_temp.alter_period_during_fk()");
+    await rejectUpdate("DELETE FROM users WHERE id=$1", [users[1].id]);
+    await db.query("DROP TRIGGER aaa_period_tamper ON certops_management_periods");
+    await db.query("DELETE FROM users WHERE id=$1", [users[1].id]);
+    const row=(await db.query("SELECT created_by,to_jsonb(p)-'created_by' AS state FROM certops_management_periods p WHERE id=$1", [period])).rows[0];
+    assert.equal(row.created_by,null); assert.deepEqual(row.state,before);
+    await rejectUpdate("UPDATE certops_management_periods SET ended_reason='rewritten' WHERE id=$1", [period]);
+  } finally { await db.query("ROLLBACK"); db.release(); }
+});
