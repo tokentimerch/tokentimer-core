@@ -1,7 +1,7 @@
 -- Preserve closed provenance while permitting creator foreign-key nullification.
 CREATE OR REPLACE FUNCTION certops_guard_management_period()
 RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE source_row RECORD;
+DECLARE source_row RECORD; creator_absent BOOLEAN;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     SELECT source, source_ref INTO source_row FROM managed_certificates
@@ -13,10 +13,16 @@ BEGIN
     IF OLD.ended_at IS NOT NULL AND NEW IS DISTINCT FROM OLD THEN
       -- A deleted creator is detached by the users foreign key. Preserve all
       -- period facts and reject direct edits, even to created_by alone.
-      IF NOT (pg_trigger_depth() > 1
+      IF pg_catalog.pg_trigger_depth() > 1
         AND OLD.created_by IS NOT NULL AND NEW.created_by IS NULL
-        AND NOT EXISTS (SELECT 1 FROM users WHERE id = OLD.created_by)
-        AND (to_jsonb(NEW) - 'created_by') = (to_jsonb(OLD) - 'created_by')) THEN
+        AND (pg_catalog.to_jsonb(NEW) - 'created_by') = (pg_catalog.to_jsonb(OLD) - 'created_by')
+        AND NOT pg_catalog.row_security_active(pg_catalog.format('%I.users', TG_TABLE_SCHEMA)::pg_catalog.regclass) THEN
+        -- Resolve the parent in this period table's schema; an invoker-owned
+        -- temporary table or search_path must not hide an existing creator.
+        EXECUTE pg_catalog.format('SELECT NOT EXISTS (SELECT 1 FROM %I.users WHERE id = $1)', TG_TABLE_SCHEMA)
+          INTO creator_absent USING OLD.created_by;
+      END IF;
+      IF creator_absent IS DISTINCT FROM TRUE THEN
         RAISE EXCEPTION 'CertOps closed management period is immutable' USING ERRCODE = '23514';
       END IF;
     END IF;

@@ -33,7 +33,25 @@ test("deleting a creator nullifies only its retained closed period attribution",
     await db.query("CREATE TEMP TABLE fake_period_update (id uuid)");
     await db.query(`CREATE FUNCTION pg_temp.try_clear_period_creator() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN UPDATE certops_management_periods SET created_by=NULL WHERE id=NEW.id; RETURN NEW; END $$`);
     await db.query("CREATE TRIGGER fake_period_update BEFORE INSERT ON fake_period_update FOR EACH ROW EXECUTE FUNCTION pg_temp.try_clear_period_creator()");
+    // Create the shadow before the guard first evaluates its user lookup.
+    await db.query("CREATE TEMP TABLE users(id integer)");
     await rejectUpdate("INSERT INTO fake_period_update(id) VALUES($1)", [period]);
+    await db.query("DROP TABLE pg_temp.users");
+    await rejectUpdate("INSERT INTO fake_period_update(id) VALUES($1)", [period]);
+    // A restricted role that cannot see the creator through RLS must fail
+    // closed instead of interpreting an invisible row as a deleted user.
+    const restrictedRole = `period_probe_${nonce.replaceAll("-", "")}`;
+    await db.query(`CREATE ROLE "${restrictedRole}" NOLOGIN`);
+    await db.query("ALTER TABLE public.users ENABLE ROW LEVEL SECURITY");
+    await db.query(`GRANT USAGE ON SCHEMA public TO "${restrictedRole}"`);
+    await db.query(`GRANT SELECT ON public.users TO "${restrictedRole}"`);
+    await db.query(`GRANT SELECT, UPDATE ON public.certops_management_periods TO "${restrictedRole}"`);
+    await db.query(`GRANT INSERT ON fake_period_update TO "${restrictedRole}"`);
+    await db.query(`SET LOCAL ROLE "${restrictedRole}"`);
+    assert.equal((await db.query("SELECT row_security_active('public.users') AS active")).rows[0].active, true);
+    await rejectUpdate("INSERT INTO fake_period_update(id) VALUES($1)", [period]);
+    await db.query("RESET ROLE");
+    await db.query("ALTER TABLE public.users DISABLE ROW LEVEL SECURITY");
     // Even an actual FK action cannot change another historical field.
     await db.query(`CREATE FUNCTION pg_temp.alter_period_during_fk() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.created_by IS NULL THEN NEW.ended_reason := 'tampered'; END IF; RETURN NEW; END $$`);
     await db.query("CREATE TRIGGER aaa_period_tamper BEFORE UPDATE ON certops_management_periods FOR EACH ROW EXECUTE FUNCTION pg_temp.alter_period_during_fk()");
