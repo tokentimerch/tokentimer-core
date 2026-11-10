@@ -19,6 +19,8 @@ ACLs. The installer also repairs legacy configuration permissions during an
 upgrade without changing the configuration. Use an elevated editor that writes the existing file in place; editors
 that replace it may need a different save method because Administrators cannot
 create or delete files in the state directory. Restart the service after edits.
+A local administrator can take ownership of files, so these ACLs do not protect
+secrets from a determined administrator.
 Files inside it:
 
 | File | Contents | Mode |

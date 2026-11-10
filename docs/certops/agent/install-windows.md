@@ -29,7 +29,7 @@ Write your policy first, then run the installer: it keeps an existing `config.js
 
 Save `config.json` and any DNS credentials file as UTF-8 without a byte order mark. Windows PowerShell 5.1 `Set-Content -Encoding utf8` adds one and the agent refuses the file. Use Notepad, or `[IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false)))`.
 
-Windows state is protected and checked with `icacls` ACLs. Only the agent identity and SYSTEM are granted access; Administrators are accepted if already present. A failed permission check stops the operation.
+Windows state is protected with ACLs; see [configuration](configuration.md#config-directory) for operator access and credential protection. A failed permission check stops the operation.
 
 For a protected config that even an elevated editor cannot change, follow [Windows configuration maintenance](../windows-maintenance.md). Never delete enrolled identity or keys to get past an access error.
 
