@@ -906,7 +906,6 @@ if ((Test-Path -LiteralPath $configPath) -and -not $script:DryRun) {
     $configContent = ($lines -join "`n") + "`n"
     [System.IO.File]::WriteAllText($configTmp, $configContent, (New-Object System.Text.UTF8Encoding($false)))
     Move-Item -Force $configTmp $configPath
-    Invoke-PlatformAcl -TargetPath $configPath -Kind "file" -IncludeAdministrators
     # Sanity-parse the result with the node we already verified, so a bad
     # value can never install an unreadable config.
     & node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" $configPath
@@ -914,6 +913,10 @@ if ((Test-Path -LiteralPath $configPath) -and -not $script:DryRun) {
         Fail "generated $configPath is not valid JSON (unexpected characters in --api-url/--workspace-id?)"
     }
 }
+
+# Repair legacy SYSTEM-only configuration ACLs on upgrade without rewriting
+# the operator's configuration or changing the credential's separate ACL.
+Invoke-Step "apply operator ACL to $configPath" { Invoke-PlatformAcl -TargetPath $configPath -Kind "file" -IncludeAdministrators }
 
 # --------------------------------------- bootstrap token env file
 # Written for parity with install-agent.sh (documentation, and a manual/dev

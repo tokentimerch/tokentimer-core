@@ -15,7 +15,8 @@ Resolution order (`resolveConfigDir`): explicit argument >
 On Linux/macOS the directory uses mode 0700. On Windows the agent restricts
 access with ACLs: local Administrators can traverse the state directory and
 edit `config.json` in place, while agent secrets retain separate restricted
-ACLs. Use an elevated editor that writes the existing file in place; editors
+ACLs. The installer also repairs legacy configuration permissions during an
+upgrade without changing the configuration. Use an elevated editor that writes the existing file in place; editors
 that replace it may need a different save method because Administrators cannot
 create or delete files in the state directory. Restart the service after edits.
 Files inside it:
@@ -100,7 +101,7 @@ Top level:
 | `policy` | object or null | null | Agent-local allowlists (below). Null means every allowlist is empty: default deny. |
 | `discovery` | object or null | null | Filesystem discovery is off until `discovery.directories` is configured; there is no default directory. The default interval is 60 minutes. Windows store discovery is separate. |
 | `windowsDiscovery` | object or null | enabled | Windows defaults to `LocalMachine\My` every 30 minutes and also observes stores referenced by IIS/HTTP.sys bindings. For GPO-distributed CA certificates, set `stores` to `["My", "Root", "CA"]` to include root and intermediate stores. |
-| `observedRevocation` | object or null | enabled in new installer configurations; no origins | Add approved CRL/OCSP HTTP(S) origins to `allowedOrigins` and restart the agent. An empty list makes no responder requests and reports that configuration is required; a previously verified revocation stays highlighted. An absent block or `enabled: false` disables checks. Upgrade the control plane and console before the agents: an older API cannot immediately replace a previous good result with the new no-check state. Checks follow discovery intervals and may extend the scan. System trust is read with Node 22.19 or later; optional `trustAnchorFiles` and `intermediateFiles` add PEM certificates. LDAP and delta CRLs are unsupported; failed or stale checks are unknown or stale. Root trust anchors are not revocation-checked; remove a distrusted root from local trust. |
+| `observedRevocation` | object or null | enabled in new installer configurations; no origins | Add approved CRL/OCSP HTTP(S) origins to `allowedOrigins` and restart the agent. If the CA publishes a delta CRL, its advertised HTTP(S) origin must also be allowed; LDAP-only locations and restricted CRL scopes are unsupported. Missing, invalid or stale data remains unknown or stale. An empty list makes no requests; an absent block or `enabled: false` disables checks. Upgrade the control plane and console before agents. Checks follow discovery intervals. Node 22.19 or later reads system trust; optional `trustAnchorFiles` and `intermediateFiles` add PEM certificates. Root trust anchors are not revocation-checked. |
 | `execution` | object or null | null | Null is treated as `{ enabled: false }` (observe-only mode). |
 | `caBundlePath` | string or null | null | Path to a PEM CA bundle trusted for the agent-to-control-plane HTTPS channel (private-CA control planes). Env override: `TOKENTIMER_AGENT_CA_BUNDLE`. Fail-loud at startup: a missing/unreadable file, a file without a `BEGIN CERTIFICATE` block, or a file containing private key material aborts before any network call. When set, the bundle replaces the default trust store for control-plane requests (it does not extend it); plain `http` URLs are unaffected. When unset, Node's default CA trust applies; the [Windows installer](install-windows.md) enables system CA trust on supported Node versions. |
 | `dnsProviders` | object or null | null | Native DNS-01 solver configuration (see "DNS-01 providers" in [DNS and ACME](dns-and-acme.md)). Maps provider id to `{ credentialsFile: <absolute path>, ...non-secret options }`, plus a reserved `zoneProviderMap` key (zone to provider id). Credentials never live in `config.json`, only the path to a 0600 credentials file does. Fail-loud validation: unknown provider ids, relative paths, and `zoneProviderMap` entries naming unconfigured providers abort startup. |
@@ -156,6 +157,10 @@ the agent configuration and restart the agent:
 Each reported observation is retained as workspace evidence; the inventory shows
 the latest result and, when a check fails, the last verified result. Evidence
 has no separate revocation retention setting and is deleted with the workspace.
+
+If IIS returns HTTP 404.11 for an AD CS delta CRL URL containing `+`, allow
+double escaping only on the dedicated CRL publication directory and verify the
+URL from the agent. This relaxes request filtering for that directory.
 
 `discovery` block:
 

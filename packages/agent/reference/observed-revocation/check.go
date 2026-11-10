@@ -103,7 +103,7 @@ func checkCRL(ctx context.Context, cert, issuer *x509.Certificate, allowed []str
 		if err != nil {
 			continue
 		}
-		verdict, until, err := CheckCRL(der, issuer, cert.SerialNumber, now, complete)
+		verdict, until, err := checkBaseAndDelta(ctx, der, cert, issuer, allowed, tlsRoots, now, complete, fetch)
 		if err == nil && verdict != "unknown" {
 			return verdict, until
 		}
@@ -117,13 +117,6 @@ func checkCRL(ctx context.Context, cert, issuer *x509.Certificate, allowed []str
 func fullCRLDistributionPoints(cert *x509.Certificate) bool {
 	if cert == nil || len(cert.CRLDistributionPoints) == 0 {
 		return false
-	}
-	for _, ext := range cert.Extensions {
-		// A delta CRL may change a base CRL's verdict; until delta merging is
-		// implemented a base list cannot prove a certificate is still good.
-		if ext.Id.Equal(asn1.ObjectIdentifier{2, 5, 29, 46}) {
-			return false
-		}
 	}
 	for _, ext := range cert.Extensions {
 		if !ext.Id.Equal(asn1.ObjectIdentifier{2, 5, 29, 31}) {
