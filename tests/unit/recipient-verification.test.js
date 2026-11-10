@@ -42,6 +42,7 @@ function createStore() {
     const text = String(sql);
     state.queries.push(text);
     if (text === "BEGIN" || text === "COMMIT" || text === "ROLLBACK") return rowsOf([]);
+    if (/RV_VERIFIED_MEMBER_EMAILS|RV_LIST_MEMBER_REVOCATIONS|RV_RESUME_MEMBER_DESTINATION/.test(text)) return rowsOf([]);
     if (text.includes("SAVEPOINT rv_optional_verification")) return rowsOf([]);
     if (text.includes("pg_advisory_xact_lock")) {
       state.locks.push(params[0]);
@@ -1087,7 +1088,7 @@ describe("recipient verification", () => {
     assert.equal(ui.verificationControlsVisible("off"), false);
     assert.equal(ui.verificationControlsVisible("enforce"), true);
     assert.equal(ui.verificationControlsVisible("shadow"), true);
-    assert.match(ui.verificationWaitCopy("enforce"), /Alerts wait until/);
+    assert.match(ui.verificationWaitCopy("enforce"), /Unverified destinations wait for confirmation/);
     assert.match(ui.verificationWaitCopy("shadow"), /still sent/);
     assert.equal(ui.verificationWaitCopy("off"), null);
     assert.match(ui.verificationIntro("off"), /confirmation is off/i);

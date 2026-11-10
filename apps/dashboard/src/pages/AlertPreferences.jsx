@@ -2802,7 +2802,11 @@ export default function AlertPreferences({
       const response = await apiClient.post(
         `/api/v1/workspaces/${workspaceId}/contacts/${contact.id}/verifications/email`
       );
-      if (
+      if (response?.data?.status === 'verified') {
+        showSuccess(
+          'This workspace member is already verified. No email was sent.'
+        );
+      } else if (
         response?.data?.code === 'RECIPIENT_OPTED_OUT' ||
         response?.data?.status === 'opted_out'
       ) {
@@ -3423,7 +3427,7 @@ export default function AlertPreferences({
                         <Text fontSize='sm' color={bodySecondary} mt={1}>
                           {recipientVerificationMode === 'shadow'
                             ? 'Confirmation is recorded; delivery continues.'
-                            : 'Email and WhatsApp alerts wait for confirmation.'}
+                            : verificationIntro(recipientVerificationMode)}
                         </Text>
                       </Box>
                       <Button

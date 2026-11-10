@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Verified workspace-member recipients.** Contacts matching a current member's exact verified email can receive workspace notifications without another confirmation. Membership removal or lost mailbox proof ends this eligibility; explicit refusals still apply. Self-hosted verification remains off by default; use `shadow` to observe eligibility before enabling `enforce`.
+
 ### Changed
 
 - **MCP contact creation.** When recipient verification is enforced, the response reports confirmation status for each email or WhatsApp destination. Creating a contact does not send an invitation.
