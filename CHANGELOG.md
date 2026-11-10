@@ -11,7 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Bounded recipient transition.** Operators can grant reviewed existing email and WhatsApp destinations up to 30 days to confirm while verification stays `enforce`. Refusals and destination changes invalidate grace; grants never become consent or renew automatically. **Operator action:** run migrations, review and activate a snapshot, then set `RECIPIENT_VERIFICATION_LEGACY_GRACE=1` on API and notification workers. See [the operator procedure](docs/recipient-legacy-grace.md).
+- **Verified workspace-member recipients.** Contacts matching a current member's exact verified email can receive workspace notifications without another confirmation. Membership removal or lost mailbox proof ends this eligibility; explicit refusals still apply. Self-hosted verification remains off by default; use `shadow` to observe eligibility before enabling `enforce`.
 
 ### Changed
 

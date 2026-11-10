@@ -14,14 +14,12 @@ const pool = new Pool({
   user: process.env.RV_TEST_DB_USER || "tokentimer", password: process.env.RV_TEST_DB_PASSWORD || "password",
   max: 6, options: `-c search_path=${schema},public`,
 });
-const keys = ["TT_DEPLOYMENT", "RECIPIENT_VERIFICATION_MODE", "RECIPIENT_FINGERPRINT_SECRET",
-  "RECIPIENT_VERIFICATION_LEGACY_GRACE"];
+const keys = ["TT_DEPLOYMENT", "RECIPIENT_VERIFICATION_MODE", "RECIPIENT_FINGERPRINT_SECRET"];
 const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
 test.before(async () => {
   process.env.TT_DEPLOYMENT = "self-hosted";
   process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
   process.env.RECIPIENT_FINGERPRINT_SECRET = "member-postgres-test-only";
-  delete process.env.RECIPIENT_VERIFICATION_LEGACY_GRACE;
   await pool.query(`CREATE SCHEMA ${schema}`);
   await pool.query(`
     CREATE TABLE users (id SERIAL PRIMARY KEY, email TEXT);
@@ -141,10 +139,11 @@ test("opt-out and active destination suppression always take precedence", async 
   await status(row, "opted_out");
   assert.equal((await decision(row)).code, "RECIPIENT_OPTED_OUT");
   await status(row, "pending");
-  await pool.query(`INSERT INTO notification_suppressions
-    (channel,destination_fingerprint,scope,workspace_id,reason)
-    VALUES ('email',$1,'workspace',$2,'recipient_declined')`,
-  [verification.destinationFingerprint("email", row.destination), row.workspaceId]);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM notification_suppressions WHERE reason='recipient_declined'")).rows[0].n, 1);
+  assert.equal((await decision(row)).code, "RECIPIENT_OPTED_OUT");
+  await pool.query("DELETE FROM workspace_contacts WHERE id=$1", [row.contactId]);
+  row.contactId = (await pool.query("INSERT INTO workspace_contacts (workspace_id,details) VALUES ($1,$2) RETURNING id",
+    [row.workspaceId, { email: row.destination }])).rows[0].id;
   assert.equal((await decision(row)).code, "RECIPIENT_OPTED_OUT");
 });
 

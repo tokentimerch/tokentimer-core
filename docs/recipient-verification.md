@@ -1,104 +1,11 @@
 # Recipient verification
 
-Workspace contacts can exist, and can belong to contact groups, before a destination is confirmed. Whether alerts, weekly digests, and workspace notification tests require that confirmation depends on the deployment. Cloud enforces recipient policy by default; an operator can grant a bounded transition period to reviewed existing destinations. A standard self-hosted deployment does not require confirmation until an operator turns verification on. When verification is enforced, a weekly digest checks delivery eligibility again after it claims the recipient and does not mark the digest sent when the check fails.
+Self-hosted delivery keeps verification off by default. In `enforce` mode, a contact matching a current workspace member's exact verified mailbox needs no second email confirmation; other email addresses and WhatsApp numbers require their own confirmation. Membership removal or lost mailbox proof ends inherited eligibility. Opt-outs, revocations and suppressions still take precedence. Use `shadow` to evaluate eligibility without blocking delivery during rollout. Run the standard migrations before starting matching API and workers.
 
-Account verification, password reset, billing, waitlist, workspace invitations, and operator incident email are not recipient-consent messages. They are not blocked by this policy.
+## Configuration
 
-## States
+- `RECIPIENT_VERIFICATION_MODE`: `off` bypasses verification, `shadow` logs eligibility while delivering, and `enforce` requires eligibility. Configure the same mode on the API and notification workers.
+- `RECIPIENT_FINGERPRINT_SECRET`: shared HMAC key for destination fingerprints and verification tokens; falls back to `PHONE_HASH_SALT`, then `SESSION_SECRET`.
+- `PUBLIC_BASE_URL`: public API origin for confirmation links and Twilio inbound signature validation; falls back to `API_URL`.
 
-Each channel is independent:
-
-| Status | Meaning |
-| --- | --- |
-| `pending` | No recipient confirmation for the current address or number. |
-| `verified` | The recipient confirmed this exact destination for this workspace. |
-| `revoked` | A workspace manager stopped notifications. |
-| `opted_out` | The recipient declined. |
-
-Changing the email address invalidates email verification only. Changing the phone number invalidates WhatsApp verification only. A confirmation in one workspace does not authorize another workspace. Deleting and recreating a contact does not clear a decline for that destination in the same workspace.
-
-An email decline stays in force until the recipient accepts a new confirmation sent to that mailbox. An administrator cannot receive or open that link. The recipient requests it from `/verify/recipient/resubscribe`. Daily and weekly invitation limits still apply. The generic response does not guarantee an email was sent; check spam and try again after 24 hours, or contact the workspace administrator. Expired, used, revoked, and superseded links do not restore consent.
-
-Historical `contact_opt_ins` rows recorded when a contact was created are not treated as consent. New contacts do not write that row.
-
-An operator may activate [bounded legacy delivery grants](recipient-legacy-grace.md)
-for reviewed existing destinations. Such a contact remains `pending`; API fields
-`delivery_basis: "legacy_grace"` and `grace_expires_at` describe its temporary
-delivery eligibility. New/changed destinations and explicit refusals do not gain
-that exception.
-
-## Email
-
-A workspace admin or manager sends a verification invitation. TokenTimer emails a link that expires in 48 hours. Opening the link only shows the confirmation page. The recipient must submit the accept or decline form. The token is stored as an HMAC, is single-use, and is bound to the workspace, contact, channel, and normalized address.
-
-## WhatsApp
-
-Choose **Copy confirmation link**, then copy the visible **WhatsApp confirmation link** before leaving the page. Use that field if clipboard copying fails and share the link through a trusted channel. TokenTimer sends no unsolicited verification message. The recipient opens the link and sends the prefilled `CONFIRM` from the saved WhatsApp number. Consent requires a valid signed Twilio inbound request. Links expire; creating another is subject to invitation limits. A submitted test is not delivery confirmation: check the phone, then Twilio logs if missing. Delivery success is not consent.
-
-WhatsApp re-subscription is not currently available after a decline, and managers cannot create a new confirmation link. The public re-subscribe page supports email only.
-
-Configure Twilio's incoming message webhook as `POST {PUBLIC_BASE_URL}/webhooks/twilio/whatsapp/inbound`.
-
-## Enforcement
-
-`RECIPIENT_VERIFICATION_MODE` controls delivery. It is an environment setting, not a workspace setting. The API and every notification worker must use the same value. Startup logs `recipient verification mode`.
-
-- Self-hosted default is `off` when `TT_DEPLOYMENT` is unset or `self-hosted`. Alerts, weekly digests, and workspace tests send without recipient confirmation, and they do not require `PUBLIC_BASE_URL`, `RECIPIENT_FINGERPRINT_SECRET`, or the Twilio inbound webhook. Set `RECIPIENT_VERIFICATION_MODE=enforce` to require confirmation. Set `shadow` to evaluate and log eligibility without blocking delivery.
-- Cloud default is `enforce` when `TT_DEPLOYMENT=cloud`. `off` is ignored. `shadow` on Cloud requires both `RECIPIENT_VERIFICATION_MODE=shadow` and `RECIPIENT_VERIFICATION_CLOUD_SHADOW=1`. An unrecognized nonempty `TT_DEPLOYMENT` also enforces.
-
-`RECIPIENT_VERIFICATION_LEGACY_GRACE=1` is an optional companion to `enforce`, not
-a new verification mode. It only permits an exact destination in an active,
-operator-reviewed snapshot, for at most 30 days. Opt-out, revocation and
-suppression checks still win. See the [preview and activation runbook](recipient-legacy-grace.md).
-
-When enforcement blocks every required recipient, the alert is marked `blocked` with `NO_VERIFIED_RECIPIENTS` and is not retried as a provider outage. If another channel succeeded, the alert is `partial` and the successful channel is not sent again. Other eligible recipients in a mixed group are still delivered, including when an earlier duplicate contact for the same address is unverified. A workspace warning is raised for administrators. A permanent webhook response is a provider failure: that endpoint is not retried automatically, earlier successful channels are not sent again, and the warning type is `delivery_webhook_permanent`. An administrator can retry that webhook after fixing it. A later temporary failure stays scheduled on that new retry. A malformed webhook URL is refused when settings are saved. A previously stored malformed URL is a permanent delivery failure for that endpoint, and the other endpoints in the batch still run. Retry returns `409 DELIVERY_IN_PROGRESS` while a worker is delivering the alert. A claim whose lease has expired can still be retried. After a recipient confirms, an authorized operator can retry the blocked email or WhatsApp channel. The worker checks current consent before sending and skips destinations that already received the alert.
-
-Workspace WhatsApp tests require `contact_id` for a saved contact, and the number must match that contact. In `enforce` mode the current number must be verified or have an eligible active legacy grant. An arbitrary `phone_e164` is rejected. In `off` and `shadow`, an unverified saved contact can still receive the test.
-
-## Limits
-
-Defaults, overridable by environment (see [configuration](CONFIGURATION.md#recipient-verification)):
-
-- 1 email invitation per destination per 24 hours, and 3 per 7 days.
-- 1 WhatsApp challenge per destination per 24 hours, and 3 per 7 days.
-- 50 invitations per workspace per day, and 20 per user per day.
-- 3 notification tests per contact per day, with 120 seconds between tests.
-
-The standard Compose API forwards these limits from `.env`; unset values retain the documented defaults. In Helm, set their environment names under `api.env`. Configure `WEEKLY_DIGEST_UNCERTAIN_RETRY_SECONDS` on the digest worker (`worker.env` in Helm). Leave `RECIPIENT_VERIFY_PAGE_MAX` unset to retain its production or development default. Reducing a limit can block further invitations or tests until its existing window expires.
-
-A destination that hits the weekly cap from 3 or more workspaces is suppressed for 24 hours. That suppression is saved even though the refused invitation is rolled back. Per-destination, per-workspace, and per-user limits are enforced inside one transaction with advisory locks, so concurrent invitations to different destinations cannot pass a shared workspace or user cap. Public confirmation pages are limited per client address in memory and in Postgres. The Twilio inbound webhook keeps its own limiter and is not part of the page limit. Limits are stored in Postgres and apply across API replicas.
-
-## Rollout
-
-Self-hosted notification delivery works with verification left off. Turn it on only when you want recipients to confirm:
-
-```env
-RECIPIENT_VERIFICATION_MODE=enforce
-```
-
-`shadow` is the self-hosted observation mode. It logs eligibility and still delivers. Cloud verification is mandatory. Set `TT_DEPLOYMENT=cloud` and `RECIPIENT_VERIFICATION_MODE=enforce` on the API and every notification worker.
-
-1. Run the standard migration runner before the matching API and workers. Canonical main uses migration 84 for recipient verification and 85 for weekly-digest claim tracking; neither is skipped when verification is off. Existing contacts remain unverified. Supported preview histories retain their applied versions and timestamps; pending definitions use free versions. Do not hand-apply individual SQL files or relabel migration history.
-2. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL` before sending invitations.
-3. Ask workspace managers to send invitations. Existing alert groups keep their contacts.
-4. Switch self-hosted from `off` or `shadow` to `enforce` after recipients confirm.
-5. Rollback on self-hosted is `RECIPIENT_VERIFICATION_MODE=off` or `shadow`. That restores delivery. It does not delete consent rows. Cloud has no indefinite fail-open switch.
-
-## Monitoring
-
-See [browser validation and reproduction](recipient-verification-validation.md) for the executed UI/API scenarios, security review, local test command and provider limitations.
-
-- Audit actions: `RECIPIENT_VERIFICATION_INVITED`, `RECIPIENT_VERIFICATION_RATE_LIMITED`, `RECIPIENT_VERIFICATION_REVOKED`, `RECIPIENT_VERIFICATION_RESUBSCRIBE_REQUIRED`, `RECIPIENT_WHATSAPP_CONFIRMED`.
-- Worker log `recipient-verification-shadow` while shadow mode is on.
-- Operational notification type `delivery_unverified_recipients` when an enforced alert has no eligible recipient.
-- Operational notification type `delivery_webhook_permanent` when a webhook endpoint rejects the alert. That warning is not used for an unverified or opted-out recipient.
-- Alert status `blocked` and error `NO_VERIFIED_RECIPIENTS` means the failure is eligibility, not SMTP, Twilio, or a webhook response. `PERMANENT_DELIVERY_FAILURE` means a provider rejected the delivery.
-
-## Limitations
-
-- A verification email the provider rejects can be retried without using another destination-day allowance. An uncertain SMTP result is not replaced while that challenge is still pending. If the API stops after creating the challenge and before recording an outcome, another invitation is allowed after the dispatch lease (120 seconds by default), not after the 48-hour challenge lifetime.
-- The confirmation token is present on the POST URL. The response redirects to a token-free page and sets `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
-- Invitation pages return the same generic result for unknown, expired, and replayed links.
-- Apply the migration on a database before production enforcement. The migration is idempotent.
-- A database timeout or other verification infrastructure failure does not mark the alert `NO_VERIFIED_RECIPIENTS`. The delivery stays retryable, and the message is not sent until consent has been read. One successful recipient does not complete a channel while another eligible recipient is still failed.
-- A weekly digest renews its claim lease during the provider call. If that lease expires while a send is still in progress, the next worker records the delivery as uncertain and waits `WEEKLY_DIGEST_UNCERTAIN_RETRY_SECONDS` (default 900) before trying again. SMTP cannot promise that a crash after the provider accepts the message, and before that acceptance is stored, will never send a second copy. WhatsApp retries keep the same idempotency key. A recorded provider acceptance is finished without sending again.
+See [configuration variables and limits](CONFIGURATION.md#recipient-verification) for defaults and [browser validation](recipient-verification-validation.md) for the test command.

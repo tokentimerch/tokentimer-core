@@ -7,8 +7,8 @@ const { spawnSync } = require("node:child_process");
 const { test } = require("node:test");
 const { Pool } = require("pg");
 
-test("normal runner upgrades the pre-grace ledger, restarts and preserves its history", { timeout: 120000 }, async () => {
-  const database = `recipient_grace_${randomUUID().replaceAll("-", "")}_test`;
+test("normal runner appends member verification to the released ledger and restarts unchanged", { timeout: 120000 }, async () => {
+  const database = `recipient_member_${randomUUID().replaceAll("-", "")}_test`;
   const connection = {
     host: process.env.RV_TEST_DB_HOST || "127.0.0.1",
     port: Number(process.env.RV_TEST_DB_PORT || 54329),
@@ -25,11 +25,11 @@ test("normal runner upgrades the pre-grace ledger, restarts and preserves its hi
   };
   delete env.DB_SSL;
   delete env.PGSSLROOTCERT;
-  function migrate(preGrace = false, preMember = false) {
+  delete env.DATABASE_URL;
+  function migrate(beforeMember = false) {
     const source = `
       const m = require(${JSON.stringify(entry)});
-      ${preGrace ? "for (let i=m.migrations.length-1;i>=0;i--) if (['recipient_legacy_delivery_grace','recipient_member_verification'].includes(m.migrations[i].name)) m.migrations.splice(i,1);" : ""}
-      ${preMember ? "m.migrations.splice(m.migrations.findIndex(row => row.name === 'recipient_member_verification'),1);" : ""}
+      ${beforeMember ? "m.migrations.splice(m.migrations.findIndex(row => row.name === 'recipient_member_verification'),1);" : ""}
       m.runMigrations().then(() => process.exit(0), e => { console.error(e); process.exit(1); });
     `;
     const result = spawnSync(process.execPath, ["-e", source], { env, encoding: "utf8", timeout: 45000, maxBuffer: 8 * 1024 * 1024 });
@@ -39,22 +39,14 @@ test("normal runner upgrades the pre-grace ledger, restarts and preserves its hi
     await admin.query(`CREATE DATABASE ${database}`);
     migrate(true);
     const before = (await target.query("SELECT * FROM migrations ORDER BY version")).rows;
-    assert.ok(before.length > 90);
-    migrate(false, true);
-    const withGrace = (await target.query("SELECT * FROM migrations ORDER BY version")).rows;
-    assert.deepEqual(withGrace.slice(0, -1), before);
-    assert.equal(withGrace.at(-1).version, 109);
+    assert.equal(before.at(-1).version, 108);
     migrate();
     const after = (await target.query("SELECT * FROM migrations ORDER BY version")).rows;
-    assert.deepEqual(after.slice(0, -1), withGrace);
-    assert.deepEqual(after.slice(0, -2), before);
-    assert.equal(after.at(-2).name, "recipient_legacy_delivery_grace");
-    assert.equal(after.at(-2).version, 109);
+    assert.deepEqual(after.slice(0, -1), before);
     assert.equal(after.at(-1).name, "recipient_member_verification");
-    assert.equal(after.at(-1).version, 110);
-    assert.equal((await target.query("SELECT count(*)::int AS n FROM contact_channel_legacy_grants")).rows[0].n, 0);
-    assert.equal((await target.query("SELECT count(*)::int AS n FROM recipient_legacy_grace_refusals")).rows[0].n, 0);
-    assert.ok((await target.query("SELECT 1 FROM pg_trigger WHERE tgname='recipient_legacy_grace_guard_insert'")).rowCount);
+    assert.equal(after.at(-1).version, 109);
+    assert.ok((await target.query("SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='recipient_verified_email'")).rowCount);
+    assert.ok((await target.query("SELECT 1 FROM pg_trigger WHERE tgname='recipient_member_verification_preserve_revocation'")).rowCount);
     migrate();
     assert.deepEqual((await target.query("SELECT * FROM migrations ORDER BY version")).rows, after);
   } finally {

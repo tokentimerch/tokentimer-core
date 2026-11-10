@@ -8,15 +8,13 @@ const verification = require("../../packages/recipient-verification");
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const contactId = "22222222-2222-4222-8222-222222222222";
 const email = "member@example.test";
-const keys = ["TT_DEPLOYMENT", "RECIPIENT_VERIFICATION_MODE", "RECIPIENT_FINGERPRINT_SECRET",
-  "RECIPIENT_VERIFICATION_LEGACY_GRACE"];
+const keys = ["TT_DEPLOYMENT", "RECIPIENT_VERIFICATION_MODE", "RECIPIENT_FINGERPRINT_SECRET"];
 const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
 
 test.beforeEach(() => {
   process.env.TT_DEPLOYMENT = "self-hosted";
   process.env.RECIPIENT_VERIFICATION_MODE = "enforce";
   process.env.RECIPIENT_FINGERPRINT_SECRET = "member-unit-test-only";
-  delete process.env.RECIPIENT_VERIFICATION_LEGACY_GRACE;
 });
 test.after(() => {
   for (const key of keys) {

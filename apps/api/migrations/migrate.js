@@ -4938,13 +4938,6 @@ const migrations = [
   },
   {
     version: 109,
-    name: "recipient_legacy_delivery_grace",
-    sql: ["legacy-grace-migration.sql", "legacy-grace-locking-migration.sql"]
-      .map(file => fs.readFileSync(require("path").join(__dirname, "../../../packages/recipient-verification", file), "utf8"))
-      .join("\n"),
-  },
-  {
-    version: 110,
     name: "recipient_member_verification",
     sql: fs.readFileSync(require("path").join(__dirname, "../../../packages/recipient-verification/member-verification-migration.sql"), "utf8"),
   },

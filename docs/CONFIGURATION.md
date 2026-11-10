@@ -151,28 +151,17 @@ an incomplete configuration and SMTP is reported as not configured. With no
 
 ## Recipient verification
 
-Workspace email and WhatsApp alerts are separate from account email verification. A contact can be saved and placed in a contact group while a destination is still `pending`. Account verification, password reset, billing, waitlist, workspace invites, and operator incident mail are not gated by this check.
-
-Self-hosted deployments leave recipient verification `off`. Alerts, weekly digests, and workspace tests send without confirmation, and they do not need the verification secret or `PUBLIC_BASE_URL`. To require confirmation:
-
-```env
-RECIPIENT_VERIFICATION_MODE=enforce
-```
-
-`shadow` is optional for self-hosted operators who want eligibility logged without blocking delivery. Set `TT_DEPLOYMENT=cloud` and `RECIPIENT_VERIFICATION_MODE=enforce` on the API and every notification worker. Cloud then enforces verification. `off` is ignored. Temporary Cloud shadow also requires `RECIPIENT_VERIFICATION_CLOUD_SHADOW=1` together with `RECIPIENT_VERIFICATION_MODE=shadow`. An unrecognized nonempty `TT_DEPLOYMENT` value enforces. There is no workspace setting for this mode. The API and worker log `recipient verification mode` at startup.
-
-Set `RECIPIENT_FINGERPRINT_SECRET` (or rely on `PHONE_HASH_SALT` or `SESSION_SECRET`) before creating invitations. Set `PUBLIC_BASE_URL` or `API_URL` to the externally visible API origin. Invitation links and the Twilio inbound signature both use that origin. Those values are required only when verification is `shadow` or `enforce`.
+Self-hosted delivery leaves verification `off` by default. In `enforce`, current workspace members' exact verified mailboxes need no second email confirmation; external addresses and WhatsApp numbers require confirmation, and explicit refusals still win. Use `shadow` to observe eligibility without blocking delivery. Keep the API and every notification worker on the same mode, and run standard migrations before matching processes. Verification does not gate account, password-reset or workspace-invitation messages.
 
 | Variable | Description | Default value | Scope |
 | --- | --- | --- | --- |
 | `RECIPIENT_VERIFICATION_MODE` | `off`, `shadow`, or `enforce`. Cloud ignores `off` | `off` self-hosted, `enforce` on Cloud | API, worker |
 | `TT_DEPLOYMENT` | `self-hosted` or `cloud`. Any other value enforces verification | unset means `self-hosted` | API, worker |
 | `RECIPIENT_VERIFICATION_CLOUD_SHADOW` | Set to `1` with mode `shadow` to temporarily shadow Cloud | unset | API, worker |
-| `RECIPIENT_VERIFICATION_LEGACY_GRACE` | Set to `1` alongside `enforce` to honor active, operator-reviewed exact-destination grants; [activation and expiry](recipient-legacy-grace.md) | `0` | API, worker |
 | `RECIPIENT_VERIFICATION_DISPATCH_LEASE_SECONDS` | How long an in-flight verification email blocks a replacement after a crash | `120` | API |
 | `RECIPIENT_RESUBSCRIBE_IP_PER_DAY` | Public re-subscribe requests per client address | `10` | API |
 | `RECIPIENT_FINGERPRINT_SECRET` | HMAC key for destination fingerprints and token hashes | falls back to `PHONE_HASH_SALT`, then `SESSION_SECRET` | API, worker |
-| `PUBLIC_BASE_URL` | External origin for invitation links and Twilio signature validation | falls back to `API_URL` | API |
+| `PUBLIC_BASE_URL` | External origin for invitation links and signature validation at `POST /webhooks/twilio/whatsapp/inbound` | falls back to `API_URL` | API |
 | `RECIPIENT_VERIFY_EMAIL_DEST_PER_DAY` | Email invitations per destination | `1` | API |
 | `RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK` | Email invitations per destination | `3` | API |
 | `RECIPIENT_VERIFY_WHATSAPP_DEST_PER_DAY` | WhatsApp challenges per destination | `1` | API |
@@ -186,10 +175,6 @@ Set `RECIPIENT_FINGERPRINT_SECRET` (or rely on `PHONE_HASH_SALT` or `SESSION_SEC
 | `RECIPIENT_VERIFY_PAGE_MAX` | In-process shield for public confirmation pages | `60` in production, `10000` in development and test | API |
 | `RECIPIENT_VERIFY_PAGE_WINDOW_MS` | Window for the in-process confirmation page shield | `600000` | API |
 | `RECIPIENT_VERIFICATION_ADMIN_PROVIDER_TEST` | Set to `1` to allow an enforce-mode operator WhatsApp provider probe to an arbitrary number | unset | API |
-
-Point Twilio's inbound WhatsApp webhook at `POST /webhooks/twilio/whatsapp/inbound`. The signature is checked against `PUBLIC_BASE_URL` or `API_URL` plus the request path and the raw form body. A missing base URL or auth token returns 503 and does not confirm a number. Delivery status callbacks are not consent.
-
-Run the standard migration runner, including when verification is `off`; do not apply recipient SQL by hand. It preserves supported preview histories and does not mark existing contacts verified. See [recipient verification](recipient-verification.md) and [migration numbering](migrations/open-pr-numbering.md).
 
 ## Alerts, limits, and webhooks
 
