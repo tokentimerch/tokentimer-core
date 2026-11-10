@@ -49,6 +49,20 @@ async function preferences(target = page) {
   await until(async () => (await target.locator("#contacts").innerText()).includes("Browser") || (await target.getByRole("button", { name: "Add contact", exact: true }).count()) > 0);
 }
 
+async function confirmation(fixture = contact, target = page) {
+  const dialog = target.getByRole("dialog");
+  if (!await dialog.isVisible()) {
+    await target.getByRole("button", { name: "Review confirmations", exact: true }).click();
+  }
+  await dialog.getByRole("combobox").selectOption(fixture.id);
+  return dialog;
+}
+
+async function closeConfirmation(target = page) {
+  await target.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).last().click();
+  await target.getByRole("dialog").waitFor({ state: "hidden" });
+}
+
 async function login(target, email) {
   await target.goto(`${app}/login`);
   await target.getByPlaceholder("Enter your email").fill(email);
@@ -62,6 +76,32 @@ async function newContact(label, { phone = null, target = context } = {}) {
   const response = await apiCall("POST", contactsPath(), { first_name: label, last_name: run, details: { email }, phone_e164: phone }, target);
   assert.equal(response.status(), 201, await response.text());
   return response.json();
+}
+
+async function verifiedMemberContact(label) {
+  const fixture = await newContact(label);
+  const email = fixture.details.email;
+  const user = await pool.query(
+    "INSERT INTO users(email,email_original,display_name,password_hash,auth_method,email_verified) VALUES($1,$4,$2,$3,'local',true) RETURNING id",
+    [email, label, await require("bcryptjs").hash(password, 10), email]);
+  const userId = user.rows[0].id;
+  await pool.query("INSERT INTO workspace_memberships(user_id,workspace_id,role,invited_by) VALUES($1,$2,'viewer',$1)", [userId, workspace]);
+  return { ...fixture, userId };
+}
+
+async function emailVerification(fixture) {
+  const response = await apiCall("GET", contactsPath());
+  assert.equal(response.status(), 200, await response.text());
+  return (await response.json()).items.find((entry) => entry.id === fixture.id).verification.email;
+}
+
+async function assertInheritedMember(fixture) {
+  assert.deepEqual(await emailVerification(fixture), {
+    status: "verified", delivery_basis: "verified_member",
+    verified_at: null, consent_at: null, invitation: null,
+  });
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM contact_channel_verifications WHERE contact_id=$1", [fixture.id])).rows[0].n, 0);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM contact_verification_challenges WHERE contact_id=$1", [fixture.id])).rows[0].n, 0);
 }
 
 async function emailLink(email) {
@@ -128,12 +168,80 @@ describe(`recipient verification in Chromium: ${mode}`, { skip: !enabled, timeou
     const list = await (await apiCall("GET", contactsPath())).json();
     assert.equal(list.verification_summary.mode, enforced ? "enforce" : "off");
     assert.equal(list.items.find((entry) => entry.id === contact.id).verification.email.status, "pending");
-    if (enforced) assert.equal(await row().getByText("Pending", { exact: true }).count(), 2);
+    if (enforced) {
+      const controls = await confirmation();
+      assert.equal(await controls.getByText("Pending", { exact: true }).count(), 2);
+    }
     else {
       assert.equal(await row().getByRole("button", { name: "Send invitation" }).count(), 0);
       await page.getByText("Recipient confirmation is off for this deployment.", { exact: false }).waitFor();
     }
     await screenshot("contact-pending");
+    if (enforced) await closeConfirmation();
+  });
+
+  it("inherits exact verified local member proof without email or consent, and honors authenticated revocation", { skip: mode !== "enforce" }, async () => {
+    const messagesBefore = (await (await fetch(`${mail}/api/v1/messages`)).json()).total;
+    const fixture = await verifiedMemberContact("verified-member");
+    await preferences();
+    const controls = await confirmation(fixture);
+    await controls.getByText("Verified member", { exact: true }).waitFor();
+    await page.reload();
+    await confirmation(fixture);
+    await controls.getByText("Verified member", { exact: true }).waitFor();
+    await assertInheritedMember(fixture);
+    assert.equal(await controls.getByRole("button", { name: "Send invitation", exact: true }).count(), 0);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await apiCall("POST", invitePath(fixture.id));
+      assert.equal(response.status(), 200, await response.text());
+      assert.deepEqual(await response.json(), {
+        status: "verified", channel: "email", delivery_basis: "verified_member",
+      });
+    }
+    await assertInheritedMember(fixture);
+    assert.equal((await (await fetch(`${mail}/api/v1/messages`)).json()).total, messagesBefore);
+    const revoked = page.waitForResponse((response) => response.url().endsWith(`${invitePath(fixture.id)}/revoke`) && response.request().method() === "POST");
+    await controls.getByRole("button", { name: "Stop notifications", exact: true }).click();
+    const response = await revoked;
+    assert.equal(response.status(), 200, await response.text());
+    assert.deepEqual(await response.json(), { status: "revoked", channel: "email" });
+    await page.reload();
+    await confirmation(fixture);
+    await controls.getByText("Revoked", { exact: true }).waitFor();
+    assert.equal(await controls.getByText("Verified member", { exact: true }).count(), 0);
+    const state = await emailVerification(fixture);
+    assert.equal(state.status, "revoked");
+    assert.notEqual(state.delivery_basis, "verified_member");
+    assert.equal(state.consent_at, null);
+    assert.equal((await pool.query("SELECT u.email_verified FROM users u JOIN workspace_memberships wm ON wm.user_id=u.id WHERE u.id=$1 AND wm.workspace_id=$2", [fixture.userId, workspace])).rows[0].email_verified, true);
+    await screenshot("member-revoked");
+    await closeConfirmation();
+  });
+
+  it("drops inherited member eligibility after removal through the authenticated membership endpoint", { skip: mode !== "enforce" }, async () => {
+    // A separate destination isolates membership loss from the revocation above.
+    const fixture = await verifiedMemberContact("removed-member");
+    await preferences();
+    const controls = await confirmation(fixture);
+    await controls.getByText("Verified member", { exact: true }).waitFor();
+    await assertInheritedMember(fixture);
+    const removed = await apiCall("DELETE", `/api/v1/workspaces/${workspace}/members/${fixture.userId}`);
+    assert.equal(removed.status(), 204, await removed.text());
+    const state = await emailVerification(fixture);
+    assert.equal(state.status, "pending");
+    assert.notEqual(state.delivery_basis, "verified_member");
+    assert.equal(state.consent_at ?? null, null);
+    assert.equal(state.invitation, null);
+    await page.reload();
+    await confirmation(fixture);
+    await controls.getByText("Pending", { exact: true }).waitFor();
+    assert.equal(await controls.getByText("Verified member", { exact: true }).count(), 0);
+    await controls.getByRole("button", { name: "Send invitation", exact: true }).waitFor();
+    assert.equal((await pool.query("SELECT email_verified FROM users WHERE id=$1", [fixture.userId])).rows[0].email_verified, true);
+    assert.equal((await pool.query("SELECT count(*)::int AS n FROM contact_channel_verifications WHERE contact_id=$1", [fixture.id])).rows[0].n, 0);
+    assert.equal((await pool.query("SELECT count(*)::int AS n FROM contact_verification_challenges WHERE contact_id=$1", [fixture.id])).rows[0].n, 0);
+    await screenshot("member-removed");
+    await closeConfirmation();
   });
 
   it("keeps Vite-denied files private when query suffixes are supplied", async () => {
@@ -209,12 +317,13 @@ describe(`recipient verification in Chromium: ${mode}`, { skip: !enabled, timeou
   });
 
   it("sends an email invitation over SMTP, remains pending until explicit confirmation, and reloads verified", { skip: !enforced }, async () => {
+    const controls = await confirmation();
     const responsePromise = page.waitForResponse((response) => response.url().endsWith(invitePath(contact.id)) && response.request().method() === "POST");
-    await row().getByRole("button", { name: "Send invitation", exact: true }).click();
+    await controls.getByRole("button", { name: "Send invitation", exact: true }).click();
     const response = await responsePromise;
     assert.equal(response.status(), 202, await response.text());
-    await until(async () => (await row().innerText()).includes("Invitation open until"));
-    assert.equal(await row().getByText("Pending", { exact: true }).count(), 2);
+    await until(async () => (await controls.innerText()).includes("Invitation open until"));
+    assert.equal(await controls.getByText("Pending", { exact: true }).count(), 2);
     const link = await emailLink(contact.details.email);
     const recipient = await context.newPage();
     const publicResponse = await recipient.goto(link);
@@ -226,8 +335,10 @@ describe(`recipient verification in Chromium: ${mode}`, { skip: !enabled, timeou
     await recipient.getByRole("heading", { name: "Confirmed", exact: true }).waitFor();
     assert.match(recipient.url(), /\/done\?result=accepted$/);
     await page.reload();
-    await row().getByText("Verified", { exact: true }).waitFor();
+    await confirmation();
+    await controls.getByText("Verified", { exact: true }).waitFor();
     await screenshot("email-verified");
+    await closeConfirmation();
     await recipient.goto(link);
     assert.equal(await recipient.locator("form").count(), 0);
     const replay = await context.request.post(`${link}/accept`);
@@ -267,8 +378,10 @@ describe(`recipient verification in Chromium: ${mode}`, { skip: !enabled, timeou
   it("generates and copies WhatsApp links without sending, verifies signed inbound, and rejects wrong senders/signatures", { skip: !enforced }, async () => {
     await preferences();
     const messagesBefore = (await (await fetch(`${mail}/api/v1/messages`)).json()).total;
+    const controls = await confirmation();
+    await controls.getByRole("button", { name: "Confirm WhatsApp", exact: true }).click();
     const generated = page.waitForResponse((response) => response.url().endsWith(invitePath(contact.id, "whatsapp")) && response.request().method() === "POST");
-    await row().getByRole("button", { name: "Copy confirmation link", exact: true }).click();
+    await controls.getByRole("button", { name: "Create confirmation link", exact: true }).click();
     const response = await generated;
     assert.equal(response.status(), 201, await response.text());
     const invitation = await response.json();
@@ -299,14 +412,18 @@ describe(`recipient verification in Chromium: ${mode}`, { skip: !enabled, timeou
     assert.equal((await send(contact.phone_e164, true, sid)).status(), 200);
     assert.equal(await state(), "verified");
     await page.reload();
-    await until(async () => await row().getByText("Verified", { exact: true }).count() === 2);
+    await confirmation();
+    await until(async () => await controls.getByText("Verified", { exact: true }).count() === 2);
     await screenshot("both-verified");
+    await closeConfirmation();
     await recipient.close();
   });
 
   it("revokes email confirmation and invalidates WhatsApp after editing the saved number", { skip: !enforced }, async () => {
-    await row().getByRole("button", { name: "Stop notifications", exact: true }).first().click();
-    await row().getByText("Revoked", { exact: true }).waitFor();
+    const controls = await confirmation();
+    await controls.getByRole("button", { name: "Stop notifications", exact: true }).first().click();
+    await controls.getByText("Revoked", { exact: true }).waitFor();
+    await closeConfirmation();
     await row().getByRole("button", { name: "Edit", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByPlaceholder("+14155550100").fill(`+1415556${String(Date.now()).slice(-4)}`);
@@ -314,10 +431,12 @@ describe(`recipient verification in Chromium: ${mode}`, { skip: !enabled, timeou
     await dialog.getByRole("button", { name: "Save changes", exact: true }).click();
     await dialog.waitFor({ state: "hidden" });
     await page.reload();
-    await until(async () => await row().getByText("Pending", { exact: true }).count() === 2);
+    await confirmation();
+    await until(async () => await controls.getByText("Pending", { exact: true }).count() === 2);
     const settings = await (await apiCall("GET", `/api/v1/workspaces/${workspace}/alert-settings`)).json();
     assert.deepEqual(settings.contact_groups.find((entry) => entry.id === groupId).email_contact_ids, [contact.id]);
     await screenshot("edited-contact");
+    await closeConfirmation();
   });
 
   it("shows loading and provider errors, then recovers through a real invitation and reload", { skip: !enforced }, async () => {
@@ -325,14 +444,14 @@ describe(`recipient verification in Chromium: ${mode}`, { skip: !enabled, timeou
     // which creates a transaction, attempts delivery and records the failure.
     const fixture = await newContact("errors");
     await preferences();
-    const errorRow = page.getByRole("row").filter({ hasText: `errors ${run}` });
+    const controls = await confirmation(fixture);
     const { spawnSync } = require("node:child_process");
     const compose = ["compose", "-p", "tt-recipient-browser", "-f", "tests/e2e/recipient-verification.compose.yml"];
     assert.equal(spawnSync("docker", [...compose, "stop", "mailpit"], { env: process.env, windowsHide: true }).status, 0);
     try {
       const response = page.waitForResponse((r) => r.url().endsWith(invitePath(fixture.id)) && r.request().method() === "POST");
-      await errorRow.getByRole("button", { name: "Send invitation", exact: true }).click();
-      await until(async () => await errorRow.locator("button[disabled]").count() > 0);
+      await controls.getByRole("button", { name: "Send invitation", exact: true }).click();
+      await until(async () => await controls.locator("button[disabled]").count() > 0);
       const failed = await response;
       assert.equal(failed.status(), 502, await failed.text());
       await page.getByText(/Verification email could not be sent|Failed to send verification email/).first().waitFor();
@@ -342,11 +461,13 @@ describe(`recipient verification in Chromium: ${mode}`, { skip: !enabled, timeou
       await until(async () => (await fetch(`${mail}/api/v1/messages`)).ok);
     }
     const response = page.waitForResponse((r) => r.url().endsWith(invitePath(fixture.id)) && r.request().method() === "POST");
-    await errorRow.getByRole("button", { name: /Send invitation|Resend invitation/ }).click();
+    await controls.getByRole("button", { name: /Send invitation|Resend invitation/ }).click();
     assert.equal((await response).status(), 202);
     await emailLink(fixture.details.email);
     await page.reload();
-    await errorRow.getByRole("button", { name: "Resend invitation" }).waitFor();
+    await confirmation(fixture);
+    await controls.getByRole("button", { name: "Resend invitation" }).waitFor();
+    await closeConfirmation();
   });
 
   it("enforces viewer restrictions and allows workspace managers through actual sessions and UI", async () => {
@@ -377,7 +498,11 @@ describe(`recipient verification in Chromium: ${mode}`, { skip: !enabled, timeou
         const managerRow = target.getByRole("row").filter({ hasText: `manager ${run}` });
         await managerRow.waitFor();
         assert.equal(await managerRow.getByRole("button", { name: "Edit", exact: true }).isEnabled(), true);
-        if (enforced) assert.equal(await managerRow.getByRole("button", { name: "Send invitation", exact: true }).isEnabled(), true);
+        if (enforced) {
+          const controls = await confirmation(fresh, target);
+          assert.equal(await controls.getByRole("button", { name: "Send invitation", exact: true }).isEnabled(), true);
+          await closeConfirmation(target);
+        }
       }
       await screenshot(role, target);
       await ctx.close();

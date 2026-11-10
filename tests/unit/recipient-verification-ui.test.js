@@ -67,6 +67,19 @@ test("email sent acknowledgement still reports an actual invitation", async () =
   assert.equal(calls.refreshes, 1);
 });
 
+test("verified member acknowledgement reports no email instead of an invitation", async () => {
+  const { run, calls } = handler("email", {
+    status: "verified", channel: "email", delivery_basis: "verified_member",
+  });
+  await run({ id: "contact-b" });
+  assert.deepEqual(calls.success, ["This workspace member is already verified. No email was sent."]);
+  assert.deepEqual(calls.errors, []);
+  assert.deepEqual(calls.posts, ["/api/v1/workspaces/workspace-a/contacts/contact-b/verifications/email"]);
+  assert.deepEqual(calls.clipboard, []);
+  assert.equal(calls.refreshes, 1);
+  assert.equal(calls.busy.at(-1), "");
+});
+
 test("pending WhatsApp invitation still copies the returned confirmation link", async () => {
   const url = "https://example.test/verify/recipient/test-token";
   const { run, calls } = handler("whatsapp", { status: "pending", share_url: url });
