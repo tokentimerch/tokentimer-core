@@ -10,6 +10,12 @@ const assert = require("node:assert/strict"),
   crypto = require("node:crypto");
 const attachment = require("./certops-acme-lease-attachment");
 const active = new Set();
+function leaseFailureLabels(row, agent) {
+  const statuses = new Set(["pending", "pending_approval", "approved", "claimed", "running", "succeeded", "failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect", "awaiting_issuer"]);
+  const status = row && statuses.has(row.status) ? row.status.replaceAll("_", "-") : row ? "other" : "missing";
+  const agentState = agent && agent.exitCode === null && agent.signalCode === null ? "running" : agent && (agent.exitCode != null || agent.signalCode != null) ? "exited" : "unknown";
+  return [`lease-job-${status}`, `lease-agent-${agentState}`];
+}
 function verifyFencedJob(fenced, jobId, row) {
   assert.ok(fenced && Array.isArray(fenced.cancelledJobIds) && Array.isArray(fenced.orphanedJobIds));
   const cancelled = fenced.cancelledJobIds.filter(id => id === jobId).length;
@@ -83,7 +89,7 @@ module.exports = async function qualifyLeaseLoss({
   active.add(path.resolve(barrierDirectory));
   fs.writeFileSync(arm, JSON.stringify({ token }), { flag: "wx", mode: 0o600 });
   onMilestone("lease-armed");
-  let proof, primary, owner;
+  let proof, primary, owner, jobId;
   try {
     const created = await publicSession.request(
       `/api/v1/workspaces/${workspaceId}/certops/jobs`,
@@ -96,10 +102,11 @@ module.exports = async function qualifyLeaseLoss({
       },
     );
     assert.equal(created.status, 201);
-    const jobId = created.body.job.id;
+    jobId = created.body.job.id;
     ownedJobIds.push(jobId);
     onMilestone("lease-job-admitted");
     await waitUntil(() => fs.existsSync(receipt), 60000);
+    onMilestone("lease-receipt-observed");
     proof = measureOwnedProcess(JSON.parse(fs.readFileSync(receipt, "utf8")), {
       token,
       agent,
@@ -170,6 +177,12 @@ module.exports = async function qualifyLeaseLoss({
     onMilestone("lease-final-state-verified");
   } catch (error) {
     primary = error;
+    if (jobId && !owner) {
+      try {
+        const row = (await pool.query("SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, jobId])).rows[0];
+        for (const label of leaseFailureLabels(row, agent)) onMilestone(label);
+      } catch { try { onMilestone("lease-job-diagnostic-unavailable"); } catch {} }
+    }
   } finally {
     const failures = [];
     try {
@@ -192,6 +205,7 @@ module.exports = async function qualifyLeaseLoss({
   }
   if (primary) throw primary;
 };
+module.exports.leaseFailureLabels = leaseFailureLabels;
 module.exports.verifyFencedJob = verifyFencedJob;
 module.exports.assertCleanupSafe = function assertCleanupSafe(root) {
   assert.equal(
