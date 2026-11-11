@@ -4,6 +4,7 @@ import {
   render,
   screen,
   fireEvent,
+  act,
   waitFor,
   within,
 } from '@testing-library/react';
@@ -96,6 +97,97 @@ function renderWithProviders(ui) {
     </ChakraProvider>
   );
 }
+
+describe.each([
+  ['GitHub', ImportGitHubForm, githubScanMock, 'https://api.github.com'],
+  ['GitLab', ImportGitLabForm, gitlabScanMock, 'https://gitlab.com'],
+])('%s preview integrity', (_provider, Form, scan, url) => {
+  const preview = {
+    items: [{ name: 'credential', location: 'provider:credential' }],
+    summary: [],
+    scan_id: 'verified-scan',
+  };
+  const rules = [
+    { action: 'exclude', field: 'name', matchType: 'exact', value: 'ignore' },
+  ];
+  function connect() {
+    const ref = React.createRef();
+    renderWithProviders(
+      <Form
+        ref={ref}
+        workspaceId='workspace'
+        onError={vi.fn()}
+        initialFilterRules={rules}
+      />
+    );
+    fireEvent.change(screen.getByPlaceholderText(url), {
+      target: { value: url },
+    });
+    fireEvent.change(document.querySelector('input[type="password"]'), {
+      target: { value: 'synthetic-token' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+    return ref;
+  }
+  beforeEach(() => {
+    vi.clearAllMocks();
+    checkDuplicatesMock.mockResolvedValue({
+      duplicate_count: 0,
+      duplicates: [],
+    });
+    scan.mockResolvedValue(preview);
+  });
+  it('imports filters and invalidates selection after raw rule edits', async () => {
+    const ref = connect();
+    await screen.findByRole('button', { name: 'select-first-1' });
+    fireEvent.click(screen.getByRole('button', { name: 'select-first-1' }));
+    await act(async () => {
+      await ref.current.importSelected();
+    });
+    expect(integrationImportMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scanId: 'verified-scan',
+        filterRules: rules,
+      })
+    );
+    integrationImportMock.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+    expect(ref.current.getSelectedCount()).toBe(0);
+    await act(async () => {
+      await ref.current.importSelected();
+    });
+    expect(integrationImportMock).not.toHaveBeenCalled();
+  });
+  it.each(['scan', 'duplicates'])(
+    'rejects a late %s response after credentials change',
+    async stage => {
+      let finish;
+      const deferred = new Promise(resolve => {
+        finish = resolve;
+      });
+      (stage === 'scan' ? scan : checkDuplicatesMock).mockReturnValue(deferred);
+      const ref = connect();
+      if (stage === 'duplicates')
+        await screen.findByRole('button', { name: 'select-first-1' });
+      fireEvent.change(document.querySelector('input[type="password"]'), {
+        target: { value: 'changed-token' },
+      });
+      await act(async () => {
+        finish(
+          stage === 'scan' ? preview : { duplicate_count: 0, duplicates: [] }
+        );
+      });
+      expect(
+        screen.queryByRole('button', { name: 'select-first-1' })
+      ).toBeNull();
+      expect(ref.current.getSelectedCount()).toBe(0);
+      await act(async () => {
+        await ref.current.importSelected();
+      });
+      expect(integrationImportMock).not.toHaveBeenCalled();
+    }
+  );
+});
 
 describe('Dashboard import forms', () => {
   beforeEach(() => {

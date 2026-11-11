@@ -249,18 +249,21 @@ export function isValidFilterRule(rule) {
   return true;
 }
 
-/**
- * Returns only the complete, valid rules from the editor state, ready to be
- * sent to the API. Incomplete rows (empty value, invalid regex) are dropped.
- */
+// Drop blank editor rows only. Invalid rules must reach server validation.
 export function sanitizeFilterRules(rules) {
-  if (!Array.isArray(rules)) return [];
-  return rules.filter(isValidFilterRule).map(r => ({
-    action: r.action,
-    matchType: r.matchType,
-    field: r.field,
-    value: r.value,
-  }));
+  if (!Array.isArray(rules)) return rules ?? [];
+  return rules
+    .filter(rule => rule?.value !== '')
+    .map(rule =>
+      rule && typeof rule === 'object'
+        ? {
+            action: rule.action,
+            matchType: rule.matchType,
+            field: rule.field,
+            value: rule.value,
+          }
+        : rule
+    );
 }
 
 /**

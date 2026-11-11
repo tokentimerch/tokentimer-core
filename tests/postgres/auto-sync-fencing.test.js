@@ -267,6 +267,7 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
         userId, workspaceId, name: "Old identity name", type: "api_key", expiration: "2028-01-01",
         location: "azure-ad:servicePrincipals/app/secrets/key", notes: "operator note",
         used_by: "operator", contact_group_ids: ["retain"],
+        section: ["production", "critical"], domains: ["internal.example.com"],
         ...(attributed ? {
           source_provider: "azure-ad", source_instance: "11111111-1111-4111-8111-111111111111",
           source_owner_key: "11111111-1111-4111-8111-111111111111", source_kind: "azure-ad-sp-secret", source_object_id: "app:key",
@@ -281,6 +282,8 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
       assert.equal(stored.location, entraItem.location);
       assert.equal(stored.notes, "operator note");
       assert.equal(stored.used_by, "operator");
+      assert.deepEqual(stored.section, ["production", "critical"]);
+      assert.deepEqual(stored.domains, ["internal.example.com"]);
       assert.equal(stored.user_id, userId);
       assert.equal(stored.auto_sync_managed, false);
       assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM tokens WHERE workspace_id=$1", [workspaceId])).rows[0].n, 1);

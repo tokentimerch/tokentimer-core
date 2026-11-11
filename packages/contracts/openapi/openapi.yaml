@@ -17573,6 +17573,8 @@ components:
           type: string
         default_type:
           type: string
+        filterRules:
+          $ref: "#/components/schemas/IntegrationScanFilterRules"
         scan_id:
           type: string
           description: >-

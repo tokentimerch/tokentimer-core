@@ -3,7 +3,7 @@
 function legacyManagedIdentityLocation(item) {
   if (item?.servicePrincipalType !== "ManagedIdentity") return null;
   const kind = item.sourceKind || item.source;
-  const match = /^azure-ad:managedIdentities\/([^/]+)\/(certificates|secrets)\/([^/]+)$/.exec(
+  const match = /^azure-ad:managedIdentities\/([^/:]+)\/(certificates|secrets)\/([^/:]+)$/.exec(
     item.location || "",
   );
   if (!match) return null;

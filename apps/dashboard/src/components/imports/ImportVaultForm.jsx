@@ -193,6 +193,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   // hasn't been engaged yet, so scans keep scanning every mount (unchanged
   // default behavior) until the user explicitly loads and narrows the list.
   const [availableMounts, setAvailableMounts] = React.useState([]);
+  const [mountSelectionKnown, setMountSelectionKnown] = React.useState(false);
   const [selectedMountPaths, setSelectedMountPaths] = React.useState(new Set());
   const [isLoadingMounts, setIsLoadingMounts] = React.useState(false);
   const [mountsError, setMountsError] = React.useState(null);
@@ -239,6 +240,8 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     setRestoredMounts(Array.isArray(sp.mounts) ? sp.mounts : null);
     setSelectedMountPaths(new Set(sp.mounts || []));
     setAvailableMounts([]);
+    setMountSelectionKnown(false);
+    setMountsError(null);
   }, [initialScanParams]);
 
   React.useEffect(() => {
@@ -289,14 +292,14 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       });
       const scannable = mounts.filter(m => m.type === 'kv' || m.type === 'pki');
       setAvailableMounts(scannable);
+      setMountSelectionKnown(true);
       const availablePaths = new Set(scannable.map(m => m.path));
       setSelectedMountPaths(previous =>
-        restoredMounts !== null || availableMounts.length > 0
+        restoredMounts !== null || mountSelectionKnown
           ? new Set([...previous].filter(path => availablePaths.has(path)))
           : availablePaths
       );
     } catch (e) {
-      setAvailableMounts([]);
       setMountsError(e?.message || 'Failed to load secrets engines');
     } finally {
       setIsLoadingMounts(false);
@@ -324,8 +327,9 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   // Only send an explicit mount list when the picker was used and the user
   // narrowed it down; otherwise every mount is scanned (unchanged default).
   const mountsFilterForScan = () => {
+    if (mountsError) return [];
     if (restoredMounts !== null) return Array.from(selectedMountPaths);
-    if (availableMounts.length === 0) return null;
+    if (availableMounts.length === 0) return mountSelectionKnown ? [] : null;
     if (selectedMountPaths.size >= availableMounts.length) return null;
     return Array.from(selectedMountPaths);
   };

@@ -580,6 +580,7 @@ router.post(
         items,
         default_category,
         default_type,
+        filterRules,
         cleanup,
         scan_id: scanId,
       } = req.body || {};
@@ -597,6 +598,10 @@ router.post(
       if (cleanupError) {
         return res.status(400).json({ error: cleanupError });
       }
+      const filterRulesError = validateFilterRules(filterRules);
+      if (filterRulesError) {
+        return res.status(400).json({ error: filterRulesError });
+      }
       // A complete scan that legitimately finds zero items is still a real
       // cleanup-driving result (see importCleanup.js), so an empty items
       // array is only rejected when cleanup isn't the reason for the call.
@@ -606,13 +611,16 @@ router.post(
         return res.status(400).json({ error: "items array required" });
       }
 
+      const { items: itemsToImport, excludedCount: filteredOutCount } =
+        applyFilterRules(filterRules, items);
+
       // Bind each submitted item to the scan that actually discovered it
       // (metadata-only integration_scan_items rows), so provenance comes
       // from what the backend recorded, never from client-echoed fields.
       // Items that don't bind (no scan_id, stale scan_id, or the item
       // wasn't part of that scan) import unattributed, same as before this
       // feature existed -- never a cleanup candidate.
-      const bindingPairs = items.map((it) => ({
+      const bindingPairs = itemsToImport.map((it) => ({
         sourceKind: it?.sourceKind || it?.source || "vault-kv",
         sourceObjectId:
           it?.sourceObjectId ||
@@ -667,8 +675,8 @@ router.post(
       const updated = [];
       const errors = [];
       const NEVER_EXPIRES_DATE = "2099-12-31"; // Default for tokens without expiration
-      for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
-        const it = items[itemIndex];
+      for (let itemIndex = 0; itemIndex < itemsToImport.length; itemIndex++) {
+        const it = itemsToImport[itemIndex];
         try {
           const name = String(it?.name || "").trim();
           let expiration = it?.expiration || it?.expiresAt || null;
@@ -919,6 +927,7 @@ router.post(
         created_count: created.length,
         updated_count: updated.length,
         error_count: errors.length,
+        filtered_out_count: filteredOutCount,
         deleted_count: autoCleanupResult?.deleted ?? cleanupDeleted.length,
         detached_count: autoCleanupResult?.detached || 0,
         cleanup_complete: autoCleanupResult?.complete ?? null,

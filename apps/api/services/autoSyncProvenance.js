@@ -231,7 +231,7 @@ async function upsertImportedToken({ context, payload, workspaceId, userId, manu
     }
     if (existing && legacyLocation) {
       // Identity reclassification must not overwrite operator-owned metadata.
-      for (const key of ["used_by", "contacts", "notes", "renewal_url", "renewal_date"]) delete payload[key];
+      for (const key of ["section", "domains", "used_by", "contacts", "notes", "renewal_url", "renewal_date"]) delete payload[key];
     }
     assignMembership(payload, { isCreate: !existing });
     const token = existing ? await Token.update(existing.id, {

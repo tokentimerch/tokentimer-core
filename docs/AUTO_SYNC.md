@@ -12,7 +12,7 @@ TokenTimer tracks metadata rather than the secret value. A one-time scan does no
 
 ### Filter scan results
 
-AWS, Azure Key Vault, Entra ID and GCP accept `filterRules`, as do GitHub, GitLab and Vault. Choose **name**, **description** or **location**, then **include** or **exclude**, with **exact** or **regex** matching. Excludes win; if includes exist, an item must match one. Exact means case-sensitive whole-field equality. Regex uses JavaScript syntax and is case-sensitive unless explicit flags are supplied; unsafe patterns are rejected. Rules apply before import and can be saved with scheduled configurations. Filtering out an existing asset does not silence its alerts. Manage contact groups, recipient preferences and alert controls separately.
+AWS, Azure Key Vault, Entra ID and GCP accept `filterRules`, as do GitHub, GitLab and Vault. Choose **name**, **description** or **location**, then **include** or **exclude**, with **exact** or **regex** matching. Excludes win; if includes exist, an item must match one. Exact means case-sensitive whole-field equality. Regex uses JavaScript syntax and is case-sensitive unless explicit flags are supplied; unsafe patterns are rejected. Rules apply before import and can be saved with scheduled configurations. Filtering alone does not silence existing alerts, but enabled cleanup can remove excluded inventory after a complete scan. Keep cleanup off while changing filters; manage contact groups, recipient preferences and alert controls separately.
 
 ### Separate Entra managed identities
 

@@ -1214,36 +1214,6 @@ function ImportTokensModalContent({
     React.useState(false);
   // The backend-authoritative scan record cleanup is driven from.
   const [azureADLastScanId, setAzureADLastScanId] = React.useState(null);
-  const [azureADPreviewReady, setAzureADPreviewReady] = React.useState(false);
-  const {
-    beginScanVerification: beginAzureADPreview,
-    isScanCurrent: isAzureADPreviewCurrent,
-  } = useScanVerification({
-    identity: {
-      isOpen,
-      workspaceId,
-      source,
-      managedIdentityMode,
-      azureADFilterRules,
-      azureADIncludeApps,
-      azureADIncludeSPs,
-      azureADAuthMethod,
-      azureADToken,
-      azureADTenantId,
-      azureADClientId,
-      azureADClientSecret,
-    },
-    provider: 'azure-ad',
-    onScanInvalidated: () => {
-      setAzureADPreviewReady(false);
-      setAzureADItems([]);
-      setAzureADSummary([]);
-      setAzureADFilterSummary(null);
-      setSelectedRowsAzureAD(new Set());
-      setAzureADDuplicates(new Set());
-      setAzureADLastScanId(null);
-    },
-  });
 
   // Show/hide toggle for secret fields
   const [showSecrets, setShowSecrets] = React.useState({});
@@ -1720,10 +1690,46 @@ function ImportTokensModalContent({
     return { credentials, scanParams };
   };
 
+  const [azureADPreviewReady, setAzureADPreviewReady] = React.useState(false);
+  const {
+    beginScanVerification: beginAzureADPreview,
+    isScanCurrent: isAzureADPreviewCurrent,
+  } = useScanVerification({
+    identity: {
+      isOpen,
+      workspaceId,
+      source,
+      autoSyncConfigId: autoSyncConfig?.id,
+      requestedAutoSyncConfig,
+      integrationSubTab,
+      managedIdentityMode,
+      azureADFilterRules,
+      azureADIncludeApps,
+      azureADIncludeSPs,
+      azureADAuthMethod,
+      azureADToken,
+      azureADTenantId,
+      azureADClientId,
+      azureADClientSecret,
+    },
+    provider: 'azure-ad',
+    onScanInvalidated: () => {
+      setAzureADPreviewReady(false);
+      setIsScanning(false);
+      setAzureADItems([]);
+      setAzureADSummary([]);
+      setAzureADFilterSummary(null);
+      setSelectedRowsAzureAD(new Set());
+      setAzureADDuplicates(new Set());
+      setAzureADLastScanId(null);
+    },
+  });
+
   const scanContext = JSON.stringify([
     isOpen,
     workspaceId,
     source,
+    integrationSubTab,
     autoSyncConfig?.id,
     requestedAutoSyncConfig,
     scanContextVersion,
@@ -3787,8 +3793,9 @@ function ImportTokensModalContent({
                     </Select>
                     <Text fontSize='xs'>
                       Managed identities only scans service principals
-                      regardless of scope switches. Filtering does not disable
-                      existing inventory alerts.
+                      regardless of scope switches. Filtering alone does not
+                      disable existing alerts, but cleanup can remove excluded
+                      inventory. Keep cleanup off while changing filters.
                     </Text>
                   </FormControl>
                   <FilterRulesEditor
