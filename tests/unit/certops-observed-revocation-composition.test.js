@@ -5,6 +5,17 @@ const assert = require("node:assert/strict");
 const { migrations } = require("../../apps/api/migrations/migrate");
 const { composeMigrations } = require("../../apps/api/migrations/compose-migrations");
 
+test("revoked issuer fingerprint remains a valid OpenAPI schema property", () => {
+  const fs = require("node:fs");
+  const apiRequire = require("node:module").createRequire(require.resolve("../../apps/api/package.json"));
+  const yaml = require("node:module").createRequire(apiRequire.resolve("swagger-jsdoc"))("yaml");
+  const doc = yaml.parse(fs.readFileSync(require("node:path").join(__dirname, "../../packages/contracts/openapi/openapi.yaml"), "utf8"));
+  const property = doc.components.schemas.CertOpsManagedCertificate.properties.observedRevocation.properties.revokedIssuerFingerprintSha256;
+  assert.deepEqual(Object.keys(property).sort(), ["description", "pattern", "type"]);
+  assert.equal(property.type, "string");
+  assert.match(property.description, /when supplied by a qualified agent/);
+});
+
 test("reserved Windows store migrations and observed revocation compose in either order", () => {
   const store = [
     { version: 113, name: "store_issuance_explicit_renewal_consent" },

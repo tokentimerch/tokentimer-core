@@ -14500,7 +14500,7 @@ components:
             revision: { type: integer, minimum: 1, maximum: 9007199254740991, description: Agent scan ordering revision. }
             validUntil: { type: string, format: date-time, nullable: true }
             detail: { type: string, nullable: true, maxLength: 256 }
-            revokedIssuerFingerprintSha256: { type: string, pattern: '^[a-f0-9]{64}$', description: Exact revoked intermediate certificate, when supplied by a qualified agent. }
+            revokedIssuerFingerprintSha256: { type: string, pattern: '^[a-f0-9]{64}$', description: 'Exact revoked intermediate certificate, when supplied by a qualified agent.' }
             derivedFromIssuerChain: { type: boolean, description: This CA status was derived from an observed certificate chain. }
             lastVerified:
               type: object

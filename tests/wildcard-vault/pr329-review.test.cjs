@@ -87,6 +87,7 @@ test("manual renewal serializes same-key snapshot lookup with PostgreSQL transac
 
 async function fixture({ expired = false, validFor = "1 day", required = true, requireApproval = false } = {}) {
   const workspaceId = uuid();
+  const agentCredentials = new Map();
   async function user() {
     return (
       await pool.query(
@@ -115,7 +116,8 @@ async function fixture({ expired = false, validFor = "1 day", required = true, r
     );
   }
   async function agent() {
-    return (
+    const agentCredential = crypto.randomBytes(32).toString("hex");
+    const id = (
       await pool.query(
         `INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash,
       supported_operations,declared_capabilities,declared_target_selectors,supported_dns_providers,declared_command_profile_names,capabilities_updated_at,last_seen_at)
@@ -125,10 +127,12 @@ async function fixture({ expired = false, validFor = "1 day", required = true, r
           workspaceId,
           uuid(),
           `ttagent_${crypto.randomBytes(8).toString("hex")}`,
-          crypto.randomBytes(32).toString("hex"),
+          crypto.createHash("sha256").update(agentCredential).digest("hex"),
         ],
       )
     ).rows[0].id;
+    agentCredentials.set(id, agentCredential);
+    return id;
   }
   const issuer = await agent(),
     consumer = await agent();
@@ -246,6 +250,7 @@ async function fixture({ expired = false, validFor = "1 day", required = true, r
     outsider,
     issuer,
     consumer,
+    agentCredentials,
     agent,
     certificateId,
     identityId,
@@ -406,7 +411,8 @@ test("retired pending deployment cannot starve the next approved rollout with ma
   const fresh=await pending();
   const row=(await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1",[f.consumer])).rows[0];
   const signing=apiRequire("./services/certops/jobSigning");const key=await signing.ensureActiveSigningKey();
-  const claimed=await apiRequire("./services/certops/agentDispatch").claimJobs({agent:{id:f.consumer,workspaceId:f.workspaceId,agentId:row.agent_id,status:"active",agentVersion:"0.17.3",protocolVersion:"1.0.0"},body:{supportedActions:["deploy-from-store"],maxJobs:1}});
+  const agent = apiRequire("./services/certops/agentCredentialFence").bindAuthenticatedCredential({id:f.consumer,workspaceId:f.workspaceId,agentId:row.agent_id,status:"active",agentVersion:"0.17.3",protocolVersion:"1.0.0"}, f.agentCredentials.get(f.consumer));
+  const claimed=await apiRequire("./services/certops/agentDispatch").claimJobs({agent,body:{supportedActions:["deploy-from-store"],maxJobs:1}});
   assert.equal(claimed.jobs.length,1);
   const verified=require("../../packages/agent/src/signing").verifyJobEnvelope({claimed:claimed.jobs[0],...key,pinnedSigningKeyId:key.signingKeyId});
   assert.equal(verified.allowed,true);assert.equal(verified.job.jobId,fresh.child.id);
@@ -1355,7 +1361,7 @@ async function waveLab(f, specs, { maxParallel = 3 } = {}) {
   lab.claim = async (name) => {
     const node = nodes[name];
     const row = (await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1", [node.agentId])).rows[0];
-    const agent = { id: node.agentId, workspaceId: f.workspaceId, agentId: row.agent_id, status: "active", protocolVersion: "1.0.0", agentVersion: "0.17.3" };
+    const agent = apiRequire("./services/certops/agentCredentialFence").bindAuthenticatedCredential({ id: node.agentId, workspaceId: f.workspaceId, agentId: row.agent_id, status: "active", protocolVersion: "1.0.0", agentVersion: "0.17.3" }, f.agentCredentials.get(node.agentId));
     const claimed = await dispatch.claimJobs({ agent, body: { supportedActions: ["deploy-from-store"], maxJobs: 1 } });
     if (!claimed.jobs.length) return null;
     const key = await labSigning();
