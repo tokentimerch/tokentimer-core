@@ -123,7 +123,12 @@ vi.mock('../../src/components/certops/certopsApi.js', async () => {
 });
 
 vi.mock('../../src/pages/certops/CertOpsAdcs.jsx', () => ({
-  default: () => <div>AD CS issuers</div>,
+  default: ({ onIssuersChanged }) => (
+    <div>
+      AD CS issuers
+      <button onClick={onIssuersChanged}>Simulate issuer confirmation</button>
+    </div>
+  ),
 }));
 
 vi.mock('../../src/components/certops/certopsRenewalApi.js', async () => {
@@ -235,6 +240,39 @@ beforeEach(() => {
 });
 
 describe('CertOpsRenewals page', () => {
+  it('refreshes profile issuer choices after an AD CS issuer is confirmed', async () => {
+    listRenewalProfilesMock.mockResolvedValue({
+      items: [profile({ issuerId: 'old' })],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+    listIssuersMock.mockResolvedValue({
+      items: [{ id: 'old', kind: 'adcs', name: 'Old CA', currentVersion: 1 }],
+    });
+    renderPage();
+    await openRenewalProfiles();
+    await screen.findByText('AD CS · Old CA');
+    listIssuersMock.mockResolvedValue({
+      items: [
+        { id: 'old', kind: 'adcs', name: 'Old CA', currentVersion: 1 },
+        { id: 'new', kind: 'adcs', name: 'New CA', currentVersion: 1 },
+      ],
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^AD CS issuers/ }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Simulate issuer confirmation' })
+    );
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Change issuer for Derived: app.example.com',
+      })
+    );
+    expect(
+      await screen.findByRole('option', { name: 'AD CS · New CA' })
+    ).toBeInTheDocument();
+  });
+
   it('keeps Renewals focused on profiles and issuers without fetching distribution', async () => {
     renderPage();
     expect(
@@ -723,7 +761,9 @@ describe('CertOpsRenewals page', () => {
       )
     ).toBeInTheDocument();
     expect(screen.getByText(/Open Certificates later/)).toBeInTheDocument();
-    expect(screen.getByText(/inside the deployment renewal window/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/inside the deployment renewal window/)
+    ).toBeInTheDocument();
     expect(readdManagingSourceMock).not.toHaveBeenCalled();
     expect(stopManagingSourceMock).not.toHaveBeenCalled();
   });

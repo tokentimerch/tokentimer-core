@@ -17,7 +17,7 @@ import {
 } from '../../components/certops/adcsIssuerLink.js';
 import CertOpsAdcs from './CertOpsAdcs.jsx';
 
-function ProfilesDisclosure() {
+function ProfilesDisclosure({ issuerRefreshSignal }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -30,7 +30,7 @@ function ProfilesDisclosure() {
       onToggle={() => setOpen(current => !current)}
       panelId='certops-renewal-profiles'
     >
-      <RenewalProfilesPanel />
+      <RenewalProfilesPanel issuerRefreshSignal={issuerRefreshSignal} />
     </SettingsIntegrationCard>
   );
 }
@@ -40,6 +40,7 @@ function AdcsDisclosure({
   onRequestHandled,
   focusIssuerId,
   onFocusHandled,
+  onIssuersChanged,
 }) {
   const [open, setOpen] = useState(Boolean(openRequest || focusIssuerId));
 
@@ -64,6 +65,7 @@ function AdcsDisclosure({
         onRequestHandled={onRequestHandled}
         focusIssuerId={focusIssuerId}
         onFocusHandled={onFocusHandled}
+        onIssuersChanged={onIssuersChanged}
       />
     </SettingsIntegrationCard>
   );
@@ -78,6 +80,7 @@ function AdcsDisclosure({
  */
 export default function CertOpsRenewals() {
   const { certOpsPaused } = useOutletContext() || {};
+  const [issuerRefreshSignal, setIssuerRefreshSignal] = useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
   // ?action=new-adcs-issuer opens the dialog, then the parameters are removed
   // so a reload or a shared URL does not open it again.
@@ -109,8 +112,9 @@ export default function CertOpsRenewals() {
           </AlertDescription>
         </Alert>
       ) : null}
-      <ProfilesDisclosure />
+      <ProfilesDisclosure issuerRefreshSignal={issuerRefreshSignal} />
       <AdcsDisclosure
+        onIssuersChanged={() => setIssuerRefreshSignal(value => value + 1)}
         openRequest={issuerRequest}
         onRequestHandled={clearIssuerRequest}
         focusIssuerId={recheckRequest?.issuerId || null}

@@ -435,7 +435,11 @@ export function LeadTimeEditor({ profile, onSave, saving, disabled }) {
   );
 }
 
-export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
+export default function RenewalProfilesPanel({
+  refreshSignal,
+  issuerRefreshSignal,
+  onChanged,
+}) {
   const canManage = useCertOpsCanManage();
   const { workspaceId } = useWorkspace();
   const {
@@ -471,7 +475,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
     return () => {
       cancelled = true;
     };
-  }, [canManage, workspaceId, profileWizardOpen]);
+  }, [canManage, workspaceId, profileWizardOpen, issuerRefreshSignal]);
 
   const [disableTarget, setDisableTarget] = useState(null);
   const [detailsTarget, setDetailsTarget] = useState(null);
