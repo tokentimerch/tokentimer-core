@@ -9,6 +9,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.19.2-rc.1] - 2026-11-11
+
 ### Added
 
 - **Verified workspace-member recipients.** Contacts matching a current member's exact verified email can receive workspace notifications without another confirmation. Membership removal or lost mailbox proof ends this eligibility; explicit refusals still apply. Self-hosted verification remains off by default; use `shadow` to observe eligibility before enabling `enforce`.
