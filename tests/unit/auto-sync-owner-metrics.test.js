@@ -59,6 +59,20 @@ test("owner is a validated optional high-cardinality label requiring effective o
   }).owner_username, "alice");
 });
 
+test("owner permission never selects owners for a saved global kind-only override", () => {
+  const stored = { override_metrics: true, enabled: true, labels: ["kind"] };
+  for (const env of [allowed, { AUTO_SYNC_METRICS_EXTRA_LABELS: "project,owner_username" }]) {
+    const policy = labels.systemMetricPolicy(stored, env);
+    assert.ok(!policy.labels.includes("owner_username"));
+    assert.deepEqual(labels.creationDimensions(payload, selected, env, stored), legacy);
+    assert.equal(policy.labels.includes("project"), env.AUTO_SYNC_METRICS_EXTRA_LABELS.includes("project"));
+  }
+  const globalOwner = { ...stored, labels: ["kind", "owner_username"] };
+  assert.equal(labels.creationDimensions(payload, { enabled: false }, {}, globalOwner).owner_username, "alice");
+  assert.deepEqual(labels.creationDimensions(payload, selected, {}, stored), legacy);
+  assert.deepEqual(labels.creationDimensions(payload, selected, {}), legacy);
+});
+
 test("only structured PAT owners survive source selection and creation dimensions", () => {
   for (const kind of ["gitlab-project-token", "gitlab-group-token", "gitlab-deploy-token", "gitlab-trigger-token", "gitlab-ssh-key", "github-secret", undefined]) {
     const dimensions = labels.metricSourceDimensions({
