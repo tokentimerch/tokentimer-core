@@ -28,7 +28,7 @@ function verifyTree(directory,inventory,{installed=false}={}){
  const expected=installed?inventory.filter(entry=>entry.file.split("/")[0]!=="node_modules"):inventory;
  assert.deepEqual(treeInventory(directory),expected,"Extracted/installed release tree differs from the verified archive");return true;
 }
-function laterVersion(candidate){assert.match(candidate,/^\d+\.\d+\.\d+$/);const left=candidate.split(".").map(Number),right=baseline.version.split(".").map(Number);const index=left.findIndex((value,i)=>value!==right[i]);assert.ok(index>=0&&left[index]>right[index],"Candidate must be a true later version than the published baseline");return candidate;}
+function laterVersion(candidate){assert.match(candidate,/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-rc\.(?:0|[1-9]\d*))?$/);const left=candidate.split("-")[0].split(".").map(Number),right=baseline.version.split(".").map(Number);const index=left.findIndex((value,i)=>value!==right[i]);assert.ok(index>=0&&left[index]>right[index],"Candidate must be a true later version than the published baseline");return candidate;}
 function inspect(archive,checksum,published=false){
  const actual=sha(archive),name=path.basename(archive),line=fs.readFileSync(checksum,"utf8").trim();assert.equal(line,`${actual}  ${name}`,"Archive checksum file mismatch");
  const members=run(["-tzf",archive]).split(/\r?\n/).filter(Boolean);validateMembers(members);
