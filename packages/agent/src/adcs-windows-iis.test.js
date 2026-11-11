@@ -807,7 +807,8 @@ describe("AD CS accept-failure key retention", () => {
     assert.match(retentionBlock, /removeCertificateAndKeyContainer\(\{[\s\S]*?signal,/);
     const lockBlock = src.slice(src.indexOf("withRowLock: async (row, work)", retention), src.indexOf("windows-retention sweep:", retention));
     assert.match(lockBlock, /acquireWindowsStoreLocks/);
-    assert.match(lockBlock, /storeLock\.run\(signal => work\(\{ signal,/);
+    assert.match(lockBlock, /storeLock\.run\(\(lockSignal\) => work\(\{/);
+    assert.match(lockBlock, /signal: shutdownSignal \? AbortSignal\.any\(\[shutdownSignal, lockSignal\]\) : lockSignal/);
   });
 });
 

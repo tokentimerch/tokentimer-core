@@ -91,7 +91,7 @@ if(!$stageGate){throw 'Mandatory source/stage comparison absent'}
 $stageGate=[scriptblock]::Create($stageGate.Extent.Text)
 $script:SystemSid='S-1-5-18'
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
-$script:AdministratorsSid=if($identity.IsSystem){'S-1-5-32-544'}else{$identity.User.Value}
+$script:AdministratorsSid=if($identity.IsSystem){'S-1-5-32-544'}else{$identity.Owner.Value}
 $identity.Dispose()
 $script:TrustedInstallerSid='S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
 $sealAssignment=$ast.Find({param($n)$n -is [Management.Automation.Language.AssignmentStatementAst] -and
@@ -275,7 +275,7 @@ $script:SystemSid='S-1-5-18'
 $script:TrustedInstallerSid='S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
 # Use this test's owner in place of Administrators to run without elevation.
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
-$script:AdministratorsSid=if($identity.IsSystem){'S-1-5-32-544'}else{$identity.User.Value}
+$script:AdministratorsSid=if($identity.IsSystem){'S-1-5-32-544'}else{$identity.Owner.Value}
 $identity.Dispose()
 $root=Join-Path '${q(parent)}' 'app'
 $security=[Security.AccessControl.DirectorySecurity]::new()
