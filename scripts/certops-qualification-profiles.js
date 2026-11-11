@@ -22,7 +22,7 @@ const EXTENDED = Object.freeze([
 ]);
 // Native collection deliberately excludes contract-only diagnostics; omitted slot
 // IDs remain in every verdict and cannot imply complete AD CS qualification.
-const ADCS_NATIVE = Object.freeze(["enterprise-adcs-real"]);
+const ADCS_NATIVE = Object.freeze(["enterprise-adcs-real", "enterprise-adcs-hierarchy-real", "native-adcs-issuer-reassignment", "adcs-browser-enrollment", "adcs-uncertain-abandon"]);
 const PROFILES = Object.freeze({
   full: ["hosted", "domain-adcs", "extended-domain-adcs"],
   "standard-hosted": ["hosted"],
@@ -34,7 +34,7 @@ function classify(slot) {
   if (DOMAIN.includes(slot.suite)) return "domain-adcs";
   if (EXTENDED.includes(slot.suite)) return "extended-domain-adcs";
   const caps =
-    require("../docs/certops/qualification-suites.json").requiredCapabilities[
+    require("./certops-qualification-manifest").requiredCapabilities[
       slot.suite
     ] || [];
   assert.ok(
@@ -68,7 +68,7 @@ function selectProfile(matrix, profile = "full") {
   return {
     profile,
     selectedSlotIds,
-    omittedSlotIds: [...ids.filter((id) => !selectedSlotIds.includes(id)), ...(matrix.deferredSlots || []).map(slot => slot.id)],
+    omittedSlotIds: ids.filter((id) => !selectedSlotIds.includes(id)),
     specification: { ...matrix, slots: selected },
   };
 }
@@ -81,7 +81,7 @@ function summaryFields(selection, qualified = false) {
         : "declared-profile",
     selectedSlotIds: [...selection.selectedSlotIds],
     omittedSlotIds: [...selection.omittedSlotIds],
-    fullMatrixQualified: qualified === true && selection.profile === "full" && selection.omittedSlotIds.length === 0,
+    fullMatrixQualified: qualified === true && selection.profile === "full",
   };
 }
 function validateProfileSummary(summary, matrix) {

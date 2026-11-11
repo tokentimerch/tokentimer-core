@@ -38,7 +38,7 @@ jobs:
           version: "11.28.8"
 
       - name: Set up Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: "pnpm"
@@ -63,7 +63,7 @@ jobs:
           version: "11.28.8"
 
       - name: Set up Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: "pnpm"
@@ -97,7 +97,7 @@ jobs:
           version: "11.28.8"
 
       - name: Set up Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: "pnpm"
@@ -128,7 +128,7 @@ jobs:
           version: "11.28.8"
 
       - name: Set up Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: "pnpm"
@@ -153,7 +153,7 @@ jobs:
           version: "11.28.8"
 
       - name: Set up Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: "pnpm"
@@ -184,7 +184,7 @@ jobs:
           version: "11.28.8"
 
       - name: Set up Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: "pnpm"
@@ -197,6 +197,9 @@ jobs:
 
       - name: Validate contracts manifest
         run: pnpm run check:contracts
+
+      - name: Check integrations watch manifest
+        run: node scripts/check-integrations-manifest.js
 
       - name: Validate contracts integrity
         run: pnpm run check:contracts:integrity
@@ -244,7 +247,7 @@ jobs:
           version: "11.28.8"
 
       - name: Set up Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: "pnpm"
@@ -286,7 +289,7 @@ jobs:
           version: "11.28.8"
 
       - name: Set up Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: "pnpm"
@@ -320,7 +323,7 @@ jobs:
           version: "11.28.8"
 
       - name: Set up Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: "pnpm"
@@ -361,6 +364,7 @@ jobs:
 
       - name: Run AD CS API qualification on the existing test stack
         env:
+          CERTOPS_API_QUALIFICATION_SCOPE: adcs
           CERTOPS_ENABLED: 'true'
           CERTOPS_E2E_REQUIRED: '1'
           CERTOPS_CSR_DISPOSABLE_STACK: '1'
@@ -449,7 +453,7 @@ jobs:
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: "11.28.8"
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: pnpm
@@ -467,6 +471,30 @@ jobs:
         run: node apps/api/migrations/migrate.js
       - name: Exercise manual and fenced auto-sync cleanup through HTTP routes
         run: node --test tests/postgres/vault-material-cleanup.test.js
+      - name: Preserve provider-owned expiration under concurrent manual edits
+        env:
+          DB_NAME: core_token_expiry_test
+        run: |
+          node - <<'NODE'
+          const { Client } = require('pg');
+          async function main() {
+            const client = new Client({
+              host: process.env.DB_HOST,
+              port: Number(process.env.DB_PORT),
+              user: process.env.DB_USER,
+              password: process.env.DB_PASSWORD,
+              database: 'postgres',
+            });
+            await client.connect();
+            try {
+              await client.query('CREATE DATABASE core_token_expiry_test');
+            } finally {
+              await client.end();
+            }
+          }
+          main().catch(error => { console.error(error.message); process.exitCode = 1; });
+          NODE
+          node --test --test-force-exit tests/postgres/token-expiry-ownership.test.js
       - name: Upgrade main enrollment history to distribution without rewriting migrations
         env:
           DB_NAME: pr329_distribution_upgrade_ci_test
@@ -489,6 +517,11 @@ jobs:
               await client.query('CREATE DATABASE wildcard_candidate_ci_test');
               await client.query('CREATE DATABASE pr329_issuance_path_reuse_ci_test');
               await client.query('CREATE DATABASE pr329_workspace_delete_ci_test');
+              await client.query('CREATE DATABASE pagerduty_ci_issue364_test');
+              for (const history of ['78','80','81','82','92','94','legacy79','legacy81']) {
+                await client.query(`CREATE DATABASE pd_${history}_migration_issue364_test`);
+              }
+              await client.query('CREATE DATABASE recipient_delivery_worker_ci_test');
             } finally {
               await client.end();
             }
@@ -496,6 +529,41 @@ jobs:
           main().catch(error => { console.error(error.message); process.exitCode = 1; });
           NODE
           node --test --test-force-exit tests/postgres/distribution-migration-upgrade.test.js
+      - name: Verify alert date serialization across host timezones
+        run: node --test tests/postgres/alert-queue-timezones.test.js
+      - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability
+        env:
+          DB_NAME: pagerduty_ci_issue364_test
+          PAGERDUTY_COMPANION_ROOT: ${{ github.workspace }}
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit tests/postgres/pagerduty-incident-lifecycle.test.js
+      - name: Verify PagerDuty upgrades and explicit preview recovery
+        env:
+          PAGERDUTY_COMPANION_ROOT: ${{ github.workspace }}
+        run: |
+          for history in 78 80 81 82 92 94 legacy79 legacy81; do
+            DB_NAME="pd_${history}_migration_issue364_test" PAGERDUTY_UPGRADE_FROM="$history" \
+              node --test --test-force-exit tests/postgres/pagerduty-migration.test.js
+          done
+      - name: Verify recipient delivery retries and ledger outcomes
+        env:
+          DELIVERY_WORKER_DB_HOST: ${{ env.DB_HOST }}
+          DELIVERY_WORKER_DB_PORT: ${{ env.DB_PORT }}
+          DELIVERY_WORKER_DB_NAME: recipient_delivery_worker_ci_test
+          DELIVERY_WORKER_DB_USER: ${{ env.DB_USER }}
+          DELIVERY_WORKER_DB_PASSWORD: ${{ env.DB_PASSWORD }}
+        run: node --test --test-force-exit tests/postgres/delivery-worker-ledger.test.js
+      - name: Verify member email reuse and migration
+        env:
+          RV_TEST_DB_HOST: ${{ env.DB_HOST }}
+          RV_TEST_DB_PORT: ${{ env.DB_PORT }}
+          RV_TEST_DB_NAME: recipient_delivery_worker_ci_test
+          RV_TEST_DB_USER: ${{ env.DB_USER }}
+          RV_TEST_DB_PASSWORD: ${{ env.DB_PASSWORD }}
+        run: node --test --test-force-exit --test-concurrency=1 tests/postgres/recipient-verified-member.test.js tests/postgres/recipient-member-migration.test.js
+      - name: Verify bulk webhook retry preserves delivery history
+        run: node --test --test-force-exit tests/postgres/bulk-webhook-requeue.test.js
       - name: Prove abandoned certificate-path reuse on isolated PostgreSQL
         env:
           DB_NAME: pr329_issuance_path_reuse_ci_test
@@ -509,9 +577,11 @@ jobs:
           CERTOPS_ENABLED: "true"
         run: |
           node apps/api/migrations/migrate.js
-          node --test --test-force-exit tests/postgres/workspace-delete-certops.test.js tests/postgres/retired-identity-periods.test.js tests/postgres/distribution-claim-locking.test.js
+          node --test --test-force-exit tests/postgres/workspace-delete-certops.test.js tests/postgres/certops-period-creator-delete.test.js tests/postgres/retired-identity-periods.test.js tests/postgres/distribution-claim-locking.test.js
       - name: Replay all supported immutable migration histories
         run: pnpm exec mocha --no-config tests/integration/certops-distribution-upgrade.test.js --timeout 120000 --exit
+      - name: Verify material provider version pins and retained-version rollback
+        run: pnpm exec mocha --no-config tests/integration/certops-material-providers.test.js tests/integration/certops-azure-keyvault-qualification.test.js --timeout 180000 --exit
       - name: Fence pinned rollback identities and late deployment evidence
         env:
           DB_NAME: wildcard_candidate_ci_test
@@ -533,6 +603,168 @@ jobs:
         run: |
           node apps/api/migrations/migrate.js
           node --test --test-force-exit tests/wildcard-vault/transfer.test.cjs
+
+  release_acceptance:
+    name: Published Upgrade and Signed Protocol Acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: acceptance
+          POSTGRES_PASSWORD: synthetic-release-acceptance-only
+          POSTGRES_DB: core_published_upgrade_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U acceptance -d core_published_upgrade_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      NODE_ENV: test
+      NODE_PATH: ${{ github.workspace }}/apps/api/node_modules:${{ github.workspace }}/node_modules
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_NAME: core_published_upgrade_test
+      DB_USER: acceptance
+      DB_PASSWORD: synthetic-release-acceptance-only
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGDATABASE: core_published_upgrade_test
+      PGUSER: acceptance
+      PGPASSWORD: synthetic-release-acceptance-only
+      TT_RELEASE_UPGRADE_DISPOSABLE: "1"
+    steps:
+      - name: Checkout full published migration history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: "11.28.8"
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Preserve published CertOps data and execute real signed protocol
+        env:
+          TT_RELEASE_UPGRADE_PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          test -f tests/postgres/release-published-upgrade.test.js
+          test -f tests/postgres/staged-agent-protocol.test.js
+          node --test --test-reporter=tap --test-concurrency=1 tests/postgres/release-published-upgrade.test.js tests/postgres/staged-agent-protocol.test.js | tee release-acceptance.tap
+          grep -qx '# tests 2' release-acceptance.tap
+          grep -qx '# pass 2' release-acceptance.tap
+          grep -qx '# skipped 0' release-acceptance.tap
+          grep -qx '# cancelled 0' release-acceptance.tap
+
+  material_store_compatibility:
+    name: Material Store Compatibility (${{ matrix.provider }} / ${{ matrix.version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: openbao-kv2
+            version: 2.3.2
+            image: openbao/openbao:2.3.2
+          - provider: openbao-kv2
+            version: 2.4.1
+            image: openbao/openbao:2.4.1
+          - provider: vault-kv2
+            version: 1.21.0
+            image: hashicorp/vault:1.21.0
+    services:
+      material:
+        image: ${{ matrix.image }}
+        env:
+          BAO_DEV_ROOT_TOKEN_ID: isolated-material-fixture-only
+          BAO_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+          VAULT_DEV_ROOT_TOKEN_ID: isolated-material-fixture-only
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+        options: >-
+          --cap-add=IPC_LOCK
+          --health-cmd="wget -q -O /dev/null http://127.0.0.1:8200/v1/sys/health"
+          --health-interval=2s --health-timeout=2s --health-retries=30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Exercise real KV v2 publication, access control and recovery
+        env:
+          TT_REAL_KV: "1"
+          TT_REAL_KV_PROVIDER: ${{ matrix.provider }}
+          TT_REAL_KV_ADDRESS: http://127.0.0.1:8200
+          TT_REAL_KV_TOKEN: isolated-material-fixture-only
+        run: node --test tests/e2e/material-providers-real.test.js
+  operator_interface:
+    name: Operator Interface (MCP) on PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mcp_ci
+          POSTGRES_PASSWORD: ci-synthetic-operator-only
+          POSTGRES_DB: operator_interface_mcp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mcp_ci -d operator_interface_mcp_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      NODE_ENV: test
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_NAME: operator_interface_mcp_test
+      DB_USER: mcp_ci
+      DB_PASSWORD: ci-synthetic-operator-only
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: "11.28.8"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Generate isolated test-only CertOps encryption keys
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          for (const name of ['CERTOPS_SIGNING_ENCRYPTION_KEY', 'CERTOPS_REGISTRATION_ENCRYPTION_KEY']) {
+            fs.appendFileSync(process.env.GITHUB_ENV, `${name}=${crypto.randomBytes(32).toString('hex')}\n`);
+          }
+          NODE
+      - name: Migrate dedicated empty test database
+        run: node apps/api/migrations/migrate.js
+      - name: Authority, enrollment, write gates, approvals and reads against real PostgreSQL
+        run: >-
+          node --test --test-force-exit --test-timeout=180000
+          tests/postgres/operator-connections.test.js
+          tests/postgres/operator-routes.test.js
+          tests/postgres/operator-reads.test.js
+          tests/postgres/operator-enrollments.test.js
+          tests/postgres/operator-enrollment-routes.test.js
+          tests/postgres/operator-renew-requests.test.js
+          tests/postgres/operator-oauth.test.js
+          tests/postgres/operator-inventory.test.js
+      - name: Adapter unit and stdio tests
+        run: pnpm --filter @tokentimer/mcp test
+      - name: Adapter end to end against the real API and database
+        run: pnpm --filter @tokentimer/mcp test:e2e
 
   helm_chart:
     name: Helm Chart Validation
@@ -694,6 +926,95 @@ jobs:
       - name: Validate local dev postgres compose
         run: DB_PASSWORD=password docker compose -f deploy/compose/docker-compose.postgres.yml config -q
 
+  certops_tooling:
+    name: CertOps Qualification Tooling (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, windows-2025]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/certops-node-setup
+      - name: Expose shipped Git OpenSSL and fail if missing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $candidates = @(
+            'C:\Program Files\Git\usr\bin\openssl.exe',
+            'C:\Program Files\Git\mingw64\bin\openssl.exe',
+            (Get-Command openssl.exe -ErrorAction SilentlyContinue).Source
+          )
+          $openssl = $candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
+          if (!$openssl) { throw 'OpenSSL prerequisite missing' }
+          & $openssl version
+          if ($LASTEXITCODE -ne 0) { throw 'OpenSSL prerequisite unusable' }
+          Split-Path -Parent $openssl | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Install checksum-pinned official Actions schema validator
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          actionlint_directory=$(mktemp -d "$RUNNER_TEMP/certops-actionlint.XXXXXX")
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$actionlint_directory/actionlint.tar.gz"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$actionlint_directory/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$actionlint_directory/actionlint.tar.gz" -C "$actionlint_directory" actionlint
+          chmod 0755 "$actionlint_directory/actionlint"
+          echo "$actionlint_directory" >> "$GITHUB_PATH"
+      - name: Install checksum-pinned Windows Actions schema validator
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actionlintDirectory = Join-Path $env:RUNNER_TEMP 'certops-actionlint'
+          New-Item -ItemType Directory -Path $actionlintDirectory | Out-Null
+          $actionlintArchive = Join-Path $actionlintDirectory 'actionlint.zip'
+          Invoke-WebRequest -Uri 'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_windows_amd64.zip' -OutFile $actionlintArchive
+          $actionlintHash = (Get-FileHash -LiteralPath $actionlintArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actionlintHash -ne '6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9') { throw 'Actionlint checksum mismatch' }
+          Expand-Archive -LiteralPath $actionlintArchive -DestinationPath $actionlintDirectory
+          $actionlintBinary = Join-Path $actionlintDirectory 'actionlint.exe'
+          "CERTOPS_ACTIONLINT=$actionlintBinary" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Check bounded CA observation diagnostics
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/certops-adcs-issued-observation.test.ps1
+      - name: Exercise temporary credential ACL refusal
+        if: runner.os == 'Windows'
+        env:
+          CERTOPS_WINDOWS_DISPOSABLE_HOST: '1'
+        run: node scripts/certops-credential-weak-acl-support.js
+      - name: Exercise installer activation using owned temporary files
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'Windows PowerShell 5.1 is required for installer compatibility' }
+          & ./scripts/certops-installer-swap.test.ps1
+          $env:PSExecutionPolicyPreference = 'Restricted'
+          node scripts/certops-installer-second-rename-support.js
+          if ($LASTEXITCODE -ne 0) { throw 'Restricted-parent installer activation control failed' }
+          node scripts/certops-installer-startup-support.js
+          if ($LASTEXITCODE -ne 0) { throw 'Cold-start installer activation control failed' }
+      - name: Exercise temporary response barriers from a restricted PowerShell parent
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CERTOPS_RESPONSE_BARRIER_SUPPORT: '1'
+        run: |
+          $env:PSExecutionPolicyPreference = 'Restricted'
+          node scripts/certops-response-barrier-support.js
+          if ($LASTEXITCODE -ne 0) { throw 'Temporary response barrier supporting controls failed' }
+      - name: Run complete qualification tooling including all AD CS language package gates
+        run: pnpm run test:certops:qualification
+      - name: Run complete release collector inventory
+        if: runner.os == 'Linux'
+        run: pnpm run test:certops:release-collector
+
   windows_agent_quality:
     name: Windows Agent Quality Checks
     runs-on: windows-latest
@@ -708,13 +1029,17 @@ jobs:
           version: "11.28.8"
 
       - name: Set up Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: "pnpm"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Credential fixtures use the user profile, not the shared checkout.
+      - name: Run MCP adapter tests including native Windows credential ACLs
+        run: pnpm --filter @tokentimer/mcp test
 
       - name: Lint agent package
         run: pnpm run lint:agent
@@ -747,10 +1072,75 @@ jobs:
         shell: pwsh
         run: ./packages/agent/scripts/install-agent.ps1 --uninstall --dry-run
 
+  windows_material_qualification:
+    name: Windows IIS Material (${{ matrix.os }} / ${{ matrix.store }} / ${{ matrix.key }})
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+        store: [fixture, openbao]
+        key: [rsa, ec-p256, ec-p384, ec-p521]
+    env:
+      TT_WINDOWS_MATERIAL_KEY_ALGORITHM: ${{ matrix.key }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Prepare native IIS on the disposable Server runner
+        shell: powershell
+        run: |
+          $result = Install-WindowsFeature Web-Server,Web-Mgmt-Tools,Web-Scripting-Tools
+          if (-not $result.Success) { throw 'IIS feature installation failed' }
+          Start-Service W3SVC
+      - name: Start checksum-verified customer-local OpenBao
+        if: matrix.store == 'openbao'
+        env:
+          TT_WINDOWS_MATERIAL_REAL: "1"
+        shell: pwsh
+        run: |
+          $directory = Join-Path $env:RUNNER_TEMP 'tt-windows-openbao'
+          New-Item -ItemType Directory -Path $directory | Out-Null
+          $archive = Join-Path $directory 'bao.zip'
+          Invoke-WebRequest 'https://github.com/openbao/openbao/releases/download/v2.4.1/bao_2.4.1_Windows_x86_64.zip' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne '1d1422e9578101f167ffe2a0b8847afacda56a4f41201e8666d3c058f6470e84') { throw 'OpenBao checksum mismatch' }
+          Expand-Archive $archive -DestinationPath $directory
+          $process = Start-Process (Join-Path $directory 'bao.exe') -ArgumentList @('server','-dev','-dev-root-token-id=isolated-windows-openbao-only','-dev-listen-address=127.0.0.1:58208') -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'stdout.log') -RedirectStandardError (Join-Path $directory 'stderr.log')
+          $process.Id | Set-Content (Join-Path $directory 'pid.txt')
+          $ready = $false
+          for ($attempt = 0; $attempt -lt 60; $attempt++) {
+            try { $health = Invoke-RestMethod 'http://127.0.0.1:58208/v1/sys/health'; if ($health.initialized -and -not $health.sealed) { $ready = $true; break } } catch {}
+            Start-Sleep -Seconds 1
+          }
+          if (-not $ready) { throw 'Owned OpenBao fixture did not become ready' }
+          $env:TT_WINDOWS_MATERIAL_KV_ADDRESS = 'http://127.0.0.1:58208'
+          try {
+            node --test tests/e2e/windows-material-custody-real.test.js tests/e2e/windows-material-real.test.js
+            if ($LASTEXITCODE -ne 0) { throw 'Native OpenBao/IIS qualification failed' }
+          } finally { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue }
+      - name: Verify actual CNG import, ACL, IIS listeners and retained rollback
+        if: matrix.store == 'fixture'
+        env:
+          TT_WINDOWS_MATERIAL_REAL: "1"
+        run: node --test tests/e2e/windows-material-custody-real.test.js tests/e2e/windows-material-real.test.js
+      - name: Stop only the owned OpenBao process
+        if: always() && matrix.store == 'openbao'
+        shell: pwsh
+        run: |
+          $pidFile = Join-Path $env:RUNNER_TEMP 'tt-windows-openbao/pid.txt'
+          if (Test-Path $pidFile) { Stop-Process -Id ([int](Get-Content $pidFile)) -ErrorAction SilentlyContinue }
+
   docker_build_and_scan:
     name: Docker Build & Security Scan
     runs-on: ubuntu-latest
-    needs: [dependency_audit, frontend_quality, worker_quality, controller_quality, backend_quality, build_and_test, helm_chart, proxy_smoke]
+    needs: [dependency_audit, frontend_quality, worker_quality, controller_quality, backend_quality, build_and_test, operator_interface, helm_chart, proxy_smoke, certops_tooling, release_acceptance]
     timeout-minutes: 20
     permissions:
       security-events: write

@@ -1,11 +1,10 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-27 against main 63e97bf8 for v0.18.2. Other
-certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
+Last reviewed: 2026-11-11 against main 8cbc26f0 for 0.19.2-rc.1.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
-without gating v1.0.0, and what v1.0.0 itself changes for compatibility. Customer-facing feature cards and voting
+without gating v1.0.0, and what v1.0.0 itself changes for compatibility. Public feature cards and voting
 live on the [public feature roadmap](https://tokentimer.featurebase.app/en/roadmap).
 Release history lives in [CHANGELOG.md](CHANGELOG.md). Owners, acceptance
 criteria, and evidence live in the linked GitHub issues.
@@ -23,8 +22,8 @@ controller, agent renewal, signed dispatch, Windows/IIS execution, and
 trust-anchor reconciliation have shipped. CLM 0.17.0 groups
 certificates by fingerprint and separates lifecycle, management periods and
 observed locations; see [CHANGELOG.md](CHANGELOG.md)
-and `docs/adr/`. Remaining Core CLM work is listed under Before v1.0.0,
-except the AD CS issuer, which does not gate v1.0.0.
+and `docs/adr/`. Remaining Core CLM release gates are listed under Before
+v1.0.0; additional capabilities below follow their own schedules.
 Airgap operator packages, proxy-agents, appliance connectors, and
 compliance reporting are not deliverables of this repository.
 
@@ -37,14 +36,22 @@ called stable while they are open.
 
 - **CLM destinations: store issued material and distribute it**
   ([#248](https://github.com/tokentimerch/tokentimer-core/issues/248)).
-  Name filesystem, IIS, or customer Vault locations on a certificate.
+  Name filesystem, IIS, or Vault locations on a certificate.
   One issuance can deploy to those destinations. The control plane
   never stores private keys. Shared-key Vault mode is explicit opt-in.
   [PR #329](https://github.com/tokentimerch/tokentimer-core/pull/329) adds
-  customer Vault publication and independent consumer rollouts for any shared
+  publication through your Vault and independent consumer rollouts for any shared
   certificate, including ordinary and wildcard certificates, shipped in 0.18.0
   (see [CHANGELOG.md](CHANGELOG.md)); the remaining destination scope stays
   open on the issue.
+  The distribution lifecycle remains open in [PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498).
+  Windows/IIS shared material and provider extensions merged in
+  [PR #460](https://github.com/tokentimerch/tokentimer-core/pull/460). Functional
+  implementation is separate from remaining fleet/protected qualification;
+  these increments do not complete every #248 requirement.
+  Provider extensions cover OpenBao KV v2 and Azure Key Vault Secrets exact
+  versions. Azure and Windows/IIS remain subject to independent production
+  qualification; see [implementation and evidence](docs/certops/distribution-extensions-qualification.md).
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   Wire offline mode and outbound allowlists into API and worker egress.
@@ -59,6 +66,9 @@ called stable while they are open.
   ([#232](https://github.com/tokentimerch/tokentimer-core/issues/232)).
   Correlation identifiers across API and workers; production error
   reporting with secret scrubbing.
+  API request logs now share a generated `correlationId`, returned as
+  `X-Request-Id`, which dashboard API errors display as a request reference.
+  Worker propagation and production error-boundary reporting remain open.
 
 ---
 
@@ -67,7 +77,12 @@ called stable while they are open.
 Accepted work that ships in 0.x stages on its own schedule. v1.0.0 can be
 called stable while it is open.
 
-No open items. The AD CS issuer for the Windows agent shipped in 0.18.0 (see [CHANGELOG.md](CHANGELOG.md)).
+- **MCP operator interface**
+  ([#502](https://github.com/tokentimerch/tokentimer-core/issues/502),
+  implementation [PR #406](https://github.com/tokentimerch/tokentimer-core/pull/406)).
+  Scoped inventory queries and updates, contact and invitation actions,
+  remote sign-in, and ACME issuance and renewal requests ship in 0.19.0.
+  Deletes and provider-side actions remain follow-on work.
 
 ---
 
@@ -103,6 +118,48 @@ Per-user personal default already exists. v1.0.0 adds a separate
 ---
 
 ## Later -- evaluate against a concrete need
+
+These themes make queued requests and follow-ons discoverable. Inclusion
+does not promise a version or add a v1.0.0 gate.
+
+- **Incident response and escalation**
+  ([#503](https://github.com/tokentimerch/tokentimer-core/issues/503)):
+  owner/backup thresholds, acknowledgement, delivery fallback and external
+  incident lifecycle are distinct outcomes.
+  PagerDuty expiration incidents ([PR #496](https://github.com/tokentimerch/tokentimer-core/pull/496))
+  with resolution after verified renewal or confirmed certificate retirement
+  and audited manager ACK/Resolve actions, alongside distribution incidents ([PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498))
+  are active increments, not completion of the entire umbrella.
+- **Windows service certificates beyond IIS**
+  ([#504](https://github.com/tokentimerch/tokentimer-core/issues/504)):
+  service discovery, typed connectors, controlled activation and fleet
+  operations build on shipped Windows/IIS and AD CS support.
+  #498 provides metadata/contract groundwork; #460 covers Windows/IIS shared
+  material under #248. Additional service executors remain separate.
+- **Workspace readiness and actionable recovery**
+  ([#505](https://github.com/tokentimerch/tokentimer-core/issues/505)):
+  persistent readiness, safe diagnostics, verified recipes and contributor
+  setup extend completed wizards; coordinate error reporting with #232.
+- **Discovery and provider expansion**
+  ([#506](https://github.com/tokentimerch/tokentimer-core/issues/506)):
+  Bitbucket, registrar discovery and additional secret inventories need
+  explicit provider and edition scope.
+- **Telegram notifications**
+  ([#507](https://github.com/tokentimerch/tokentimer-core/issues/507)):
+  reuse recipient routing and delivery controls with documented transport.
+- **API-triggered token renewal**
+  ([#508](https://github.com/tokentimerch/tokentimer-core/issues/508)) and
+  [CI/CD templates](https://github.com/tokentimerch/tokentimer-core/issues/308):
+  provider credential rotation is separate from auto-sync inventory refresh
+  and certificate renewal.
+- **Certificate operator controls and recovery**:
+  [native alerts #360](https://github.com/tokentimerch/tokentimer-core/issues/360),
+  [cancellation #344](https://github.com/tokentimerch/tokentimer-core/issues/344),
+  [manual evidence #341](https://github.com/tokentimerch/tokentimer-core/issues/341)
+  and [restore decommissioned identities #410](https://github.com/tokentimerch/tokentimer-core/issues/410).
+  Scope each against the released lifecycle before implementation.
+- **Release provenance**
+  ([#300](https://github.com/tokentimerch/tokentimer-core/issues/300)).
 
 Performance tests with regression budgets
 ([#235](https://github.com/tokentimerch/tokentimer-core/issues/235));

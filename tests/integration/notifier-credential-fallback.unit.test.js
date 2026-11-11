@@ -47,7 +47,14 @@ describe("Worker notifier credential fallback", () => {
     axios = workerRequire("axios");
     const axiosModule = await import(pathToFileURL(workerRequire.resolve("axios")).href);
     axiosDefault = axiosModule.default || axios;
-    nodemailer = workerRequire("nodemailer");
+    // Match the worker's conditional ESM export, even in a nested checkout.
+    const mailerManifestPath = workerRequire.resolve("nodemailer/package.json");
+    const mailerManifest = workerRequire("nodemailer/package.json");
+    const mailerImportPath = path.resolve(
+      path.dirname(mailerManifestPath),
+      mailerManifest.exports["."].import,
+    );
+    nodemailer = (await import(pathToFileURL(mailerImportPath).href)).default;
     const dbModule = await import(pathToFileURL(dbModulePath).href);
     dbPool = dbModule.pool;
   });
@@ -380,4 +387,46 @@ describe("Worker notifier credential fallback", () => {
     expect(createdOptions[0].auth).to.equal(undefined);
     expect(createdOptions[0].host).to.equal("anon-db.smtp.local");
   });
+
+  for (const config of [
+    { name: "an anonymous relay without FROM_EMAIL" },
+    { name: "SMTP_USER without SMTP_PASS", user: "relay@example.com" },
+    { name: "SMTP_PASS without SMTP_USER", pass: "unused-test-password" },
+  ]) {
+    it(`refuses ${config.name} without sending or verifying SMTP`, async () => {
+      process.env.SMTP_HOST = "invalid.smtp.local";
+      process.env.SMTP_PORT = "25";
+      delete process.env.FROM_EMAIL;
+      delete process.env.SMTP_USER;
+      delete process.env.SMTP_PASS;
+      if (config.user) process.env.SMTP_USER = config.user;
+      if (config.pass) process.env.SMTP_PASS = config.pass;
+      dbPool.query = async () => ({ rows: [] });
+
+      const attempts = [];
+      nodemailer.createTransport = () => ({
+        async verify() {
+          attempts.push("verify");
+          return true;
+        },
+        async sendMail() {
+          attempts.push("sendMail");
+          return { accepted: ["recipient@example.com"], response: "250 OK" };
+        },
+      });
+
+      const email = await importFresh(emailModulePath);
+      const result = await email.sendEmailNotification({
+        to: "recipient@example.com",
+        subject: "Incomplete SMTP configuration",
+        text: "Hello",
+      });
+
+      expect(result).to.deep.equal({
+        success: false,
+        error: "SMTP not configured",
+      });
+      expect(attempts).to.deep.equal([]);
+    });
+  }
 });

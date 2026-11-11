@@ -12,6 +12,10 @@ import { MemoryRouter } from 'react-router';
 import CertificateDetailsModal from '../../src/components/certops/CertificateDetailsModal.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
+vi.mock('../../src/components/PagerDutyIncidentActions.jsx', () => ({
+  default: () => null,
+}));
+
 const { updateTokenMock } = vi.hoisted(() => ({
   updateTokenMock: vi.fn(),
 }));
@@ -133,6 +137,30 @@ function renderModal(overrides = {}) {
 describe('CertificateDetailsModal', () => {
   beforeEach(() => {
     updateTokenMock.mockReset();
+  });
+
+  it('associates each editable certificate field with its visible label', () => {
+    renderModal();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+    for (const label of [
+      'Name',
+      'Section',
+      'Asset expiration',
+      'Domains',
+      'Issuer',
+      'Serial number',
+      'Subject',
+      'Contacts / key custodian',
+      'Renewal URL',
+    ]) {
+      const field = screen.getByLabelText(label, { exact: true });
+      expect(field.labels[0]).toHaveTextContent(label);
+    }
+    expect(
+      screen.getByRole('button', { name: 'Contact groups' })
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Notes')).toBeInTheDocument();
   });
 
   it('hides location observations in the dashboard token view even when populated', () => {
@@ -290,6 +318,22 @@ describe('CertificateDetailsModal', () => {
       'data-default-latest-expanded',
       'false'
     );
+  });
+
+  it('shows alert threshold suggestions for a short certificate lifetime', () => {
+    renderModal({
+      certOps: {
+        certificateCount: 1,
+        certificate: {
+          ...certificate,
+          notBefore: '2026-08-16T00:00:00.000Z',
+          notAfter: '2026-09-30T00:00:00.000Z',
+        },
+      },
+    });
+
+    expect(screen.getByText('Suggested alert thresholds')).toBeInTheDocument();
+    expect(screen.getByText('14, 9, 4, 1, 0')).toBeInTheDocument();
   });
 
   it('groups certificate alert state, history and upcoming delivery in one disclosure', async () => {
@@ -726,7 +770,8 @@ describe('CertificateDetailsModal', () => {
     expect(screen.queryByText('Auto-renewal')).not.toBeInTheDocument();
     expect(screen.queryByText('Key locality')).not.toBeInTheDocument();
     expect(screen.queryByText('Section')).not.toBeInTheDocument();
-    expect(screen.queryByText('Contact groups')).not.toBeInTheDocument();
+    expect(screen.getByText('Contact groups')).toBeInTheDocument();
+    expect(screen.getByText('Use workspace default')).toBeInTheDocument();
     expect(
       screen.queryByRole('heading', { name: 'Certificate details' })
     ).not.toBeInTheDocument();
@@ -779,5 +824,20 @@ describe('CertificateDetailsModal', () => {
     expect(
       screen.queryByRole('heading', { name: 'Certificate operations' })
     ).not.toBeInTheDocument();
+  });
+  it('distinguishes unrecorded historical routing from workspace-default routing', () => {
+    renderModal({
+      token: {
+        name: 'Historical certificate',
+        category: 'cert',
+        type: 'ssl_cert',
+      },
+      isViewer: true,
+    });
+    expect(screen.getByText('Contact groups')).toBeInTheDocument();
+    expect(
+      screen.getByText('Not recorded for this certificate')
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Use workspace default')).not.toBeInTheDocument();
   });
 });

@@ -172,6 +172,45 @@ describe("adcs-preflight enrollment rule gate", () => {
 });
 
 describe("adcs-preflight certutil parsing", () => {
+  async function replayCertificateCount(stdout) {
+    const fs = require("node:fs/promises"), path = require("node:path"), crypto = require("node:crypto");
+    const der = new crypto.X509Certificate(await fs.readFile(path.join(__dirname, "../verify/fixtures/ca.crt.pem"))).raw;
+    let exports = 0;
+    const outcome = await runCertutilPreflight({ caConfig: CA, template: TEMPLATE, async execFileImpl(_file, args) {
+      if (args.includes("-dstemplate")) return { stdout: SAFE_TEMPLATE };
+      if (args.includes("EditFlags")) return { stdout: "EditFlags REG_DWORD = 0x10000 (65536)" };
+      if (args.includes("InterfaceFlags")) return { stdout: "InterfaceFlags REG_DWORD = 0x200 (512)" };
+      if (args.includes("certcount")) return { stdout };
+      assert.equal(args[2], "-ca.cert"); assert.equal(args[4], String(exports++));
+      await fs.writeFile(args[3], der, { flag: "wx" }); return { stdout: "" };
+    } });
+    return { result: outcome.preflightResult, exports, expectedPin: crypto.createHash("sha256").update(new crypto.X509Certificate(der).publicKey.export({ type: "spki", format: "der" })).digest("hex") };
+  }
+
+  it("exports real certificate pins from localized CA count captions in UTF-8 and UTF-16", async () => {
+    // German/French captions are Windows Server 2022 certutil MUI resource 823.
+    for (const caption of ["CA cert count", "Zertifizierungsstellen-Zertifikatanzahl", "Nombre de certificats d’autorités de certification"]) {
+      for (const encoding of ["utf8", "utf16le"]) {
+        const text = `${caption}: 1\r\nCertUtil: -CAInfo completed.\r\n`;
+        const stdout = Buffer.concat([encoding === "utf16le" ? Buffer.from([0xff, 0xfe]) : Buffer.alloc(0), Buffer.from(text, encoding)]);
+        const { result, exports, expectedPin } = await replayCertificateCount(stdout);
+        assert.equal(exports, 1, `${caption}: ${encoding}`);
+        assert.equal(result.caCertificates.length, 1);
+        assert.equal(result.caCertificates[0].keySha256, expectedPin);
+      }
+    }
+  });
+
+  it("rejects ambiguous and malformed count answers and retains the eight-certificate export cap", async () => {
+    for (const answer of ["", "Count: -1", "Count: 1.5", "Count: 33", "Count: 1 trailing", "Count: 1\nCount: 2", "Count: 1\nCount: 1", "Count: 1 (0x2)", "CertUtil: 5", "Warning: certificate count: 1"]) {
+      const { result, exports } = await replayCertificateCount(answer);
+      assert.equal(exports, 0, answer); assert.deepEqual(result.caCertificates, []);
+    }
+    for (const answer of ["Count: 2 (0x2)", "Count: 0x2 (2)"]) assert.equal((await replayCertificateCount(answer)).exports, 2);
+    assert.equal((await replayCertificateCount("Count: 0")).exports, 0);
+    assert.equal((await replayCertificateCount("Count: 32")).exports, 8);
+  });
+
   it("marks a server-auth template and clean CA flags safe", () => {
     const templateCheck = parseTemplateDump(SAFE_TEMPLATE);
     assert.equal(templateCheck.verdict, "safe");

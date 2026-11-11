@@ -3,6 +3,8 @@ import {
   Alert,
   AlertDescription,
   AlertIcon,
+  AlertTitle,
+  Box,
   Button,
   FormControl,
   FormHelperText,
@@ -88,7 +90,7 @@ function certificateUsesName(certificate, dnsName) {
 }
 
 function sourceIsThisCertificate(certificate, source) {
-  if (source?.endedAt) return false;
+  if (source?.endedAt && !source.periodEndedAt) return false;
   if (!certificate?.identityId || !source?.currentIdentityId) return true;
   return source.currentIdentityId === certificate.identityId;
 }
@@ -115,7 +117,10 @@ function extraDnsNames(value, reference) {
 }
 
 function sweepSentence(dnsName, leadDays) {
-  return `The sweep enrolls when the certificate is inside the ${leadDays} day lead time and an agent that declares ${dnsName} has passed the CA check and is online.`;
+  const window = leadDays
+    ? `the ${leadDays} day lead time`
+    : 'the deployment renewal window';
+  return `The sweep enrolls when the certificate is inside ${window} and an agent that declares ${dnsName} has passed the CA check and is online.`;
 }
 
 /**
@@ -217,7 +222,7 @@ export default function AdcsProfileWizard({
   const [store, setStore] = useState('My');
   const [keyAlgorithm, setKeyAlgorithm] = useState('rsa');
   const [keySize, setKeySize] = useState('2048');
-  const [leadTime, setLeadTime] = useState('30');
+  const [leadTime, setLeadTime] = useState('');
   const [agents, setAgents] = useState([]);
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState('');
@@ -242,7 +247,7 @@ export default function AdcsProfileWizard({
       setStore('My');
       setKeyAlgorithm('rsa');
       setKeySize('2048');
-      setLeadTime('30');
+      setLeadTime('');
       setBusy(false);
       setLocalError('');
       setCreated(null);
@@ -336,7 +341,7 @@ export default function AdcsProfileWizard({
         dnsNames,
         keyAlgorithm,
         keySize: Number(keySize),
-        renewBeforeDays: Number(leadTime),
+        renewBeforeDays: leadTime.trim() ? Number(leadTime) : null,
       });
       setCreated(profile);
       showSuccess('Renewal profile created.');
@@ -401,7 +406,7 @@ export default function AdcsProfileWizard({
     site.trim() &&
     store.trim() &&
     wholeInRange(port, 1, 65535) &&
-    wholeInRange(leadTime, 1, 365) &&
+    (!leadTime.trim() || wholeInRange(leadTime, 1, 365)) &&
     extraNameCount <= 15;
 
   return (
@@ -609,13 +614,14 @@ export default function AdcsProfileWizard({
                       ))}
                     </Select>
                   </FormControl>
-                  <FormControl isRequired>
+                  <FormControl>
                     <FormLabel {...modal.labelProps}>
-                      Lead time (days)
+                      Lead time (days, optional)
                     </FormLabel>
                     <Input
                       {...modal.fieldProps}
                       aria-label='Lead time'
+                      placeholder='Use deployment default'
                       value={leadTime}
                       onChange={event => setLeadTime(event.target.value)}
                     />
@@ -666,11 +672,18 @@ export default function AdcsProfileWizard({
                   borderRadius='md'
                 >
                   <AlertIcon />
-                  <AlertDescription fontSize='sm'>
-                    {created?.agentDeclaresName
-                      ? 'An active agent already declares this certificate name. Run the CA check on that agent if you have not already. The check stores the CA certificate and template OID there.'
-                      : 'The profile is saved. No active agent declares this certificate name yet. Add the name to the agent target selectors and restart the agent. The next heartbeat publishes it. Until then the renewal sweep skips this certificate.'}
-                  </AlertDescription>
+                  <Box>
+                    <AlertTitle fontSize='sm'>
+                      {created?.agentDeclaresName
+                        ? 'Agent found'
+                        : 'Agent configuration needed'}
+                    </AlertTitle>
+                    <AlertDescription fontSize='sm'>
+                      {created?.agentDeclaresName
+                        ? 'Run the CA check on the agent if needed. It stores the CA certificate and template OID.'
+                        : 'Add this name to the agent target selectors and restart the agent. Its next heartbeat publishes the name; renewal skips this certificate until then.'}
+                    </AlertDescription>
+                  </Box>
                 </Alert>
                 {matchesLoading ? (
                   <Text fontSize='sm'>

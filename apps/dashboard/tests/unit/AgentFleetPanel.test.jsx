@@ -8,6 +8,7 @@ import {
 } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
+import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 import AgentFleetPanel from '../../src/components/certops/AgentFleetPanel.jsx';
 
@@ -64,7 +65,9 @@ vi.mock('../../src/utils/apiClient', async () => {
 function renderWithProviders(ui, initialEntries = ['/']) {
   return render(
     <ChakraProvider>
-      <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
+      <DashboardThemeProvider>
+        <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
+      </DashboardThemeProvider>
     </ChakraProvider>
   );
 }
@@ -235,11 +238,18 @@ describe('AgentFleetPanel', () => {
     expect(menus).toHaveLength(3);
     for (let index = 0; index < menus.length; index += 1) {
       fireEvent.click(menus[index]);
-      // The lazy menu container can appear before its items are mounted.
-      const viewLogs = await screen.findByRole('menuitem', {
+      // A previous menu may still be animating closed. Resolve this button's
+      // controlled portal before waiting for its lazily mounted items.
+      const menu = await waitFor(() => {
+        const controlled = document.getElementById(
+          menus[index].getAttribute('aria-controls')
+        );
+        expect(controlled).toBeInTheDocument();
+        return controlled;
+      });
+      const viewLogs = await within(menu).findByRole('menuitem', {
         name: 'View logs',
       });
-      const menu = viewLogs.closest('[role="menu"]');
       expect(viewLogs).toBeInTheDocument();
       if (index < 2) {
         expect(
@@ -730,9 +740,11 @@ describe('AgentFleetPanel', () => {
 
     rerender(
       <ChakraProvider>
-        <MemoryRouter>
-          <AgentFleetPanel refreshSignal={1} />
-        </MemoryRouter>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <AgentFleetPanel refreshSignal={1} />
+          </MemoryRouter>
+        </DashboardThemeProvider>
       </ChakraProvider>
     );
     expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(1, {

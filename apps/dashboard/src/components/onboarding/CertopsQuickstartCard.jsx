@@ -13,10 +13,10 @@ import { useCertOpsCanManage } from '../certops/useCertOps.js';
 import { SessionController } from './sessionController.js';
 import { clearGoal } from './sessionTransitions.js';
 import {
-  QUICKSTART_PATH,
   WIZARD_FLOW,
   quickstartLabel,
   quickstartMode,
+  quickstartPath,
 } from './certopsQuickstartRules.js';
 
 /**
@@ -66,7 +66,7 @@ export default function CertopsQuickstartCard({ api = onboardingAPI }) {
           flow: WIZARD_FLOW,
         }).update(clearGoal);
       }
-      navigate(QUICKSTART_PATH);
+      navigate(quickstartPath(workspaceId));
     } catch (e) {
       showError(e?.message || 'Could not open the CertOps quickstart.');
       setBusy(false);

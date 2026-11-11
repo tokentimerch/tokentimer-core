@@ -325,7 +325,7 @@ describe("Core services unit coverage", () => {
       });
 
       expect(count).to.equal(4);
-      expect(capturedParams).to.deep.equal(["ws1"]);
+      expect(capturedParams).to.deep.equal(["ws1", "u1"]);
       expect(capturedSql).to.include(
         "SELECT ca.workspace_id FROM certops_agents",
       );

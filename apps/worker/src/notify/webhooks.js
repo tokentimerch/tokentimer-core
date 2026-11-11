@@ -41,21 +41,6 @@ function discordColorForSeverity(sev) {
   }
 }
 
-function teamsThemeForSeverity(sev) {
-  // MessageCard supports themeColor keywords or hex strings
-  switch (normalizeSeverity(sev)) {
-    case "critical":
-      return "FF0000"; // Bright red
-    case "error":
-      return "FF6B35"; // Orange-red
-    case "warning":
-      return "FFA500"; // Orange
-    case "info":
-    default:
-      return "0078D4"; // Microsoft blue
-  }
-}
-
 function teamsSeverityEmoji(sev) {
   switch (normalizeSeverity(sev)) {
     case "critical":
@@ -70,13 +55,107 @@ function teamsSeverityEmoji(sev) {
   }
 }
 
+function teamsColorForSeverity(sev) {
+  // Adaptive Cards use "Attention", "Good", "Warning", "Default", or hex
+  switch (normalizeSeverity(sev)) {
+    case "critical":
+      return "Attention";
+    case "error":
+      return "Attention";
+    case "warning":
+      return "Warning";
+    case "info":
+    default:
+      return "Default";
+  }
+}
+
+function buildAdaptiveCard({ title, subtitle, statusText, facts, actions, color }) {
+  const body = [
+    {
+      type: "TextBlock",
+      text: title,
+      weight: "Bolder",
+      size: "Large",
+      wrap: true,
+      ...(color ? { color } : {}),
+    },
+  ];
+
+  if (subtitle) {
+    body.push({
+      type: "TextBlock",
+      text: subtitle,
+      weight: "Bolder",
+      size: "Medium",
+      wrap: true,
+      spacing: "Small",
+    });
+  }
+
+  if (statusText) {
+    body.push({
+      type: "TextBlock",
+      text: statusText,
+      wrap: true,
+      spacing: "Small",
+    });
+  }
+
+  if (facts && facts.length > 0) {
+    body.push({
+      type: "FactSet",
+      facts: facts.map((f) => ({ title: f.title, value: f.value })),
+      spacing: "Medium",
+    });
+  }
+
+  const card = {
+    type: "message",
+    attachments: [
+      {
+        contentType: "application/vnd.microsoft.card.adaptive",
+        contentUrl: null,
+        content: {
+          type: "AdaptiveCard",
+          $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+          version: "1.4",
+          body,
+          ...(actions && actions.length > 0 ? { actions } : {}),
+        },
+      },
+    ],
+  };
+
+  return card;
+}
+
 export async function postJson(webhookUrl, body, kind = "generic") {
+  let url;
   try {
-    const url = new URL(webhookUrl);
+    url = new URL(webhookUrl);
+  } catch {
+    return {
+      success: false,
+      code: "WEBHOOK_INVALID_URL",
+      error: "Invalid webhook URL",
+    };
+  }
+  try {
     const schemeOk = url.protocol === "https:" || url.protocol === "http:";
-    if (!schemeOk) throw new Error("Invalid webhook URL scheme");
+    if (!schemeOk) {
+      return {
+        success: false,
+        code: "WEBHOOK_INVALID_URL",
+        error: "Invalid webhook URL scheme",
+      };
+    }
     if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
-      throw new Error("In production, only HTTPS webhook URLs are allowed");
+      return {
+        success: false,
+        code: "WEBHOOK_INVALID_URL",
+        error: "In production, only HTTPS webhook URLs are allowed",
+      };
     }
     const lowerKind = String(kind || "generic").toLowerCase();
     if (
@@ -93,7 +172,11 @@ export async function postJson(webhookUrl, body, kind = "generic") {
       try {
         cDeniedHost.labels(lowerKind, url.hostname).inc();
       } catch (_) {}
-      throw new Error("Webhook host not allowed for provider");
+      return {
+        success: false,
+        code: "WEBHOOK_HOST_NOT_ALLOWED",
+        error: "Webhook host not allowed for provider",
+      };
     }
 
     // In test mode, short-circuit network calls for deterministic outcomes
@@ -146,6 +229,7 @@ export async function postJson(webhookUrl, body, kind = "generic") {
         : {
             success: false,
             status: result.status,
+            code: "WEBHOOK_PROVIDER_REJECTED",
             error: `PagerDuty responded HTTP ${result.status}`,
           };
     }
@@ -156,14 +240,15 @@ export async function postJson(webhookUrl, body, kind = "generic") {
       ...(!success ? { error: `HTTP ${result.status}` } : {}),
     };
   } catch (e) {
-    if (e && e.code === "WEBHOOK_PRIVATE_IP_BLOCKED") {
-      return { success: false, error: e.message };
+    const code = e && e.code ? String(e.code) : "WEBHOOK_NETWORK";
+    if (code === "WEBHOOK_PRIVATE_IP_BLOCKED") {
+      return { success: false, code, error: e.message };
     }
     if (e && e.status) {
       const msg = e.message || `HTTP ${e.status}`;
-      return { success: false, error: msg };
+      return { success: false, status: e.status, code, error: msg };
     }
-    return { success: false, error: e.message };
+    return { success: false, code, error: e && e.message ? e.message : "Webhook request failed" };
   }
 }
 
@@ -406,9 +491,11 @@ function formatDiscordPayload(text, tokenData, opts = {}) {
 
 function formatTeamsPayload(text, tokenData, opts = {}) {
   if (!tokenData) {
-    return {
-      text: `${teamsSeverityEmoji(opts?.severity)} ${opts?.title || text}`,
-    };
+    return buildAdaptiveCard({
+      title: `${teamsSeverityEmoji(opts?.severity)} ${opts?.title || text}`,
+      facts: [],
+      actions: [],
+    });
   }
 
   const severity = normalizeSeverity(opts?.severity);
@@ -417,7 +504,6 @@ function formatTeamsPayload(text, tokenData, opts = {}) {
   const expired = typeof daysLeft === "number" && daysLeft < 0;
   const absDays = typeof daysLeft === "number" ? Math.abs(daysLeft) : daysLeft;
 
-  // Create a more descriptive title with emoji
   let title = `${severityEmoji} Token Expiry Alert`;
   if (expired) {
     title = `🚨 CRITICAL: Token Expired`;
@@ -427,76 +513,51 @@ function formatTeamsPayload(text, tokenData, opts = {}) {
     title = `🟡 WARNING: Token Expires Soon`;
   }
 
-  return {
-    "@type": "MessageCard",
-    "@context": "https://schema.org/extensions",
-    summary: title,
-    themeColor: teamsThemeForSeverity(severity),
-    sections: [
-      {
-        activityTitle: title,
-        activitySubtitle: `🔔 ${tokenData.name || `Token #${tokenData.token_id}`}`,
-        text: expired
-          ? `**Expired ${absDays} day(s) ago**`
-          : `**Expires in ${daysLeft} day(s)**`,
-        facts: [
-          {
-            name: "📋 Type",
-            value: tokenData.type || "Unknown",
-          },
-          {
-            name: "📅 Expiration Date",
-            value: tokenData.expiration || "Unknown",
-          },
-          {
-            name: expired ? "⚡ Status" : "⚡ Severity",
-            value: expired
-              ? `Expired ${absDays} day(s) ago`
-              : severity.toUpperCase(),
-          },
-          {
-            name: expired ? "⏰ Status" : "⏰ Days Remaining",
-            value: expired
-              ? `Expired ${absDays} day(s) ago`
-              : `${daysLeft} day(s)`,
-          },
-          ...(tokenData.renewal_url
-            ? [
-                {
-                  name: "🔗 Renewal URL",
-                  value: `[${tokenData.renewal_url}](${tokenData.renewal_url})`,
-                },
-              ]
-            : []),
-        ],
-        markdown: true,
-      },
-    ],
-    potentialAction: [
-      ...(tokenData.renewal_url
-        ? [
-            {
-              "@type": "OpenUri",
-              name: "Renew Now",
-              targets: [
-                {
-                  os: "default",
-                  uri: tokenData.renewal_url,
-                },
-              ],
-            },
-          ]
-        : []),
-      {
-        "@type": "OpenUri",
-        name: "View in TokenTimer",
-        targets: [
-          {
-            os: "default",
-            uri: `${process.env.APP_URL || "http://localhost:5173"}/dashboard`,
-          },
-        ],
-      },
-    ],
-  };
+  const subtitle = `🔔 ${tokenData.name || `Token #${tokenData.token_id}`}`;
+  const statusText = expired
+    ? `**Expired ${absDays} day(s) ago**`
+    : `**Expires in ${daysLeft} day(s)**`;
+
+  const facts = [
+    { title: "📋 Type", value: tokenData.type || "Unknown" },
+    { title: "📅 Expiration Date", value: tokenData.expiration || "Unknown" },
+    {
+      title: expired ? "⚡ Status" : "⚡ Severity",
+      value: expired ? `Expired ${absDays} day(s) ago` : severity.toUpperCase(),
+    },
+    {
+      title: expired ? "⏰ Status" : "⏰ Days Remaining",
+      value: expired ? `Expired ${absDays} day(s) ago` : `${daysLeft} day(s)`,
+    },
+  ];
+
+  if (tokenData.renewal_url) {
+    facts.push({
+      title: "🔗 Renewal URL",
+      value: `[${tokenData.renewal_url}](${tokenData.renewal_url})`,
+    });
+  }
+
+  const actions = [];
+  if (tokenData.renewal_url) {
+    actions.push({
+      type: "Action.OpenUrl",
+      title: "Renew Now",
+      url: tokenData.renewal_url,
+    });
+  }
+  actions.push({
+    type: "Action.OpenUrl",
+    title: "View in TokenTimer",
+    url: `${process.env.APP_URL || "http://localhost:5173"}/dashboard`,
+  });
+
+  return buildAdaptiveCard({
+    title,
+    subtitle,
+    statusText,
+    facts,
+    actions,
+    color: teamsColorForSeverity(severity),
+  });
 }

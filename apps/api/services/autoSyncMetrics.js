@@ -2,6 +2,8 @@
 
 const { pool } = require("../db/database");
 
+const { registerAutoSyncDetailMetrics } = require("./autoSyncDetailMetrics");
+
 const METRIC_NAME = "auto_sync_items_created_total";
 const METRIC_HELP =
   "Inventory items created by auto-sync since instrumentation was enabled, by provider";
@@ -66,6 +68,7 @@ function registerRunMetrics(register, providers) {
  */
 function registerAutoSyncMetrics(register, { providers = ["github", "gitlab"] } = {}) {
   registerRunMetrics(register, [...new Set(providers)]);
+  registerAutoSyncDetailMetrics(register, [...new Set(providers)]);
   const existing = register.getSingleMetric(METRIC_NAME);
   if (existing) return existing;
 

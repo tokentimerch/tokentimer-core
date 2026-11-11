@@ -551,9 +551,7 @@ describe('CertOpsAdcs', () => {
       }
       expect(await screen.findByText(/New AD CS profile/)).toBeInTheDocument();
       expect(
-        screen.getByText(
-          /attaches the profile to a certificate already in inventory/
-        )
+        screen.getByText(/attach it to a certificate already in inventory/)
       ).toBeInTheDocument();
     }
   );

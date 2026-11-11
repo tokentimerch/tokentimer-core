@@ -102,6 +102,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     extractQuotaFromError,
     contactGroups,
     onSelectionChange,
+    afterFilterRules = null,
     autoSyncManageMode = false,
     initialScanParams = null,
     initialFilterRules = null,
@@ -563,20 +564,38 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
                   what that scan covered.
                 </Text>
               ) : gitlabSummary.some(s => s.complete === false) ? (
-                <Text fontSize='xs' color='orange.400' pl={6}>
-                  The last scan didn't fully complete for every token type above
-                  (see the errors below). The backend will only clean up the
-                  token types and scopes it confirmed were fully scanned;
-                  nothing incomplete or errored is ever touched.
+                <Text
+                  fontSize='sm'
+                  color='orange.400'
+                  pl={6}
+                  role='alert'
+                  p={3}
+                  borderWidth='1px'
+                  borderRadius='md'
+                  _light={{ color: 'orange.800', bg: 'orange.50' }}
+                  _dark={{ color: 'orange.100', bg: 'orange.900' }}
+                >
+                  <strong>Incomplete scan:</strong> Some item types or scopes
+                  did not finish. Cleanup excludes an item type if any required
+                  scope failed or was incomplete.
                 </Text>
               ) : null}
               {cleanupObsolete ? (
-                <Text fontSize='xs' color='red.400' pl={6}>
-                  Deletes previously imported tokens of the token types scanned
-                  above that no longer appear anywhere in this scan's results,
-                  regardless of which items you select for import below. Token
-                  types you did not scan for, or that this scan couldn't fully
-                  complete, are never affected. This cannot be undone.
+                <Text
+                  fontSize='sm'
+                  color='red.400'
+                  pl={6}
+                  role='alert'
+                  p={3}
+                  borderWidth='1px'
+                  borderRadius='md'
+                  _light={{ color: 'red.800', bg: 'red.50' }}
+                  _dark={{ color: 'red.100', bg: 'red.900' }}
+                >
+                  <strong>Permanent deletion:</strong> Permanently deletes
+                  previously imported tokens missing from this scan, regardless
+                  of selections below. Only fully scanned item types are
+                  eligible. This cannot be undone.
                 </Text>
               ) : null}
             </VStack>
@@ -589,6 +608,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
         borderColor={borderColor}
         helpTextColor={helpTextColor}
       />
+      {afterFilterRules}
       {!autoSyncManageMode && filterSummary ? (
         <HStack spacing={2}>
           <Badge colorScheme='green'>

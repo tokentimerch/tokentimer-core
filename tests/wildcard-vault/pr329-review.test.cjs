@@ -105,6 +105,7 @@ async function fixture({ expired = false, validFor = "1 day", required = true, r
     [workspaceId, actor, requireApproval],
   );
   for (const [id, role] of [
+    [approver, "workspace_manager"],
     [manager, "workspace_manager"],
     [viewer, "viewer"],
   ]) {
@@ -1495,6 +1496,157 @@ test("a required failure inside a wave pauses the rollout without disturbing its
   assert.equal(await lab.deployJobCount(), 2);
   assert.deepEqual(await lab.current(), { "canary-a": true, "canary-b": false, rest: false });
   assert.deepEqual(await lab.failedJobIds(), [deployments["canary-b"].job_id]);
+});
+
+test("an in-flight deployment blocks consumer reassignment", async () => {
+  const f = await fixture();
+  const lab = await waveLab(f, [{ name: "original", wave: 0 }, { name: "other", wave: 0 }]);
+  await lab.advance();
+  assert.ok(await lab.claim("original"));
+  await assert.rejects(() => operations.putBinding({ workspaceId: f.workspaceId, groupId: f.groupId,
+    bindingId: lab.nodes.original.bindingId, actorUserId: f.actor,
+    binding: { ...f.binding, agentId: lab.nodes.other.agentId, wave: 0, required: true } }),
+    { code: "CERTOPS_CONSUMER_REASSIGNMENT_REQUIRES_RECONCILIATION" });
+});
+
+test("publication retry rejects a job whose issuer or profile no longer matches its frozen group", async () => {
+  const f = await fixture();
+  const job = (await pool.query(`SELECT j.* FROM certificate_jobs j JOIN certops_material_versions v
+    ON v.workspace_id=j.workspace_id AND v.publishing_job_id=j.id WHERE v.id=$1`, [f.materialVersionId])).rows[0];
+  await pool.query("UPDATE certificate_jobs SET status='failed' WHERE id=$1", [job.id]);
+  await pool.query("UPDATE certificate_jobs SET payload=jsonb_set(payload,'{publication,profileRevision}','2'::jsonb) WHERE id=$1", [job.id]);
+  await assert.rejects(() => operations.retryDistributionJob({ workspaceId:f.workspaceId, jobId:job.id, actorUserId:f.actor }),
+    { code:"CERTOPS_PUBLICATION_INTENT_MISMATCH" });
+  assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [job.id])).rows[0].status, "failed");
+  await pool.query("UPDATE certificate_jobs SET payload=$2::jsonb,assigned_agent_id=$3 WHERE id=$1", [job.id,JSON.stringify(job.payload),f.consumer]);
+  await assert.rejects(() => operations.retryDistributionJob({ workspaceId:f.workspaceId, jobId:job.id, actorUserId:f.actor }),
+    { code:"CERTOPS_PUBLICATION_INTENT_MISMATCH" });
+  assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [job.id])).rows[0].status, "failed");
+  await pool.query("UPDATE certificate_jobs SET assigned_agent_id=$2 WHERE id=$1", [job.id,f.issuer]);
+  const retried = await operations.retryDistributionJob({ workspaceId:f.workspaceId, jobId:job.id, actorUserId:f.actor });
+  assert.equal(retried.jobId, job.id);
+  assert.equal(retried.materialVersionId, f.materialVersionId);
+  assert.equal(retried.status, "pending");
+});
+
+test("a reviewer removed and restored cannot revive a pending rollout approval", async () => {
+  const f = await fixture();
+  const job = await f.approved();
+  await pool.query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2", [f.workspaceId, f.approver]);
+  await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'workspace_manager')", [f.workspaceId, f.approver]);
+  const result = await operations.transaction(client => operations.processDistributionIntent({ client,
+    row: { workspace_id: f.workspaceId, event_type: "distribution_approval_granted" }, payload: { jobId: job.id } }));
+  assert.deepEqual(result, { queued:false, reason:"rollout_approval_stale" });
+  const stored = (await pool.query("SELECT status,error_code FROM certificate_jobs WHERE id=$1", [job.id])).rows[0];
+  assert.deepEqual(stored, { status:"failed", error_code:"CERTOPS_ROLLOUT_APPROVAL_STALE" });
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM certops_distribution_rollouts WHERE approval_job_id=$1", [job.id])).rows[0].n, 0);
+  const fresh = await f.approved();
+  const snapshot = await operations.transaction(client => material.createRolloutSnapshot({ client, ...f,
+    approvalJobId:fresh.id, approvedIntentHash:material.hashIntent(fresh.payload.distributionRollout) }));
+  assert.ok(snapshot.rolloutId);
+});
+
+test("membership removal cannot commit concurrently with a locked rollout authorization", async () => {
+  const f = await fixture();
+  const job = await f.approved();
+  const first = await pool.connect(), second = await pool.connect();
+  try {
+    await first.query("BEGIN");
+    await require("../../apps/api/services/certops/manualRolloutAuthority")
+      .assertManualRolloutAuthority(first, f.workspaceId, f.groupId, job.id);
+    let finished = false;
+    const removal = second.query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2", [f.workspaceId, f.approver])
+      .then(() => { finished = true; });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(finished, false, "membership removal must wait for the authorization transaction");
+    await first.query("COMMIT");
+    await removal;
+    await assert.rejects(() => operations.transaction(client => require("../../apps/api/services/certops/manualRolloutAuthority")
+      .assertManualRolloutAuthority(client, f.workspaceId, f.groupId, job.id)),
+    { code:"CERTOPS_DISTRIBUTION_AUTHORIZATION_STALE" });
+  } finally {
+    await first.query("ROLLBACK");
+    first.release();
+    second.release();
+  }
+});
+
+test("an otherwise valid pre-upgrade approval cannot authorize a new deployment", async () => {
+  const f = await fixture();
+  const job = await f.approved();
+  const row = (await pool.query("SELECT * FROM certificate_jobs WHERE id=$1", [job.id])).rows[0];
+  delete row.payload.distributionRollout.manualRolloutAuthorizationRevision;
+  const approvals = apiRequire("./services/certops/jobApprovals");
+  const payloadHash = approvals.computeJobPayloadApprovalHash(row.payload);
+  const intentHash = approvals.computeCanonicalIntentHash({ operation:row.operation, subjectType:row.subject_type,
+    subjectId:row.subject_id, payload:row.payload });
+  await pool.query("UPDATE certificate_jobs SET payload=$2::jsonb,approved_payload_hash=$3,approved_canonical_intent_hash=$4 WHERE id=$1",
+    [job.id, JSON.stringify(row.payload), payloadHash, intentHash]);
+  await assert.rejects(() => operations.transaction(client => require("../../apps/api/services/certops/manualRolloutAuthority")
+    .assertManualRolloutAuthority(client, f.workspaceId, f.groupId, job.id)),
+  { code:"CERTOPS_DISTRIBUTION_AUTHORIZATION_STALE" });
+  assert.equal((await pool.query("SELECT approved_payload_hash FROM certificate_jobs WHERE id=$1", [job.id])).rows[0].approved_payload_hash, payloadHash);
+});
+
+test("restored human authority and workspace policy never revive a rollout at claim, renewal or retry", async t => {
+  for (const change of ["requester", "reviewer", "owner", "pause", "approval-policy"]) await t.test(change, async () => {
+    const f = await fixture();
+    if (change === "requester") f.rolloutRequest.actorUserId = f.manager;
+    const lab = await waveLab(f, [{ name:"claimed", wave:0 }, { name:"waiting", wave:0 }]);
+    await lab.advance();
+    const claimed = await lab.claim("claimed");
+    assert.ok(claimed);
+    if (change === "reviewer" || change === "requester") {
+      const userId = change === "reviewer" ? f.approver : f.manager;
+      await pool.query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2", [f.workspaceId,userId]);
+      await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'workspace_manager')", [f.workspaceId,userId]);
+    } else if (change === "owner") {
+      await pool.query("UPDATE workspaces SET created_by=$2 WHERE id=$1", [f.workspaceId,f.manager]);
+      await pool.query("UPDATE workspaces SET created_by=$2 WHERE id=$1", [f.workspaceId,f.actor]);
+    } else {
+      const column = change === "pause" ? "certops_paused" : "certops_require_approval_always";
+      await pool.query(`UPDATE workspaces SET ${column}=true WHERE id=$1`, [f.workspaceId]);
+      await pool.query(`UPDATE workspaces SET ${column}=false WHERE id=$1`, [f.workspaceId]);
+    }
+    assert.equal(await lab.claim("waiting"), null);
+    const dispatch = apiRequire("./services/certops/agentDispatch");
+    await assert.rejects(() => dispatch.renewJobLease({ agent:claimed.agent, jobId:claimed.intent.jobId,
+      claimId:claimed.intent.claimId, deps:{ enforceAgentSequence:async () => {} } }),
+    { code:"CERTOPS_DISTRIBUTION_AUTHORIZATION_STALE" });
+    const waiting = (await lab.deployments()).waiting.job_id;
+    await pool.query("UPDATE certificate_jobs SET status='failed' WHERE id=$1", [waiting]);
+    await assert.rejects(() => operations.retryDistributionJob({ workspaceId:f.workspaceId, jobId:waiting, actorUserId:f.actor }),
+      { code:"CERTOPS_DISTRIBUTION_AUTHORIZATION_STALE" });
+    assert.deepEqual(await lab.advance(), { queued:false, reason:"rollout_authorization_stale" });
+    assert.equal(await lab.rolloutState(), "paused");
+    await assert.rejects(() => operations.setRolloutState({ workspaceId:f.workspaceId, groupId:f.groupId,
+      rolloutId:lab.rolloutId, state:"deploying", actorUserId:f.actor }),
+    { code:"CERTOPS_DISTRIBUTION_AUTHORIZATION_STALE" });
+  });
+});
+
+test("retrying a degraded optional deployment pauses for explicit resume and preserves siblings", async () => {
+  const f = await fixture();
+  const lab = await waveLab(f, [{ name: "required", wave: 0 }, { name: "optional", wave: 0, required: false }]);
+  await lab.advance();
+  await lab.run("required", "succeeded");
+  await lab.run("optional", "failed");
+  assert.equal(await lab.rolloutState(), "degraded");
+  const before = await lab.snapshotOf(["required"]);
+  const failedId = (await lab.deployments()).optional.job_id;
+  await pool.query("UPDATE certificate_jobs SET status='orphaned_unknown_effect',needs_operator_reconciliation=true WHERE id=$1", [failedId]);
+  await pool.query("UPDATE certops_consumer_deployments SET stage='orphaned_unknown_effect' WHERE job_id=$1", [failedId]);
+  await operations.retryDistributionJob({ workspaceId: f.workspaceId, jobId: failedId, actorUserId: f.actor });
+  assert.equal(await lab.rolloutState(), "paused");
+  assert.equal((await lab.deployments()).optional.stage, "orphaned_unknown_effect");
+  assert.equal(await lab.claim("optional"), null);
+  assert.deepEqual(await lab.snapshotOf(["required"]), before);
+  await operations.setRolloutState({ workspaceId: f.workspaceId, groupId: f.groupId, rolloutId: lab.rolloutId, state: "deploying", actorUserId: f.actor });
+  await lab.advance();
+  await lab.run("optional", "succeeded");
+  assert.equal(await lab.rolloutState(), "verified");
+  assert.equal((await lab.deployments()).optional.job_id, failedId);
+  assert.deepEqual(await lab.snapshotOf(["required"]), before);
 });
 
 test("an optional destination failure never blocks the rollout, a required one does", async (t) => {

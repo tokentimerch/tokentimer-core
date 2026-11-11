@@ -115,6 +115,20 @@ $definition=$d.Extent.Text
 if($env:OS -eq 'Windows_NT'){
  [Console]::InputEncoding=[Text.UTF8Encoding]::new($true)
  $definition=$definition.Replace('$ErrorActionPreference="Stop"; $phase=', '[Console]::InputEncoding=[Text.Encoding]::GetEncoding(437); $ErrorActionPreference="Stop"; $phase=')
+ $definition=$definition.Replace('$process.StandardInput.Close()', @'
+$process.StandardInput.Close()
+if($script:captureCaDescendant){
+ $captureClock=[Diagnostics.Stopwatch]::StartNew()
+ while(-not(Test-Path ($env:CA_CHILD+'.pid'))){
+  if($captureClock.Elapsed.TotalSeconds -gt 5){throw 'Owned descendant capture deadline exceeded'}
+  Start-Sleep -Milliseconds 10
+ }
+ $script:caDescendant=Get-Process -Id ([int](Get-Content ($env:CA_CHILD+'.pid'))) -ErrorAction Stop
+ $null=$script:caDescendant.Handle
+ if(-not $ownedJob.Contains($script:caDescendant.Handle)){throw 'Descendant escaped owned job before release'}
+ Set-Content -LiteralPath ($env:CA_CHILD+'.release') -Value 'ready'
+}
+'@)
 }
 . ([scriptblock]::Create($definition))
 $clock=[Diagnostics.Stopwatch]::StartNew();$failed=$false
@@ -131,16 +145,34 @@ if($receipt.Count -ne 1 -or $receipt[0] -cne 'CERTOPS_STAGE=enterprise-ca-servic
 if($env:OS -eq 'Windows_NT'){
  Set-Content -LiteralPath $env:CA_CHILD -Value @'
 param($DomainPassword,$HierarchyRole,$StageTimeoutSeconds,[switch]$BootstrapWorker)
-$descendant=Start-Process powershell.exe -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 8' -NoNewWindow -PassThru
-$descendant.Id|Set-Content ($env:CA_CHILD+'.pid')
+$descendant=Start-Process powershell.exe -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 60' -NoNewWindow -PassThru
+$pidReceipt=$env:CA_CHILD+'.pid'
+[IO.File]::WriteAllText(($pidReceipt+'.tmp'),[string]$descendant.Id,[Text.UTF8Encoding]::new($false))
+[IO.File]::Move(($pidReceipt+'.tmp'),$pidReceipt)
+while(-not(Test-Path ($env:CA_CHILD+'.release'))){Start-Sleep -Milliseconds 10}
 Write-Output 'CERTOPS_STAGE=enterprise-ca-service-running'
 '@
  $clock.Restart()
- $receipt=@(Invoke-CaBootstrapProcess -Script $env:CA_CHILD -Password 'private-fixture-password' -Role root -Seconds 3 -GraceSeconds 0)
- $ownedPid=[int](Get-Content ($env:CA_CHILD+'.pid'))
- if($clock.Elapsed.TotalSeconds -gt 6 -or (Get-Process -Id $ownedPid -ErrorAction SilentlyContinue)){throw 'Descendant retained the output pipe or survived owned cleanup'}
+ $script:captureCaDescendant=$true
+ try{
+  $receipt=@(Invoke-CaBootstrapProcess -Script $env:CA_CHILD -Password 'private-fixture-password' -Role root -Seconds 3 -GraceSeconds 0)
+  # Termination is asynchronous; wait on the captured owned handle, within the total bound.
+  if(-not $script:caDescendant.WaitForExit(2000)){throw 'Descendant survived owned cleanup'}
+  if($clock.Elapsed.TotalSeconds -gt 6){throw 'Descendant output exceeded its deadline'}
+ }finally{if($script:caDescendant){$script:caDescendant.Dispose()}}
  if($receipt.Count -ne 1 -or $receipt[0] -cne 'CERTOPS_STAGE=enterprise-ca-service-running'){throw 'Descendant cleanup changed the success receipt'}
+ $script:captureCaDescendant=$false
 }
+Set-Content -LiteralPath $env:CA_CHILD -Value @'
+param($DomainPassword,$HierarchyRole,$StageTimeoutSeconds,[switch]$BootstrapWorker)
+throw 'private-fixture-password'
+'@
+$failed=$false
+try{Invoke-CaBootstrapProcess -Script $env:CA_CHILD -Password 'private-fixture-password' -Role root -Seconds 3 -GraceSeconds 0}catch{
+ if($_.Exception.Message -notmatch '^Owned CA bootstrap process failed: worker:' -or $_.Exception.Message.Contains('private-fixture-password')){throw 'Worker failure was not bounded'}
+ $failed=$true
+}
+if(-not $failed){throw 'Failed CA worker was accepted'}
 Write-Output 'PROCESS_DEADLINE_PASSED'
 `);
  const env={...process.env,CA_PRODUCTION:path.resolve(__dirname,'../infra/certops-adcs/domain-ca.ps1'),CA_CHILD:child};delete env.PSModulePath;

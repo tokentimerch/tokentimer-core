@@ -672,7 +672,7 @@ describe('the install step display', () => {
       certops: observeLinux,
       items: [win],
     });
-    expect(screen.getByText('Waiting for an agent')).toBeVisible();
+    expect(screen.getAllByText('Waiting for an agent')[0]).toBeVisible();
     expect(screen.queryByText('Connected')).toBeNull();
     expect(screen.queryByText(/WIN-CA01 \(win32, version/)).toBeNull();
     expect(screen.queryByTestId('other-system-agents')).toBeNull();
@@ -693,7 +693,7 @@ describe('the install step display', () => {
     '%s with only a Windows agent shows no connected agent',
     (_n, goal, certops) => {
       mount(AgentStep, { goal, certops, items: [win] });
-      expect(screen.getByText('Waiting for an agent')).toBeVisible();
+      expect(screen.getAllByText('Waiting for an agent')[0]).toBeVisible();
       expect(screen.queryByText('Connected')).toBeNull();
       expect(screen.queryByText(/WIN-CA01 \(win32, version/)).toBeNull();
     }
@@ -706,7 +706,7 @@ describe('the install step display', () => {
     ]) {
       cleanup();
       mount(AgentStep, { goal, certops, items: [lin] });
-      expect(screen.getByText('Waiting for an agent')).toBeVisible();
+      expect(screen.getAllByText('Waiting for an agent')[0]).toBeVisible();
       expect(screen.queryByText(/web-01 \(linux, version/)).toBeNull();
       expect(screen.queryByTestId('other-system-agents')).toBeNull();
     }
@@ -732,7 +732,7 @@ describe('the install step display', () => {
       certops: observeLinux,
       items: [{ ...lin, existedBeforeSession: true }],
     });
-    expect(screen.getByText('Waiting for an agent')).toBeVisible();
+    expect(screen.getAllByText('Waiting for an agent')[0]).toBeVisible();
     expect(screen.queryByText('Connected')).toBeNull();
     expect(screen.queryByText(REUSE_WORDING)).toBeNull();
     expect(screen.queryByText(/web-01 \(linux, version/)).toBeNull();
@@ -841,6 +841,15 @@ describe('the install step display', () => {
     );
     const saved = update.mock.calls[0][0](ctx.session);
     expect(saved.progress.certops.chosenAgentId).toBeUndefined();
+  });
+  it('shows recovery details when an agent lacks its command profile', () => {
+    mount(AgentStep, {
+      goal: 'certops_automate',
+      certops: { objective: 'automate', infrastructure: 'linux' },
+      items: [{ ...lin, commandProfiles: [], existedBeforeSession: false }],
+    });
+    fireEvent.click(screen.getByText('If the profile still does not appear'));
+    expect(screen.getByText(/Current agents publish profiles at check-in/)).toBeVisible();
   });
   it('an agent enrolled by this guide is simply connected', () => {
     mount(AgentStep, {

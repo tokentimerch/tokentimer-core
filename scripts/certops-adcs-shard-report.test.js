@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const suites = require("../docs/certops/qualification-suites.json");
+const suites = require("./certops-qualification-manifest");
 const { SHARD_NAMES, createShard, phaseOf } = require("../tests/e2e/helpers/certops-adcs-shards");
 const { verifyShardReport } = require("./certops-adcs-shard-report");
 
@@ -28,6 +28,15 @@ test("the release mode is never filtered", () => {
   assert.throws(() => createShard("bogus"), /Unknown AD CS qualification shard/);
 });
 
+test("diagnostic reports use the complete canonical inventory while full runs keep their own requirements", () => {
+  const incomplete = REQUIRED.filter((id) => id !== "adcs-real-localized-iis-repeat-deployment-idempotent");
+  const shard = createShard("issuance");
+  const required = shard.selectReportRequirements(incomplete, REQUIRED);
+  assert.ok(required.includes("adcs-real-localized-iis-repeat-deployment-idempotent"));
+  assert.deepEqual(required, shard.select(REQUIRED));
+  assert.equal(createShard("all").selectReportRequirements(incomplete, REQUIRED), incomplete);
+});
+
 function report(shard) {
   const required = createShard(shard).select(REQUIRED);
   return {
@@ -38,7 +47,7 @@ function report(shard) {
     cleanup: { status: "passed" },
     missingScenarios: [],
     requiredScenarios: required,
-    scenarios: required.map((id) => ({ id, status: "passed" })),
+    scenarios: [...required, ...(createShard(shard).runs("core") ? [] : ["adcs-real-rsa2048-issued-cng-iis"])].map((id) => ({ id, status: "passed" })),
   };
 }
 
@@ -47,6 +56,20 @@ test("a complete shard report is accepted and cannot be qualified evidence", () 
   const promoted = report("renewals");
   promoted.qualificationStatus = "qualified";
   assert.ok(verifyShardReport(promoted, "renewals").length);
+});
+
+test("non-core shards accept only their passed shared RSA setup scenario", () => {
+  const bootstrap = "adcs-real-rsa2048-issued-cng-iis";
+  const evidence = report("templates-and-uncertain");
+  assert.deepEqual(verifyShardReport(evidence, "templates-and-uncertain"), []);
+  const absent = structuredClone(evidence); absent.scenarios = absent.scenarios.filter(item => item.id !== bootstrap);
+  assert.ok(verifyShardReport(absent, "templates-and-uncertain").length);
+  const failed = structuredClone(evidence); failed.scenarios.at(-1).status = "failed";
+  assert.ok(verifyShardReport(failed, "templates-and-uncertain").length);
+  const duplicate = structuredClone(evidence); duplicate.scenarios.push(duplicate.scenarios.at(-1));
+  assert.ok(verifyShardReport(duplicate, "templates-and-uncertain").length);
+  const foreign = structuredClone(evidence); foreign.scenarios.push({ id: "adcs-real-rsa3072-issued-cng-iis", status: "passed" });
+  assert.ok(verifyShardReport(foreign, "templates-and-uncertain").length);
 });
 
 test("an unexecuted, failed or foreign scenario fails the shard", () => {
@@ -61,6 +84,16 @@ test("an unexecuted, failed or foreign scenario fails the shard", () => {
   foreign.requiredScenarios.push(createShard("issuance").select(REQUIRED).find((id) => !createShard("renewals").owns(id)));
   assert.ok(verifyShardReport(foreign, "renewals").some((e) => /outside the shard/.test(e)));
   assert.ok(verifyShardReport(report("renewals"), "all").length);
+});
+
+test("a shard cannot hide a missing native scenario by narrowing its own requirement list", () => {
+  const narrowed = report("issuance");
+  narrowed.requiredScenarios = narrowed.requiredScenarios.slice(0, -1);
+  narrowed.scenarios.pop();
+  assert.ok(verifyShardReport(narrowed, "issuance").length);
+  const duplicate = report("renewals");
+  duplicate.scenarios.push(duplicate.scenarios[0]);
+  assert.ok(verifyShardReport(duplicate, "renewals").length);
 });
 
 test("the workflow matrix keeps release evidence serial and shards parallel with valid group names", () => {

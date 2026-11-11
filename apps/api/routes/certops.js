@@ -140,8 +140,11 @@ const {
   RENEWAL_JOB_TERMINAL_STATUSES,
   countInFlightRenewalJobsByCaEndpoint,
   loadCertificateRenewalRows,
-  resolveRenewalThresholdDays,
 } = require("../services/certops/renewalScheduler");
+const {
+  resolveCertificateRenewalThresholdDays,
+  resolveRenewalThresholdPolicy,
+} = require("../services/certops/renewalThreshold");
 const { resolveRenewalPerCaCap } = require("../services/certops/renewalCapacity");
 const {
   CERTOPS_RENEWAL_OVERRIDE_INVALID,
@@ -233,9 +236,11 @@ const {
 const {
   CERTOPS_APPROVAL_APPROVER_REQUIRED,
   CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
+  CERTOPS_APPROVAL_REQUEST_STALE,
   CERTOPS_APPROVAL_REASON_INVALID,
   CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
   approveJob,
+  requestApprovalReview,
   rejectJob,
 } = require("../services/certops/jobApprovals");
 const { writeAudit } = require("../services/audit");
@@ -679,6 +684,13 @@ function handleCertOpsError(res, err) {
     return res.status(403).json({
       error: "The user who requested a CertOps job cannot approve it",
       code: CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
+    });
+  }
+
+  if (err?.code === CERTOPS_APPROVAL_REQUEST_STALE || err?.code === "CERTOPS_APPROVAL_REVIEW_REQUIRED") {
+    return res.status(409).json({
+      error: err.message,
+      code: err.code,
     });
   }
 
@@ -1403,6 +1415,7 @@ function jobApprovalDecisionHandler(decision, {
         jobId,
         approverUserId: req.user?.id || null,
         reason: req.body?.reason,
+        ...(req.body?.reviewHash !== undefined ? { reviewHash: req.body.reviewHash } : {}),
       });
 
       // Audit is written inside the approval transaction (jobApprovals.js).
@@ -1506,6 +1519,7 @@ function jobSummary(job) {
     completedAt: job.completedAt,
     cancelledAt: job.cancelledAt,
     requestedByUserId: job.requestedByUserId,
+    requestedByConnectionId: job.requestedByConnectionId ?? null,
     requestedByApiTokenId: job.requestedByApiTokenId,
     approvedByUserId: job.approvedByUserId,
     approvedByDisplayName: job.approvedByDisplayName ?? null,
@@ -2806,6 +2820,22 @@ router.post(
 // paused is safe because the agent claim path is itself blocked by the
 // kill switch, and a rejection is exactly the kind of action an operator
 // may need during an incident.
+router.get(
+  "/api/v1/workspaces/:id/certops/jobs/:jobId/approval-review",
+  getApiLimiter(), requireCertOpsEnabled, requireCertOpsSessionUser, requireCertOpsWriteRole,
+  async (req, res) => {
+    const jobId = jobIdFromParams(req, res);
+    if (!jobId) return null;
+    try { res.set("Cache-Control", "no-store"); return res.json(await requestApprovalReview({ workspaceId: req.workspace.id, jobId, viewerUserId: req.user?.id })); }
+    catch (error) {
+      const handled = handleCertOpsError(res, error);
+      if (handled) return handled;
+      logger.error("CertOps approval review failed", { code: error.code, workspaceId: req.workspace?.id, jobId });
+      return res.status(500).json({ error: "Failed to load approval review", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
 router.post(
   "/api/v1/workspaces/:id/certops/jobs/:jobId/approve",
   getApiLimiter(),
@@ -3175,17 +3205,6 @@ const RENEWAL_MOOT_CERTIFICATE_STATUSES = new Set([
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-/**
- * Effective renewal lead time: the per-profile override when it is a usable
- * positive integer, else the deployment-wide threshold. Matches the
- * COALESCE(cp.renew_before_days, threshold) the scheduler scans with.
- */
-function effectiveRenewBeforeDays(profileRenewBeforeDays, env) {
-  const parsed = Number.parseInt(profileRenewBeforeDays, 10);
-  if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
-  return resolveRenewalThresholdDays(env);
-}
-
 function renewalWindowStart(notAfter, renewBeforeDays) {
   if (!notAfter) return null;
   const expiry = new Date(notAfter);
@@ -3252,10 +3271,7 @@ function deriveCertificateRenewalState(
     };
   }
 
-  const renewBeforeDays = effectiveRenewBeforeDays(
-    row?.profile_renew_before_days,
-    env,
-  );
+  const renewBeforeDays = resolveCertificateRenewalThresholdDays(row, env);
 
   // Deliberate operator intent, so it is reported before profile completeness:
   // a switched-off certificate is not misconfigured and telling the operator to
@@ -3303,7 +3319,9 @@ function deriveCertificateRenewalState(
     };
   }
 
-  const renewsFrom = renewalWindowStart(row?.not_after, renewBeforeDays);
+  const renewsFrom = row?.renews_from
+    ? new Date(row.renews_from).toISOString()
+    : renewalWindowStart(row?.not_after, renewBeforeDays);
   if (!renewsFrom) {
     // The scheduler only scans rows with a not_after, so a complete profile
     // still never produces a job without a recorded expiry.
@@ -3321,7 +3339,9 @@ function deriveCertificateRenewalState(
     state: CERTOPS_RENEWAL_STATE_AUTO,
     renewBeforeDays,
     renewsFrom,
-    detail: `Renewal is attempted automatically from ${renewBeforeDays} days before expiry.`,
+    detail: renewBeforeDays < 1
+      ? `Renewal is attempted automatically from ${Number((renewBeforeDays * 24).toFixed(2))} hours before expiry.`
+      : `Renewal is attempted automatically from ${renewBeforeDays} days before expiry.`,
   };
 }
 
@@ -3337,6 +3357,7 @@ function renewalRowFromInventoryRecord(certificate) {
     status: certificate?.status,
     key_mode: certificate?.keyMode,
     key_reference: certificate?.keyReference,
+    not_before: certificate?.notBefore,
     not_after: certificate?.notAfter,
     common_name: certificate?.commonName,
     subject_alt_names: certificate?.subjectAltNames,
@@ -3782,7 +3803,7 @@ router.get(
         offset: req.query.offset,
         sort: req.query.sort,
         direction: req.query.direction,
-        thresholdDays: resolveRenewalThresholdDays(process.env),
+        ...resolveRenewalThresholdPolicy(process.env),
       });
       return res.json(result);
     } catch (err) {
@@ -4382,7 +4403,8 @@ router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumer
   }));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/versions", ...csrReadGuards,
   csrRoute(async (req) => ({ versions: (await pool.query(`SELECT id,workspace_id,group_id,management_period_id,
-    publishing_job_id,profile_revision,state,certificate_identity_id,provider_version,
+    publishing_job_id,profile_revision,state,certificate_identity_id,
+    COALESCE(to_jsonb(provider_version_ref),to_jsonb(provider_version)) AS provider_version,
     fingerprint_sha256,valid_to,published_at,created_at,allocation_released_at,allocation_release_reason
     FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 ORDER BY created_at DESC LIMIT 1000`,[req.workspace.id,materialDistribution.normalizeDistributionId(req.params.groupId)])).rows })));
 router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId", ...distributionWriteGuards,

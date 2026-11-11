@@ -308,8 +308,13 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     <VStack align='stretch' spacing={3} minW={0} maxW='100%'>
       <Box>
         <Text fontSize='sm' color={helpTextColor}>
-          Scans GCP Secret Manager and SSL certificates. Token is used for
-          scanning and stored encrypted if auto-sync is enabled.
+          <strong>Scope:</strong> Scans GCP Secret Manager and SSL certificates.{' '}
+          <br />
+          <strong>Access:</strong> Grant Secret Manager Viewer on the project.
+          For certificate scans, also grant Certificate Manager Viewer and
+          Compute Viewer. Secret Accessor cannot list secrets. <br />
+          <strong>Credentials:</strong> Token is used for scanning and stored
+          encrypted if auto-sync is enabled.
         </Text>
         <Text fontSize='xs' color={helpTextColor} mt={1}>
           Get token from Cloud Shell:{' '}
@@ -413,9 +418,20 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
               what that scan covered.
             </Text>
           ) : gcpSummary.some(s => s.complete === false) ? (
-            <Text fontSize='xs' color='orange.400' pl={6}>
-              The last scan didn't fully complete (see the errors below). The
-              backend refuses to clean up an incomplete or truncated scan.
+            <Text
+              fontSize='sm'
+              color='orange.400'
+              pl={6}
+              role='alert'
+              p={3}
+              borderWidth='1px'
+              borderRadius='md'
+              _light={{ color: 'orange.800', bg: 'orange.50' }}
+              _dark={{ color: 'orange.100', bg: 'orange.900' }}
+            >
+              <strong>Incomplete scan:</strong> This scan is incomplete. See
+              errors below. Cleanup is blocked for incomplete or truncated
+              scans.
             </Text>
           ) : gcpSummary.some(s => s.failedCount > 0) ? (
             <Text fontSize='xs' color='orange.400' pl={6}>
@@ -424,10 +440,21 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
             </Text>
           ) : null}
           {cleanupObsolete ? (
-            <Text fontSize='xs' color='red.400' pl={6}>
-              Deletes previously imported items from this GCP project that no
-              longer appear anywhere in this scan's results, regardless of which
-              items you select for import below. This cannot be undone.
+            <Text
+              fontSize='sm'
+              color='red.400'
+              pl={6}
+              role='alert'
+              p={3}
+              borderWidth='1px'
+              borderRadius='md'
+              _light={{ color: 'red.800', bg: 'red.50' }}
+              _dark={{ color: 'red.100', bg: 'red.900' }}
+            >
+              <strong>Permanent deletion:</strong> Permanently deletes
+              previously imported items from this GCP project that are missing
+              from the scan, regardless of selections below. This cannot be
+              undone.
             </Text>
           ) : null}
         </VStack>

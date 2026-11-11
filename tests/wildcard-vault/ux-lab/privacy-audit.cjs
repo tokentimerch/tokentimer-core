@@ -85,7 +85,7 @@ process.stdin.on("end", async () => {
     const [groupId] = Object.keys(store.groups);
     const { createVaultStore } = require("/repo/packages/agent/src/material-store");
     for (const materialVersionId of publishedVersions) {
-      const reader = createVaultStore(config.materialStores, { materialStoreRef: "customer", workspaceId: store.groups[groupId].workspaceId, groupId, materialVersionId });
+      const reader = createVaultStore(config.materialStores, { materialStoreRef: "customer", provider: store.provider || "vault-kv2", workspaceId: store.groups[groupId].workspaceId, groupId, materialVersionId });
       const bundle = await reader.fetch(1);
       keyNeedles(bundle.privateKeyPem);
     }

@@ -1,3 +1,4 @@
+const { metricSourceDimensions } = require("../services/autoSyncMetricLabels");
 const { logger } = require("../utils/logger");
 const { checkIntegrationAddress } = require("../utils/integrationAddressGuard");
 const { writeAudit } = require("../services/audit");
@@ -1057,7 +1058,7 @@ router.post(
             items: (result.items || []).map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: {},
+              dimensions: metricSourceDimensions(item),
             })),
             subScopes: (result.summary || []).map((s) => ({
               sourceKind: s.sourceKind,
@@ -1281,7 +1282,7 @@ router.post(
             items: (result.items || []).map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: {},
+              dimensions: metricSourceDimensions(item),
             })),
             subScopes: (result.summary || []).map((s) => ({
               sourceKind: s.sourceKind,

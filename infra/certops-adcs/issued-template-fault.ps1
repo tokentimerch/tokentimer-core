@@ -19,10 +19,27 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
   if($env:COMPUTERNAME -ine 'TT-CA' -or (Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw 'Refusing foreign CA host'}
   $config='tt-ca.lab.certops.test\TTQualificationRoot'
   $view=New-Object -ComObject CertificateAuthority.View
+  $previousUiCulture=$null;$previousThreadLanguage=0;$threadLanguageChanged=$false
   $template=$null;$csr=$null;$changed=$false;$originalOid=$null;$issuedOid=$null
   $sanFile="C:\ttqualification\template-san-$RunId-$RequestId.der";$ownedSanFile=$false
   try {
-    $null=$view.OpenConnection($config)
+    try {$null=$view.OpenConnection($config)}
+    catch {
+      $originalFailure=$_;$exception=$_.Exception;$fileNotFound=$false
+      for($i=0;$i -lt 8 -and $null -ne $exception;$i++){
+        if([BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$exception.HResult),0) -eq [uint32]2147942402){$fileNotFound=$true;break}
+        $exception=$exception.InnerException
+      }
+      if(-not $fileNotFound){throw}
+      try {
+        if(-not ('TTQualificationThreadLanguage' -as [type])){Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class TTQualificationThreadLanguage { [DllImport("kernel32.dll")] public static extern ushort GetThreadUILanguage(); [DllImport("kernel32.dll")] public static extern ushort SetThreadUILanguage(ushort language); }'}
+        $previousUiCulture=[Threading.Thread]::CurrentThread.CurrentUICulture;$previousThreadLanguage=[TTQualificationThreadLanguage]::GetThreadUILanguage()
+        if([TTQualificationThreadLanguage]::SetThreadUILanguage(1033) -eq 0){throw 'Thread language fallback unavailable'}
+        $threadLanguageChanged=$true;[Threading.Thread]::CurrentThread.CurrentUICulture=[Globalization.CultureInfo]::GetCultureInfo('en-US')
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view);$view=$null;$view=New-Object -ComObject CertificateAuthority.View
+        $null=$view.OpenConnection($config)
+      } catch {throw $originalFailure}
+    }
     $names=@('CommonName','RequesterName','Disposition','RawRequest');$view.SetResultColumnCount($names.Count)
     foreach($name in $names){$view.SetResultColumn($view.GetColumnIndex($false,$name))}
     $view.SetRestriction($view.GetColumnIndex($false,'RequestID'),1,0,[int]$RequestId)
@@ -64,8 +81,11 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
     }
     @{requestId=$RequestId;frozenTemplateOid=$FrozenTemplateOid;issuedTemplateOid=$issuedOid;template=$owned[0].Name;nativeAdminMutation=$true}|ConvertTo-Json -Compress
   } finally {
-    if($ownedSanFile -and (Test-Path -LiteralPath $sanFile)){Remove-Item -LiteralPath $sanFile}
-    if($template){$template.Dispose()}
-    foreach($object in @($csr,$view)){if($object){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($object)}}
+    try {
+      if($ownedSanFile -and (Test-Path -LiteralPath $sanFile)){Remove-Item -LiteralPath $sanFile}
+      if($template){$template.Dispose()}
+      foreach($object in @($csr,$view)){if($object){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($object)}}
+    }
+    finally {if($null -ne $previousUiCulture){[Threading.Thread]::CurrentThread.CurrentUICulture=$previousUiCulture};if($threadLanguageChanged){[void][TTQualificationThreadLanguage]::SetThreadUILanguage($previousThreadLanguage)}}
   }
 }

@@ -7,18 +7,11 @@ import {
   fireEvent,
   cleanup,
   act,
-  within,
 } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import ImportTokensModal from '../../src/components/ImportTokensModal.jsx';
-import apiClient, {
-  gitlabAPI,
-  githubAPI,
-  tokenAPI,
-  integrationAPI,
-} from '../../src/utils/apiClient';
-import { IMPORT_DOCS } from '../../src/utils/docsUrls.js';
+import apiClient, { gitlabAPI, githubAPI } from '../../src/utils/apiClient';
 
 const { apiGetMock, apiDeleteMock, gitlabFormProps, githubFormProps, wsCtx } =
   vi.hoisted(() => ({
@@ -126,6 +119,8 @@ vi.mock('../../src/styles/theme.js', async importOriginal => ({
 }));
 
 const GITLAB_SELF_HOSTED = 'https://gitlab.selfhosted.example';
+// Full provider journeys need a coverage-instrumented time budget.
+const AUTO_SYNC_FLOW_TIMEOUT = 20000;
 
 function renderModal(openRequest, extraProps = {}) {
   return (
@@ -188,7 +183,12 @@ describe.each(['gitlab', 'github'])(
       scan().mockReset().mockResolvedValue(result);
       apiGetMock.mockImplementation(url =>
         Promise.resolve({
-          data: { items: String(url).endsWith('/auto-sync') ? configs : [] },
+          data: {
+            metric_label_policy: {
+              extra_labels: ['asset_name', 'project', 'group'],
+            },
+            items: String(url).endsWith('/auto-sync') ? configs : [],
+          },
         })
       );
       apiClient.post.mockReset().mockImplementation((_url, body) => {
@@ -228,7 +228,9 @@ describe.each(['gitlab', 'github'])(
         screen.getByRole('button', { name: 'Add another', exact: true })
       );
       expect(enable()).toBeDisabled();
-    });
+    }, AUTO_SYNC_FLOW_TIMEOUT);
+    // These multi-step provider flows include several asynchronous renders;
+    // allow coverage instrumentation without relaxing any per-step assertion.
     it('requires a fresh scan after credentials or scope change and after failed or stale scans', async () => {
       const secret = await addAnother();
       scan().mockResolvedValue({
@@ -290,7 +292,87 @@ describe.each(['gitlab', 'github'])(
       });
       fireEvent.click(confirm);
       expect(apiClient.post).not.toHaveBeenCalled();
-    });
+    }, AUTO_SYNC_FLOW_TIMEOUT);
+    it('persists selected metric labels without another scan and clears them for the next configuration', async () => {
+      await addAnother();
+      fireEvent.click(scanButton());
+      await waitFor(() => expect(enable()).toBeEnabled());
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Auto-sync metrics', exact: true })
+      );
+      fireEvent.click(
+        await screen.findByRole('checkbox', {
+          name: 'Expose additional auto-sync metrics',
+        })
+      );
+      fireEvent.change(
+        screen.getByRole('textbox', { name: 'Monitoring group label' }),
+        { target: { value: 'critical' } }
+      );
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: 'Token / asset name' })
+      );
+      fireEvent.click(enable());
+      fireEvent.click(
+        await screen.findByRole('button', {
+          name: 'Enable Auto-Sync',
+          exact: true,
+        })
+      );
+      await waitFor(() =>
+        expect(apiClient.post).toHaveBeenCalledWith(
+          '/api/v1/workspaces/ws-1/auto-sync',
+          expect.objectContaining({
+            metrics_settings: {
+              enabled: true,
+              labels: [
+                'configuration_name',
+                'monitoring_group',
+                'kind',
+                'asset_name',
+              ],
+              monitoring_group: 'critical',
+            },
+          })
+        )
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole('combobox', { name: 'Configuration' })
+        ).toHaveValue('created-config')
+      );
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Auto-sync metrics', exact: true })
+      );
+      await waitFor(() =>
+        expect(
+          screen.getAllByRole('textbox', { name: 'Monitoring group label' })
+        ).toHaveLength(1)
+      );
+      expect(
+        screen.getByRole('textbox', { name: 'Monitoring group label' })
+      ).toHaveValue('critical');
+      expect(scan()).toHaveBeenCalledTimes(1);
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Add another', exact: true })
+      );
+      fireEvent.click(scanButton());
+      await waitFor(() => expect(enable()).toBeEnabled());
+      expect(
+        screen.getByRole('button', { name: 'Auto-sync metrics', exact: true })
+      ).toHaveAttribute('aria-expanded', 'false');
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Auto-sync metrics', exact: true })
+      );
+      expect(
+        await screen.findByRole('checkbox', {
+          name: 'Expose additional auto-sync metrics',
+        })
+      ).not.toBeChecked();
+      expect(
+        screen.getByRole('textbox', { name: 'Monitoring group label' })
+      ).toHaveValue('');
+    }, AUTO_SYNC_FLOW_TIMEOUT);
     it('allocates an unused configuration name despite deletions, whitespace and case', async () => {
       await addAnother();
       scan().mockResolvedValue({ ...result, items: [{ name: 'fixture' }] });
@@ -302,7 +384,7 @@ describe.each(['gitlab', 'github'])(
         exact: true,
       });
       const input = screen.getByRole('textbox', { name: 'Configuration name' });
-      expect(input).toHaveValue(provider + ' 4');
+      expect(input).toHaveValue(`${provider} 4`);
     });
   }
 );

@@ -154,6 +154,33 @@ beforeEach(() => {
 });
 
 describe('Inline contact group creation', () => {
+
+  it.each(['enforce', 'shadow', 'off'])('presents confirmation appropriately in %s mode', async mode => {
+    settings.whatsapp_available = true;
+    apiClient.get.mockResolvedValue({ data: {
+      items: [{ id: 'person', first_name: 'Demo', phone_e164: '+12025550123', details: { email: 'demo@example.invalid' } }],
+      verification_summary: { mode },
+    } });
+    const { container } = render(
+      <ChakraProvider><DashboardThemeProvider><MemoryRouter>
+        <AlertPreferences />
+      </MemoryRouter></DashboardThemeProvider></ChakraProvider>
+    );
+    await waitFor(() => expect(container.querySelector('table')).not.toBeNull());
+    await waitFor(() => expect(within(container.querySelector('table')).getByText('Demo')).toBeInTheDocument());
+    expect(within(container.querySelector('table')).queryByText('Pending')).not.toBeInTheDocument();
+    if (mode === 'off') {
+      expect(screen.queryByRole('button', { name: 'Review confirmations' })).not.toBeInTheDocument();
+      return;
+    }
+    const review = screen.getByRole('button', { name: 'Review confirmations' });
+    expect(review).toBeEnabled();
+    if (mode === 'shadow') expect(screen.getByText(/delivery continues/i)).toBeInTheDocument();
+    fireEvent.click(review);
+    const dialog = await screen.findByRole('dialog', { name: /Recipient confirmations/ });
+    expect(within(dialog).getAllByText('Pending')).toHaveLength(2);
+  });
+
   it('creates and assigns the first group from the endpoint form without losing its draft', async () => {
     settings.contact_groups = [];
     settings.default_contact_group_id = null;
@@ -610,6 +637,62 @@ describe('onboarding shared group editor', () => {
 });
 
 describe('webhook creation inside the shared group modal', () => {
+  it('renames a verified webhook and its group references without sending another test notification', async () => {
+    settings.webhook_urls = [
+      {
+        name: 'Original',
+        kind: 'generic',
+        url: 'https://hooks.example.invalid/ops',
+        verified: true,
+        verifiedUrl: 'https://hooks.example.invalid/ops',
+      },
+    ];
+    settings.contact_groups = [
+      { id: 'ops', name: 'Operations', webhook_names: ['Original'] },
+    ];
+    apiClient.post.mockImplementation(async (url, body) => {
+      if (url.endsWith('/webhooks/rename')) {
+        settings.webhook_urls = [body.webhook];
+        settings.contact_groups[0].webhook_names = [body.name];
+      }
+      return { data: { success: true } };
+    });
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <AlertPreferences />
+          </MemoryRouter>
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    await screen.findByText('Original');
+    const edit = within(document.getElementById('webhooks')).getByRole(
+      'button',
+      { name: 'Edit', exact: true }
+    );
+    await waitFor(() => expect(edit).toBeEnabled());
+    fireEvent.click(edit);
+    const dialog = await screen.findByRole('dialog', { name: /^Edit webhook/ });
+    fireEvent.change(
+      within(dialog).getByPlaceholderText(
+        'Name (required): e.g., On-call Slack, Incident Discord, Primary Teams'
+      ),
+      { target: { value: 'Renamed' } }
+    );
+    const save = within(dialog).getByRole('button', { name: 'Save webhook' });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v1/workspaces/workspace-1/webhooks/rename',
+        expect.objectContaining({ previousName: 'Original', name: 'Renamed' })
+      )
+    );
+    expect(alertAPI.testWebhook).not.toHaveBeenCalled();
+    expect(settings.contact_groups[0].webhook_names).toEqual(['Renamed']);
+  });
+
   it('creates and selects a webhook from workspace preferences without resetting the edited group', async () => {
     render(
       <ChakraProvider>
@@ -762,7 +845,7 @@ describe('webhook creation inside the shared group modal', () => {
     // Text can mount before the nested modal's entrance transition finishes.
     await waitFor(() =>
       expect(
-        within(dialog).getByText('Receiver unavailable; check the URL.')
+        within(dialog).getByText('Test failed. Receiver unavailable; check the URL.')
       ).toBeVisible()
     );
     expect(
@@ -821,7 +904,7 @@ describe('webhook creation inside the shared group modal', () => {
     // Text can mount before the nested modal's entrance transition finishes.
     await waitFor(() =>
       expect(
-        within(dialog).getByText('Connection lost after save')
+        within(dialog).getByText('Test passed, but saving was not confirmed. Connection lost after save')
       ).toBeVisible()
     );
     fireEvent.click(
@@ -845,6 +928,7 @@ describe('webhook creation inside the shared group modal', () => {
     fireEvent.click(
       within(dialog).getByRole('button', { name: 'Test', exact: true })
     );
+    expect(within(dialog).getByRole('status')).toHaveTextContent('Testing delivery');
     expect(within(dialog).getByPlaceholderText('https://...')).toBeDisabled();
     expect(
       within(dialog).getByRole('button', { name: 'Cancel' })

@@ -4,7 +4,7 @@ const fs = require("node:fs"), path = require("node:path"), crypto = require("no
 const root = path.resolve(__dirname,"../..");
 const helper = require("../../tests/e2e/helpers/certops-adcs-browser-enrollment");
 const journey = require("../../tests/e2e/helpers/certops-adcs-browser-journey");
-const contract = require("../../docs/certops/qualification-suites.json");
+const contract = require("../certops-qualification-manifest");
 function parentReport() {
   const uuid = digit => `${digit.repeat(8)}-${digit.repeat(4)}-${digit.repeat(4)}-${digit.repeat(4)}-${digit.repeat(12)}`;
   const native = {scope:journey.SCOPE,lifecycle:"renew-existing-inventory-not-first-issue-or-manual-job",scheduler:"production-default-sweep-not-background-worker-loop",browserEngine:"chromium",browserMutationCount:6,successfulEnrollments:1,

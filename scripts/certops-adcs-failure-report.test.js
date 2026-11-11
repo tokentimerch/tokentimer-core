@@ -5,9 +5,18 @@ const {test}=require("node:test"),assert=require("node:assert/strict"),fs=requir
 function producer(result){
   const source=fs.readFileSync(path.resolve(__dirname,"../tests/e2e/certops-adcs-real-e2e.test.js"),"utf8");
   const start=source.indexOf("function nativeCommandEnvironment("),end=source.indexOf("function ps(script)",start);
-  return vm.runInNewContext(source.slice(start,end)+";({command,boundedFailureMetadata,boundedJobErrorCode})",{path,spawnSync:()=>result,process:{env:{}}});
+  return vm.runInNewContext(source.slice(start,end)+";({command,boundedFailureMetadata,boundedJobErrorCode,preserveCleanupFailure})",{path,spawnSync:()=>result,process:{env:{}}});
 }
 const plain=value=>JSON.parse(JSON.stringify(value));
+test("native failure identifies only approved CA fixture scripts",()=>{
+  for(const [script,expected] of [["foreign-request.ps1","foreign-request.ps1"],["owned-ca-checkpoint.ps1","owned-ca-checkpoint.ps1"],["owned-ca-request-certificate.ps1","owned-ca-request-certificate.ps1"],["owned-request-observation.ps1","owned-request-observation.ps1"],["officer-action.ps1","officer-action.ps1"],["SECRET.ps1",undefined]]){
+    const api=producer({status:1,stdout:"",stderr:"SECRET"});
+    let failure;try{api.command("powershell.exe",["-File",script,"-OwnershipToken","SECRET"]);}catch(error){failure=error;}
+    const bounded=plain(api.boundedFailureMetadata(failure,{scenarios:[]}));
+    assert.equal(bounded.command.script,expected);
+    assert.doesNotMatch(JSON.stringify(bounded),/SECRET/);
+  }
+});
 test("native failure retains only approved executable, exit and PowerShell category",()=>{
   const api=producer({status:1,stdout:"PRIVATE_KEY_AND_TOKEN",stderr:`private argument
  FullyQualifiedErrorId : NamedParameterNotFound,Microsoft.PowerShell.Commands.RemoveItemCommand
@@ -33,7 +42,7 @@ test("officer action failure keeps only a fixed step name and numeric certutil e
   const api=producer({status:1,stdout,stderr:"private argument SECRET"});
   let failure;try{api.command("C:/Windows/System32/powershell.exe",["-File","officer-action.ps1"]);}catch(error){failure=error;}
   const bounded=plain(api.boundedFailureMetadata(failure,{scenarios:[]}));
-  assert.deepEqual(bounded.command,{executable:"powershell.exe",exitStatus:1,officerStep:"revoke",officerExit:-2147024891});
+  assert.deepEqual(bounded.command,{executable:"powershell.exe",exitStatus:1,script:"officer-action.ps1",officerStep:"revoke",officerExit:-2147024891});
   assert.doesNotMatch(JSON.stringify(bounded),/SECRET|TTQualificationRoot|tt-ca/);
 });
 test("untrusted officer output never becomes free text in the report",()=>{
@@ -75,6 +84,19 @@ test("aggregate cleanup exposes bounded sanitized command causes without recursi
   const metadata=plain(api.boundedFailureMetadata({constructor:{name:"AggregateError"},errors:[native,nested,native,native,native]},null,"cleanup"));
   assert.equal(metadata.causes.length,4);assert.equal(metadata.causes[0].command.powerShellCode,"PathNotFound");
   assert.equal(metadata.causes[1].causes,undefined);assert.doesNotMatch(JSON.stringify(metadata),/SECRET|stderr|argv/);
+});
+
+test("final report failure cannot replace the original bounded cleanup causes",()=>{
+  const api=producer({status:0,stdout:""}),report={};
+  const child=Object.assign(new Error("SECRET"),{cleanupStep:"step-3"});
+  const original=new AggregateError([child],"PRIVATE");
+  assert.equal(api.preserveCleanupFailure(original,report),original);
+  const first=plain(report.cleanupFailure);
+  api.preserveCleanupFailure(new Error("Host qualification incomplete"),report);
+  assert.deepEqual(plain(report.cleanupFailure),first);
+  assert.equal(first.errorClass,"AggregateError");
+  assert.equal(first.causes[0].cleanupStep,"step-3");
+  assert.doesNotMatch(JSON.stringify(first),/SECRET|PRIVATE|message|stack/);
 });
 
 test("enrollment error takes priority over generic agent failure without exposing result payload",()=>{

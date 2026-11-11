@@ -598,6 +598,127 @@ export default function DashboardShell({
     );
   };
 
+  const renderNotifications = isMobile => (
+    <Menu placement='bottom-end' autoSelect={false} isLazy>
+      <Box position='relative'>
+        {showNotificationIndicator && (
+          <Box
+            data-testid={
+              isMobile
+                ? 'mobile-notification-attention-indicator'
+                : 'notification-attention-indicator'
+            }
+            position='absolute'
+            top='7px'
+            right='8px'
+            w='7px'
+            h='7px'
+            borderRadius='full'
+            bg='#f87171'
+            zIndex='2'
+          />
+        )}
+        <MenuButton
+          as={IconButton}
+          aria-label={isMobile ? 'Mobile notifications' : 'Notifications'}
+          icon={<FiBell size={20} />}
+          size='md'
+          variant='ghost'
+          color={iconButtonColor}
+          borderRadius='md'
+          _hover={{ bg: chromeHoverBg, color: chromeHoverColor }}
+        />
+      </Box>
+      <Portal>
+        <MenuList {...menuListProps} minW='280px'>
+          {dashboardNotifications.length === 0 ? (
+            <Box px={3} py={2}>
+              <Text fontSize='sm' color={mutedTextColor}>
+                No notifications
+              </Text>
+            </Box>
+          ) : (
+            <>
+              {typeof onMarkAllNotificationsRead === 'function' &&
+                hasUnreadPersistedNotifications && (
+                  <Box
+                    px={3}
+                    py={1.5}
+                    borderBottom='1px solid'
+                    borderColor={borderColor}
+                  >
+                    <Text
+                      as='button'
+                      fontSize='xs'
+                      fontWeight='medium'
+                      color={mutedTextColor}
+                      onClick={onMarkAllNotificationsRead}
+                      _hover={{ textDecoration: 'underline' }}
+                    >
+                      Mark all as read
+                    </Text>
+                  </Box>
+                )}
+              {dashboardNotifications.map(notification => {
+                const isClickable = Boolean(notification?.href);
+                const isUnread = notification?.isRead === false;
+                return (
+                  <MenuItem
+                    key={notification.id}
+                    onClick={() => {
+                      if (typeof onNotificationClick === 'function') {
+                        onNotificationClick(notification);
+                      } else if (notification?.href) {
+                        navigate(notification.href);
+                      }
+                    }}
+                    cursor={isClickable ? 'pointer' : 'default'}
+                    {...(isClickable
+                      ? userMenuItemStyles
+                      : inactiveMenuItemStyles)}
+                  >
+                    <HStack align='start' spacing={2} width='100%'>
+                      {isUnread && (
+                        <Circle
+                          size='6px'
+                          bg='#f87171'
+                          mt='6px'
+                          flexShrink={0}
+                        />
+                      )}
+                      <VStack align='start' spacing={0} flex='1'>
+                        <Text
+                          color={textColor}
+                          fontSize='sm'
+                          fontWeight={isUnread ? 'semibold' : 'medium'}
+                        >
+                          {notification.text}
+                        </Text>
+                        {notification.category === 'auto_sync' &&
+                          notification.message && (
+                            <Text
+                              color={mutedTextColor}
+                              fontSize='xs'
+                              noOfLines={2}
+                            >
+                              {notification.message}
+                            </Text>
+                          )}
+                        <Text color={mutedTextColor} fontSize='xs'>
+                          {notificationActionHint(notification)}
+                        </Text>
+                      </VStack>
+                    </HStack>
+                  </MenuItem>
+                );
+              })}
+            </>
+          )}
+        </MenuList>
+      </Portal>
+    </Menu>
+  );
+
   return (
     <Flex minH='100vh' align='stretch'>
       <Box
@@ -908,120 +1029,7 @@ export default function DashboardShell({
               </Portal>
             </Menu>
 
-            <Menu placement='bottom-end' autoSelect={false}>
-              <Box position='relative'>
-                {showNotificationIndicator && (
-                  <Box
-                    data-testid='notification-attention-indicator'
-                    position='absolute'
-                    top='7px'
-                    right='8px'
-                    w='7px'
-                    h='7px'
-                    borderRadius='full'
-                    bg='#f87171'
-                    zIndex='2'
-                  />
-                )}
-                <MenuButton
-                  as={IconButton}
-                  aria-label='Notifications'
-                  icon={<FiBell size={20} />}
-                  size='md'
-                  variant='ghost'
-                  color={iconButtonColor}
-                  borderRadius='md'
-                  _hover={{ bg: chromeHoverBg, color: chromeHoverColor }}
-                />
-              </Box>
-              <Portal>
-                <MenuList {...menuListProps} minW='280px'>
-                  {dashboardNotifications.length === 0 ? (
-                    <Box px={3} py={2}>
-                      <Text fontSize='sm' color={mutedTextColor}>
-                        No notifications
-                      </Text>
-                    </Box>
-                  ) : (
-                    <>
-                      {typeof onMarkAllNotificationsRead === 'function' &&
-                        hasUnreadPersistedNotifications && (
-                          <Box
-                            px={3}
-                            py={1.5}
-                            borderBottom='1px solid'
-                            borderColor={borderColor}
-                          >
-                            <Text
-                              as='button'
-                              fontSize='xs'
-                              fontWeight='medium'
-                              color={mutedTextColor}
-                              onClick={onMarkAllNotificationsRead}
-                              _hover={{ textDecoration: 'underline' }}
-                            >
-                              Mark all as read
-                            </Text>
-                          </Box>
-                        )}
-                      {dashboardNotifications.map(notification => {
-                        const isClickable = Boolean(notification?.href);
-                        const isUnread = notification?.isRead === false;
-                        return (
-                          <MenuItem
-                            key={notification.id}
-                            onClick={() => {
-                              if (typeof onNotificationClick === 'function') {
-                                onNotificationClick(notification);
-                              } else if (notification?.href) {
-                                navigate(notification.href);
-                              }
-                            }}
-                            cursor={isClickable ? 'pointer' : 'default'}
-                            {...(isClickable
-                              ? userMenuItemStyles
-                              : inactiveMenuItemStyles)}
-                          >
-                            <HStack align='start' spacing={2} width='100%'>
-                              {isUnread && (
-                                <Circle
-                                  size='6px'
-                                  bg='#f87171'
-                                  mt='6px'
-                                  flexShrink={0}
-                                />
-                              )}
-                              <VStack align='start' spacing={0} flex='1'>
-                                <Text
-                                  color={textColor}
-                                  fontSize='sm'
-                                  fontWeight={isUnread ? 'semibold' : 'medium'}
-                                >
-                                  {notification.text}
-                                </Text>
-                                {notification.category === 'auto_sync' &&
-                                  notification.message && (
-                                    <Text
-                                      color={mutedTextColor}
-                                      fontSize='xs'
-                                      noOfLines={2}
-                                    >
-                                      {notification.message}
-                                    </Text>
-                                  )}
-                                <Text color={mutedTextColor} fontSize='xs'>
-                                  {notificationActionHint(notification)}
-                                </Text>
-                              </VStack>
-                            </HStack>
-                          </MenuItem>
-                        );
-                      })}
-                    </>
-                  )}
-                </MenuList>
-              </Portal>
-            </Menu>
+            {renderNotifications(false)}
             <IconButton
               aria-label={`Switch to ${isDarkMode ? 'light' : 'dark'} mode`}
               icon={isDarkMode ? <Sun size={19} /> : <Moon size={19} />}
@@ -1141,6 +1149,8 @@ export default function DashboardShell({
             <Menu placement='bottom-end' autoSelect={false}>
               <MenuButton
                 data-tour='workspace-selector'
+                aria-label={`Workspace: ${dashboardWorkspace?.name || workspaceLabel}`}
+                title={dashboardWorkspace?.name || workspaceLabel}
                 as={Button}
                 rightIcon={<ChevronDown size={14} />}
                 h='34px'
@@ -1177,11 +1187,16 @@ export default function DashboardShell({
                       {...userMenuItemStyles}
                     >
                       {workspace.name}
+                      {String(workspace.id) === String(dashboardWorkspace?.id)
+                        ? ' (current)'
+                        : ''}
                     </MenuItem>
                   ))}
                 </MenuList>
               </Portal>
             </Menu>
+
+            {renderNotifications(true)}
 
             <IconButton
               data-tour='mobile-menu-button'

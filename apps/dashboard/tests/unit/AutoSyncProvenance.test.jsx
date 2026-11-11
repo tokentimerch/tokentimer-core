@@ -1,4 +1,3 @@
-import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   render,
@@ -128,5 +127,73 @@ describe('association provenance API contract', () => {
         screen.queryByRole('button', { name: 'Earlier history' })
       ).toBeNull()
     );
+  });
+  it('does not claim manual ownership when history is unavailable', async () => {
+    get.mockRejectedValueOnce(new Error('offline'));
+    render(
+      <ChakraProvider>
+        <AutoSyncProvenance tokenId={71} ownership='Manual or legacy' />
+      </ChakraProvider>
+    );
+    expect(await screen.findByText('Auto-sync history could not be loaded.')).toBeTruthy();
+    expect(screen.queryByText('Manual or legacy')).toBeNull();
+  });
+
+  it('shows initial failures and retries without treating them as empty history', async () => {
+    get.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({
+      data: { managed: true, configurations: [], items: [] },
+    });
+    render(
+      <ChakraProvider>
+        <AutoSyncProvenance tokenId={71} ownership='Managed' />
+      </ChakraProvider>
+    );
+    expect(
+      await screen.findByText('Auto-sync history could not be loaded.')
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Auto-sync history could not be loaded.')
+      ).toBeNull()
+    );
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains loaded history when loading an earlier page fails', async () => {
+    get
+      .mockResolvedValueOnce({
+        data: {
+          managed: true,
+          configurations: [],
+          items: [
+            {
+              id: '26',
+              config_name: 'Production',
+              event: 'attached',
+              occurred_at: '2026-10-01T00:00:00Z',
+            },
+          ],
+          next_before: '26',
+        },
+      })
+      .mockRejectedValueOnce(new Error('offline'));
+    render(
+      <ChakraProvider>
+        <AutoSyncProvenance tokenId={71} ownership='Managed' />
+      </ChakraProvider>
+    );
+    await screen.findByRole('button', { name: 'Show history' });
+    fireEvent.click(screen.getByRole('button', { name: 'Show history' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier history' }));
+    expect(
+      await screen.findByText(
+        'Earlier history could not be loaded. Please try again.'
+      )
+    ).toBeTruthy();
+    expect(screen.getByText('Added to Production')).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Earlier history' })
+    ).toBeTruthy();
   });
 });

@@ -4850,9 +4850,111 @@ const migrations = [
     name: "auto_sync_run_metrics",
     sql: fs.readFileSync(require("path").join(__dirname, "080-auto-sync-run-metrics.sql"), "utf8"),
   },
+  {
+    version: 81,
+    name: "auto_sync_metric_labels",
+    sql: fs.readFileSync(require("path").join(__dirname, "081-auto-sync-metric-labels.sql"), "utf8"),
+  },
+  {
+    version: 82,
+    name: "auto_sync_system_metrics",
+    sql: fs.readFileSync(require("path").join(__dirname, "082-auto-sync-system-metrics.sql"), "utf8"),
+  },
+  {
+    // Companion migration plans extend through 91; leave unapplied slots unregistered.
+    version: 92,
+    name: "pagerduty_incident_lifecycle",
+    sql: fs.readFileSync(require("path").join(__dirname, "092-pagerduty-incident-lifecycle.sql"), "utf8"),
+  },
+  {
+    version: 93,
+    name: "pagerduty_resolution_reason",
+    sql: fs.readFileSync(require("path").join(__dirname, "093-pagerduty-resolution-reason.sql"), "utf8"),
+  },
+  {
+    version: 94,
+    name: "pagerduty_operator_actions",
+    sql: fs.readFileSync(require("path").join(__dirname, "094-pagerduty-operator-actions.sql"), "utf8"),
+  },
+  {
+    version: 95,
+    name: "remove_pagerduty_rest_lookup",
+    sql: fs.readFileSync(require("path").join(__dirname, "095-remove-pagerduty-rest-lookup.sql"), "utf8"),
+  },
+  {
+    version: 98,
+    name: "certops_manual_rollout_authority",
+    sql: fs.readFileSync(require("path").join(__dirname, "098-certops-manual-rollout-authority.sql"), "utf8"),
+  },
+  {
+    version: 99,
+    name: "operator_connections",
+    sql: fs.readFileSync(require("path").join(__dirname, "099-operator-connections.sql"), "utf8"),
+  },
+  {
+    version: 100,
+    name: "operator_enrollment_grants",
+    sql: fs.readFileSync(require("path").join(__dirname, "100-operator-enrollment-grants.sql"), "utf8"),
+  },
+  {
+    version: 101,
+    name: "operator_action_requests",
+    sql: fs.readFileSync(require("path").join(__dirname, "101-operator-action-requests.sql"), "utf8"),
+  },
+  {
+    version: 102,
+    name: "operator_oauth",
+    sql: fs.readFileSync(require("path").join(__dirname, "102-operator-oauth.sql"), "utf8"),
+  },
+  {
+    version: 103,
+    name: "operator_connection_lifetimes",
+    sql: fs.readFileSync(require("path").join(__dirname, "103-operator-connection-lifetimes.sql"), "utf8"),
+  },
+  {
+    version: 104,
+    name: "operator_inventory",
+    sql: fs.readFileSync(require("path").join(__dirname, "104-operator-inventory.sql"), "utf8"),
+  },
+  {
+    version: 105,
+    name: "operator_oauth_retention",
+    sql: fs.readFileSync(require("path").join(__dirname, "105-operator-oauth-retention.sql"), "utf8"),
+  },
+  {
+    version: 106,
+    name: "operator_issuance",
+    sql: fs.readFileSync(require("path").join(__dirname, "106-operator-issuance.sql"), "utf8"),
+  },
+  {
+    version: 107,
+    name: "certops_issuance_job_identity",
+    sql: fs.readFileSync(require("path").join(__dirname, "107-certops-issuance-job-identity.sql"), "utf8"),
+  },
+  {
+    version: 108,
+    name: "certops_issuance_identity_transfer",
+    sql: fs.readFileSync(require("path").join(__dirname, "108-certops-issuance-identity-transfer.sql"), "utf8"),
+  },
+  {
+    version: 109,
+    name: "certops_period_creator_delete",
+    sql: fs.readFileSync(require("path").join(__dirname, "109-certops-period-creator-delete.sql"), "utf8"),
+  },
+  {
+    version: 110,
+    name: "recipient_member_verification",
+    sql: fs.readFileSync(require("path").join(__dirname, "../../../packages/recipient-verification/member-verification-migration.sql"), "utf8"),
+  },
 ];
 
 
+
+migrations.push({
+  version: 83,
+  name: "certops_material_providers",
+  sql: fs.readFileSync(require("path").join(__dirname, "083-certops-material-providers.sql"), "utf8"),
+});
 
 const { composeMigrations } = require("./compose-migrations");
 
@@ -4870,6 +4972,10 @@ const historicalMigrationAliases = new Map([
 ]);
 
 function validateMigrationHistory(rows) {
+  const preview = rows.find(row => [79,81].includes(row.version) && row.name === "pagerduty_incident_lifecycle");
+  if (preview) {
+    throw new Error(`PagerDuty preview migration ${preview.version} conflicts with released auto-sync history; stop and follow the explicit recovery procedure in docs/PAGERDUTY.md#migration-92-and-preview-version-compatibility`);
+  }
   const planned = resolveMigrationPlan(rows);
   for (const { version, name } of rows) {
     const current = planned.find(
@@ -5142,10 +5248,44 @@ migrations.push({
   `,
 });
 
+// Main owns 81 auto_sync_metric_labels. Versions 84+ stay free for the
+// open CertOps distribution and PagerDuty branches (#460, #496, #498).
+// A database that already applied this preview as 81/82 keeps those rows.
+// compose-migrations applies metric labels as 83 on that ledger only.
+migrations.push({
+  version: 84,
+  name: "recipient_channel_verification",
+  sql: fs.readFileSync(
+    require("path").join(__dirname, "../../../packages/recipient-verification/migration.sql"),
+    "utf8",
+  ),
+});
+
+migrations.push({
+  version: 85,
+  name: "weekly_digest_recipient_claim_token",
+  sql: `
+    ALTER TABLE weekly_digest_recipient_log
+      ADD COLUMN IF NOT EXISTS claim_token TEXT;
+    ALTER TABLE weekly_digest_recipient_log
+      ADD COLUMN IF NOT EXISTS provider_accepted_at TIMESTAMPTZ;
+    ALTER TABLE weekly_digest_recipient_log
+      ADD COLUMN IF NOT EXISTS delivery_state TEXT;
+    ALTER TABLE weekly_digest_recipient_log
+      ADD COLUMN IF NOT EXISTS retry_after TIMESTAMPTZ;
+    ALTER TABLE weekly_digest_recipient_log
+      DROP CONSTRAINT IF EXISTS weekly_digest_recipient_delivery_state_check;
+    ALTER TABLE weekly_digest_recipient_log
+      ADD CONSTRAINT weekly_digest_recipient_delivery_state_check
+      CHECK (delivery_state IS NULL OR delivery_state IN ('in_progress', 'accepted', 'rejected', 'uncertain'));
+  `,
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);
 const canonicalMigrations = migrations.slice();
+require("./migration-reservations.cjs").validateMigrationReservations(canonicalMigrations);
 
 function resolveMigrationPlan(recorded) {
   // The Enterprise adapter and upgrade tests may supply an already composed
@@ -5192,7 +5332,12 @@ async function runMigrations() {
   }
 
   const client = await migrationPool.connect();
+  let migrationLockHeld = false;
   try {
+    // Serialize the entire executor, including ledger creation and post-commit
+    // validations. Transaction locks cannot span the per-migration commits.
+    await client.query("SELECT pg_advisory_lock(hashtextextended('tokentimer-core:migrations',0))");
+    migrationLockHeld = true;
     logger.info("Creating migrations table if it doesn't exist...");
 
     await client.query(`
@@ -5319,7 +5464,13 @@ async function runMigrations() {
     logger.error("Migration process failed:", error);
     process.exit(1);
   } finally {
-    client.release();
+    let discard = false;
+    if (migrationLockHeld) {
+      try { await client.query("SELECT pg_advisory_unlock(hashtextextended('tokentimer-core:migrations',0))"); }
+      catch { discard = true; }
+    }
+    // A failed unlock must never return a session holding the fence to a pool.
+    client.release(discard);
   }
 }
 

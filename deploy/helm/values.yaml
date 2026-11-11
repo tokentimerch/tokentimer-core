@@ -25,7 +25,7 @@ api:
   image:
     registry: ""
     repository: tokentimer-core-api
-    tag: "0.18.2"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.19.2-rc.1"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""    # takes precedence over tag; pin from release-manifest.json for reproducible deploys (:latest is not the source of truth)
     pullPolicy: IfNotPresent
 
@@ -91,6 +91,10 @@ api:
 
   # Extra API env, e.g. the domain checker settings (DOMAIN_CHECKER_*,
   # SUBFINDER_BIN; see docs/CONFIGURATION.md).
+  # Recipient verification stays off until RECIPIENT_VERIFICATION_MODE=enforce
+  # or shadow. Set the same value on the worker. See docs/recipient-verification.md.
+  # Set advanced invitation/test limits here using their documented environment
+  # names; weekly-digest retry tuning belongs in worker.env.
   env: {}
   # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
   # (e.g. '{{ .Release.Name }}-overlay-env').
@@ -113,7 +117,7 @@ dashboard:
   image:
     registry: ""
     repository: tokentimer-core-dashboard
-    tag: "0.18.2"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.19.2-rc.1"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -160,12 +164,14 @@ worker:
   image:
     registry: ""
     repository: tokentimer-core-worker
-    tag: "0.18.2"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.19.2-rc.1"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
   # Extra env/volumes for all CronJobs.
   # Precedence: workspace DB settings > env vars here > code defaults.
+  # Recipient verification stays off until RECIPIENT_VERIFICATION_MODE=enforce
+  # or shadow. Set the same value on the API.
   env: {}
   # First-class tuning for the workers that raise and email operational incidents.
   # These values take precedence over matching keys in worker.env.
@@ -311,7 +317,7 @@ certops:
     image:
       registry: ""
       repository: tokentimer-core-k8s-controller
-      tag: "0.18.2"  # align with Chart.appVersion; release workflow updates this per tag
+      tag: "0.19.2-rc.1"  # align with Chart.appVersion; release workflow updates this per tag
       digest: ""
       pullPolicy: IfNotPresent
 
@@ -354,11 +360,23 @@ ingress:
         - path: /api
           pathType: Prefix
           service: api
+        - path: /.well-known/oauth-protected-resource
+          pathType: Prefix
+          service: api
+        - path: /.well-known/oauth-authorization-server
+          pathType: Prefix
+          service: api
         - path: /auth
           pathType: Prefix
           service: api
         - path: /metrics
           pathType: Prefix
+          service: api
+        - path: /verify/recipient
+          pathType: Prefix
+          service: api
+        - path: /webhooks/twilio/whatsapp/inbound
+          pathType: Exact
           service: api
         - path: /
           pathType: Prefix
@@ -542,6 +560,15 @@ config:
   # Bytes of new console lines each workspace may store per UTC day.
   # Empty or 0 = no cap. Counted across API replicas.
   certopsAgentLogDailyBytes: ""
+  # Assistant (MCP) access. All three flags default off. Interface enables
+  # connection management; remote enables HTTP and browser sign-in. Writes also
+  # need an owner or workspace manager to allow renewals in Workspace controls.
+  mcpOperatorInterfaceEnabled: false
+  mcpOperatorRemoteEnabled: false
+  mcpOperatorWritesEnabled: false
+  # Exact external HTTPS endpoint, ending /api/v1/operator/mcp.
+  mcpPublicUrl: ""
+  mcpAllowedOrigins: ""
 
   # CertOps encryption keys. Each must be 64 hex chars (32 bytes).
   # These wrap, at rest, the job-signing private keys and the agent
@@ -606,6 +633,22 @@ twilio:
 monitoring:
   metrics:
     enabled: false
+    # Optional System Settings override; empty uses saved settings.
+    autoSyncEnabled: ""
+    # Global label selection; requires autoSyncEnabled: true/false. Empty uses saved labels; [none] selects no optional labels.
+    # configuration_name: saved integration name; monitoring_group: your monitoring category.
+    # kind: asset type; asset_name: imported token/key/secret name (never its value).
+    # project: source project/repository name or path; group: source group name or path (when supplied).
+    # Labels add series to both detailed metrics; combinations can greatly increase cardinality and expose metadata.
+    autoSyncLabels: []
+    # Optional global monitoring group; empty uses saved or connection settings.
+    autoSyncMonitoringGroup: ""
+    # Extra labels: asset_name, project, group; none disables them.
+    # Empty uses saved UI choices (off by default); a list restricts the available asset labels.
+    # Selected labels appear on auto_sync_items_created_detailed_total and
+    # auto_sync_last_creation_timestamp_seconds; aggregate counters stay unchanged.
+    # Each distinct label combination creates a series in both metrics; combining labels can greatly increase cardinality and expose asset metadata.
+    extraLabels: []
     pushgatewayUrl: ""
 
   serviceMonitor:

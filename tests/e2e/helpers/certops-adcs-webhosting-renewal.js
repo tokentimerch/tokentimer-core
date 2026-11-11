@@ -107,20 +107,18 @@ function storeCleanupPlan(receipt, entries, readRecord, store, domainPattern) {
     assert.match(entry.thumbprint, /^[A-F0-9]{40}$/);
     assert.ok(!seen.has(entry.thumbprint));
     seen.add(entry.thumbprint);
-    assert.ok(
-      containers.has(entry.containerName),
-      "Preserve unowned WebHosting key association",
-    );
+    if (!containers.has(entry.containerName)) {
+      const untracked = readRecord(entry.containerName);
+      const reason = !untracked ? "MISSING" : untracked.certificateId === receipt.certificateId ? "SAME_CERTIFICATE" : "OTHER_CERTIFICATE";
+      throw Object.assign(new Error("Preserve unowned WebHosting key association"), { code: `CERTOPS_STORE_CONTAINER_${reason}` });
+    }
     const record = readRecord(entry.containerName);
-    assert.ok(
-      record &&
-        record.status === "enrolled_by_agent" &&
-        record.containerName === entry.containerName &&
-        record.certificateId === receipt.certificateId &&
-        record.acceptedStore === store &&
-        record.acceptedThumbprint === entry.thumbprint,
-      "Preserve public certificate without exact durable ownership",
-    );
+    const mismatch = !record ? "MISSING" : record.status !== "enrolled_by_agent" ? "STATUS"
+      : record.containerName !== entry.containerName ? "CONTAINER"
+        : record.certificateId !== receipt.certificateId ? "CERTIFICATE"
+          : record.acceptedStore !== store ? "STORE"
+            : record.acceptedThumbprint !== entry.thumbprint ? "THUMBPRINT" : null;
+    if (mismatch) throw Object.assign(new Error("Preserve public certificate without exact durable ownership"), { code: `CERTOPS_STORE_RECEIPT_${mismatch}` });
     return Object.freeze({
       thumbprint: entry.thumbprint,
       containerName: entry.containerName,
@@ -171,6 +169,16 @@ function registerBackgroundStoreCertificate(registry, {domain, certificateId, en
   registry.push(receipt);
   return receipt;
 }
+function recordBackgroundReceiptOwnership(receipt, certificateId, {enrollmentId, thumbprint}) {
+  assert.match(certificateId,uuid);
+  assert.match(enrollmentId,uuid);
+  if (receipt.certificateId !== certificateId) return;
+  if (!receipt.enrollmentIds.includes(enrollmentId)) receipt.enrollmentIds.push(enrollmentId);
+  if (thumbprint !== undefined) {
+    assert.match(thumbprint,/^[A-F0-9]{40}$/);
+    if (!receipt.thumbprints.includes(thumbprint)) receipt.thumbprints.push(thumbprint);
+  }
+}
 // Later existing scenarios may accept another leaf for the same primary identity.
 // Adopt only IDs already recorded by the parent and exact durable My receipts.
 function refreshBackgroundEnrollmentOwnership(receipts, enrollmentIds, readRecord, {workspaceId,rows,readJournal}) {
@@ -199,6 +207,34 @@ function refreshBackgroundEnrollmentOwnership(receipts, enrollmentIds, readRecor
       if(!receipt.enrollmentIds.includes(id))receipt.enrollmentIds.push(id);
     }
   }
+}
+// Later journeys may install a leaf for a different owned source with the same
+// subject. Defer it only when the parent enrollment, database row, issuing job,
+// durable container record, journal and exact public leaf all agree.
+function collectOtherOwnedThumbprints(receipts, enrollmentIds, readRecord, {workspaceId,rows,readJournal}) {
+  assert.match(workspaceId,uuid);assert.ok(Array.isArray(rows));
+  const receiptIds=new Set(receipts.map(receipt=>receipt.certificateId));
+  const subjects=new Set(receipts.map(receipt=>`CN=${receipt.domain}`));
+  const result=new Set();
+  if(!receipts.length)return result;
+  for(const id of enrollmentIds){
+    assert.match(id,uuid);
+    const containerName=buildEnrollmentContainerName(id),record=readRecord(containerName);
+    if(!record || receiptIds.has(record.certificateId) || record.acceptedStore!=="My" || record.status!=="enrolled_by_agent")continue;
+    assert.equal(record.containerName,containerName);assert.match(record.acceptedThumbprint,/^[A-F0-9]{40}$/);
+    const matches=rows.filter(row=>row.id===id && row.workspace_id===workspaceId && row.certificate_id===record.certificateId);
+    assert.equal(matches.length,1,"Preserve certificate without exact enrollment ownership");
+    assert.ok(["installed","install_failed"].includes(matches[0].state));assert.ok(matches[0].job_ids.includes(record.jobId));
+    const journal=readJournal(id);assert.equal(journal.kind,"valid");assert.equal(journal.journal.containerName,containerName);
+    assert.ok(["installed","install_failed"].includes(journal.journal.state));
+    const pem=journal.artifacts.leafPem;assert.equal(typeof pem,"string");
+    assert.equal(crypto.createHash("sha256").update(pem.endsWith("\n")?pem:`${pem}\n`).digest("hex"),journal.journal.leafSha256);
+    const leaf=new crypto.X509Certificate(pem);
+    assert.equal(leaf.fingerprint.replace(/:/g,"").toUpperCase(),record.acceptedThumbprint);
+    if(!subjects.has(leaf.subject))continue;
+    result.add(record.acceptedThumbprint);
+  }
+  return result;
 }
 function registerCapacityStoreCertificate(registry, { domain, certificateId }) {
   const receipt = {
@@ -667,7 +703,9 @@ module.exports = {
   cleanupIssuerSwitch: context => cleanupRegisteredStore(context,"issuer-switch"),
   backgroundCleanupPlan,
   refreshBackgroundEnrollmentOwnership,
+  collectOtherOwnedThumbprints,
   registerBackgroundStoreCertificate,
+  recordBackgroundReceiptOwnership,
   cleanupBackground: context => cleanupRegisteredStore(context,"background"),
   captureServiceDrain,
   assertDrainAbsent,

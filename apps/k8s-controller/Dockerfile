@@ -1,9 +1,9 @@
-FROM node:22.23.2-alpine3.23
+FROM node:22.23.4-alpine3.23
 
 # Explicit minimums stop stale build-cache layers from keeping older packages.
 RUN apk update && apk upgrade --no-cache \
-    && apk add --no-cache "libcrypto3>=3.5.9-r0" "libssl3>=3.5.9-r0" "zlib>=1.3.2-r1" \
-    && apk info --exists "libcrypto3>=3.5.9-r0" "libssl3>=3.5.9-r0" "zlib>=1.3.2-r1"
+    && apk add --no-cache "libcrypto3>=3.5.9-r0" "libssl3>=3.5.9-r0" "zlib>=1.4-r0" \
+    && apk info --exists "libcrypto3>=3.5.9-r0" "libssl3>=3.5.9-r0" "zlib>=1.4-r0"
 
 WORKDIR /app
 

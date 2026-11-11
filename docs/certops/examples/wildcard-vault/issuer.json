@@ -13,8 +13,8 @@
   },
   "dnsProviders": { "cloudflare": { "credentialsFile": "/etc/tokentimer-agent/cloudflare.json" }, "zoneProviderMap": { "example.com": "cloudflare" } },
   "materialStores": {
-    "customer": {
-      "address": "https://vault.customer.example:8200",
+    "primary": {
+      "address": "https://vault.example.com:8200",
       "mount": "secret",
       "tokenFile": "/run/tokentimer-vault/issuer-token",
       "caFile": "/etc/tokentimer-agent/vault-ca.pem",

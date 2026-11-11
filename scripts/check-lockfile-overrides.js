@@ -4,7 +4,7 @@
 // Asserts that pnpm-lock.yaml actually resolves the security-patched versions
 // pinned in pnpm-workspace.yaml overrides. This catches the failure mode where
 // override configuration moves (or is duplicated) and silently stops applying.
-// Mirror of the tokentimer-cloud checker, with the core override set.
+// Checks the Core lockfile against its declared dependency overrides.
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -16,9 +16,10 @@ const pkgPath = path.join(repoRoot, "package.json");
 // name -> { major: expected version } ; major "*" means any major.
 // Keep in sync with the overrides block in pnpm-workspace.yaml.
 const REQUIRED_PINS = {
+  glob: { 9: "14.0.2", 10: "14.0.2", 11: "14.0.2", 12: "14.0.2", 13: "14.0.2", 14: "14.0.2" },
   tar: { "*": "7.5.7" },
   "fast-xml-parser": { "*": "5.7.3" },
-  minimatch: { "*": "10.2.5" },
+  minimatch: { "*": "11.0.1" },
   "brace-expansion": { "*": "5.0.12" },
   "path-to-regexp": { "*": "8.4.0" },
   yaml: { "*": "1.10.3" },
@@ -37,7 +38,7 @@ const REQUIRED_PINS = {
   picomatch: { 2: "2.3.2", 4: "4.0.4" },
   ajv: { 6: "6.15.0" },
   lodash: { "*": "4.18.1" },
-  "follow-redirects": { "*": "1.16.1" },
+  "follow-redirects": { "*": "1.16.2" },
   postcss: { "*": "8.5.26" },
   nanoid: { "*": "3.3.18" },
   "@babel/core": { "*": "7.29.6" },

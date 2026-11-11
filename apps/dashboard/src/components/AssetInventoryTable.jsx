@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { FiActivity, FiExternalLink } from 'react-icons/fi';
 import { AccessibleSpinner } from './Accessibility';
+import { DashboardState } from './DashboardPrimitives';
 import TruncatedText from './TruncatedText';
 import {
   isRetiredCertificate,
@@ -1161,6 +1162,7 @@ export default function AssetInventoryTable({
   sortedVisibleCount = 0,
   emptyMessage,
   noMatchMessage = 'No assets match the current filters.',
+  onClearFilters,
   getAssetTypeLabel,
   getCategoryLabel = () => '-',
   getTokenLocation,
@@ -1175,7 +1177,6 @@ export default function AssetInventoryTable({
   onDeleteToken,
   mutedTextColor = 'rgba(148, 163, 184, 0.88)',
   secondaryTextColor = 'rgba(203, 213, 225, 0.9)',
-  emptyTextColor = 'rgba(148, 163, 184, 0.88)',
   hoverBgColor = 'rgba(30, 41, 59, 0.45)',
   mobileCardBg = 'rgba(15, 23, 42, 0.55)',
   loadMoreCategories = [],
@@ -1280,17 +1281,34 @@ export default function AssetInventoryTable({
           <AccessibleSpinner size='lg' aria-label='Loading tokens' />
         </Flex>
       ) : allTokensCount === 0 ? (
-        <Text textAlign='center' color={emptyTextColor} p={{ base: 4, md: 8 }}>
-          {resolvedEmptyMessage}
-        </Text>
+        <DashboardState
+          title='No assets yet'
+          description={resolvedEmptyMessage}
+        />
       ) : sortedVisibleCount === 0 ? (
-        <Text textAlign='center' color={emptyTextColor} p={{ base: 4, md: 8 }}>
-          {noMatchMessage}
-        </Text>
+        <DashboardState
+          title='No matching assets'
+          description={noMatchMessage}
+          action={
+            onClearFilters && (
+              <Button size='sm' variant='outline' onClick={onClearFilters}>
+                Clear filters
+              </Button>
+            )
+          }
+        />
       ) : tokens.length === 0 ? (
-        <Text textAlign='center' color={emptyTextColor} p={{ base: 4, md: 8 }}>
-          {noMatchMessage}
-        </Text>
+        <DashboardState
+          title='No matching assets'
+          description={noMatchMessage}
+          action={
+            onClearFilters && (
+              <Button size='sm' variant='outline' onClick={onClearFilters}>
+                Clear filters
+              </Button>
+            )
+          }
+        />
       ) : (
         <>
           <Box display={{ base: 'block', lg: 'none' }}>

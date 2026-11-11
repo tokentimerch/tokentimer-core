@@ -12,6 +12,12 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 
 ## Core runtime and bootstrap
 
+API error messages in the dashboard show a **Reference** when the response
+includes a valid server-generated `X-Request-Id`. Include it when contacting
+support or your operator; it matches `correlationId` in API logs. This is enabled
+by default. Network failures and older servers or proxies that omit the header
+have no reference. Queued worker jobs do not yet inherit the request ID.
+
 | Variable                  | Description                              | Default value                  | Scope                  |
 | ------------------------- | ---------------------------------------- | ------------------------------ | ---------------------- |
 | `TT_MODE`                 | Core variant mode                        | `oss`                          | App mode               |
@@ -119,6 +125,7 @@ the origins users and integrations actually use in the browser.
 | `ALLOW_LOCAL_DEV_CORS`                     | In production, also allow `http://localhost:*` and `http://127.0.0.1:*` in CORS (local troubleshooting only) | `false`                                | API security |
 | `PHONE_HASH_SALT`                          | Optional salt for phone hashing                                                 | `unset`                                | API privacy  |
 | `WEEKLY_DIGEST_RECIPIENT_KEY`              | HMAC secret for weekly-digest skip keys. Falls back to `SESSION_SECRET`. Rotating it re-sends already claimed recipients for the current week. | `unset` | Worker privacy |
+| `WEEKLY_DIGEST_UNCERTAIN_RETRY_SECONDS`    | How long a weekly digest waits after an in-flight or ambiguous provider call before another worker may send | `900` | Worker |
 | `TRUST_PROXY_HOPS`                         | Number of trusted reverse-proxy hops in front of the API (affects `req.ip` and `req.protocol` resolution). `0` = no proxy, `1` = single ingress/reverse proxy, `2` = LB -> ingress. | `2`                                    | API security |
 | `WORKER_API_KEY`                           | Worker-to-API auth key. Bearer requests authenticated with this key are CSRF-exempt, as are CertOps machine-token paths. CSRF is enforced in development as well as production. | `unset (falls back to SESSION_SECRET)` | Worker, API  |
 
@@ -142,7 +149,36 @@ IP/network instead of credentials. Setting only one of the two is treated as
 an incomplete configuration and SMTP is reported as not configured. With no
 `SMTP_USER`, set `FROM_EMAIL` so there is still an address to send from.
 
+## Recipient verification
+
+Self-hosted delivery leaves verification `off` by default. In `enforce`, current workspace members' exact verified mailboxes need no second email confirmation; external addresses and WhatsApp numbers require confirmation, and explicit refusals still win. Use `shadow` to observe eligibility without blocking delivery. Keep the API and every notification worker on the same mode, and run standard migrations before matching processes. Verification does not gate account, password-reset or workspace-invitation messages.
+
+| Variable | Description | Default value | Scope |
+| --- | --- | --- | --- |
+| `RECIPIENT_VERIFICATION_MODE` | `off`, `shadow`, or `enforce`. Cloud ignores `off` | `off` self-hosted, `enforce` on Cloud | API, worker |
+| `TT_DEPLOYMENT` | `self-hosted` or `cloud`. Any other value enforces verification | unset means `self-hosted` | API, worker |
+| `RECIPIENT_VERIFICATION_CLOUD_SHADOW` | Set to `1` with mode `shadow` to temporarily shadow Cloud | unset | API, worker |
+| `RECIPIENT_VERIFICATION_DISPATCH_LEASE_SECONDS` | How long an in-flight verification email blocks a replacement after a crash | `120` | API |
+| `RECIPIENT_RESUBSCRIBE_IP_PER_DAY` | Public re-subscribe requests per client address | `10` | API |
+| `RECIPIENT_FINGERPRINT_SECRET` | HMAC key for destination fingerprints and token hashes | falls back to `PHONE_HASH_SALT`, then `SESSION_SECRET` | API, worker |
+| `PUBLIC_BASE_URL` | External origin for invitation links and signature validation at `POST /webhooks/twilio/whatsapp/inbound` | falls back to `API_URL` | API |
+| `RECIPIENT_VERIFY_EMAIL_DEST_PER_DAY` | Email invitations per destination | `1` | API |
+| `RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK` | Email invitations per destination | `3` | API |
+| `RECIPIENT_VERIFY_WHATSAPP_DEST_PER_DAY` | WhatsApp challenges per destination | `1` | API |
+| `RECIPIENT_VERIFY_WHATSAPP_DEST_PER_WEEK` | WhatsApp challenges per destination | `3` | API |
+| `RECIPIENT_VERIFY_WORKSPACE_PER_DAY` | Invitations per workspace | `50` | API |
+| `RECIPIENT_VERIFY_USER_PER_DAY` | Invitations per user | `20` | API |
+| `RECIPIENT_TEST_PER_CONTACT_PER_DAY` | Workspace notification tests per contact | `3` | API |
+| `RECIPIENT_TEST_COOLDOWN_SECONDS` | Minimum gap between tests of one contact | `120` | API |
+| `RECIPIENT_VERIFY_PUBLIC_PER_WINDOW` | Public confirmation page requests per client address, shared across API replicas | `60` | API |
+| `RECIPIENT_VERIFY_PUBLIC_WINDOW_SECONDS` | Window for the public confirmation page limit | `600` | API |
+| `RECIPIENT_VERIFY_PAGE_MAX` | In-process shield for public confirmation pages | `60` in production, `10000` in development and test | API |
+| `RECIPIENT_VERIFY_PAGE_WINDOW_MS` | Window for the in-process confirmation page shield | `600000` | API |
+| `RECIPIENT_VERIFICATION_ADMIN_PROVIDER_TEST` | Set to `1` to allow an enforce-mode operator WhatsApp provider probe to an arbitrary number | unset | API |
+
 ## Alerts, limits, and webhooks
+
+For Microsoft Teams, create a Teams Workflows incoming webhook with the trigger authentication set to Anyone and enter its URL in Alert Preferences using the Microsoft Teams type. TokenTimer does not send a bearer token. TokenTimer sends Adaptive Cards for alerts, weekly digests, and test messages. Replace any Office 365 Connector URL with the new Workflow URL, then send a test from Alert Preferences. For Teams and Power Automate setup, see [Microsoft Teams webhook setup](https://tokentimer.ch/docs/self-hosted/alerts/contact-groups#webhook-teams).
 
 | Variable                                  | Description                                                                 | Default value                         | Scope                |
 | ----------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------- | -------------------- |
@@ -474,7 +510,7 @@ a published compatibility guarantee.
 | `CERTOPS_AGENT_MIN_AGENT_VERSION` / `CERTOPS_AGENT_MAX_AGENT_VERSION` | Supported agent build version window used to compute fleet `compatibilityState` (`blocked` outside this window). `MAX` is intentionally an unbounded reject-ceiling so the control plane never blocks an agent purely for being newer than this server knows about; it is not the reference used for the `outdated` label below. | `0.1.0` / `99.999.999` | API |
 | `CERTOPS_AGENT_LATEST_KNOWN_VERSION` | Reference agent build version used only to compute the `outdated` fleet label (more than one minor behind this value, but still inside the min/max window above). Defaults to the version of the agent package this server actually ships (`packages/agent/package.json`), so it tracks every release automatically; override only if the API is intentionally serving a different agent build than the one bundled with it. | shipped agent package version | API |
 | `CERTOPS_AGENT_CLOCK_DRIFT_WARN_MS` / `CERTOPS_AGENT_CLOCK_DRIFT_ALERT_MS` | Absolute clock-offset thresholds used to compute fleet `clockDriftState` (`warn`/`alert`). | `5000` / `30000` | API |
-| `CERTOPS_RENEWAL_THRESHOLD_DAYS` | Schedule a renewal when a managed certificate expires within this many days. This is the fleet-wide default; a certificate whose renewal profile sets `certificate_profiles.renew_before_days` uses that value instead (`COALESCE(renew_before_days, <this>)`). Editing the profile from the Renewal automation page (`/certops/renewals`) is the supported way to give one certificate a longer runway than the rest of the fleet. A profile whose `status` is `disabled` or `archived` is excluded from renewal entirely regardless of this value. | `30` | API + Worker |
+| `CERTOPS_RENEWAL_THRESHOLD_DAYS` | Fleet-wide renewal lead time in days. A renewal profile's lead time takes priority. With neither set, certificates valid for under 10 days renew no earlier than halfway through their lifetime; certificates valid for 10 to under 90 days use about one-third of their lifetime before expiry, with a 7-day minimum. The sweep cadence and job execution time must fit the remaining lifetime. Certificate details show suggested alert thresholds for lifetimes of at least two days. Disabled and archived profiles are excluded from automatic renewal. | Adaptive for known short lifetimes, otherwise `30` days | API + Worker |
 | `CERTOPS_RENEWAL_PER_CA_CAP` | Maximum in-flight renewals per CA endpoint per workspace, so one CA cannot be flooded. Enforced on **every** renew creation path (scheduler sweep, manual job, bulk renew): the sweep skips over-cap certificates and retries them next tick, while manual and bulk creation fail with `409 CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED`. Certificates waiting on this cap show a distinct **At CA capacity** badge and a separate, non-alarming notice in Upcoming renewals, instead of looking like a healthy auto-renewing certificate. The wait clears automatically once earlier renewals for that CA finish. | `5` | API + Worker |
 | `CERTOPS_JOB_LEASE_SECONDS` | How long an agent's claim on a job stays valid before it must be renewed. Raise this if legitimate renewals routinely take longer. | `900` | API |
 | `CERTOPS_LEASE_HARD_GRACE_MS` | Extra time a still-heartbeating agent gets before its expired-lease job is judged. | `3600000` (1 hour) | API + Worker |
@@ -496,8 +532,7 @@ bypass it.
 | `certOpsRequireApprovalAlways` | When on, every new certificate job starts `pending_approval`, including dashboard, machine API tokens, bulk renew, scheduled renewal, and trust-anchor distribute/revoke. The per-job approval checkbox cannot override it. | `false` | Workspace |
 
 Toggle it from **Certificate Management → Settings** under **Job approval** (badges
-**Always required** / **Not required**; switch text **Require approval
-before every new job can run, regardless of the per-job setting.**), or via
+**On** / **Off**; switch text **Require approval for every new job**), or via
 `GET`/`PUT /api/v1/workspaces/:id/certops/settings` (admin-only for the
 `PUT`). It shares that endpoint with the pause/resume kill switch: a
 request that sets both together applies them as one transaction, so a
@@ -530,7 +565,7 @@ request awaiting the CA's decision.
 
 ### CertOps maintenance sweeps (worker)
 
-The `certops` worker target runs eleven independent sweeps. Each has an enable
+The `certops` worker target runs twelve independent sweeps. Each has an enable
 flag (default enabled) and a per-sweep timeout (default `120000` ms,
 `DEFAULT_SWEEP_TIMEOUT_MS`). Disabling a sweep is an operational escape hatch,
 not a normal configuration.
@@ -560,6 +595,7 @@ schedule is the CronJob's own `schedule` field. Set
 | Trust-anchor reconciliation | `CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED` | `CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_TIMEOUT_MS` | Reschedules or marks stale a `certops_trust_anchor_installations` row still pending past its `next_reconcile_at` (ADR-0012 decision 20b/20f/20h) |
 | Agent log close/abandon | `CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED` | `CERTOPS_SWEEP_AGENT_LOG_ABANDON_TIMEOUT_MS` | Closes console streams whose claim ended without a final batch (cancel, requeue, reaped lease), then marks them abandoned once their 5-minute grace window passes, so the panel stops polling |
 | Agent log retention | `CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED` | `CERTOPS_SWEEP_AGENT_LOG_PURGE_TIMEOUT_MS` | Deletes console lines older than `CERTOPS_AGENT_LOG_RETENTION_DAYS`, closed stream rows 30 days after that, and old daily quota rows |
+| Assistant requests | `CERTOPS_SWEEP_OPERATOR_REQUESTS_ENABLED` | `CERTOPS_SWEEP_OPERATOR_REQUESTS_TIMEOUT_MS` | Ends renewal requests from an assistant connection that can no longer be approved: the approval window closed, the connection expired or was revoked, or the requester lost the required role. Finds nothing until assistant requests exist |
 
 **The outbox drain is not optional if you rely on renewal-failure alerts.** A
 terminal renewal failure records its *intent* to alert in `certops_outbox` inside
@@ -579,6 +615,30 @@ interaction.
 **Deployment defaults differ from the app-level default above.** The Helm chart (`config.certopsEnabled`, see `deploy/helm/values.yaml`) and the Docker Compose files (`CERTOPS_ENABLED:-true` in `deploy/compose/docker-compose.yml` / `docker-compose.dev.yml`) both set `CERTOPS_ENABLED=true` unless explicitly overridden, so CertOps is **enabled by default** for Helm and Compose deployments. Set `config.certopsEnabled: false` (Helm) or `CERTOPS_ENABLED=false` (Compose `.env`) to opt out.
 
 TokenTimer stores only public certificate material (fingerprints, serials, issuers, subjects, SANs, validity, chains) and external key references. Requests containing private key material are rejected with HTTP 422. Agent registration-replay credentials are stored only as an encrypted envelope (see `docs/certops/agent.md`).
+
+<a name="mcp-operator-interface"></a>
+
+### Assistant (MCP) operator interface
+
+Connect an assistant from **Preferences → MCP assistants**. Remote HTTP with browser sign-in is recommended and needs no Node; the local stdio adapter is optional. Start read-only and follow the visual [setup guide](https://tokentimer.ch/docs/api/mcp-setup). All deployment flags below default to off.
+
+| Variable | Helm value | Description | Default |
+| -------- | ---------- | ----------- | ------- |
+| `MCP_OPERATOR_INTERFACE_ENABLED` | `config.mcpOperatorInterfaceEnabled` | Enables the `/api/v1/operator` namespace, connection management and setup codes. Writes need the separate write flag. | `false` |
+| `MCP_OPERATOR_REMOTE_ENABLED` | `config.mcpOperatorRemoteEnabled` | Enables remote HTTP MCP and browser sign-in; requires the interface flag. | `false` |
+| `MCP_PUBLIC_URL` | `config.mcpPublicUrl` | Exact public HTTPS URL ending `/api/v1/operator/mcp`; issuer/audience and Host binding. | unset |
+| `MCP_ALLOWED_ORIGINS` | `config.mcpAllowedOrigins` | Additional comma-separated browser client origins; no wildcards. Does not extend account API CORS. | unset |
+| `MCP_OPERATOR_WRITES_ENABLED` | `config.mcpOperatorWritesEnabled` | Enables reviewed assistant write actions when their connection permissions and workspace controls allow them. Requires the interface flag. | `false` |
+
+Remote clients must support the TLS version required by your deployment; TLS 1.3-only endpoints need a TLS 1.3-capable client.
+
+Publish `/api/v1/mcp/oauth/*` and both `/.well-known/oauth-*` discovery paths to the API, preserving Host and port. Set `APP_URL` to the dashboard. Remote sign-in requires clients that support dynamic registration; URL-based client metadata is not supported.
+
+Inventory import needs an explicit manager grant of `mcp:inventory:import`. It adds reviewed metadata only and preserves existing records. It uses a preview, not CertOps Job approval. Renewals separately need `mcp:renew:request` and owner/manager enablement in **Certificate Management → Settings → Allow MCP renewal requests**. **Job approval On** requires a different manager or admin within 24 hours; **Off** queues claimable work. Policy changes require a fresh preview; existing jobs retain their gate. Disabling workspace MCP renewals cancels unapproved work. Submission does not prove installation or live TLS.
+
+Issuance separately needs `mcp:issue:request` and the workspace issuance switch. Successful issuance can establish a renewal profile. Other write actions require their own connection permissions; see the [tool list](https://tokentimer.ch/docs/api/mcp-setup#available-tools).
+
+Connections default to 30 days, with longer durations or explicit **No expiry**. No expiry keeps access until revoked; OAuth access tokens still last 15 minutes and rotating refresh credentials expire after 90 days of inactivity. Revocation cancels unclaimed work; already claimed jobs can finish. See [ADR-0017](adr/0017-mcp-operator-interface.md) for the authority and lifecycle rules.
 
 ## Metrics and observability
 
@@ -687,6 +747,15 @@ Variables sent by TokenTimer for endpoint WhatsApp alerts:
   - `template_kind = endpoint_down` for outage alerts
   - `template_kind = endpoint_recovered` for recovery alerts
 
+## PagerDuty expiration incidents
+
+Named PagerDuty webhooks use the existing Events API v2 routing key. Expiration
+incidents now correlate retries and thresholds, then automatically resolve after
+validated recovery outside the destination's risk window. No extra credentials
+or schedules are needed. See [PagerDuty configuration and operations](PAGERDUTY.md)
+for multiple groups, credential rotation, historical incidents, retry handling
+and Event Orchestration routing.
+
 ## Legacy and compatibility
 
 | Variable            | Description                                                                 | Default value | Scope                   |
@@ -695,22 +764,4 @@ Variables sent by TokenTimer for endpoint WhatsApp alerts:
 | `RATE_LIMIT_WINDOW` | Config package generic rate-limit window (ms)                               | `60000`       | Shared config consumers |
 | `RATE_LIMIT_MAX`    | Config package generic rate-limit max requests                              | `100`         | Shared config consumers |
 
-## Test, CI, and local orchestration
-
-| Variable                    | Description                               | Default value           | Scope              |
-| --------------------------- | ----------------------------------------- | ----------------------- | ------------------ |
-| `CI`                        | Standard CI marker                        | `unset`                 | CI pipelines       |
-| `CONTRACT_API_REQUIRED`     | Fail contract tests if API is unavailable | `unset`                 | Contract tests     |
-| `TEST_API_URL`              | Integration test API endpoint             | `http://localhost:4000` | Integration tests  |
-| `TEST_MODE`                 | Test behavior switch                      | `unset`                 | Tests              |
-| `NODE_V8_COVERAGE`          | V8 coverage output path                   | `unset`                 | Coverage           |
-| `TT_ALLOW_FORCE_INSTALL`    | Permit force install in test bootstrap    | `unset`                 | Tests              |
-| `TT_AUTO_INSTALL_TEST_DEPS` | Auto install missing test deps            | `unset`                 | Tests              |
-| `TT_FORCE_INSTALL`          | Force dependency install in tests         | `unset`                 | Tests              |
-| `TT_IMAGE_TAG`              | Docker image tag for tests                | `unset`                 | Test orchestration |
-| `TT_SKIP_COMPOSE_BUILD`     | Skip docker compose build step            | `unset`                 | Test orchestration |
-| `TT_TEST_API_PORT`          | API port used by test compose             | `4000`                  | Test compose       |
-| `TT_TEST_DB_PORT`           | DB port used by test compose              | `5432`                  | Test compose       |
-| `TT_TEST_MAILHOG_SMTP_PORT` | MailHog SMTP port in tests                | `1025`                  | Test compose       |
-| `TT_TEST_MAILHOG_UI_PORT`   | MailHog UI port in tests                  | `8025`                  | Test compose       |
-| `TT_TEST_SUITE`             | Select subset of test suites              | `unset`                 | Test selection     |
+For test and CI variables, see [Local development](../DEVELOPMENT.md#test-ci-and-local-orchestration).

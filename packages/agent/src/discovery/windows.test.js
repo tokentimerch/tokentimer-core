@@ -210,7 +210,7 @@ function generateSelfSignedCertWithSanDerBase64(commonName, sanEntries) {
 describe("computeFingerprintSha256", () => {
   it(
     "computes a real SHA-256 fingerprint from base64 DER bytes",
-    // skip-reason: no-host - needs a real openssl binary on PATH.
+    // skip-reason: prerequisite - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     () => {
       const derBase64 = generateSelfSignedCertDerBase64("fingerprint-test.example.com");
@@ -323,7 +323,7 @@ describe("parseNodeSubjectAltName", () => {
 describe("readSubjectAltNamesFromDer", () => {
   it(
     "reads real SAN entries directly from a certificate's own raw DER bytes",
-    // skip-reason: no-host - needs a real openssl binary on PATH.
+    // skip-reason: prerequisite - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     () => {
       const derBase64 = generateSelfSignedCertWithSanDerBase64("san-adapter-test.example.com", [
@@ -355,7 +355,7 @@ describe("readSubjectAltNamesFromDer", () => {
 describe("resolveSubjectAltNames", () => {
   it(
     "prefers the raw-bytes-derived SANs over windows-discovery's own list",
-    // skip-reason: no-host - needs a real openssl binary on PATH.
+    // skip-reason: prerequisite - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     () => {
       const derBase64 = generateSelfSignedCertWithSanDerBase64("resolve-san-test.example.com", [
@@ -398,7 +398,7 @@ describe("collectWindowsDiscoveryObservations", () => {
 
   it(
     "reports a windows_store observation using windows-discovery's parsed fields plus an adapter-computed fingerprint",
-    // skip-reason: no-host - needs a real openssl binary on PATH.
+    // skip-reason: prerequisite - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     async () => {
       const derBase64 = generateSelfSignedCertDerBase64("store-only.example.com");
@@ -427,7 +427,7 @@ describe("collectWindowsDiscoveryObservations", () => {
 
   it(
     "resolves an http.sys binding matched to an IIS site as iis_binding, reusing the store's fingerprint",
-    // skip-reason: no-host - needs a real openssl binary on PATH.
+    // skip-reason: prerequisite - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     async () => {
       const derBase64 = generateSelfSignedCertDerBase64("iis-bound.example.com");
@@ -456,9 +456,26 @@ describe("collectWindowsDiscoveryObservations", () => {
     },
   );
 
+  it("reports each IIS site sharing an HTTP.sys binding with stable site identities", async () => {
+    const certificate = new (require("node:crypto").X509Certificate)(fs.readFileSync(path.join(__dirname, "../verify/fixtures/leaf.crt.pem")));
+    const thumbprint = "1122334455667788990011223344556677889900";
+    const execFileImpl = makeExecFileImplRouter({
+      ...storeFixtureFor(thumbprint, "shared.example.test", { hasPrivateKey: true }),
+      bindingsJson: httpSysJson([{ ipPort: "10.0.0.5:443", thumbprint, storeName: "My" }]),
+      appcmdStdout: ['SITE "First Service" (id:1,bindings:https/10.0.0.5:443:,state:Started)',
+        'SITE "Second Service" (id:2,bindings:https/10.0.0.5:443:,state:Started)',
+        'SITE "Second Service" (id:2,bindings:https/10.0.0.5:443:,state:Started)'].join("\n"),
+    });
+    const observations = await collectWindowsDiscoveryObservations({ execFileImpl,
+      spawn: () => fakeSpawnResult({ stdout: rawDataJson(thumbprint, certificate.raw.toString("base64")) }) });
+    const services = observations.filter(value => value.locationKind === "iis_binding");
+    assert.deepEqual(services.map(value => value.locationSlot).sort(), ["First Service:443", "Second Service:443"]);
+    assert.equal(observations.filter(value => value.locationKind === "windows_store").length, 1);
+  });
+
   it(
     "unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store",
-    // skip-reason: no-host - needs a real openssl binary on PATH.
+    // skip-reason: prerequisite - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     async () => {
       const thumbprint = "1234567890abcdef1234567890abcdef12345678";
@@ -511,7 +528,7 @@ describe("collectWindowsDiscoveryObservations", () => {
 
   it(
     "reports an http.sys binding with no matching IIS site as http_sys, not iis_binding",
-    // skip-reason: no-host - needs a real openssl binary on PATH.
+    // skip-reason: prerequisite - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     async () => {
       const derBase64 = generateSelfSignedCertDerBase64("httpsys-bound.example.com");
@@ -599,7 +616,7 @@ describe("collectWindowsDiscoveryObservations", () => {
 
   it(
     "reports real subjectAltNames end-to-end from the certificate's raw bytes",
-    // skip-reason: no-host - needs a real openssl binary on PATH.
+    // skip-reason: prerequisite - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     async () => {
       const thumbprint = "aabbccddeeff00112233445566778899aabbccdd";

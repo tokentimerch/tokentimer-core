@@ -36,6 +36,7 @@ if (
   );
 }
 const { writeAudit } = require("./services/audit");
+const recipientVerification = require("../../packages/recipient-verification");
 const { resolveRequeuedNotifications } = require("./services/alertQueue");
 const {
   loadWorkspace,
@@ -44,6 +45,7 @@ const {
 } = require("./services/rbac");
 const { hideWorkspaceExistence } = require("./middleware/workspace-access-policy");
 const { generateCsrfToken, csrfExempt } = require("./middleware/csrf");
+const { guardOperatorCredentials } = require("./middleware/operator-connection-auth");
 const {
   createCertOpsMachineWritePreParserBoundary,
 } = require("./middleware/certops-executor-body-parser");
@@ -87,6 +89,12 @@ const resolveOpenApiSpecPath = () => {
   );
 };
 const app = express();
+const {
+  requestCorrelation,
+  requestCompletionLogger,
+} = require("./utils/request-context");
+app.use(requestCorrelation);
+app.use(requestCompletionLogger(logger));
 
 // Prometheus metrics (shared module ensures counters are registered once)
 const {
@@ -226,6 +234,7 @@ app.use(
 
 // 2. CORS with strict configuration (include API_URL for split-host dashboard → API)
 const corsOptions = {
+  exposedHeaders: ["X-Request-Id"],
   origin: buildCorsOrigins(process.env),
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -240,13 +249,18 @@ const corsOptions = {
   ],
   maxAge: 86400, // 24 hours
 };
-app.use(cors(corsOptions));
-app.options(/.*/, cors(corsOptions));
+const { remoteCors, remoteBodyParser, createMcpRemoteRouter } = require("./routes/mcpRemote");
+require("./services/operator/remoteConfig").remoteConfig();
+app.use(remoteCors);
+const ordinaryCors = cors(corsOptions);
+app.use((req, res, next) => req.mcpRemoteConfig ? next() : ordinaryCors(req, res, next));
+app.options(/.*/, ordinaryCors);
 
 // 3. Request size limits. The exact CertOps machine-write boundary runs its
 // prefix/IP limiter before parsing, then applies the smaller dedicated parser.
 // It marks accepted requests so the machine router does not count them twice.
 app.use(createCertOpsMachineWritePreParserBoundary());
+app.use(remoteBodyParser);
 // Parser, not a route. Global and per-route limiters apply to handlers.
 // codeql[js/missing-rate-limiting]
 app.use(express.json({ limit: "10mb" })); // Limit JSON payload size (10mb for large integration scans)
@@ -309,6 +323,11 @@ app.use(cookieParser());
 app.use("/api", csrfExempt);
 app.use("/auth", csrfExempt);
 
+// Operator connection credentials are only valid on the operator namespace.
+// Reject them everywhere else before any other authentication runs.
+app.use("/api", guardOperatorCredentials);
+app.use("/auth", guardOperatorCredentials);
+
 const {
   speedLimiter,
   csrfTokenLimiter,
@@ -344,6 +363,7 @@ app.use((error, req, res, next) => {
 // delayed by speedLimiter or double-counted against GLOBAL_RATE_LIMIT_MAX.
 app.use(require("./routes/contacts"));
 app.use(require("./routes/whatsapp"));
+app.use(require("./routes/recipientVerification"));
 
 // Apply global rate limiting (excluding auth routes)
 app.use(applyGlobalRateLimit);
@@ -476,7 +496,9 @@ app.post(
       });
     try {
       const r = await pool.query(
-        `SELECT aq.*, COALESCE(t.workspace_id, ca.workspace_id) AS workspace_id
+        `SELECT aq.*, COALESCE(t.workspace_id, ca.workspace_id) AS workspace_id,
+                (aq.delivery_claim_id IS NOT NULL AND aq.next_attempt_at > NOW()) AS claim_active,
+                (aq.delivery_claim_id IS NULL AND aq.next_attempt_at > NOW()) AS cooldown_active
            FROM alert_queue aq
            LEFT JOIN tokens t ON t.id = aq.token_id
            LEFT JOIN certops_agents ca ON ca.id = aq.certops_agent_id
@@ -493,124 +515,192 @@ app.post(
         });
       const alert = r.rows[0];
 
-      // If alert is blocked due to plan limits, return informative message and reset date
-      if (String(alert.status || "").toLowerCase() === "blocked") {
+      const alertStatus = String(alert.status || "").toLowerCase();
+      if (alertStatus === "blocked") {
         const now = new Date();
         const reset = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-        const isPlanLimit = (alert.error_message || "").includes("PLAN_LIMIT");
-        // If blocked due to max attempts, do not allow manual retry
-        if (!isPlanLimit) {
+        const failureText = alert.error_message || "";
+        if (failureText.includes("PLAN_LIMIT")) {
+          return res.status(400).json({
+            error: `Maximum monthly usage reached, please wait until ${reset
+              .toISOString()
+              .slice(0, 10)} to process or consider upgrading to higher plan`,
+            code: "PLAN_ALERT_LIMIT",
+            resetDate: reset.toISOString().slice(0, 10),
+          });
+        }
+        if (failureText.includes("MAX_ATTEMPTS")) {
           return res.status(400).json({
             error:
               "This alert has been permanently blocked due to too many failed attempts.",
             code: "MAX_ATTEMPTS_BLOCKED",
           });
         }
+      }
+      if (alertStatus === "sent") {
         return res.status(400).json({
-          error: `Maximum monthly usage reached, please wait until ${reset
-            .toISOString()
-            .slice(0, 10)} to process or consider upgrading to higher plan`,
-          code: "PLAN_ALERT_LIMIT",
-          resetDate: reset.toISOString().slice(0, 10),
+          error: "This alert was already delivered.",
+          code: "ALREADY_DELIVERED",
         });
       }
 
-      // Determine remaining eligible channels from stored list
-      let storedChannels = [];
-      try {
-        if (Array.isArray(alert.channels)) storedChannels = alert.channels;
-        else if (typeof alert.channels === "string") {
-          try {
-            const parsed = JSON.parse(alert.channels);
-            if (Array.isArray(parsed)) storedChannels = parsed;
-          } catch (_err) {
-            logger.debug("Parse failed", { error: _err.message });
-          }
-        }
-      } catch (_err) {
-        logger.debug("Parse failed", { error: _err.message });
-      }
-      const eligible = Array.from(new Set(storedChannels)).filter(Boolean);
-
-      // If no channel provided, derive behavior
-      if (!channel) {
-        if (eligible.length === 0) {
-          // Provide a friendly diagnostic
-          let providerHint = null;
-          try {
-            const lastWh = await pool.query(
-              `SELECT metadata->>'kind' AS kind
-               FROM alert_delivery_log
-               WHERE alert_queue_id = $1 AND channel = 'webhooks'
-               ORDER BY sent_at DESC
-               LIMIT 1`,
-              [alert.id],
-            );
-            providerHint = (lastWh.rows?.[0]?.kind || "").toLowerCase() || null;
-          } catch (_err) {
-            logger.warn("DB operation failed", { error: _err.message });
-          }
-          const isWebhookIssue =
-            (alert.error_message || "").toLowerCase().includes("webhooks") ||
-            providerHint;
-          const hint = isWebhookIssue
-            ? `Please put a valid ${providerHint || "webhook"} before retrying (Preferences -> Webhooks).`
-            : "No eligible channels to retry. Enable at least one channel in Preferences, then try again.";
-          return res.status(400).json({
-            error: hint,
-            code: isWebhookIssue ? "WEBHOOK_REQUIRED" : "NO_ELIGIBLE_CHANNELS",
-            ...(providerHint ? { provider: providerHint } : {}),
-          });
-        }
-        if (eligible.length > 1) {
+      const retryPlan = recipientVerification.planManualRetry(alert.channels, channel);
+      if (!retryPlan.ok) {
+        if (retryPlan.code === "CHANNEL_REQUIRED") {
           return res.status(400).json({
             error:
               "Multiple channels are eligible for retry. Please specify a channel (e.g., 'email' or 'webhooks').",
             code: "CHANNEL_REQUIRED",
-            eligible,
+            eligible: retryPlan.eligible,
           });
         }
-        channel = eligible[0];
+        if (retryPlan.code === "CHANNEL_PERMANENT") {
+          return res.status(400).json({
+            error:
+              "This channel failed permanently. Choose it explicitly after the endpoint is fixed. Successful channels are not sent again.",
+            code: "CHANNEL_PERMANENT",
+            eligible: retryPlan.eligible,
+          });
+        }
+        if (retryPlan.code === "ALREADY_DELIVERED") {
+          return res.status(400).json({
+            error: "That channel was already delivered.",
+            code: "ALREADY_DELIVERED",
+            eligible: retryPlan.eligible,
+          });
+        }
+        if (retryPlan.code === "CHANNEL_NOT_ELIGIBLE") {
+          return res.status(400).json({
+            error: "Channel is not eligible for retry",
+            code: "CHANNEL_NOT_ELIGIBLE",
+            eligible: retryPlan.eligible,
+          });
+        }
+        if (
+          retryPlan.code === "NO_VERIFIED_RECIPIENTS"
+          || retryPlan.code === "RECIPIENT_NOT_VERIFIED"
+          || retryPlan.code === "RECIPIENT_OPTED_OUT"
+          || retryPlan.code === "RECIPIENT_REVOKED"
+          || retryPlan.code === "RECIPIENT_SUPPRESSED"
+        ) {
+          return res.status(400).json({
+            error: retryPlan.code === "RECIPIENT_OPTED_OUT"
+              ? "This channel is waiting because the recipient opted out."
+              : "This channel is waiting for the recipient to confirm the destination.",
+            code: retryPlan.code,
+            eligible: retryPlan.eligible,
+          });
+        }
+        let providerHint = null;
+        try {
+          const lastWh = await pool.query(
+            `SELECT metadata->>'kind' AS kind
+             FROM alert_delivery_log
+             WHERE alert_queue_id = $1 AND channel = 'webhooks'
+             ORDER BY sent_at DESC
+             LIMIT 1`,
+            [alert.id],
+          );
+          providerHint = (lastWh.rows?.[0]?.kind || "").toLowerCase() || null;
+        } catch (_err) {
+          logger.warn("DB operation failed", { error: _err.message });
+        }
+        const isWebhookIssue =
+          (alert.error_message || "").toLowerCase().includes("webhooks") ||
+          providerHint;
+        const hint = isWebhookIssue
+          ? `Please put a valid ${providerHint || "webhook"} before retrying (Preferences -> Webhooks).`
+          : "No eligible channels to retry. Enable at least one channel in Preferences, then try again.";
+        return res.status(400).json({
+          error: hint,
+          code: isWebhookIssue ? "WEBHOOK_REQUIRED" : "NO_ELIGIBLE_CHANNELS",
+          ...(providerHint ? { provider: providerHint } : {}),
+        });
+      }
+      channel = retryPlan.channel;
+
+      if (alert.claim_active === true) {
+        return res.status(409).json({
+          error: "A delivery is already in progress for this alert.",
+          code: "DELIVERY_IN_PROGRESS",
+        });
       }
 
-      // Respect cooldown window
-      if (
-        alert.next_attempt_at &&
-        new Date(alert.next_attempt_at) > new Date()
-      ) {
+      // Respect cooldown window. A live claim uses the same future timestamp
+      // and is reported above, so this is only a scheduled retry wait.
+      if (alert.cooldown_active === true) {
         const eta = new Date(alert.next_attempt_at).toISOString();
         return res
           .status(429)
           .json({ error: "Cooldown active", nextAttemptAt: eta });
       }
 
-      // Ensure channel is among remaining channels
-      if (!eligible.includes(channel)) {
-        return res
-          .status(400)
-          .json({ error: "Channel is not eligible for retry", eligible });
-      }
-
-      // Set to pending and only this channel
+      // Compare the snapshot the plan was built from. A worker that claims or
+      // finishes the row between the read and this update changes one of these
+      // fields, and the update matches nothing.
       const currentAnchor = `COALESCE(
         (SELECT t.workspace_id FROM tokens t WHERE t.id = aq.token_id),
         (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id)
       )`;
       const updated = await pool.query(
-        `UPDATE alert_queue aq
-            SET status='pending', channels=$1, next_attempt_at=NOW(), updated_at=NOW()
-          WHERE aq.id=$2 AND aq.user_id=$3
-            AND (${currentWorkspaceAccessSql(currentAnchor, "$3")}
-                 OR (aq.token_id IS NULL AND aq.certops_agent_id IS NULL))
-          RETURNING aq.id, ${currentAnchor} AS workspace_id`,
-        [JSON.stringify([channel]), alertId, req.user.id],
+        recipientVerification.manualRetryUpdateSql(
+          `${currentWorkspaceAccessSql(currentAnchor, "$3")}
+                 OR (aq.token_id IS NULL AND aq.certops_agent_id IS NULL)`,
+          `aq.id, ${currentAnchor} AS workspace_id`,
+        ),
+        [
+          JSON.stringify(retryPlan.channels),
+          alertId,
+          req.user.id,
+          alert.status,
+          JSON.stringify(alert.channels),
+          alert.delivery_claim_id,
+        ],
       );
-      if (updated.rowCount === 0)
-        return res.status(404).json({
-          error:
-            "We couldn't find this alert. It may have been processed or deleted.",
-          code: "ALERT_NOT_FOUND",
+      if (updated.rowCount === 0) {
+        const latest = await pool.query(
+          `SELECT aq.status, aq.next_attempt_at,
+                  (aq.delivery_claim_id IS NOT NULL AND aq.next_attempt_at > NOW()) AS claim_active,
+                  (aq.delivery_claim_id IS NULL AND aq.next_attempt_at > NOW()) AS cooldown_active
+             FROM alert_queue aq
+             LEFT JOIN tokens t ON t.id = aq.token_id
+             LEFT JOIN certops_agents ca ON ca.id = aq.certops_agent_id
+            WHERE aq.id = $1 AND aq.user_id = $2
+              AND (${currentWorkspaceAccessSql("COALESCE(t.workspace_id, ca.workspace_id)", "$2")}
+                   OR (aq.token_id IS NULL AND aq.certops_agent_id IS NULL))`,
+          [alertId, req.user.id],
+        );
+        if (latest.rows.length === 0) {
+          return res.status(404).json({
+            error:
+              "We couldn't find this alert. It may have been processed or deleted.",
+            code: "ALERT_NOT_FOUND",
+          });
+        }
+        const current = latest.rows[0];
+        if (current.claim_active === true) {
+          return res.status(409).json({
+            error: "A delivery is already in progress for this alert.",
+            code: "DELIVERY_IN_PROGRESS",
+          });
+        }
+        if (String(current.status || "").toLowerCase() === "sent") {
+          return res.status(400).json({
+            error: "This alert was already delivered.",
+            code: "ALREADY_DELIVERED",
+          });
+        }
+        if (current.cooldown_active === true) {
+          return res.status(429).json({
+            error: "Cooldown active",
+            nextAttemptAt: new Date(current.next_attempt_at).toISOString(),
+          });
+        }
+        return res.status(409).json({
+          error: "This alert changed before the retry could be saved.",
+          code: "ALERT_STATE_CHANGED",
         });
+      }
       const workspaceId = updated.rows[0].workspace_id;
       await resolveRequeuedNotifications([
         { id: alertId, workspace_id: workspaceId },
@@ -657,6 +747,7 @@ app.use(require("./routes/usage"));
 app.use(require("./routes/controlCenter"));
 // --- ALERTS (extracted to routes/alerts.js) ---
 app.use(require("./routes/alerts"));
+app.use(require("./routes/incidentActions"));
 // --- ONBOARDING (extracted to routes/onboarding.js) ---
 app.use(require("./routes/onboarding"));
 // --- ACCOUNT (extracted to routes/account.js) ---
@@ -670,6 +761,9 @@ app.use(require("./routes/certops-enrollments"));
 app.use(require("./routes/certops-executor"));
 // --- CERTOPS AGENT (agent-protocol machine routes) ---
 app.use(require("./routes/certops-agent"));
+// --- OPERATOR INTERFACE (connection management and the operator namespace) ---
+app.use(createMcpRemoteRouter());
+app.use(require("./routes/operator"));
 // --- ADMIN (extracted to routes/admin.js) ---
 app.use(require("./routes/admin"));
 
@@ -774,6 +868,13 @@ function validateStartupConfig() {
     logger.info(
       "WhatsApp env vars not configured; this is expected unless Twilio is enabled via env or System Settings",
     );
+  }
+
+  try {
+    const { describeEnforcement } = require("../../packages/recipient-verification");
+    logger.info("recipient verification mode", describeEnforcement());
+  } catch (error) {
+    logger.error("recipient verification mode unavailable", { error: error.message });
   }
 
   // Validate PUBLIC_BASE_URL for webhook signatures

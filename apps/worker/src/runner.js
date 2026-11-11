@@ -3,6 +3,7 @@ import { isNodeEntrypoint } from "./is-node-entrypoint.js";
 import { pool } from "./db.js";
 import { logger } from "./logger.js";
 import { warnIfNodeUseEnvProxyUnsupported } from "./proxy-compat-check.js";
+import recipientVerification from "../../../packages/recipient-verification/index.js";
 
 const POSITIVE_INTEGER_PATTERN = /^\d+$/;
 const CRON_FIELD_COUNT = 5;
@@ -733,6 +734,7 @@ function printHelp() {
 async function main() {
   try {
     warnIfNodeUseEnvProxyUnsupported();
+    logger.info("recipient verification mode", recipientVerification.describeEnforcement());
 
     const parsed = parseRunnerArgs(process.argv.slice(2));
     if (parsed.help) {

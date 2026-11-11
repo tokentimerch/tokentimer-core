@@ -1,4 +1,20 @@
 "use strict";
+/**
+ * Qualification notes: WebHosting two-generation renewal
+ *
+ * Confirmed short RSA issuer/authority, exact allowlisted domain/IIS site, discovery
+ * My+WebHosting. Two public enrollments/same certificate ID install fresh LocalMachine/WebHosting
+ * keys/leaves; actual CA/CNG/IIS/HTTP.sys store/hash/SNI/trusted TLS agree. Register
+ * store-qualified cleanup before POST/IDs before waits. Parent freezes SYSTEM service
+ * path/state/tree, drains captured+ late children before public-store cleanup; match exact durable
+ * accepted-container/certificate/ key/store/thumbprint before public removal then keys. Reconcile
+ * partial acceptance even before thumbprint observed; foreign replacement refused.
+ * Discovery=latest persisted inventory, both receipts WebHosting, untouched predecessor retention
+ * store/key/replacement. No expiry deletion/ other stores/interval/CMC. Unresolved public cleanup
+ * blocks key/state deletion; before rollover.
+ *
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
+ */
 /** Public projection adversaries only. Native WebHosting enrollment is never
  * executed by these checks and remains pending its protected disposable lane. */
 const test = require("node:test"),
@@ -98,6 +114,8 @@ test("store cleanup requires exact durable ownership before any public removal",
   assert.throws(() =>
     helper.cleanupPlan(receipt, [{ thumbprint, containerName }], () => null),
   );
+  assert.throws(() => helper.cleanupPlan(receipt, [{ thumbprint, containerName }], () => ({ ...record, certificateId: "33333333-3333-3333-3333-333333333333" })), error => error.code === "CERTOPS_STORE_RECEIPT_CERTIFICATE" && !error.message.includes("33333333"));
+  assert.throws(() => helper.cleanupPlan(receipt, [{ thumbprint, containerName }], () => null), error => error.code === "CERTOPS_STORE_RECEIPT_MISSING");
   assert.throws(() =>
     helper.cleanupPlan(
       receipt,
@@ -235,6 +253,21 @@ test("WebHosting fixture persists its exact source and verifies trigger-created 
  }
 });
 
+test("background receipts record enrollments and leaves only for their own certificate identity", () => {
+  const own = "33333333-3333-4333-8333-333333333333";
+  const other = "44444444-4444-4444-8444-444444444444";
+  const enrollmentId = "55555555-5555-4555-8555-555555555555";
+  const thumbprint = "A".repeat(40);
+  const receipt = { certificateId: own, enrollmentIds: [], thumbprints: [] };
+  helper.recordBackgroundReceiptOwnership(receipt, other, { enrollmentId, thumbprint });
+  assert.deepEqual(receipt.enrollmentIds, []);
+  assert.deepEqual(receipt.thumbprints, []);
+  helper.recordBackgroundReceiptOwnership(receipt, own, { enrollmentId });
+  helper.recordBackgroundReceiptOwnership(receipt, own, { enrollmentId, thumbprint });
+  assert.deepEqual(receipt.enrollmentIds, [enrollmentId]);
+  assert.deepEqual(receipt.thumbprints, [thumbprint]);
+});
+
 test("background cleanup defers other-identity leaves only when they are independently owned thumbprints", () => {
   const domain = "certops-adcs-0123456789-rsa2048.example.test";
   const certificateId = "33333333-3333-4333-8333-333333333333";
@@ -277,7 +310,7 @@ test("background cleanup defers other-identity leaves only when they are indepen
   // Without independent ownership another identity's leaf still blocks cleanup.
   assert.throws(
     () => run([foreign], new Set()),
-    /Preserve unowned WebHosting key association/,
+    error => error.code === "CERTOPS_STORE_CONTAINER_MISSING",
   );
   assert.throws(
     () => run([foreign]),
@@ -292,4 +325,26 @@ test("background cleanup defers other-identity leaves only when they are indepen
     () => run([foreign, unowned], new Set([foreign.thumbprint])),
     /Preserve unowned WebHosting key association/,
   );
+});
+
+test("other-source cleanup accepts only an exact owned enrollment, job, journal and public leaf", () => {
+  const crypto=require("node:crypto"),fs=require("node:fs"),path=require("node:path");
+  const pem=fs.readFileSync(path.resolve(__dirname,"../tests/fixtures/certops-owned-cn.txt"),"utf8");
+  const leaf=new crypto.X509Certificate(pem),id="55555555-5555-4555-8555-555555555555",workspaceId="11111111-1111-4111-8111-111111111111",certificateId="22222222-2222-4222-8222-222222222222",jobId="33333333-3333-4333-8333-333333333333";
+  const containerName=`tokentimer-enr-${id}`,thumbprint=leaf.fingerprint.replace(/:/g,"").toUpperCase();
+  const record={containerName,certificateId,jobId,status:"enrolled_by_agent",acceptedStore:"My",acceptedThumbprint:thumbprint};
+  const row={id,workspace_id:workspaceId,certificate_id:certificateId,state:"installed",job_ids:[jobId]};
+  const journal={kind:"valid",journal:{containerName,state:"installed",leafSha256:crypto.createHash("sha256").update(pem.endsWith("\n")?pem:`${pem}\n`).digest("hex")},artifacts:{leafPem:pem}};
+  const receipts=[{certificateId:"44444444-4444-4444-8444-444444444444",domain:"certops.example"}];
+  const collect=(r=record,rows=[row],j=journal)=>helper.collectOtherOwnedThumbprints(receipts,[id],()=>r,{workspaceId,rows,readJournal:()=>j});
+  assert.deepEqual([...collect()],[thumbprint]);
+  assert.throws(()=>collect(record,[{...row,workspace_id:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]));
+  assert.throws(()=>collect(record,[{...row,certificate_id:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]));
+  assert.throws(()=>collect(record,[{...row,job_ids:[]} ]));
+  assert.throws(()=>collect({...record,containerName:"foreign"}));
+  assert.throws(()=>collect({...record,acceptedThumbprint:"A".repeat(40)}));
+  assert.throws(()=>collect(record,[row],{...journal,journal:{...journal.journal,leafSha256:"a".repeat(64)}}));
+  assert.throws(()=>collect(record,[row],{...journal,journal:{...journal.journal,state:"pending"}}));
+  assert.deepEqual([...helper.collectOtherOwnedThumbprints([{...receipts[0],domain:"other.example"}],[id],()=>record,{workspaceId,rows:[row],readJournal:()=>journal})],[]);
+  assert.deepEqual([...helper.collectOtherOwnedThumbprints(receipts,[],()=>record,{workspaceId,rows:[row],readJournal:()=>journal})],[]);
 });

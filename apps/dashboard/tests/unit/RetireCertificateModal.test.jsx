@@ -56,8 +56,12 @@ describe('retiring a certificate from a shared token', () => {
 
   it('requires explicit fingerprint selection and submits only the chosen renewed certificate', async () => {
     const onRetire = show({ certificates: [older, renewed] });
-    expect(screen.getByText(/linked to certificate records/)).toBeInTheDocument();
-    expect(screen.getByText(/Stopping management does not unlink these records/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/linked to certificate records/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Stopping management does not unlink these records/)
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('radio', { name: /Mark revoked/ }));
     fireEvent.change(screen.getByPlaceholderText(/Reason/), {
       target: { value: 'Revocation recorded by operator' },
@@ -73,6 +77,12 @@ describe('retiring a certificate from a shared token', () => {
         target: { value: renewed.id },
       }
     );
+    expect(
+      screen.getByText('b'.repeat(64), { exact: false })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Endpoint monitoring continues/)
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Mark revoked' }));
     await waitFor(() =>
       expect(onRetire).toHaveBeenCalledWith({

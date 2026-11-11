@@ -50,19 +50,19 @@
 
 Operational incidents caused by expired assets are still a recurring problem. Certificates expire, API keys get rotated, secrets are forgotten, and renewal ownership is often unclear. Most systems expose expiration data inconsistently, offer limited notification support, lack a centralized cross-provider view, and leave renewal as manual, error-prone work.
 
-TokenTimer is an open-source platform providing unified visibility, expiration monitoring, and lifecycle automation for machine credentials, certificates, secrets, tokens, and other expiring assets. Discover and monitor assets across your infrastructure, track ownership, and receive actionable alerts. Certificate Lifecycle Management (CLM) automates supported certificate renewals, deployment, and verification while customer certificate private keys stay outside the TokenTimer control plane.
+TokenTimer is an open-source platform providing unified visibility, expiration monitoring, and lifecycle automation for machine credentials, certificates, secrets, tokens, and other expiring assets. Discover and monitor assets across your infrastructure, track ownership, and receive actionable alerts. Certificate Lifecycle Management (CLM) automates supported certificate renewals, deployment, and verification while certificate private keys stay outside the TokenTimer control plane.
 
 Three complementary pillars organize the platform:
 
 - **NHI Credential Visibility & Ownership:** inventory machine credentials and service accounts, track expiration and review dates, assign owners, and alert responsible teams. Credential rotation remains with your providers and tooling.
-- **Certificate Lifecycle Management:** discover certificates, automate supported ACME workflows, deploy and verify through outbound-only agents, enroll from Microsoft AD CS, share certificates through customer Vault, and coordinate cert-manager or external executors with approvals and audit evidence.
+- **Certificate Lifecycle Management:** discover certificates, automate supported ACME workflows, deploy and verify through outbound-only agents, enroll from Microsoft AD CS, share certificates through your Vault, and coordinate cert-manager or external executors with approvals and audit evidence.
 - **Integrations & Centralized Operations:** aggregate relevant metadata from Vault, AWS, Azure, GCP, GitHub, and GitLab. TokenTimer complements your existing systems; it does not replace their secret-storage responsibilities.
 
 <p align="center">
   <img src="docs/assets/control-center.png" alt="TokenTimer control center: what needs attention, inventory snapshot, scoped credentials, auto-sync health, and managed certificates in one view" width="888" />
 </p>
 
-Screenshots and GIFs show the current interface with illustrative sample data. [Media capture notes](docs/assets/MEDIA.md).
+Screenshots and GIFs show the current interface with illustrative sample data. [Media capture notes](.github/maintainers/MEDIA.md).
 
 ## What makes TokenTimer different?
 
@@ -102,6 +102,8 @@ Track certificates, tokens, secrets, licenses, subscriptions, and other expiring
 ### Flexible multi-channel alerting
 
 Notify teams through email, Slack, Microsoft Teams, Discord, PagerDuty, WhatsApp, and webhooks, with configurable delivery and escalation options.
+
+[PagerDuty expiration incidents](docs/PAGERDUTY.md) correlate triggers and automatic recovery, while acknowledgment stays in PagerDuty.
 
 <p align="center">
   <img src="docs/assets/workspace-alerting.png" alt="Workspace alerting preferences: expiry thresholds, delivery window, contacts, and webhook setup guides for Slack, Discord, Teams, and PagerDuty" width="888" />
@@ -147,18 +149,22 @@ TokenTimer stores expiration metadata, ownership, and status information without
 
 # Documentation
 
+New to TokenTimer? [Watch the guided product tour](https://www.youtube.com/watch?v=9dlDbMt8Ino), or browse the [full tutorial playlist](https://www.youtube.com/playlist?list=PLLNNSQoxXXug). Topic videos are linked beside the written guides below.
+
 | | |
 |---|---|
 | [QUICKSTART.md](QUICKSTART.md) | Step-by-step setup guide |
-| [First asset and alert check](https://tokentimer.ch/docs/self-hosted/quickstart) | Verify the installation with a tracked asset and an alert |
+| [First asset and alert check](https://tokentimer.ch/docs/self-hosted/quickstart) | Verify the installation with a tracked asset and an alert · [Video](https://www.youtube.com/watch?v=g_EUVyACZnY) |
+| [Import assets and keep them current](docs/AUTO_SYNC.md) | Provider imports and self-hosted auto-sync · [Video](https://www.youtube.com/watch?v=RHF2afKACcE) |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Local development, worker runner, and cron scheduling |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Environment variables and Vault AppRole inventory authentication |
-| [docs/certops/CONTEXT.md](docs/certops/CONTEXT.md) | Certificate Lifecycle Management domain model and behavior (`certops` technical namespace) |
+| [.github/maintainers/certops/CONTEXT.md](.github/maintainers/certops/CONTEXT.md) | Certificate Lifecycle Management domain model and behavior (`certops` technical namespace) |
 | [Agent overview](docs/certops/agent.md) | Installation, policy, and focused operator references |
-| [Install an agent on Linux](docs/certops/agent/install-linux.md) | systemd installation and registration |
-| [Install an agent on Windows](docs/certops/agent/install-windows.md) | Native service installation and registration |
-| [Microsoft AD CS enrollment](docs/certops/agent/adcs.md) | Domain-joined Windows enrollment from an enterprise CA, allowlists, and qualification scope |
-| [Certificate distribution through Vault](docs/certops/wildcard-vault-operations.md) | Shared ordinary, SAN, and wildcard certificates via customer Vault KV v2 and Linux consumers |
+| [Install an agent on Linux](docs/certops/agent/install-linux.md) | systemd installation and registration · [Linux renewal video](https://www.youtube.com/watch?v=mPhUbYYnfgo) |
+| [Install an agent on Windows](docs/certops/agent/install-windows.md) | Native service installation and registration · [IIS renewal video](https://www.youtube.com/watch?v=WPqcaMPul4I) |
+| [Microsoft AD CS enrollment](docs/certops/agent/adcs.md) | Domain-joined Windows enrollment from an enterprise CA, allowlists, and qualification scope · [Video](https://www.youtube.com/watch?v=_f4amEJGjFA) |
+| [Certificate distribution through Vault](docs/certops/wildcard-vault-operations.md) | Shared ordinary, SAN, and wildcard certificates via your Vault KV v2 and Linux consumers · [Video](https://www.youtube.com/watch?v=BYe8S1Ux9PI) |
+| [Trust anchors and OS trust stores](docs/certops/agent/trust-and-key-rotation.md#establish-ca-trust-on-a-host) | Distribute and remove CA trust anchors on Linux and Windows · [Video](https://www.youtube.com/watch?v=nAY7Yx9Pd8Q) |
 | [docs/certops/executor-api.md](docs/certops/executor-api.md) | Machine API tokens and executor job API for external renewal tooling |
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | Auth model, admin bootstrap, invitations, RBAC |
 | [deploy/helm/README.md](deploy/helm/README.md) | Helm chart installation and configuration |
@@ -193,6 +199,10 @@ After receiving a report, TokenTimer will take the following steps:
 - If requested, give credit to the reporter.
 
 <br>
+
+# Integration API monitoring
+
+The [integration watch manifest](integrations.watch.yaml) lists Core integration source paths, API versions, package pins, and official change feeds. After editing it, run `node scripts/check-integrations-manifest.js` from the repository root with the development dependencies installed.
 
 # License
 

@@ -1,6 +1,6 @@
 {
   "name": "tokentimer-core",
-  "version": "0.18.2",
+  "version": "0.19.2-rc.1",
   "private": true,
   "description": "TokenTimer Core - Self-hosted token, certificate, and secret expiration management",
   "scripts": {
@@ -43,6 +43,8 @@
     "test:auto-sync:postgres": "node --test --test-concurrency=1 --test-force-exit tests/postgres/auto-sync-fencing.test.js tests/postgres/auto-sync-run-metrics.test.js",
     "test:auto-sync:alerts": "node scripts/test-auto-sync-alerts.cjs",
     "test:auto-sync:prometheus": "node scripts/test-auto-sync-prometheus.cjs",
+    "test:pagerduty:postgres": "node --test --test-force-exit tests/postgres/pagerduty-incident-lifecycle.test.js",
+    "test:pagerduty:migration": "node --test --test-force-exit tests/postgres/pagerduty-migration.test.js",
     "test:controller": "pnpm --filter @tokentimer/k8s-controller test",
     "test:agent": "pnpm --filter @tokentimer/agent test",
     "test:core": "node scripts/run-tests-local.js core",
@@ -51,6 +53,14 @@
     "test:quick": "pnpm exec mocha tests/integration/endpoint-monitor.test.js tests/integration/endpoint-health-alerts.test.js --timeout 30000 --exit",
     "test:contracts": "node --test tests/contract/**/*.test.js",
     "test:e2e:agent": "node --test tests/e2e/certops-agent-e2e.test.js",
+    "test:certops:qualification": "node scripts/run-certops-tooling-tests.js",
+    "test:certops:release-collector": "node scripts/run-certops-collector-tests.js",
+    "check:certops:release-matrix": "node scripts/ci-guards/certops-release-matrix.cjs",
+    "check:certops:release-qualification": "node scripts/certops-release-qualification.js",
+    "check:certops:dns-errors": "node scripts/ci-guards/certops-dns-errors.cjs",
+    "check:certops:catalog": "node scripts/certops-qualification-catalog.js",
+    "check:certops:skip-qualification": "node scripts/certops-skip-qualification.js",
+    "test:e2e:recipient-verification": "node scripts/run-recipient-verification-browser.cjs",
     "test:baseline": "node scripts/run-baseline.js",
     "test:proxy-smoke": "node scripts/proxy-smoke-test.js",
     "test:ci": "pnpm run test:unit && node scripts/run-tests-local.js core",
@@ -97,11 +107,7 @@
     "// --- Helm ---": "",
     "helm:lint": "helm lint deploy/helm --set config.disableAdminBootstrap=true && helm lint deploy/helm -f deploy/helm/ci/ci-values.yaml",
     "helm:template": "helm template tokentimer deploy/helm -f deploy/helm/ci/ci-values.yaml",
-    "helm:verify": "bash scripts/helm-template-verify.sh",
-    "test:certops:qualification": "node scripts/run-certops-tooling-tests.js",
-    "test:certops:release-collector": "node scripts/run-certops-collector-tests.js",
-    "check:certops:release-qualification": "node scripts/certops-release-qualification.js",
-    "check:certops:catalog": "node scripts/certops-qualification-catalog.js docs/certops/e2e-scenario-catalog.json"
+    "helm:verify": "bash scripts/helm-template-verify.sh"
   },
   "packageManager": "pnpm@11.28.8",
   "engines": {
@@ -126,7 +132,7 @@
     "bcryptjs": "3.0.3",
     "c8": "10.1.3",
     "chai": "4.5.0",
-    "mocha": "10.8.2",
+    "mocha": "11.8.0",
     "mocha-junit-reporter": "2.2.1",
     "otplib": "13.3.0",
     "pg": "8.18.0",

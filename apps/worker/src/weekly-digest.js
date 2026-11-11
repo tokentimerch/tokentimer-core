@@ -17,6 +17,7 @@ import {
   pushMetrics,
 } from "./metrics.js";
 import { computeDaysLeft } from "./shared/thresholds.js";
+import { confirmDigestConsent, destinationAllowed, verificationMode } from "./shared/recipientDeliveryGate.js";
 import {
   buildWeeklyDigestWhatsAppTemplateVariables,
   sanitizeWhatsAppTemplateVars,
@@ -31,7 +32,9 @@ import { loadAssignedGroupIdsForAssets } from "./shared/replaceAssetContactGroup
 import {
   invertDigestCandidates,
   claimWeeklyDigestRecipient,
-  markWeeklyDigestRecipientSent,
+  releaseWeeklyDigestRecipientClaim,
+  runOwnedDigestDelivery,
+  isUncertainProviderFailure,
   weeklyDigestWhatsAppIdempotencyKey,
 } from "./shared/weeklyDigestRecipients.js";
 
@@ -41,6 +44,10 @@ const APP_URL = (process.env.APP_URL || "http://localhost:5173").replace(
 );
 
 const WEEKLY_DIGEST_CLAIM_LEASE_MS = 300000;
+const WEEKLY_DIGEST_LEASE_RENEW_MS = Math.min(
+  60000,
+  Math.max(5000, Math.floor(WEEKLY_DIGEST_CLAIM_LEASE_MS / 3)),
+);
 
 function getWeekStartDate() {
   const now = new Date();
@@ -450,63 +457,99 @@ function buildTeamsDigestPayload(
   workspaceName,
 ) {
   const groupNames = formatGroupNames(contributingGroupNames);
-  const facts = [
-    { name: "📊 Workspace", value: workspaceName },
-    { name: "🔢 Tokens Count", value: String(count) },
+  const summaryFacts = [
+    { title: "📊 Workspace", value: workspaceName },
+    { title: "🔢 Tokens Count", value: String(count) },
   ];
   if (groupNames.length > 0) {
-    facts.splice(1, 0, {
-      name: "👥 Contact groups",
+    summaryFacts.splice(1, 0, {
+      title: "👥 Contact groups",
       value: groupNames.join(", "),
     });
   }
 
-  const sections = [
+  const body = [
     {
-      activityTitle: `📊 Weekly Digest: ${count} token(s) expiring soon`,
-      activitySubtitle: workspaceName,
+      type: "TextBlock",
+      text: `📊 Weekly Digest: ${count} token(s) expiring soon`,
+      weight: "Bolder",
+      size: "Large",
+      wrap: true,
+    },
+    {
+      type: "TextBlock",
+      text: workspaceName,
+      weight: "Bolder",
+      size: "Medium",
+      wrap: true,
+      spacing: "Small",
+    },
+    {
+      type: "TextBlock",
       text: `You have **${count}** token(s) expiring soon. Review them below:`,
-      facts,
-      markdown: true,
+      wrap: true,
+      spacing: "Small",
+    },
+    {
+      type: "FactSet",
+      facts: summaryFacts,
+      spacing: "Medium",
     },
   ];
 
   const displayTokens = tokensList.slice(0, 10);
   for (const t of displayTokens) {
-    sections.push({
-      activityTitle: t.name,
-      facts: [
-        { name: "📋 Type", value: t.type },
-        { name: "⏰ Expires in", value: `${t.days_until} day(s)` },
-        { name: "📅 Expiration Date", value: t.expiration },
-      ],
-      markdown: true,
-    });
+    body.push(
+      {
+        type: "TextBlock",
+        text: t.name,
+        weight: "Bolder",
+        size: "Medium",
+        wrap: true,
+        spacing: "Large",
+        separator: true,
+      },
+      {
+        type: "FactSet",
+        facts: [
+          { title: "📋 Type", value: t.type },
+          { title: "⏰ Expires in", value: `${t.days_until} day(s)` },
+          { title: "📅 Expiration Date", value: t.expiration },
+        ],
+        spacing: "Small",
+      },
+    );
   }
 
   if (count > 10) {
-    sections.push({
-      activitySubtitle: `_...and ${count - 10} more token(s)_`,
-      markdown: true,
+    body.push({
+      type: "TextBlock",
+      text: `_...and ${count - 10} more token(s)_`,
+      wrap: true,
+      isSubtle: true,
+      spacing: "Medium",
     });
   }
 
   return {
-    "@type": "MessageCard",
-    "@context": "https://schema.org/extensions",
-    summary: `Weekly Digest: ${count} token(s) expiring soon`,
-    themeColor: "FFA500", // Orange
-    sections,
-    potentialAction: [
+    type: "message",
+    attachments: [
       {
-        "@type": "OpenUri",
-        name: "View in TokenTimer",
-        targets: [
-          {
-            os: "default",
-            uri: `${APP_URL}/dashboard`,
-          },
-        ],
+        contentType: "application/vnd.microsoft.card.adaptive",
+        contentUrl: null,
+        content: {
+          type: "AdaptiveCard",
+          $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+          version: "1.4",
+          body,
+          actions: [
+            {
+              type: "Action.OpenUrl",
+              title: "View in TokenTimer",
+              url: `${APP_URL}/dashboard`,
+            },
+          ],
+        },
       },
     ],
   };
@@ -645,7 +688,7 @@ function indexWebhooksByUrl(webhookUrls) {
   return map;
 }
 
-async function deliverRecipientDigest({
+export async function deliverRecipientDigest({
   row,
   ws,
   weekStartDate,
@@ -653,6 +696,7 @@ async function deliverRecipientDigest({
   phoneNameByKey,
   webhookByUrl,
   weeklyDigestTemplateSid,
+  postWebhook = postJson,
 }) {
   const tokens = row.tokens;
   if (row.channel === "email") {
@@ -746,7 +790,7 @@ async function deliverRecipientDigest({
       });
     }
 
-    const res = await postJson(wh.url || row.recipientKey, payload, kind);
+    const res = await postWebhook(wh.url || row.recipientKey, payload, kind);
     if (res.success) {
       try {
         logger.info(
@@ -1005,71 +1049,10 @@ export async function weeklyDigestJob() {
       const groupChannelsSent = new Map();
       const groupSuccessCount = new Map();
 
-      for (const row of inverted) {
-        processed++;
-        const claim = await claimWeeklyDigestRecipient(client, {
-          workspaceId: ws.workspace_id,
-          weekStartDate,
-          channel: row.channel,
-          recipientKey: row.recipientKey,
-          tokensCount: row.tokens.length,
-          leaseMs: WEEKLY_DIGEST_CLAIM_LEASE_MS,
-        });
-        if (!claim) {
-          skipped++;
-          continue;
-        }
-
-        const groupNames = contributingGroupNames(
-          groupById,
-          row.contributingGroupIds,
-        );
-
-        let res;
-        try {
-          res = await deliverRecipientDigest({
-            row,
-            ws,
-            weekStartDate,
-            groupNames,
-            phoneNameByKey,
-            webhookByUrl,
-            weeklyDigestTemplateSid,
-          });
-        } catch (err) {
-          logger.error(
-            JSON.stringify({
-              level: "ERROR",
-              message: "weekly-digest-recipient-send-failed",
-              workspace: ws.workspace_id,
-              channel: row.channel,
-              error: err.message,
-            }),
-          );
-          res = { success: false };
-        }
-
-        try {
-          cWeeklyDigestSent
-            .labels(row.channel, res && res.success ? "success" : "failure")
-            .inc();
-        } catch (_) {}
-
-        if (!res || !res.success) {
-          continue;
-        }
-
-        await markWeeklyDigestRecipientSent(client, {
-          workspaceId: ws.workspace_id,
-          weekStartDate,
-          channel: row.channel,
-          recipientKey: row.recipientKey,
-        });
-
+      const recordConfirmedDelivery = (row) => {
         sent++;
         digestCount++;
         totalTokensIncluded += row.tokens.length;
-
         for (const gid of row.contributingGroupIds || []) {
           const groupId = String(gid);
           successfulGroupIds.add(groupId);
@@ -1082,6 +1065,166 @@ export async function weeklyDigestJob() {
             (groupSuccessCount.get(groupId) || 0) + 1,
           );
         }
+        try {
+          cWeeklyDigestSent.labels(row.channel, "success").inc();
+        } catch (_) {}
+      };
+
+      const logUnconfirmedDelivery = (row, completion) => {
+        logger.warn(
+          JSON.stringify({
+            level: "WARN",
+            message: "weekly-digest-delivery-unconfirmed",
+            workspace: ws.workspace_id,
+            channel: row.channel,
+            completion,
+          }),
+        );
+        try {
+          cWeeklyDigestSent.labels(row.channel, "unconfirmed").inc();
+        } catch (_) {}
+      };
+
+      for (const row of inverted) {
+        processed++;
+        if (row.channel === "email" || row.channel === "whatsapp") {
+          const decision = await destinationAllowed(
+            client,
+            ws.workspace_id,
+            row.channel,
+            row.recipientKey,
+          );
+          if (verificationMode() === "enforce" && !decision.allowed) {
+            skipped++;
+            continue;
+          }
+          if (decision.shadowBlocked) {
+            logger.warn(
+              JSON.stringify({
+                message: "recipient-verification-shadow",
+                channel: row.channel,
+                workspaceId: ws.workspace_id,
+                code: decision.code,
+              }),
+            );
+          }
+        }
+        const claim = await claimWeeklyDigestRecipient(client, {
+          workspaceId: ws.workspace_id,
+          weekStartDate,
+          channel: row.channel,
+          recipientKey: row.recipientKey,
+          tokensCount: row.tokens.length,
+          leaseMs: WEEKLY_DIGEST_CLAIM_LEASE_MS,
+        });
+        if (!claim) {
+          skipped++;
+          continue;
+        }
+        const claimInput = {
+          workspaceId: ws.workspace_id,
+          weekStartDate,
+          channel: row.channel,
+          recipientKey: row.recipientKey,
+          claimToken: claim.claim_token,
+          leaseMs: WEEKLY_DIGEST_CLAIM_LEASE_MS,
+        };
+        if (claim.provider_accepted_at) {
+          const finalized = await runOwnedDigestDelivery(client, {
+            ...claimInput,
+            providerAcceptedAt: claim.provider_accepted_at,
+          }, async () => ({ success: false }));
+          if (finalized.completion !== "confirmed") {
+            logUnconfirmedDelivery(row, finalized.completion);
+            continue;
+          }
+          recordConfirmedDelivery(row);
+          continue;
+        }
+        if (claim.delivery_state === "uncertain") {
+          skipped++;
+          continue;
+        }
+        if (row.channel === "email" || row.channel === "whatsapp") {
+          const finalDecision = await destinationAllowed(
+            client,
+            ws.workspace_id,
+            row.channel,
+            row.recipientKey,
+          );
+          const consent = confirmDigestConsent({
+            mode: verificationMode(),
+            finalAllowed: finalDecision.allowed,
+          });
+          if (!consent.send) {
+            await releaseWeeklyDigestRecipientClaim(client, {
+              workspaceId: ws.workspace_id,
+              weekStartDate,
+              channel: row.channel,
+              recipientKey: row.recipientKey,
+              claimToken: claim.claim_token,
+            });
+            skipped++;
+            continue;
+          }
+        }
+
+        const groupNames = contributingGroupNames(
+          groupById,
+          row.contributingGroupIds,
+        );
+
+        const outcome = await runOwnedDigestDelivery(client, claimInput, async ({ renew }) => {
+          const timer = setInterval(() => {
+            renew().catch((error) => {
+              logger.warn(
+                JSON.stringify({
+                  level: "WARN",
+                  message: "weekly-digest-lease-renew-failed",
+                  workspace: ws.workspace_id,
+                  channel: row.channel,
+                  error: error && error.message,
+                }),
+              );
+            });
+          }, WEEKLY_DIGEST_LEASE_RENEW_MS);
+          if (typeof timer.unref === "function") timer.unref();
+          try {
+            return await deliverRecipientDigest({
+              row,
+              ws,
+              weekStartDate,
+              groupNames,
+              phoneNameByKey,
+              webhookByUrl,
+              weeklyDigestTemplateSid,
+            });
+          } catch (err) {
+            logger.error(
+              JSON.stringify({
+                level: "ERROR",
+                message: "weekly-digest-recipient-send-failed",
+                workspace: ws.workspace_id,
+                channel: row.channel,
+                error: err.message,
+              }),
+            );
+            return { success: false, uncertain: isUncertainProviderFailure(err) };
+          } finally {
+            clearInterval(timer);
+          }
+        });
+        if (outcome.completion === "rejected") {
+          try {
+            cWeeklyDigestSent.labels(row.channel, "failure").inc();
+          } catch (_) {}
+          continue;
+        }
+        if (outcome.completion !== "confirmed") {
+          logUnconfirmedDelivery(row, outcome.completion);
+          continue;
+        }
+        recordConfirmedDelivery(row);
       }
 
       for (const groupId of successfulGroupIds) {

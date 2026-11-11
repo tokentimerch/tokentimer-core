@@ -1,4 +1,5 @@
-# Opt-in activity and health rules; apply after your normal values.
+# Canonical opt-in activity and health rules; apply after your normal values.
+# For standalone Prometheus, copy monitoring.prometheusRules.groups under groups.
 # Change installation identity, Prometheus selector labels, API job selector
 # and schedule windows as described in docs/AUTO_SYNC.md.
 monitoring:
@@ -116,6 +117,7 @@ monitoring:
                 An enabled provider with an observed attempt has remained without a recorded full success for
                 25 hours of alert evaluation. New installations and unused providers do not page immediately.
           - alert: TokenTimerAPIDown
+            # Set this selector to the actual API scrape job in your deployment.
             expr: up{job="tokentimer-api"} == 0
             for: 2m
             labels:
@@ -125,3 +127,15 @@ monitoring:
               description: >-
                 The API metrics target cannot be scraped. Check API availability, database connectivity and
                 migrations; missing telemetry must not be interpreted as zero activity.
+
+          - alert: AutoSyncCriticalAssetsCreated
+            expr: |
+              (max by (installation, namespace, job, provider, configuration_id, configuration_name, monitoring_group, kind, asset_name, project, group, label_set) (auto_sync_last_creation_timestamp_seconds{monitoring_group="critical"} > 0) > time() - 900)
+              and
+              (max by (installation, namespace, job, provider, configuration_id, configuration_name, monitoring_group, kind, asset_name, project, group, label_set) (auto_sync_last_creation_timestamp_seconds{monitoring_group="critical"}) <= time())
+            for: 0m
+            labels:
+              severity: info
+            annotations:
+              summary: 'Auto-sync imported {{ if $labels.asset_name }}{{ $labels.asset_name }}{{ else }}inventory{{ end }}'
+              description: 'Configuration {{ $labels.configuration_id }} imported inventory within the last 15 minutes.{{ with $labels.kind }} Type: {{ . }}.{{ end }}{{ with $labels.project }} Project: {{ . }}.{{ end }}{{ with $labels.group }} Group: {{ . }}.{{ end }}'

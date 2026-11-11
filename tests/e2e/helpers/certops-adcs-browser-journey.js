@@ -18,7 +18,31 @@ const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-browser-installed-enrollment-visible",
   "adcs-real-browser-owned-cleanup",
 ]);
+function assertMutationStatus(status, expectedStatus, pathname, responseCode) {
+  if (status === expectedStatus) return;
+  const operation = pathname.endsWith('/replace-management') ? 'ATTACH' : pathname.endsWith('/profiles') ? 'CREATE_PROFILE' : 'ISSUER';
+  const attachReasons = new Set(['CERTOPS_MANAGEMENT_ALREADY_OPEN','CERTOPS_MANAGEMENT_PERIOD_MISMATCH','CERTOPS_CERTIFICATE_RETIRED','CERTOPS_MUTATION_RUNNING','CERTOPS_MANAGED_CERT_LIMIT','CERTOPS_MANAGEMENT_SOURCE_UNAVAILABLE','CERTOPS_CERTIFICATE_NOT_RENEWABLE','CERTOPS_CERTIFICATE_PATH_IN_USE','CERTOPS_LIFECYCLE_DOWNGRADE','CERTOPS_CERTIFICATE_STILL_SERVING']);
+  if (operation === 'ATTACH' && status === 409 && attachReasons.has(responseCode)) throw Object.assign(new Error('Browser attachment was refused'), {code:`CERTOPS_BROWSER_ATTACH_${responseCode.slice('CERTOPS_'.length)}`});
+  throw Object.assign(new Error('Browser mutation returned an unexpected status'), {code: `CERTOPS_BROWSER_${operation}_HTTP_${Number.isInteger(status) && status >= 100 && status <= 599 ? status : 'OTHER'}`});
+}
+async function confirmOwnedAttachmentConflict({ response, selectedSource, reloadSource, confirm }) {
+  let body;
+  try { body = await response.json(); } catch {}
+  if (response.status() !== 409 || body?.code !== "CERTOPS_MANAGEMENT_ALREADY_OPEN") {
+    assertMutationStatus(response.status(), 201, "/replace-management", body?.code);
+    return;
+  }
+  const current = await reloadSource();
+  assert.ok(
+    current && current.id === selectedSource.id &&
+      current.periodId === selectedSource.periodId &&
+      body.currentPeriod?.periodId === current.periodId,
+    "Browser conflict must match the current owned IIS management period",
+  );
+  await confirm();
+}
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-adcs-lab-contract.js",
   "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
   "tests/e2e/helpers/certops-native-issuer-reassignment.js",
   "tests/e2e/certops-adcs-real-e2e.test.js",
@@ -77,6 +101,57 @@ const FLAGS = Object.freeze([
   "otherProfilePoliciesRestored",
 ]);
 const SCOPE = "browser-issuer-profile-default-scheduler-native-adcs";
+function currentBrowserSource(inventory, { certificateId, fingerprint }) {
+  assert.match(certificateId, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i);
+  assert.match(fingerprint, /^[a-f0-9]{64}$/);
+  assert.ok(Array.isArray(inventory?.items));
+  const identities = inventory.items.filter(
+    item => item.fingerprintSha256 === fingerprint && item.lifecycleStatus === "active",
+  );
+  assert.ok(identities.length <= 1, "Native browser certificate identity is ambiguous");
+  if (!identities.length) return null;
+  const identity = identities[0];
+  const sources = (identity.sources || []).filter(
+    source => source.managedCertificateId === certificateId &&
+      !source.endedAt && !source.periodEndedAt &&
+      source.currentIdentityId === identity.identityId,
+  );
+  assert.ok(sources.length <= 1, "Native browser management period is ambiguous");
+  if (!sources.length) return null;
+  assert.match(sources[0].periodId, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i);
+  return { id: certificateId, periodId: sources[0].periodId };
+}
+function currentIisBrowserSource(inventory, { certificateIds, fingerprint, openCertificateIds = [] }) {
+  assert.ok(Array.isArray(certificateIds) && certificateIds.length <= 64);
+  assert.match(fingerprint, /^[a-f0-9]{64}$/);
+  assert.equal(new Set(certificateIds).size, certificateIds.length);
+  assert.ok(Array.isArray(openCertificateIds) && openCertificateIds.length <= 64);
+  for (const id of openCertificateIds) assert.ok(certificateIds.includes(id));
+  const blocked = new Set(openCertificateIds);
+  const candidates = certificateIds.map(certificateId => {
+    assert.match(certificateId, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i);
+    return blocked.has(certificateId) ? null : currentBrowserSource(inventory, { certificateId, fingerprint });
+  }).filter(Boolean);
+  assert.ok(candidates.length <= 1, "Current owned IIS browser source is ambiguous");
+  return candidates[0] || null;
+}
+async function loadCurrentIisBrowserSource({ fixture, api, site, port, domain, fingerprint }) {
+  assert.ok(Number.isInteger(port) && port > 0 && port <= 65535);
+  assert.match(fingerprint, /^[a-f0-9]{64}$/);
+  const inventory = await fixture.request(`${api}/certificate-identities?limit=100&q=${fingerprint}`);
+  assert.equal(inventory.status, 200);
+  const observed = await fixture.pool.query(
+    "SELECT DISTINCT mc.id FROM managed_certificates mc JOIN certificate_instances ci ON ci.workspace_id=mc.workspace_id AND ci.managed_certificate_id=mc.id JOIN certificate_targets ct ON ct.workspace_id=ci.workspace_id AND ct.id=ci.target_id WHERE mc.workspace_id=$1 AND ci.observed_fingerprint_sha256=$2 AND ct.windows_site=$3 AND ct.windows_port=$4 AND ct.windows_sni_host=$5 AND ct.windows_store='My' AND mc.source='agent_windows'",
+    [fixture.workspaceId, fingerprint, site, port, domain],
+  );
+  assert.ok(observed.rows.length <= 64);
+  const certificateIds = observed.rows.map(row => row.id), openCertificateIds = [];
+  const { findOpenEnrollment } = require("../../../apps/api/services/certops/certificateEnrollments");
+  for (const id of certificateIds) {
+    if (await findOpenEnrollment(fixture.pool, fixture.workspaceId, id)) openCertificateIds.push(id);
+  }
+  return currentIisBrowserSource(inventory.body, { certificateIds, fingerprint, openCertificateIds });
+}
 function verifyProof(proof, { workerDriven = false } = {}) {
   assert.ok(proof && typeof proof === "object" && !Array.isArray(proof));
   assert.deepEqual(
@@ -335,7 +410,7 @@ async function qualifyAdcsBrowserJourney(context) {
     if ((await control.getAttribute("aria-expanded")) !== "true")
       await control.click();
   }
-  async function mutation(button, pathname, expectedStatus) {
+  async function mutation(button, pathname, expectedStatus, { allowManagementConflict = false } = {}) {
     const [response] = await Promise.all([
       page.waitForResponse(
         (response) =>
@@ -344,7 +419,10 @@ async function qualifyAdcsBrowserJourney(context) {
       ),
       button.click(),
     ]);
-    assert.equal(response.status(), expectedStatus);
+    let responseCode;
+    if(response.status()!==expectedStatus && pathname.endsWith('/replace-management')){try{responseCode=(await response.json())?.code;}catch{}}
+    if (allowManagementConflict && response.status() === 409 && responseCode === "CERTOPS_MANAGEMENT_ALREADY_OPEN") return response;
+    assertMutationStatus(response.status(), expectedStatus, pathname, responseCode);
     mutations++;
     return response;
   }
@@ -571,15 +649,10 @@ async function qualifyAdcsBrowserJourney(context) {
       REQUIRED_SCENARIOS[2],
       async () => {
         stage = "browser-profile-attachment";
-        selectedSource = await until(
-          async () =>
-            (
-              await query(
-                "SELECT mc.id FROM managed_certificates mc JOIN certificate_instances ci ON ci.workspace_id=mc.workspace_id AND ci.managed_certificate_id=mc.id JOIN certificate_targets ct ON ct.workspace_id=ci.workspace_id AND ct.id=ci.target_id WHERE mc.workspace_id=$1 AND mc.source='agent_windows' AND ci.observed_fingerprint_sha256=$2 AND ct.windows_site=$3 ORDER BY ci.observed_at DESC LIMIT 1",
-                [fixture.workspaceId, initial.fingerprint, site],
-              )
-            ).rows[0],
-        );
+        // Earlier fault cases can retain open enrollments on the original
+        // registration. Use the current owned IIS observation, intersected with
+        // the public picker and the production open-enrollment gate.
+        selectedSource = await until(() => loadCurrentIisBrowserSource({ fixture, api, site, port, domain: item.domain, fingerprint: initial.fingerprint }));
         await openDisclosure("certops-renewal-profiles");
         await page
           .getByRole("button", { name: "New AD CS profile", exact: true })
@@ -600,9 +673,9 @@ async function qualifyAdcsBrowserJourney(context) {
           ["IIS port", String(port)],
           ["SNI hostname", item.domain],
           ["Certificate store", "My"],
-          ["Lead time", "30"],
         ])
           await dialog.getByLabel(label, { exact: true }).fill(value);
+        assert.equal(await dialog.getByLabel("Lead time", { exact: true }).inputValue(), "", "AD CS wizard must default to inheritance");
         await dialog
           .getByLabel("Key algorithm", { exact: true })
           .selectOption("rsa");
@@ -617,7 +690,15 @@ async function qualifyAdcsBrowserJourney(context) {
           `${api}/profiles`,
           201,
         );
-        profileId = (await created.json()).id;
+        const createdProfile = await created.json();
+        profileId = createdProfile.id;
+        assert.equal(createdProfile.renewBeforeDays, null, "Browser-created AD CS profile must inherit the deployment window");
+        // The real certificate has not reached its midpoint. Set an explicit
+        // lead through the public API before attachment so the existing native
+        // enrollment remains an immediate positive control.
+        const override = await fixture.request(`${api}/profiles/${profileId}`, "PATCH", { renewBeforeDays: 30 });
+        assert.equal(override.status, 200);
+        assert.equal(override.body.renewBeforeDays, 30);
         const attachButton = dialog.getByRole("button", {
           name: "Attach and enable automation",
           exact: true,
@@ -627,11 +708,18 @@ async function qualifyAdcsBrowserJourney(context) {
           exact: true,
         });
         if (await picker.count()) await picker.selectOption(selectedSource.id);
-        await mutation(
+        const attached = await mutation(
           attachButton,
           `${api}/sources/${selectedSource.id}/replace-management`,
           201,
+          { allowManagementConflict: true },
         );
+        if (attached.status() !== 201) await confirmOwnedAttachmentConflict({
+          response: attached,
+          selectedSource,
+          reloadSource: () => loadCurrentIisBrowserSource({ fixture, api, site, port, domain: item.domain, fingerprint: initial.fingerprint }),
+          confirm: () => mutation(dialog.getByRole("button", { name: "Replace the current management with this profile", exact: true }), `${api}/sources/${selectedSource.id}/replace-management`, 201),
+        });
         const periods = (
           await query(
             "SELECT id,automation_enabled,renewal_profile_id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",
@@ -647,7 +735,7 @@ async function qualifyAdcsBrowserJourney(context) {
       {
         evidenceLevel: "real-host",
         oracle:
-          "Real browser authors a confirmed-issuer IIS profile and replaces the exact existing native source's management period with automation enabled; no first-issue UI is invented",
+          "Real browser creates an inherited-lead IIS profile; a public explicit-lead override enables immediate native renewal before the browser attaches the owned source",
       },
     );
     await gate.scenario(
@@ -675,6 +763,10 @@ async function qualifyAdcsBrowserJourney(context) {
               value.id === selectedSource.id,
           ),
         );
+        const selectedDue = due.find(value => value.workspace_id === fixture.workspaceId && value.id === selectedSource.id);
+        assert.equal(selectedDue.profile_id, profileId);
+        assert.equal(selectedDue.profile_issuer_id, issuerId);
+        assert.equal(await require("../../../apps/api/services/certops/certificateEnrollments").findOpenEnrollment(fixture.pool, fixture.workspaceId, selectedSource.id), null);
         const expiry = (
           await query(
             "SELECT not_after FROM managed_certificates WHERE workspace_id=$1 AND id=$2",
@@ -695,6 +787,12 @@ async function qualifyAdcsBrowserJourney(context) {
           dbPool: fixture.pool,
           env: process.env,
         });
+        gate.report.nativeBrowserSchedulerSweep = Object.fromEntries(
+          ["perCaCap", "scanned", "created", "replayed", "skippedPaused", "skippedByCaCap", "skippedIncompleteProfile", "skippedNotAgentDeployable", "skippedAdcsAgentNotPrepared"].map(field => {
+            assert.ok(Number.isSafeInteger(sweep[field]) && sweep[field] >= 0 && sweep[field] <= 100000);
+            return [field, sweep[field]];
+          }),
+        );
         assert.equal(sweep.lockAcquired, true);
         assert.equal(sweep.created, 1);
         assert.deepEqual(sweep.errors, []);
@@ -965,6 +1063,11 @@ module.exports = {
   SCOPE,
   verifyProof,
   createOwnedBrowserResource,
+  currentBrowserSource,
+  currentIisBrowserSource,
+  loadCurrentIisBrowserSource,
   currentAuthorityGroup,
+  assertMutationStatus,
+  confirmOwnedAttachmentConflict,
   qualifyAdcsBrowserJourney,
 };

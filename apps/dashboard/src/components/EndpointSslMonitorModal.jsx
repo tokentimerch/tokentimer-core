@@ -1322,9 +1322,8 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                   Domain checker
                 </Text>
                 <Text fontSize='xs' color={muted}>
-                  Discovery is best-effort and limited to publicly available
-                  subdomains seen by passive sources. Then import selected hosts
-                  as SSL tokens and endpoint monitors.
+                  Best-effort discovery uses public passive sources. Import
+                  selected hosts as SSL tokens and endpoint monitors.
                 </Text>
               </Box>
               <HStack spacing={3} align='flex-end' flexWrap='wrap'>
@@ -1487,10 +1486,14 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                   <Alert status='info' borderRadius='md' py={2}>
                     <AlertIcon />
                     <AlertDescription fontSize='xs'>
-                      Import runs in batches (up to about 5 minutes per batch on
-                      slow hosts). After each run, hosts that finished importing
-                      are removed from your selection so you can click Import
-                      again for the rest without re-scanning.
+                      <Text fontWeight='semibold'>Batch import</Text>
+                      <Text>
+                        Each batch may take about 5 minutes on slow hosts.
+                      </Text>
+                      <Text>
+                        Imported hosts leave your selection. Import the rest
+                        without scanning again.
+                      </Text>
                     </AlertDescription>
                   </Alert>
                   <FormControl maxW='480px'>

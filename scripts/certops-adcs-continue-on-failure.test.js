@@ -18,7 +18,8 @@ test("default mode stops at the first failed scenario exactly as before", async 
   const gate = await gateWith({ continueOnFailure: false });
   await assert.rejects(gate.scenario("first", async () => { throw new Error("boom"); }), /boom/);
   assert.equal(gate.report.scenarios[0].status, "failed");
-  assert.equal(gate.report.scenarios[0].failure, undefined);
+  assert.equal(gate.report.scenarios[0].failure.errorClass, "Error");
+  assert.doesNotMatch(JSON.stringify(gate.report.scenarios[0].failure), /boom/);
   assert.equal(await gate.guard("cleanup", async () => 7), 7);
   await assert.rejects(gate.guard("cleanup", async () => { throw new Error("raised"); }), /raised/);
 });

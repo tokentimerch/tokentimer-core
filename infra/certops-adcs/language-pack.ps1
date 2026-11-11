@@ -50,17 +50,31 @@ if($Language -ne 'en-US'){
     $phase=$operationPhase
   }
 }
+$phase='resource-verification'
+if(-not (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Control\MUI\UILanguages\$Language")){throw 'Actual Windows display language resources not installed'}
+# Select the installed UI language for every lab identity, including services.
+# Account preferences alone can leave fresh LocalSystem processes on the image's
+# original UI language. These are the typed Globalization.admx machine policies.
+# https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-globalization#lockmachineuilanguage
+$phase='system-ui-policy'
+$muiPolicy='HKLM:\SOFTWARE\Policies\Microsoft\MUI\Settings'
+New-Item -Path $muiPolicy -Force | Out-Null
+New-ItemProperty -Path $muiPolicy -Name PreferredUILanguages -PropertyType String -Value $Language -Force | Out-Null
+New-ItemProperty -Path $muiPolicy -Name MachineUILock -PropertyType DWord -Value 1 -Force | Out-Null
 # Run Command uses LocalSystem, the same identity as the agent service.
+$phase='user-language-list'
+Set-WinUserLanguageList -LanguageList (New-WinUserLanguageList -Language $Language) -Force
 $phase='ui-language'
 Set-WinUILanguageOverride -Language $Language
 $phase='system-locale'
 Set-WinSystemLocale -SystemLocale $Language
 $phase='culture'
 Set-Culture -CultureInfo $Language
+# Configure account preferences too. Copy welcome-screen/new-user defaults where supported;
+# older Servers must not launch a Control Panel process from headless Run Command.
+# The provisioner reboots and verifies the actual UI language in a fresh process.
 $phase='system-settings-copy'
 if(Get-Command Copy-UserInternationalSettingsToSystem -ErrorAction SilentlyContinue){
   Copy-UserInternationalSettingsToSystem -WelcomeScreen $true -NewUser $true
 }
-$phase='resource-verification'
-if($Language -ne 'en-US' -and -not (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Control\MUI\UILanguages\$Language")){throw 'Actual Windows display language resources not installed'}
 Write-Output 'CERTOPS_STAGE=language-installed-reboot-required'

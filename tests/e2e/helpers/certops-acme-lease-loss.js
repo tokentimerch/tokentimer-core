@@ -1,0 +1,223 @@
+/**
+ * Observe lease-loss cancellation of a genuine owned ACME command in the native journey.
+ * The parent arms a transparent command barrier, triggers public retirement, and proves
+ * actual process-tree exit plus unchanged certificate/key/TLS/DNS state. This fixture
+ * must run only under its owning disposable ACME harness and exact PID identity checks. */
+"use strict";
+const assert = require("node:assert/strict"),
+  fs = require("node:fs"),
+  path = require("node:path"),
+  crypto = require("node:crypto");
+const attachment = require("./certops-acme-lease-attachment");
+const active = new Set();
+function leaseFailureLabels(row, agent) {
+  const statuses = new Set(["pending", "pending_approval", "approved", "claimed", "running", "succeeded", "failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect", "awaiting_issuer"]);
+  const status = row && statuses.has(row.status) ? row.status.replaceAll("_", "-") : row ? "other" : "missing";
+  const agentState = agent && agent.exitCode === null && agent.signalCode === null ? "running" : agent && (agent.exitCode != null || agent.signalCode != null) ? "exited" : "unknown";
+  return [`lease-job-${status}`, `lease-agent-${agentState}`];
+}
+function verifyFencedJob(fenced, jobId, row) {
+  assert.ok(fenced && Array.isArray(fenced.cancelledJobIds) && Array.isArray(fenced.orphanedJobIds));
+  const cancelled = fenced.cancelledJobIds.filter(id => id === jobId).length;
+  const orphaned = fenced.orphanedJobIds.filter(id => id === jobId).length;
+  assert.equal(cancelled + orphaned, 1, "Retirement must fence the exact owned job once");
+  assert.ok(row);
+  if (cancelled) {
+    assert.equal(row.status, "cancelled");
+    assert.equal(row.error_code, "CERTOPS_AGENT_FORCE_RETIRED");
+  } else {
+    assert.equal(row.status, "orphaned_unknown_effect");
+    assert.equal(row.error_code, "CERTOPS_AGENT_FORCE_RETIRED_UNKNOWN_EFFECT");
+    assert.equal(row.needs_operator_reconciliation, true);
+    assert.equal(row.reconciliation_reason, "Qualification native mutation-time lease loss");
+  }
+}
+function measureOwnedProcess(proof, { token, agent, barrierDirectory }) {
+  assert.equal(proof.token, token);
+  assert.ok(Number.isInteger(proof.pid) && proof.pid > 0);
+  assert.equal(proof.parentPid, agent.pid);
+  const raw = fs.readFileSync(`/proc/${proof.pid}/stat`, "utf8"),
+    fields = raw
+      .slice(raw.lastIndexOf(")") + 2)
+      .trim()
+      .split(/\s+/);
+  assert.equal(Number(fields[1]), agent.pid);
+  assert.equal(Number(fields[2]), proof.pid);
+  assert.equal(proof.processGroup, proof.pid);
+  assert.equal(fields[19], proof.startTicks);
+  const argv = fs
+    .readFileSync(`/proc/${proof.pid}/cmdline`, "utf8")
+    .split("\0");
+  assert.ok(
+    argv.includes(path.join(__dirname, "certops-acme-command-barrier.js")),
+  );
+  assert.ok(argv.includes(barrierDirectory));
+  assert.equal(
+    fs.realpathSync(`/proc/${proof.pid}/exe`),
+    fs.realpathSync(process.execPath),
+  );
+  return proof;
+}
+module.exports = async function qualifyLeaseLoss({
+  pool,
+  workspaceId,
+  agentId,
+  agent,
+  publicSession,
+  certificateId,
+  certPath,
+  keyPath,
+  barrierDirectory,
+  ownedJobIds,
+  ownedLeaseResources,
+  waitUntil,
+  verifyDnsCleanup,
+  servedFingerprint,
+  onMilestone = () => {},
+}) {
+  onMilestone("lease-start");
+  assert.equal(process.platform, "linux");
+  const beforeCert = fs.readFileSync(certPath),
+    beforeKey = fs.readFileSync(keyPath),
+    fingerprint = new crypto.X509Certificate(beforeCert).fingerprint256;
+  const arm = path.join(barrierDirectory, "armed.json"),
+    receipt = path.join(barrierDirectory, "process.json"),
+    token = crypto.randomUUID();
+  assert.equal(fs.lstatSync(arm, { throwIfNoEntry: false }), undefined);
+  assert.equal(fs.lstatSync(receipt, { throwIfNoEntry: false }), undefined);
+  assert.ok(Array.isArray(ownedLeaseResources));
+  active.add(path.resolve(barrierDirectory));
+  fs.writeFileSync(arm, JSON.stringify({ token }), { flag: "wx", mode: 0o600 });
+  onMilestone("lease-armed");
+  let proof, primary, owner, jobId;
+  try {
+    const created = await publicSession.request(
+      `/api/v1/workspaces/${workspaceId}/certops/jobs`,
+      "POST",
+      {
+        operation: "renew",
+        subjectId: certificateId,
+        subjectType: "managed_certificate",
+        idempotencyKey: crypto.randomUUID(),
+      },
+    );
+    assert.equal(created.status, 201);
+    jobId = created.body.job.id;
+    ownedJobIds.push(jobId);
+    onMilestone("lease-job-admitted");
+    await waitUntil(() => fs.existsSync(receipt), 60000);
+    onMilestone("lease-receipt-observed");
+    proof = measureOwnedProcess(JSON.parse(fs.readFileSync(receipt, "utf8")), {
+      token,
+      agent,
+      barrierDirectory,
+    });
+    onMilestone("lease-process-identified");
+    owner = attachment.attach({
+      proof,
+      token,
+      agent,
+      barrierDirectory,
+      ownedResources: ownedLeaseResources,
+      waitUntil,
+    });
+    await owner.ready;
+    onMilestone("lease-process-attached");
+    assert.equal(agent.exitCode, null);
+    assert.equal(agent.signalCode, null);
+    const active = (
+      await pool.query(
+        "SELECT status,claim_id,claimed_by_agent_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",
+        [workspaceId, jobId],
+      )
+    ).rows[0];
+    assert.ok(["claimed", "running"].includes(active.status));
+    assert.ok(active.claim_id);
+    await verifyDnsCleanup();
+    assert.ok(fs.readFileSync(certPath).equals(beforeCert));
+    assert.ok(fs.readFileSync(keyPath).equals(beforeKey));
+    assert.equal(await servedFingerprint(), fingerprint);
+    const actualAgent = (
+      await pool.query(
+        "SELECT id FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2",
+        [workspaceId, agentId],
+      )
+    ).rows[0];
+    assert.ok(actualAgent);
+    assert.equal(active.claimed_by_agent_id, actualAgent.id);
+    onMilestone("lease-active-state-verified");
+    const retired = await publicSession.request(
+      `/api/v1/workspaces/${workspaceId}/certops/agents/${actualAgent.id}/retire`,
+      "POST",
+      { force: true, reason: "Qualification native mutation-time lease loss" },
+    );
+    assert.equal(retired.status, 200);
+    onMilestone("lease-agent-retired");
+    await owner.waitForNativeExit();
+    onMilestone("lease-process-exited");
+    // The arm remains present throughout: only native lease-abort cancellation,
+    // not a fixture release, can terminate this genuine executing command.
+    assert.equal(JSON.parse(fs.readFileSync(arm, "utf8")).token, token);
+    onMilestone("lease-arm-retained");
+    await verifyDnsCleanup();
+    onMilestone("lease-dns-clean");
+    assert.ok(fs.readFileSync(certPath).equals(beforeCert));
+    onMilestone("lease-cert-unchanged");
+    assert.ok(fs.readFileSync(keyPath).equals(beforeKey));
+    onMilestone("lease-key-unchanged");
+    assert.equal(await servedFingerprint(), fingerprint);
+    onMilestone("lease-tls-unchanged");
+    const terminal = (await pool.query(
+      "SELECT status,error_code,needs_operator_reconciliation,reconciliation_reason FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",
+      [workspaceId, jobId],
+    )).rows[0];
+    // Use the retirement transaction's fenced list: a claimed job can become
+    // running after the earlier observation and before retirement commits.
+    verifyFencedJob(retired.body.fenced, jobId, terminal);
+    onMilestone("lease-final-state-verified");
+  } catch (error) {
+    primary = error;
+    if (jobId && !owner) {
+      try {
+        const row = (await pool.query("SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, jobId])).rows[0];
+        for (const label of leaseFailureLabels(row, agent)) onMilestone(label);
+      } catch { try { onMilestone("lease-job-diagnostic-unavailable"); } catch {} }
+    }
+  } finally {
+    const failures = [];
+    try {
+      assert.ok(
+        owner,
+        "Unconfirmed command attachment; preserve ownership and fixture state",
+      );
+      await owner.stopAndDrain();
+      owner.removeOwnedBarriersAndRelease();
+      active.delete(path.resolve(barrierDirectory));
+      onMilestone("lease-owned-cleanup-completed");
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length)
+      throw new AggregateError(
+        [...(primary ? [primary] : []), ...failures],
+        "Native lease barrier ownership or cleanup failed",
+      );
+  }
+  if (primary) throw primary;
+};
+module.exports.leaseFailureLabels = leaseFailureLabels;
+module.exports.verifyFencedJob = verifyFencedJob;
+module.exports.assertCleanupSafe = function assertCleanupSafe(root) {
+  assert.equal(
+    active.has(path.resolve(root)),
+    false,
+    "Preserve unresolved lease-loss fixture",
+  );
+  attachment.assertCleanupSafe(root);
+};
+module.exports.REQUIRED_SOURCES = Object.freeze([
+  "tests/e2e/helpers/certops-acme-lease-loss.js",
+  "tests/e2e/helpers/certops-acme-command-barrier.js",
+  "tests/e2e/helpers/certops-acme-lease-attachment.js",
+  "tests/e2e/helpers/certops-acme-lease-pidfd.py",
+]);

@@ -48,7 +48,7 @@ function verifyScope(report, root = path.resolve(__dirname, "..")) {
       .digest("hex"),
   );
   const required =
-    require("../docs/certops/qualification-suites.json").slots.find(
+    require("./certops-qualification-manifest").slots.find(
       (s) => s.suite === SUITE,
     ).requiredSources;
   for (const file of required) {

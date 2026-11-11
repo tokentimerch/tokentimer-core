@@ -928,8 +928,21 @@ describe("Alert lifecycle APIs", function () {
   });
 
   it("records a post-transfer manual retry against the alert and B workspace", async () => {
-    await request(BASE)
+    const delivered = await request(BASE)
       .post(`/api/alert-queue/${alertA}/retry`)
+      .set("Cookie", owner.cookie)
+      .send({ channel: "email" })
+      .expect(400);
+    expect(delivered.body.code).to.equal("ALREADY_DELIVERED");
+    const retryKey = `token_expiry:${tokenA}:poswin:1`;
+    const retry = await client.query(
+      `INSERT INTO alert_queue (user_id,token_id,alert_key,threshold_days,due_date,channels,status)
+       VALUES ($1,$2,$3,1,CURRENT_DATE,'["email"]'::jsonb,'failed') RETURNING id`,
+      [owner.user.id, tokenA, retryKey],
+    );
+    const retryAlertId = retry.rows[0].id;
+    await request(BASE)
+      .post(`/api/alert-queue/${retryAlertId}/retry`)
       .set("Cookie", owner.cookie)
       .send({ channel: "email" })
       .expect(200);
@@ -937,13 +950,13 @@ describe("Alert lifecycle APIs", function () {
       `SELECT workspace_id,metadata FROM audit_events
         WHERE action='ALERT_MANUAL_RETRY' AND target_type='alert'
           AND target_id=$1 ORDER BY occurred_at DESC LIMIT 1`,
-      [alertA],
+      [retryAlertId],
     );
     expect(audit.rows).to.have.length(1);
     expect(audit.rows[0].workspace_id).to.equal(workspaceB);
-    expect(audit.rows[0].metadata.alert_id).to.equal(alertA);
+    expect(audit.rows[0].metadata.alert_id).to.equal(retryAlertId);
     expect(audit.rows[0].metadata.alert_key).to.equal(
-      `token_expiry:${tokenA}:poswin:7`,
+      retryKey,
     );
     const oldActivity = await request(BASE)
       .get(
@@ -959,12 +972,12 @@ describe("Alert lifecycle APIs", function () {
       .expect(200);
     expect(
       oldActivity.body.items.some(
-        (item) => item.type === "alert_requeued" && item.alert_id === alertA,
+        (item) => item.type === "alert_requeued" && item.alert_id === retryAlertId,
       ),
     ).to.equal(false);
     expect(
       newActivity.body.items.some(
-        (item) => item.type === "alert_requeued" && item.alert_id === alertA,
+        (item) => item.type === "alert_requeued" && item.alert_id === retryAlertId,
       ),
     ).to.equal(true);
   });

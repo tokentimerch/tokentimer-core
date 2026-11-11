@@ -49,6 +49,28 @@ const REQUIRED_SOURCES = [
   ]),
 ];
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+function assertRecoveryScenariosPassed(report) {
+  assert.ok(Array.isArray(report?.scenarios));
+  for (const id of REQUIRED_SCENARIOS.slice(0, 2)) {
+    const rows = report.scenarios.filter((scenario) => scenario.id === id);
+    assert.equal(rows.length, 1, `Expected exactly one prior scenario: ${id}`);
+    assert.equal(rows[0].status, "passed", `Recovery proof requires a passed scenario: ${id}`);
+  }
+}
+function assertRecoveryJobNotTerminal(row) {
+  assert.ok(row && typeof row === "object");
+  if (!["failed", "rejected", "cancelled", "blocked"].includes(row.status)) return;
+  const message = typeof row.error_message === "string" ? row.error_message : "";
+  const categories = [
+    [/^could not acquire AD CS enrollment lock:/, "LOCK"],
+    [/^no local enrollment journal for enrollment /, "JOURNAL_MISSING"],
+    [/^local AD CS enrollment journal is corrupt:/, "JOURNAL_CORRUPT"],
+    [/^AD CS tier-2 /, "RECONCILIATION"],
+    [/^Local enrollment policy /, "LOCAL_POLICY"],
+  ];
+  const category = categories.find(([pattern]) => pattern.test(message))?.[1] ?? "OTHER";
+  throw Object.assign(new Error("Single native candidate recovery failed"), { code: `CERTOPS_RECOVERY_${category}` });
+}
 function verifyProof(p) {
   assert.ok(p && typeof p === "object" && !Array.isArray(p));
   assert.deepEqual(
@@ -321,10 +343,7 @@ async function runCandidateRecovery({
       restartService();
       await until(async () => {
         const row = await job(recovery.body.jobId);
-        assert.ok(
-          !["failed", "rejected", "cancelled", "blocked"].includes(row.status),
-          row.error_message || "Single native candidate recovery must succeed",
-        );
+        assertRecoveryJobNotTerminal(row);
         return row.status === "succeeded";
       });
       const row = await enrollment();
@@ -391,6 +410,7 @@ async function runCandidateRecovery({
   await gate.scenario(
     REQUIRED_SCENARIOS[2],
     async () => {
+      assertRecoveryScenariosPassed(gate.report);
       const scheduler = require("../../../apps/api/services/certops/certificateEnrollments");
       for (let i = 0; i < 2; i++)
         assert.equal(
@@ -475,6 +495,8 @@ module.exports = {
   FLAGS,
   REQUIRED_SCENARIOS,
   REQUIRED_SOURCES,
+  assertRecoveryScenariosPassed,
+  assertRecoveryJobNotTerminal,
   verifyProof,
   runCandidateRecovery,
   qualifyOperatorCreatedUnique,

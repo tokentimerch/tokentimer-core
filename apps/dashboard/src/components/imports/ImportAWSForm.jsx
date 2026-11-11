@@ -535,26 +535,43 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
             Remove previously imported items no longer found at the source
           </Checkbox>
           <Text fontSize='xs' color={helpTextColor} pl={6}>
-            Only available right after a scan completes. An All Regions sweep
-            records IAM plus every region that actually ran, so cleanup is
-            scoped to those complete sub-scopes. A region that errored or
-            truncated is never used as a deletion basis.
+            <strong>Cleanup scope:</strong> Available immediately after a scan.
+            All Regions covers IAM and each completed region. Failed or
+            truncated regions are excluded from deletion.
           </Text>
           {lastScanId && awsSummary.some(s => s.complete === false) ? (
-            <Text fontSize='xs' color='orange.400' pl={6}>
-              The last scan didn't fully complete for every item type above (see
-              the errors below). The backend will only clean up item types it
-              confirmed were fully scanned; nothing incomplete or errored is
-              ever touched.
+            <Text
+              fontSize='sm'
+              color='orange.400'
+              pl={6}
+              role='alert'
+              p={3}
+              borderWidth='1px'
+              borderRadius='md'
+              _light={{ color: 'orange.800', bg: 'orange.50' }}
+              _dark={{ color: 'orange.100', bg: 'orange.900' }}
+            >
+              <strong>Incomplete scan:</strong> Some item types did not finish.
+              See errors below. Cleanup affects only fully scanned types;
+              incomplete or failed types are excluded.
             </Text>
           ) : null}
           {cleanupObsolete ? (
-            <Text fontSize='xs' color='red.400' pl={6}>
-              Deletes previously imported items of the item types scanned above
-              (secrets, certificates, and/or IAM keys, depending on the scan you
-              run) that no longer appear anywhere in this scan's results,
-              regardless of which items you select for import below. Item types
-              you did not scan for are never affected. This cannot be undone.
+            <Text
+              fontSize='sm'
+              color='red.400'
+              pl={6}
+              role='alert'
+              p={3}
+              borderWidth='1px'
+              borderRadius='md'
+              _light={{ color: 'red.800', bg: 'red.50' }}
+              _dark={{ color: 'red.100', bg: 'red.900' }}
+            >
+              <strong>Permanent deletion:</strong> Permanently deletes
+              previously imported secrets, certificates, or IAM keys missing
+              from this scan, regardless of selections below. Unscanned types
+              are excluded. This cannot be undone.
             </Text>
           ) : null}
         </VStack>

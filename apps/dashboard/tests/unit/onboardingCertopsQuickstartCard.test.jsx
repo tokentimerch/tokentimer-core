@@ -137,7 +137,7 @@ describe('CertopsQuickstartCard', () => {
     );
     await waitFor(() =>
       expect(screen.getByTestId('where').textContent).toBe(
-        '/onboarding?area=certops'
+        '/onboarding?area=certops&workspace=ws-1'
       )
     );
     expect(api.resetSession).not.toHaveBeenCalled();
@@ -156,7 +156,7 @@ describe('CertopsQuickstartCard', () => {
       );
       await waitFor(() =>
         expect(screen.getByTestId('where').textContent).toBe(
-          '/onboarding?area=certops'
+          '/onboarding?area=certops&workspace=ws-1'
         )
       );
       expect(api.resetSession).toHaveBeenCalledWith('ws-1', 'mega');
@@ -180,7 +180,7 @@ describe('CertopsQuickstartCard', () => {
     expect(api.resetSession).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(screen.getByTestId('where').textContent).toBe(
-        '/onboarding?area=certops'
+        '/onboarding?area=certops&workspace=ws-1'
       )
     );
   });

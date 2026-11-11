@@ -287,10 +287,12 @@ const SAFE_JOB_SELECT_FIELDS = `
   executor_kind,
   requested_by_user_id,
   requested_by_api_token_id,
+  requested_by_connection_id,
   idempotency_key,
   creation_request_hash,
   subject_type,
   subject_id,
+  certificate_identity_id,
   payload,
   result_metadata,
   error_code,
@@ -810,7 +812,7 @@ const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
 // it is the one operation with no renewalProfile to fall back on (only
 // renew jobs get one, via validateRenewalProfileOnPayload / dispatch-time
 // merge), and DNS-01 is the only challenge mechanism this agent supports
-// (docs/certops/CONTEXT.md), so every field the agent needs to actually run
+// (.github/maintainers/certops/CONTEXT.md), so every field the agent needs to actually run
 // the ACME order must be present on the payload at creation time. Without
 // this, validateExecutionFields only validated fields that were present,
 // so an issue request missing commandRef/caEndpoint/dnsZone/dnsProvider was
@@ -1687,6 +1689,14 @@ async function preflightManualRenewalJob({
   return validateJobPayloadForOperation(materialized, "renew");
 }
 
+async function preflightManualRenewalRouting({ client, workspaceId, certificateId, payload }) {
+  const { autoAssignedAgentId } = await resolveManagedCertificateJobDefaults({
+    db: client, workspaceId, source: "api", operation: "renew",
+    subjectType: "managed_certificate", subjectId: certificateId, payload, assignedAgentId: payload.assignedAgentId,
+  });
+  return resolveExecutorKindAndRouting({}, "api", payload, autoAssignedAgentId);
+}
+
 function jobFromRow(row) {
   if (!row) return null;
   const job = {
@@ -1700,10 +1710,12 @@ function jobFromRow(row) {
     executorKind: row.executor_kind ?? "agent",
     requestedByUserId: row.requested_by_user_id,
     requestedByApiTokenId: row.requested_by_api_token_id,
+    requestedByConnectionId: row.requested_by_connection_id ?? null,
     idempotencyKey: row.idempotency_key,
     creationRequestHash: row.creation_request_hash,
     subjectType: row.subject_type,
     subjectId: row.subject_id,
+    certificateIdentityId: row.certificate_identity_id ?? null,
     payload: parseJsonb(row.payload),
     resultMetadata: parseJsonb(row.result_metadata),
     errorCode: row.error_code,
@@ -2077,6 +2089,15 @@ async function createCertificateJob(options) {
     requiredDnsProvider,
     requiredCommandProfile,
   } = resolveExecutorKindAndRouting(options, source, payload, autoAssignedAgentId);
+  if (options.expectedRenewalRouting && (
+    executorKind !== options.expectedRenewalRouting.executorKind ||
+    assignedAgentId !== options.expectedRenewalRouting.assignedAgentId ||
+    requiredTargetSelector !== options.expectedRenewalRouting.requiredTargetSelector ||
+    requiredDnsProvider !== options.expectedRenewalRouting.requiredDnsProvider ||
+    requiredCommandProfile !== options.expectedRenewalRouting.requiredCommandProfile
+  )) {
+    throw serviceError("The renewal routing changed; preview again", "OPERATOR_INTENT_STALE");
+  }
   const resultMetadata = normalizePublicObject(
     options.resultMetadata,
     "resultMetadata",
@@ -2183,6 +2204,15 @@ async function createCertificateJob(options) {
     });
   }
 
+  // Set only by the operator request path, and it must be a UUID.
+  let connectionIdForInsert = null;
+  if (options.requestedByConnectionId !== undefined && options.requestedByConnectionId !== null) {
+    if (!SUBJECT_ID_UUID_PATTERN.test(String(options.requestedByConnectionId))) {
+      throw serviceError("requestedByConnectionId must be a UUID", CERTOPS_JOB_INVALID);
+    }
+    connectionIdForInsert = String(options.requestedByConnectionId);
+  }
+
   try {
     const result = await db.query(
       `INSERT INTO certificate_jobs (
@@ -2210,12 +2240,13 @@ async function createCertificateJob(options) {
          completed_at,
         canceled_at,
         creation_request_hash,
-        enrollment_id
+        enrollment_id,
+        requested_by_connection_id
        )
        VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
          $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18, $19,
-         $20, $21, $22, $23, $24, $25
+         $20, $21, $22, $23, $24, $25, $26
        )
        ON CONFLICT (workspace_id, idempotency_key)
          WHERE idempotency_key IS NOT NULL
@@ -2247,6 +2278,7 @@ async function createCertificateJob(options) {
         cancelledAt,
         creationRequestHash,
         options.enrollmentId || null,
+        connectionIdForInsert,
       ],
     );
 
@@ -2445,8 +2477,15 @@ async function listCertificateJobs(options) {
       CERTOPS_JOB_STATUS_INVALID,
       "status",
     );
-    params.push(status);
-    conditions.push(`status = $${params.length}`);
+    if (status === "approved") {
+      // Approval immediately moves a job to claimable pending. Keep the
+      // approved queue filter useful without treating unreviewed pending work
+      // or already-running/terminal work as part of that queue.
+      conditions.push("(status = 'approved' OR (status = 'pending' AND approved_at IS NOT NULL))");
+    } else {
+      params.push(status);
+      conditions.push(`status = $${params.length}`);
+    }
   }
 
   if (options.operation !== undefined && options.operation !== null && options.operation !== "") {
@@ -2486,6 +2525,22 @@ async function listCertificateJobs(options) {
     const subjectId = normalizeOptionalShortText(options.subjectId, "subjectId");
     params.push(subjectId);
     conditions.push(`subject_id = $${params.length}`);
+  }
+
+  if (options.certificateIdentityId) {
+    params.push(options.certificateIdentityId);
+    const identity = `$${params.length}`;
+    conditions.push(`(certificate_identity_id = ${identity}::uuid OR
+      EXISTS (SELECT 1 FROM certops_issuance_job_identities issued
+               WHERE issued.workspace_id = certificate_jobs.workspace_id
+                 AND issued.job_id = certificate_jobs.id AND issued.identity_id = ${identity}::uuid) OR
+      (subject_type IS DISTINCT FROM 'managed_certificate' AND subject_id = ${identity}::uuid::text) OR
+      (subject_type = 'managed_certificate' AND operation = 'issue' AND certificate_identity_id IS NULL
+       AND subject_id = ${identity}::uuid::text AND EXISTS (
+         SELECT 1 FROM managed_certificates mc WHERE mc.workspace_id = certificate_jobs.workspace_id
+           AND mc.id = ${identity}::uuid
+           AND certops_is_initial_provisioning(mc.workspace_id, mc.id, 'renew', 'agent', 'api')
+       )))`);
   }
 
   const createdSince = normalizeJobCreatedSince(options.createdSince);
@@ -2878,6 +2933,7 @@ module.exports = {
   normalizeRequiredId,
   normalizeWorkspaceId,
   preflightManualRenewalJob,
+  preflightManualRenewalRouting,
   serviceError,
   updateCertificateJobStatus,
   validateJobPayloadForOperation,

@@ -15,7 +15,7 @@ document; ratification fleshes out the TODOs and links each mitigation to a test
 
 Trust boundaries:
 
-- Internet / customer infra <-> control plane API
+- Internet / operator infrastructure <-> control plane API
 - Control plane <-> agent (outbound-only, scoped-token)
 - Agent <-> host / CA / DNS provider
 - Kubernetes cluster <-> TokenTimer controller

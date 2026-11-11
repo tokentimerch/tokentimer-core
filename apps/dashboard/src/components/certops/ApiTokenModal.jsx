@@ -352,12 +352,17 @@ export default function ApiTokenModal({
               <Alert status='warning' borderRadius='md' variant='left-accent'>
                 <AlertIcon />
                 <AlertDescription fontSize='sm'>
-                  This token is shown only once. Store it in your secret manager
-                  now. Anyone with this token can act on this workspace within
-                  its scopes. TokenTimer never stores or accepts private keys;
-                  do not paste key material into token names.
+                  <Text fontWeight='semibold'>
+                    This token is shown only once
+                  </Text>
+                  Store it in your secret manager. Anyone with the token can act
+                  on this workspace within its scopes.
                 </AlertDescription>
               </Alert>
+              <Text fontSize='sm'>
+                TokenTimer never stores or accepts private keys. Do not paste
+                key material into token names.
+              </Text>
               <CopyableCodeBlock
                 code={plaintextToken}
                 label='API token'

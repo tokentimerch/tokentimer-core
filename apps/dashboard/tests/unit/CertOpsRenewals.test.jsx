@@ -723,7 +723,7 @@ describe('CertOpsRenewals page', () => {
       )
     ).toBeInTheDocument();
     expect(screen.getByText(/Open Certificates later/)).toBeInTheDocument();
-    expect(screen.getByText(/inside the 30 day lead time/)).toBeInTheDocument();
+    expect(screen.getByText(/inside the deployment renewal window/)).toBeInTheDocument();
     expect(readdManagingSourceMock).not.toHaveBeenCalled();
     expect(stopManagingSourceMock).not.toHaveBeenCalled();
   });

@@ -76,8 +76,9 @@ failure; use configuration run history to investigate individual connections.
 connections. Scope freshness and failure alerts to values greater than zero so
 unused providers and disabled or deleted connections do not page operators.
 Apply the opt-in `deploy/helm/examples/values-auto-sync-alerts.yaml` after your
-normal values, or load `deploy/prometheus/auto-sync.rules.yaml` in standalone
-Prometheus. Use a unique `installation` label per database, shared by its replicas;
+normal values. For standalone Prometheus, extract its
+`monitoring.prometheusRules.groups` into a rule file under the top-level `groups`
+key. Use a unique `installation` label per database, shared by its replicas;
 match Prometheus Operator selectors and check target discovery/rule loading.
 
 The creation alert detects rolling 15-minute activity, not one notification per
@@ -88,6 +89,14 @@ scrape gaps, resets and replacement targets can undercount. Tune the 25-hour
 freshness/grace periods for your longest schedule. Alertmanager controls delivery.
 Collector errors can return HTTP 500; connection failures may terminate the API.
 Both cause scrape failures, not evidence of zero activity.
+
+### Optional configuration and asset labels
+
+- Apply migrations 81–82 with matching API/dashboard code; aggregate counters stay unchanged.
+- System Settings → Auto-sync independently overrides metrics/labels and monitoring group, locking integration controls. Otherwise, integrations retain their choices.
+- Environment wins: `AUTO_SYNC_METRICS_ENABLED=true/false`, optional `AUTO_SYNC_METRICS_LABELS` (CSV or `none`), and independent `AUTO_SYNC_METRICS_MONITORING_GROUP`. Empty restores saved values; `AUTO_SYNC_METRICS_EXTRA_LABELS` optionally restricts asset labels.
+- Helm: `monitoring.metrics.autoSyncEnabled`, `autoSyncLabels`, `autoSyncMonitoringGroup` (under `tokentimer` in Enterprise). Available labels are listed beside these settings.
+- **Warning:** label combinations multiply detailed series and expose metadata. Names/scopes cover future creations; old samples remain until retention expires.
 
 ## Cleanup and removal
 

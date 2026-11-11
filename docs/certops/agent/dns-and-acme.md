@@ -4,6 +4,10 @@ The bundled agent uses **DNS-01**. It proves domain control by publishing a TXT 
 
 For **HTTP-01**, use an external ACME client or cert-manager and connect its public certificate results through the executor/controller workflow. The native agent does not switch to HTTP-01 by changing its command profile. See [challenge selection and the HTTP-01 webroot example](https://tokentimer.ch/docs/self-hosted/certops/acme-challenges).
 
+The bundled executor also has no native TLS-ALPN-01 solver. Native DNS-01,
+external HTTP-01 and controller HTTP-01 qualification use separate execution
+reports; success in one does not qualify another challenge method.
+
 <a id="dns-01-providers"></a>
 
 ### DNS-01 providers

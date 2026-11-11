@@ -7,6 +7,21 @@ const fs=require("node:fs");
 const assert=require("node:assert/strict"),crypto=require("node:crypto"),path=require("node:path"),tls=require("node:tls");
 const {buildEnrollmentContainerName}=require("../../../packages/agent/src/windows-cert-store");
 const {readEnrollmentJournal}=require("../../../packages/agent/src/issuers/adcs-enrollment");
+function classifyRemainingKey({probe,requestListing,containerName}){
+  if(probe?.ok!==true || typeof probe.shared!=="boolean")return "CERTOPS_VALIDITY_KEY_PROBE_FAILED";
+  if(probe.shared===false)return "CERTOPS_VALIDITY_KEY_UNREFERENCED";
+  if(typeof requestListing!=="string")return "CERTOPS_VALIDITY_KEY_REQUEST_PROBE_FAILED";
+  if(!requestListing.includes(containerName))return "CERTOPS_VALIDITY_KEY_OTHER_REFERENCE";
+  const escaped=containerName.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  const exact=new RegExp(`^\\s*[^\\r\\n=:]*[=:]\\s*${escaped}\\s*$`,"im");
+  const blocks=requestListing.split(/^=+.*=+\s*$/m).filter(block=>exact.test(block));
+  if(!blocks.length)return "CERTOPS_VALIDITY_KEY_REQUEST_CONTAINER_UNPARSED";
+  if(!blocks.some(block=>{const hash=/\(sha1\)(?:[^\S\r\n]|\uFFFD)*:(?:[^\S\r\n]|\uFFFD)*([0-9a-f ]{40,59})(?:[^\S\r\n]|\uFFFD)*$/im.exec(block);return hash && /^[0-9a-f]{40}$/i.test(hash[1].replace(/\s+/g,""));}))return "CERTOPS_VALIDITY_KEY_REQUEST_HASH_UNPARSED";
+  return "CERTOPS_VALIDITY_KEY_REQUEST_MATCHED";
+}
+async function classifyRequestCleanupRetry(containerName,remove){
+  try{const retry=await remove({containerName});return retry.aborted?"CERTOPS_VALIDITY_KEY_REQUEST_RETRY_ABORTED":retry.removed>0?"CERTOPS_VALIDITY_KEY_REQUEST_RETRY_REMOVED":"CERTOPS_VALIDITY_KEY_REQUEST_RETRY_NO_REMOVAL";}catch{return "CERTOPS_VALIDITY_KEY_REQUEST_RETRY_ERROR";}
+}
 async function qualifyValidityBoundaries(context){
   const {gate,fixture,api,agentRowId,renewalFixture,configDir,preflight,until,ps,command,ownedEnrollmentIds,tlsAuthority}=context;
   assert.equal(process.platform,"win32");assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB,"1");assert.equal(ps("[Security.Principal.WindowsIdentity]::GetCurrent().User.Value"),"S-1-5-18");
@@ -37,11 +52,22 @@ async function qualifyValidityBoundaries(context){
     assert.equal(leaf.verify(authorityCertificate(authority).publicKey),true,"Actual invalid-policy leaf must still carry the pinned CA signature");
     if(!selected.pending)assert.ok(Date.parse(leaf.validTo)<Date.now()+selected.options.minimumRemainingValidity*1000);
     const journal=readEnrollmentJournal(configDir,admitted.body.enrollmentId);assert.equal(journal.kind,"valid");assert.equal(journal.journal.state,"rejected_invalid");assert.equal(journal.journal.snapshotSha256,original.snapshot_sha256);
-    const container=buildEnrollmentContainerName(admitted.body.enrollmentId);assert.ok(!command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).includes(container),"Invalid unaccepted enrollment must free its exact CNG key");
+    const container=buildEnrollmentContainerName(admitted.body.enrollmentId);if(command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).includes(container)){
+      const probe=await require("../../../packages/agent/src/windows-key-survivors").inspectMachineKeySurvivors({containerName:container});let requestListing;
+      if(probe.ok===true && probe.shared===true){try{requestListing=command("certutil.exe",["-store","-silent","REQUEST"]);}catch{}}
+      let code=classifyRemainingKey({probe,requestListing,containerName:container});
+      if(code==="CERTOPS_VALIDITY_KEY_REQUEST_MATCHED"){
+        // The terminal enrollment and exact container belong to this disposable fixture.
+        // Retry only its pending-entry cleanup after recording the failure; never delete the key here.
+        assert.ok(ownedEnrollmentIds.includes(admitted.body.enrollmentId));
+        code=await classifyRequestCleanupRetry(container,require("../../../packages/agent/src/windows-cert-store").removePendingRequestEntries);
+      }
+      throw Object.assign(new Error("Invalid unaccepted enrollment retained its exact CNG key"),{code});
+    }
     const rejectedThumbprint=leaf.fingerprint.replace(/:/g,"");assert.equal(ps(`$foundCertificates=@();foreach($store in @('My','WebHosting')){$storePath='Cert:\\LocalMachine\\'+$store;if(Test-Path -LiteralPath $storePath){$foundCertificates+=@(Get-ChildItem -LiteralPath $storePath|Where-Object Thumbprint -eq '${rejectedThumbprint}')}};$foundCertificates.Count`),"0");
     assert.equal((await require("../../../packages/agent/src/windows-iis").queryCurrentBinding({binding})).thumbprint.toUpperCase(),outgoingThumbprint);assert.equal(await tlsFingerprint(),observed.fingerprint256);
     gate.report.nativeValidityBoundaries??=[];gate.report.nativeValidityBoundaries.push({scenario:selected.id,requestId:String(final.request_id??caRequestId),snapshotSha256:original.snapshot_sha256,policy:selected.options,issuedNotAfter:leaf.validTo,installedNotAfter:observed.validTo,actualCaSignedLeaf:true,publicFrozenPolicy:true,refusedBeforeAccept:true,unacceptedOwnedKeyAbsent:true,outgoingTrustedTlsPreserved:true,nativeAndCaClocks:"actual"});
   },{evidenceLevel:"real-host",oracle:"actual approved or issued CA-signed leaf evaluated by installed signed agent against public immutable validity policy; no clock/journal/phase rewriting, no accept, exact CNG cleanup and outgoing trusted TLS preserved"});
 }
 function authorityCertificate(authority){return new crypto.X509Certificate(Buffer.from(authority.certificateB64,"base64"));}
-module.exports={qualifyValidityBoundaries};
+module.exports={qualifyValidityBoundaries,classifyRemainingKey,classifyRequestCleanupRetry};

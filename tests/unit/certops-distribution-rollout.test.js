@@ -8,6 +8,7 @@ const {
 } = require("../../apps/api/services/certops/distributionOperations");
 
 test("rollout completion requires current authorization even for previously verified optional consumers", async (t) => {
+  t.mock.method(require("../../apps/api/services/certops/manualRolloutAuthority"), "assertManualRolloutAuthority", async () => {});
   t.mock.method(material, "lockGroup", async () => ({
     state: "active",
     generation: 1,

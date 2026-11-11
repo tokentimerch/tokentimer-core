@@ -52,11 +52,16 @@ services:
       - API_URL=http://localhost:4000
       # CertOps route tests intentionally enable the dark-launch flag.
       - CERTOPS_ENABLED=${CERTOPS_ENABLED:-true}
-      # Synthetic test-only defaults; dispatch can supply isolated per-run keys.
+      # Disposable test database only: registration and signed dispatch require
+      # stable encryption keys across the API and fixture processes.
       - CERTOPS_SIGNING_ENCRYPTION_KEY=${CERTOPS_SIGNING_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
       - CERTOPS_REGISTRATION_ENCRYPTION_KEY=${CERTOPS_REGISTRATION_ENCRYPTION_KEY:-abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789}
       # Auth
       - SESSION_SECRET=test-session-secret-key
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       # SMTP (MailHog)
       - SMTP_HOST=mailhog
       - SMTP_PORT=1025
@@ -100,6 +105,8 @@ services:
       - ../../packages:/app/packages
       - /app/node_modules
       - /app/apps/api/node_modules
+      - /app/packages/contracts/node_modules
+      - /app/packages/mcp/node_modules
       - ../../.coverage/v8-api:/tmp/v8-coverage
     working_dir: /app/apps/api
     command: ["node", "coverage-bootstrap.cjs"]
@@ -122,6 +129,8 @@ services:
       - NODE_V8_COVERAGE=${NODE_V8_COVERAGE:+/tmp/v8-coverage}
     depends_on:
       postgres:
+        condition: service_healthy
+      api:
         condition: service_healthy
     networks:
       - tokentimer-test
@@ -148,13 +157,17 @@ services:
       - DB_USER=tokentimer
       - DB_PASSWORD=password
       - SESSION_SECRET=test-session-secret-key
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       - API_URL=http://api:4000
       - NODE_V8_COVERAGE=${NODE_V8_COVERAGE:+/tmp/v8-coverage}
     depends_on:
       postgres:
         condition: service_healthy
       api:
-        condition: service_started
+        condition: service_healthy
     networks:
       - tokentimer-test
     restart: "no"
@@ -181,6 +194,10 @@ services:
       - DB_PASSWORD=password
       - APP_URL=http://localhost:5173
       - SESSION_SECRET=test-session-secret-key
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       # SMTP (MailHog)
       - SMTP_HOST=mailhog
       - SMTP_PORT=1025
@@ -193,7 +210,7 @@ services:
       postgres:
         condition: service_healthy
       api:
-        condition: service_started
+        condition: service_healthy
     networks:
       - tokentimer-test
     restart: "no"

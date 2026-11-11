@@ -1,3 +1,7 @@
+import AutoSyncRecentRuns from './imports/AutoSyncRecentRuns.jsx';
+import AutoSyncMetricSettings, {
+  DEFAULT_METRIC_SETTINGS,
+} from './imports/AutoSyncMetricSettings.jsx';
 import { useScanVerification } from '../hooks/useScanVerification.js';
 import React from 'react';
 import {
@@ -1260,8 +1264,28 @@ function ImportTokensModalContent({
   const [autoSyncConfig, setAutoSyncConfig] = React.useState(null); // null = not loaded, false = not exists, object = exists
   const [autoSyncConfigs, setAutoSyncConfigs] = React.useState([]);
   const [autoSyncName, setAutoSyncName] = React.useState('');
+  const [allowedExtraMetricLabels, setAllowedExtraMetricLabels] =
+    React.useState([]);
+  const [systemMetricPolicy, setSystemMetricPolicy] = React.useState({
+    enabled: null,
+    labels: ['configuration_name', 'monitoring_group', 'kind'],
+  });
+  const [autoSyncMetricSettings, setAutoSyncMetricSettings] = React.useState(
+    DEFAULT_METRIC_SETTINGS
+  );
   const [autoSyncRuns, setAutoSyncRuns] = React.useState([]);
   const [autoSyncRunsFor, setAutoSyncRunsFor] = React.useState(null);
+  const [autoSyncRunsErrorFor, setAutoSyncRunsErrorFor] = React.useState(null);
+  const [autoSyncRunsRetry, setAutoSyncRunsRetry] = React.useState(0);
+  const renderAutoSyncMetrics = () => (
+    <AutoSyncMetricSettings
+      key={source + '/' + (autoSyncConfig?.id || 'new')}
+      value={autoSyncMetricSettings}
+      allowedExtraLabels={allowedExtraMetricLabels}
+      systemPolicy={systemMetricPolicy}
+      onChange={setAutoSyncMetricSettings}
+    />
+  );
   const autoSyncHistoryKey = `${workspaceId}/${autoSyncConfig?.id}`;
   const visibleAutoSyncRuns =
     autoSyncRunsFor === autoSyncHistoryKey ? autoSyncRuns : [];
@@ -1343,6 +1367,20 @@ function ImportTokensModalContent({
             ? configs.find(c => c.provider === source && c.id === requestedId)
             : configs.find(c => c.provider === source);
         setAutoSyncConfig(existing || false);
+        setAllowedExtraMetricLabels(
+          Array.isArray(res.data?.metric_label_policy?.extra_labels)
+            ? res.data.metric_label_policy.extra_labels
+            : []
+        );
+        setAutoSyncMetricSettings(
+          existing?.metrics_settings || DEFAULT_METRIC_SETTINGS
+        );
+        setSystemMetricPolicy(
+          res.data?.metric_label_policy?.system || {
+            enabled: null,
+            labels: ['configuration_name', 'monitoring_group', 'kind'],
+          }
+        );
         setAutoSyncName(
           existing?.name || (creating ? requestedAutoSyncConfig.name : source)
         );
@@ -1479,10 +1517,11 @@ function ImportTokensModalContent({
     }
     let cancelled = false;
     setAutoSyncRunsFor(null);
+    setAutoSyncRunsErrorFor(null);
     setAutoSyncRunsCursor(null);
     apiClient
       .get(
-        `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}/runs?limit=10`
+        `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}/runs?limit=5`
       )
       .then(res => {
         if (!cancelled) {
@@ -1494,6 +1533,7 @@ function ImportTokensModalContent({
       .catch(() => {
         if (!cancelled) {
           setAutoSyncRunsFor(autoSyncHistoryKey);
+          setAutoSyncRunsErrorFor(autoSyncHistoryKey);
           setAutoSyncRuns([]);
         }
       });
@@ -1505,20 +1545,23 @@ function ImportTokensModalContent({
     autoSyncConfig?.id,
     autoSyncConfig?.last_sync_at,
     autoSyncHistoryKey,
+    autoSyncRunsRetry,
   ]);
 
   const loadEarlierAutoSyncRuns = async () => {
-    if (!autoSyncRunsCursor || !autoSyncConfig?.id) return;
+    if (!autoSyncRunsCursor || !autoSyncConfig?.id) return false;
     const configId = autoSyncConfig.id;
     setLoadingAutoSyncRuns(true);
     try {
       const res = await apiClient.get(
-        `/api/v1/workspaces/${workspaceId}/auto-sync/${configId}/runs?limit=10&cursor=${encodeURIComponent(autoSyncRunsCursor)}`
+        `/api/v1/workspaces/${workspaceId}/auto-sync/${configId}/runs?limit=5&cursor=${encodeURIComponent(autoSyncRunsCursor)}`
       );
       if (autoSyncHistoryConfigRef.current === configId) {
         setAutoSyncRuns(previous => [...previous, ...(res.data?.items || [])]);
         setAutoSyncRunsCursor(res.data?.next_cursor || null);
+        return (res.data?.items || []).length > 0;
       }
+      return false;
     } finally {
       setLoadingAutoSyncRuns(false);
     }
@@ -1818,6 +1861,7 @@ function ImportTokensModalContent({
     const { credentials, scanParams } = getAutoSyncCredentials();
     const payload = {
       name: autoSyncName,
+      metrics_settings: autoSyncMetricSettings,
       frequency: enableSyncFrequency,
       schedule_time: enableSyncTime,
       schedule_tz: enableSyncTz,
@@ -1935,6 +1979,7 @@ function ImportTokensModalContent({
         {
           provider: source,
           name: autoSyncName,
+          metrics_settings: autoSyncMetricSettings,
           credentials,
           scan_params: { ...scanParams, contactGroupIds: autoSyncGroupIds },
           frequency: enableSyncFrequency,
@@ -2833,7 +2878,18 @@ function ImportTokensModalContent({
             </DashboardModalDescription>
           </ModalHeader>
           <ModalCloseButton {...closeButtonProps} />
-          <ModalBody {...bodyProps}>
+          <ModalBody
+            {...bodyProps}
+            fontSize='sm'
+            sx={{
+              '& .chakra-form__label, & .chakra-checkbox__label, & .chakra-radio__label':
+                { fontSize: 'sm', fontWeight: 'medium' },
+              '& .chakra-input, & .chakra-select, & .chakra-textarea': {
+                fontSize: 'sm',
+              },
+              '& .chakra-form__helper-text': { fontSize: 'xs' },
+            }}
+          >
             <VStack align='stretch' spacing={4}>
               {/* Source selector */}
               <Box>
@@ -3109,6 +3165,7 @@ function ImportTokensModalContent({
                         variant='outline'
                         onClick={() => {
                           invalidateScanVerification();
+                          setAutoSyncMetricSettings(DEFAULT_METRIC_SETTINGS);
                           setScanContextVersion(value => value + 1);
                           const normalizeName = value =>
                             String(value || '')
@@ -3207,45 +3264,16 @@ function ImportTokensModalContent({
                       contactGroups={contactGroups}
                       defaultGroupId={defaultContactGroupId}
                     />
-                    <Box>
-                      <Text fontSize='sm' fontWeight='semibold' mb={2}>
-                        Recent runs
-                      </Text>
-                      {autoSyncRunsFor !== autoSyncHistoryKey ? (
-                        <Text fontSize='sm' color={muted}>
-                          Loading run history…
-                        </Text>
-                      ) : visibleAutoSyncRuns.length === 0 ? (
-                        <Text fontSize='sm' color={muted}>
-                          No runs yet
-                        </Text>
-                      ) : (
-                        visibleAutoSyncRuns.map(run => (
-                          <Text key={run.run_id} fontSize='xs'>
-                            {new Date(run.started_at).toLocaleString()} ·{' '}
-                            {run.trigger} · {run.status}
-                            {' · '}found {run.discovered_count}, created{' '}
-                            {run.created_count}, updated {run.updated_count},
-                            detached {run.detached_count}, deleted{' '}
-                            {run.deleted_count}, errors {run.error_count}
-                            {run.error ? ` · ${run.error}` : ''}
-                          </Text>
-                        ))
-                      )}
-                      {autoSyncRunsFor === autoSyncHistoryKey &&
-                      autoSyncRunsCursor ? (
-                        <Button
-                          size='xs'
-                          mt={2}
-                          isLoading={loadingAutoSyncRuns}
-                          onClick={() => {
-                            void loadEarlierAutoSyncRuns().catch(() => {});
-                          }}
-                        >
-                          Earlier runs
-                        </Button>
-                      ) : null}
-                    </Box>
+                    <AutoSyncRecentRuns
+                      key={`${autoSyncHistoryKey}/${autoSyncConfig?.last_sync_at || ''}`}
+                      runs={visibleAutoSyncRuns}
+                      loading={autoSyncRunsFor !== autoSyncHistoryKey}
+                      error={autoSyncRunsErrorFor === autoSyncHistoryKey}
+                      onRetry={() => setAutoSyncRunsRetry(value => value + 1)}
+                      hasEarlier={Boolean(autoSyncRunsCursor)}
+                      loadingEarlier={loadingAutoSyncRuns}
+                      onLoadEarlier={loadEarlierAutoSyncRuns}
+                    />
                     <Divider />
                     <Box>
                       <Text fontSize='sm' fontWeight='semibold' mb={3}>
@@ -3310,10 +3338,24 @@ function ImportTokensModalContent({
               {source === 'file' ? (
                 <>
                   <Box>
-                    <Text fontSize='sm' color={muted}>
-                      Upload a file in .csv, .xlsx, .json, .yaml or .yml format.
-                      Required fields per row: name, category, type, expiresAt.
-                    </Text>
+                    <VStack
+                      align='stretch'
+                      spacing={1}
+                      fontSize='sm'
+                      color={muted}
+                    >
+                      <Text>
+                        <strong>Formats:</strong> CSV, XLSX, JSON or YAML.
+                      </Text>
+                      <Text>
+                        <strong>Required fields:</strong> name, category, type
+                        and expiresAt.
+                      </Text>
+                      <Text>
+                        <strong>Preview:</strong> Review rows before importing;
+                        incomplete rows are skipped.
+                      </Text>
+                    </VStack>
                     {hideDocs ? null : (
                       <LearnMorePanel
                         variant='compact'
@@ -3428,6 +3470,9 @@ function ImportTokensModalContent({
 
               {source === 'gitlab' ? (
                 <ImportGitLabForm
+                  afterFilterRules={
+                    isAutoSyncAllowed ? renderAutoSyncMetrics() : null
+                  }
                   hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={gitlabFormRef}
@@ -3474,6 +3519,9 @@ function ImportTokensModalContent({
 
               {source === 'github' ? (
                 <ImportGitHubForm
+                  afterFilterRules={
+                    isAutoSyncAllowed ? renderAutoSyncMetrics() : null
+                  }
                   hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={githubFormRef}
@@ -3624,12 +3672,14 @@ function ImportTokensModalContent({
                   {!autoSyncManageMode ? (
                     <Box>
                       <Text fontSize='sm' color={muted}>
-                        Scans Microsoft Entra ID for app registrations and
-                        service principals with expiring client secrets and
-                        certificates. Pasted Graph tokens and Entra app client
-                        credentials are stored encrypted if auto-sync is
-                        enabled. Application.Read.All is the recommended Graph
-                        application permission.
+                        <strong>Scope:</strong> Scans Microsoft Entra ID for app
+                        registrations and service principals with expiring
+                        client secrets and certificates. <br />
+                        <strong>Access:</strong> Application.Read.All is the
+                        recommended Graph application permission. <br />
+                        <strong>Credentials:</strong> Pasted Graph tokens and
+                        Entra app client credentials are stored encrypted if
+                        auto-sync is enabled.
                       </Text>
                       {hideDocs ? null : (
                         <LearnMorePanel
@@ -3778,23 +3828,38 @@ function ImportTokensModalContent({
                           record of what that scan covered.
                         </Text>
                       ) : azureADSummary.some(s => s.complete === false) ? (
-                        <Text fontSize='xs' color='orange.400' pl={6}>
-                          The last scan didn't fully complete for every item
-                          type above (see the errors below). The backend will
-                          only clean up App Registrations or Service Principals
-                          it confirmed were fully scanned; nothing incomplete or
-                          errored is ever touched.
+                        <Text
+                          fontSize='sm'
+                          color='orange.400'
+                          role='alert'
+                          p={3}
+                          borderWidth='1px'
+                          borderRadius='md'
+                          _light={{ color: 'orange.800', bg: 'orange.50' }}
+                          _dark={{ color: 'orange.100', bg: 'orange.900' }}
+                        >
+                          <strong>Incomplete scan:</strong> Some item types did
+                          not finish. Cleanup affects only fully scanned App
+                          Registrations or Service Principals; incomplete or
+                          failed types are excluded.
                         </Text>
                       ) : null}
                       {azureADCleanupObsolete ? (
-                        <Text fontSize='xs' color='red.400' pl={6}>
-                          Deletes previously imported secrets and certificates
-                          of the item types scanned above (App Registrations,
-                          Service Principals, or both) that no longer appear
-                          anywhere in this scan's results, regardless of which
-                          items you select for import below. Item types this
-                          scan couldn't fully complete are never affected. This
-                          cannot be undone.
+                        <Text
+                          fontSize='sm'
+                          color='red.400'
+                          role='alert'
+                          p={3}
+                          borderWidth='1px'
+                          borderRadius='md'
+                          _light={{ color: 'red.800', bg: 'red.50' }}
+                          _dark={{ color: 'red.100', bg: 'red.900' }}
+                        >
+                          <strong>Permanent deletion:</strong> Permanently
+                          deletes previously imported secrets and certificates
+                          missing from the scanned App Registrations or Service
+                          Principals, regardless of selections below. Incomplete
+                          types are excluded. This cannot be undone.
                         </Text>
                       ) : null}
                     </VStack>

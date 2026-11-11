@@ -43,6 +43,7 @@ import {
 import {
   DashboardActionButton,
   DashboardErrorAlert,
+  DashboardState,
 } from '../DashboardPrimitives.jsx';
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import CopyableId from '../CopyableId.jsx';
@@ -647,14 +648,11 @@ export default function TrustAnchorsPanel({ focusTrustAnchorId } = {}) {
       ) : null}
 
       {!loading && !error && anchors.length === 0 ? (
-        <Box py={6} textAlign='center'>
-          <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
-            No trust anchors approved yet.
-          </Text>
-          <Text fontSize='sm' color={muted} mt={1}>
-            Approve a CA certificate above to make it distributable to agents.
-          </Text>
-        </Box>
+        <DashboardState
+          py={6}
+          title='No trust anchors approved yet.'
+          description='Approve a CA certificate above to make it distributable to agents.'
+        />
       ) : null}
 
       {anchors.length > 0 ? (

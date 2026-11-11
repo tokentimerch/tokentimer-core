@@ -65,7 +65,30 @@ services:
       # Agent output console. Retention must match worker-certops; 0 stores no lines.
       - CERTOPS_AGENT_LOG_RETENTION_DAYS=${CERTOPS_AGENT_LOG_RETENTION_DAYS:-}
       - CERTOPS_AGENT_LOG_DAILY_BYTES=${CERTOPS_AGENT_LOG_DAILY_BYTES:-}
+      - MCP_OPERATOR_INTERFACE_ENABLED=${MCP_OPERATOR_INTERFACE_ENABLED:-false}
+      - MCP_OPERATOR_REMOTE_ENABLED=${MCP_OPERATOR_REMOTE_ENABLED:-false}
+      - MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-}
+      - MCP_ALLOWED_ORIGINS=${MCP_ALLOWED_ORIGINS:-}
+      - MCP_OPERATOR_WRITES_ENABLED=${MCP_OPERATOR_WRITES_ENABLED:-false}
       - SESSION_SECRET=dev_session_secret_change_in_production
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_VERIFY_EMAIL_DEST_PER_DAY=${RECIPIENT_VERIFY_EMAIL_DEST_PER_DAY:-1}
+      - RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK=${RECIPIENT_VERIFY_EMAIL_DEST_PER_WEEK:-3}
+      - RECIPIENT_VERIFY_WHATSAPP_DEST_PER_DAY=${RECIPIENT_VERIFY_WHATSAPP_DEST_PER_DAY:-1}
+      - RECIPIENT_VERIFY_WHATSAPP_DEST_PER_WEEK=${RECIPIENT_VERIFY_WHATSAPP_DEST_PER_WEEK:-3}
+      - RECIPIENT_VERIFY_WORKSPACE_PER_DAY=${RECIPIENT_VERIFY_WORKSPACE_PER_DAY:-50}
+      - RECIPIENT_VERIFY_USER_PER_DAY=${RECIPIENT_VERIFY_USER_PER_DAY:-20}
+      - RECIPIENT_TEST_PER_CONTACT_PER_DAY=${RECIPIENT_TEST_PER_CONTACT_PER_DAY:-3}
+      - RECIPIENT_TEST_COOLDOWN_SECONDS=${RECIPIENT_TEST_COOLDOWN_SECONDS:-120}
+      - RECIPIENT_VERIFY_PUBLIC_PER_WINDOW=${RECIPIENT_VERIFY_PUBLIC_PER_WINDOW:-60}
+      - RECIPIENT_VERIFY_PUBLIC_WINDOW_SECONDS=${RECIPIENT_VERIFY_PUBLIC_WINDOW_SECONDS:-600}
+      - RECIPIENT_RESUBSCRIBE_IP_PER_DAY=${RECIPIENT_RESUBSCRIBE_IP_PER_DAY:-10}
+      - RECIPIENT_VERIFICATION_DISPATCH_LEASE_SECONDS=${RECIPIENT_VERIFICATION_DISPATCH_LEASE_SECONDS:-120}
+      - RECIPIENT_VERIFY_PAGE_MAX
+      - RECIPIENT_VERIFY_PAGE_WINDOW_MS=${RECIPIENT_VERIFY_PAGE_WINDOW_MS:-600000}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       - ADMIN_EMAIL=admin@localhost.local
       - ADMIN_PASSWORD=AdminPassword123!
       - ADMIN_NAME=Administrator
@@ -114,6 +137,17 @@ services:
       - WHATSAPP_DRY_RUN=${WHATSAPP_DRY_RUN:-}
       # Metrics / diagnostics
       - ENABLE_METRICS=${ENABLE_METRICS:-false}
+      # Optional System Settings override; leave empty to use saved settings.
+      - AUTO_SYNC_METRICS_ENABLED=${AUTO_SYNC_METRICS_ENABLED:-}
+      - AUTO_SYNC_METRICS_LABELS=${AUTO_SYNC_METRICS_LABELS:-}
+      # Optional global monitoring group; empty uses saved or connection settings.
+      - AUTO_SYNC_METRICS_MONITORING_GROUP=${AUTO_SYNC_METRICS_MONITORING_GROUP:-}
+      # Extra labels: asset_name, project, group; none disables them.
+      # Empty uses saved UI choices (off by default); a list restricts the available asset labels.
+      # Selected labels appear on auto_sync_items_created_detailed_total and
+      # auto_sync_last_creation_timestamp_seconds; aggregate counters stay unchanged.
+      # Each distinct label combination creates a series in both metrics; combining labels can greatly increase cardinality and expose asset metadata.
+      - AUTO_SYNC_METRICS_EXTRA_LABELS=${AUTO_SYNC_METRICS_EXTRA_LABELS:-}
       - ENVIRONMENT_SUFFIX=${ENVIRONMENT_SUFFIX:-}
     depends_on:
       postgres:
@@ -186,6 +220,10 @@ services:
       - DB_PASSWORD=password
       - APP_URL=http://localhost:5173
       - SESSION_SECRET=dev_session_secret_change_in_production
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       # SMTP (optional - configure here or via System Settings UI)
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-}
@@ -247,6 +285,10 @@ services:
       - DB_PASSWORD=password
       - APP_URL=http://localhost:5173
       - SESSION_SECRET=dev_session_secret_change_in_production
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       # Webhook security
       - WEBHOOK_PROVIDER_HOSTS=${WEBHOOK_PROVIDER_HOSTS:-}
       - WEBHOOK_EXTRA_PROVIDER_HOSTS=${WEBHOOK_EXTRA_PROVIDER_HOSTS:-}
@@ -319,7 +361,12 @@ services:
       - DB_PASSWORD=password
       - APP_URL=http://localhost:5173
       - SESSION_SECRET=dev_session_secret_change_in_production
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       - WEEKLY_DIGEST_RECIPIENT_KEY=${WEEKLY_DIGEST_RECIPIENT_KEY:-}
+      - WEEKLY_DIGEST_UNCERTAIN_RETRY_SECONDS=${WEEKLY_DIGEST_UNCERTAIN_RETRY_SECONDS:-900}
       # Webhook security
       - WEBHOOK_PROVIDER_HOSTS=${WEBHOOK_PROVIDER_HOSTS:-}
       - WEBHOOK_EXTRA_PROVIDER_HOSTS=${WEBHOOK_EXTRA_PROVIDER_HOSTS:-}
@@ -384,6 +431,10 @@ services:
       - DB_USER=tokentimer
       - DB_PASSWORD=password
       - SESSION_SECRET=dev_session_secret_change_in_production
+      - RECIPIENT_VERIFICATION_MODE=${RECIPIENT_VERIFICATION_MODE:-off}
+      - RECIPIENT_FINGERPRINT_SECRET=${RECIPIENT_FINGERPRINT_SECRET:-}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - TT_DEPLOYMENT=${TT_DEPLOYMENT:-self-hosted}
       - API_URL=http://api:4000
       - APP_URL=${APP_URL:-http://localhost:5173}
       - OP_NOTIFICATION_EMAIL_DAILY_CAP=${OP_NOTIFICATION_EMAIL_DAILY_CAP:-}

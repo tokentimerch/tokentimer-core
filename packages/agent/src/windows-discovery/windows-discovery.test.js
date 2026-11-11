@@ -215,7 +215,9 @@ function makeExecRouter(responses) {
   function execFileStub(file, args, options, callback) {
     calls.push({ file, args, options });
     const name = String(file).toLowerCase();
-    const key = String(args.at(-1)).includes("SslBindingInfo")
+    const key = String(args.at(-1)).includes("Get-WebBinding")
+      ? "iisflags"
+      : String(args.at(-1)).includes("SslBindingInfo")
       ? "httpsys"
       : ["powershell", "certutil", "appcmd"].find((tool) => name.includes(tool));
     const response = responses[key] || { error: Object.assign(new Error("unexpected"), { code: 1 }) };
@@ -739,6 +741,27 @@ describe("parseAppcmdSiteListOutput", () => {
 describe("findSitesForBinding", () => {
   const sites = parseAppcmdSiteListOutput(APPCMD_LIST_SITE_OUTPUT);
 
+  it("maps a shared IP-keyed certificate to only compatible non-SNI HTTPS host-header sites", () => {
+    const binding = (protocol, address, port, hostHeader, sslFlags) => ({ protocol, address, port, hostHeader, sslFlags });
+    const shared = [
+      { name: "site-a", bindings: [binding("https", "127.0.0.1", "59878", "a.example.test", 0)] },
+      { name: "site-b", bindings: [binding("https", "127.0.0.1", "59878", "b.example.test", 0)] },
+      { name: "non-sni-other-flags", bindings: [binding("https", "127.0.0.1", "59878", "flags.example.test", 4)] },
+      { name: "sni", bindings: [binding("https", "127.0.0.1", "59878", "sni.example.test", 1)] },
+      { name: "sni-other-flags", bindings: [binding("https", "127.0.0.1", "59878", "sni2.example.test", 5)] },
+      { name: "central-store", bindings: [binding("https", "127.0.0.1", "59878", "central.example.test", 2)] },
+      { name: "central-store-sni", bindings: [binding("https", "127.0.0.1", "59878", "central-sni.example.test", 3)] },
+      { name: "unknown-flags", bindings: [binding("https", "127.0.0.1", "59878", "unknown.example.test", undefined)] },
+      { name: "plain-http", bindings: [binding("http", "127.0.0.1", "59878", "", 0)] },
+      { name: "other-address", bindings: [binding("https", "127.0.0.2", "59878", "other.example.test", 0)] },
+      { name: "other-port", bindings: [binding("https", "127.0.0.1", "59879", "other.example.test", 0)] },
+    ];
+    assert.deepEqual(findSitesForBinding(shared, { ipPort: "127.0.0.1:59878", keyedBy: "ipport" }), ["site-a", "site-b", "non-sni-other-flags"]);
+    assert.deepEqual(findSitesForBinding(shared, { ipPort: "sni.example.test:59878", keyedBy: "hostnameport" }), ["sni"]);
+    assert.deepEqual(findSitesForBinding(shared, { ipPort: "a.example.test:59878", keyedBy: "hostnameport" }), []);
+    assert.deepEqual(findSitesForBinding(shared, { ipPort: "central-sni.example.test:59878", keyedBy: "hostnameport" }), []);
+  });
+
   it("matches an IP-keyed binding to a site with a wildcard address and no host header", () => {
     assert.deepEqual(findSitesForBinding(sites, { ipPort: "10.0.0.5:443", keyedBy: "ipport" }), ["Default Web Site"]);
   });
@@ -764,6 +787,32 @@ describe("findSitesForBinding", () => {
 });
 
 describe("listIisSites", () => {
+  it("loads SSL flags for matching HTTPS bindings and fails closed on conflicting metadata", async () => {
+    const execFileImpl = makeExecRouter({
+      appcmd: { stdout: APPCMD_LIST_SITE_OUTPUT },
+      iisflags: { stdout: JSON.stringify({ items: [
+        { site: "Secure Site", bindingInformation: "*:9443:sni.example.com", sslFlags: 1 },
+        { site: "Default Web Site", bindingInformation: "*:443:", sslFlags: 0 },
+        { site: "Secure Site", bindingInformation: "10.0.0.5:8443:", sslFlags: 0 },
+        { site: "Secure Site", bindingInformation: "10.0.0.5:8443:", sslFlags: 1 },
+      ] }) },
+    });
+    const { sites } = await listIisSites({ execFileImpl, appcmdPath: "appcmd.exe" });
+    assert.equal(sites[0].bindings[1].sslFlags, 0);
+    assert.equal(sites[1].bindings[1].sslFlags, 1);
+    assert.equal(sites[1].bindings[0].sslFlags, undefined);
+    const metadataCall = execFileImpl.calls.find((call) => String(call.args.at(-1)).includes("Get-WebBinding"));
+    assert.ok(metadataCall);
+    assert.ok(!Object.keys(metadataCall.options.env).some((key) => key.toLowerCase() === "psmodulepath"));
+  });
+
+  it("keeps host-header SSL flags unknown if the IIS metadata query fails", async () => {
+    const execFileImpl = makeExecRouter({ appcmd: { stdout: APPCMD_LIST_SITE_OUTPUT }, iisflags: denied() });
+    const { sites } = await listIisSites({ execFileImpl, appcmdPath: "appcmd.exe" });
+    assert.equal(sites[1].bindings[1].sslFlags, undefined);
+    assert.deepEqual(findSitesForBinding(sites, { ipPort: "0.0.0.0:9443", keyedBy: "ipport" }), []);
+  });
+
   it("returns parsed sites on success", async () => {
     const execFileImpl = makeExecStub({ stdout: APPCMD_LIST_SITE_OUTPUT });
     const result = await listIisSites({ execFileImpl, appcmdPath: "appcmd.exe" });

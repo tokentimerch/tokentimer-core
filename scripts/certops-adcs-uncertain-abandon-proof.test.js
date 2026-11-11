@@ -1,9 +1,78 @@
 "use strict";
+/**
+ * Qualification notes: native zero-request uncertain abandonment
+ *
+ * Block only certreq outbound to uniquely resolved CA IPv4 matching provisioned domain-ca lab VM,
+ * never offline root. Observe durable submitting/exact owned SYSTEM tree, drain; missed phase
+ * fails. CA subject count zero every checkpoint; restore transport while stopped before
+ * acknowledged public recovery so no-resubmit proof has working CA. Actual persisted
+ * lease+ordinary 60s grace+ 30s observation, <=15min prerequisite, measured monotonic timing/no
+ * shortened experiment lease. Reconciliation retains CSR/frozen identity/CNG public
+ * blob/nonexportability/unknown-effect job. Public abandon schedules normal terminal cleanup:
+ * audit/abandoned DB+journal/exact key absent/ no leaf/CA count zero . No journal/state/lease/time
+ * fabrication. No SCM failure actions, policy fixed; exact observer closes/drains before
+ * receipt/rule release/restart, failed drain preserves state. Three mandatory scenarios separate
+ * from pending abandon refusal/crash/survivor qualifications.
+ *
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
+ */
 /* Supporting proof-contract checks, without native host operations. Actual
  * submitting/recovery/abandon qualification requires the disposable forest. */
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { assertProof, validateDisposableCaAddress, recoveryWaitBudget, createOwnedRecoverySuspension } = require("../tests/e2e/helpers/certops-adcs-uncertain-abandon");
+const { assertProof, validateDisposableCaAddress, recoveryWaitBudget, createOwnedRecoverySuspension, selectUncertainIssuer } = require("../tests/e2e/helpers/certops-adcs-uncertain-abandon");
+
+test("abandonment followed by candidate recovery preserves the confirmed rotated CA key", async () => {
+  const originalKey = "a".repeat(64), currentKey = "b".repeat(64);
+  const issuerId = "11111111-1111-4111-8111-111111111111";
+  const caConfig = "tt-ca.lab.certops.test\\TTQualificationRoot";
+  const current = { ca_key_sha256: currentKey, ca_config: caConfig,
+    template: "TTQualificationRSAShort", confirmed_at: new Date(), revalidation_required: false };
+  let confirmations = 0;
+  const context = { caConfig, api: "/qualification", renewalFixture: {
+    issuerId, authority: { keySha256: currentKey }, item: { template: current.template },
+  }, fixture: { workspaceId: "22222222-2222-4222-8222-222222222222",
+    pool: { async query(sql, args) {
+      assert.match(sql, /v.version=i.current_version/);
+      assert.match(sql, /v.workspace_id=i.workspace_id/);
+      assert.deepEqual(args, [context.fixture.workspaceId, issuerId]);
+      return { rows: [{ ...current }] };
+    } },
+    async request(url, method, body) {
+      assert.equal(url, `/qualification/issuers/${issuerId}/confirm`);
+      assert.equal(method, "POST"); confirmations++;
+      current.ca_key_sha256 = body.caKeySha256; return { status: 200 };
+    },
+  }, async preflight() { return { issuerId, result: { caCheck: { verdict: "safe" },
+    templateCheck: { verdict: "safe" }, caCertificates: [
+      { keySha256: originalKey }, { keySha256: currentKey },
+    ] } }; } };
+  for (const mode of ["abandon", "operator-created-unique", "operator-created-ambiguity"]) {
+    assert.equal(await selectUncertainIssuer(context, mode), issuerId);
+    assert.equal(current.ca_key_sha256, currentKey,
+      "A prior CA certificate must not replace the pin used by later public recovery");
+  }
+  assert.equal(confirmations, 0, "The existing confirmed native issuer must remain unchanged");
+});
+
+test("uncertain setup refuses a stale, unconfirmed or different native issuer", async () => {
+  const caConfig = "tt-ca.lab.certops.test\\TTQualificationRoot";
+  const keySha256 = "b".repeat(64);
+  const current = { ca_key_sha256: keySha256, ca_config: caConfig,
+    template: "TTQualificationRSAShort", confirmed_at: new Date(), revalidation_required: false };
+  const context = { caConfig, renewalFixture: { issuerId: "11111111-1111-4111-8111-111111111111",
+    authority: { keySha256 } }, fixture: { workspaceId: "22222222-2222-4222-8222-222222222222",
+    request: () => assert.fail("Qualification must never change issuer confirmation"),
+    pool: { query: async () => ({ rows: [{ ...current }] }) } } };
+  for (const mutation of [{ ca_key_sha256: "a".repeat(64) }, { ca_config: "foreign" },
+    { template: "foreign" }, { confirmed_at: null }, { revalidation_required: true }]) {
+    context.fixture.pool.query = async () => ({ rows: [{ ...current, ...mutation }] });
+    await assert.rejects(selectUncertainIssuer(context));
+  }
+  context.fixture.pool.query = async () => ({ rows: [] });
+  await assert.rejects(selectUncertainIssuer(context));
+  await assert.rejects(selectUncertainIssuer({ ...context, renewalFixture: null }));
+});
 
 test("fault suspension restores exact production SCM policy even after a failed disable", () => {
   for (const failDisable of [false, true]) {

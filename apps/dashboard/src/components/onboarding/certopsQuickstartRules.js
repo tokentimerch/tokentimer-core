@@ -9,6 +9,12 @@ export const WIZARD_FLOW = 'mega';
 
 export const QUICKSTART_PATH = '/onboarding?area=certops';
 
+/** Keep the active workspace when opening the CertOps area of the guide. */
+export function quickstartPath(workspaceId) {
+  if (workspaceId == null || workspaceId === '') return QUICKSTART_PATH;
+  return `${QUICKSTART_PATH}&workspace=${encodeURIComponent(workspaceId)}`;
+}
+
 /**
  * - `continue`: a certificate goal is under way; reopen it where it stopped.
  * - `restart`: the guide was finished or dismissed; start from a clean session.

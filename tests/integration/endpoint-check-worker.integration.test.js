@@ -223,9 +223,9 @@ describe("Endpoint check worker integration", function () {
       [`endpoint_health:${localMonitorId}:down`],
     );
     expect(alertRes.rows).to.have.length(1);
-    const channels = Array.isArray(alertRes.rows[0].channels)
-      ? alertRes.rows[0].channels
-      : JSON.parse(String(alertRes.rows[0].channels || "[]"));
+    const channels = require("../../packages/recipient-verification")
+      .publicDeliveryChannels(alertRes.rows[0].channels)
+      .map((row) => row.channel);
     expect(channels).to.include.members(["email", "webhooks", "whatsapp"]);
 
     await TestUtils.execQuery("DELETE FROM alert_queue WHERE alert_key LIKE $1", [

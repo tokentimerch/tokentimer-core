@@ -42,6 +42,12 @@ import {
   Alert,
   AlertIcon,
   AlertDescription,
+  AlertDialog,
+  AlertDialogOverlay,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogBody,
+  AlertDialogFooter,
   Menu,
   MenuButton,
   MenuList,
@@ -87,6 +93,7 @@ import {
 import EndpointSslMonitorModal from './components/EndpointSslMonitorModal.jsx';
 import RetireCertificateModal from './components/certops/RetireCertificateModal.jsx';
 import RequireManagerRoute from './components/RequireManagerRoute.jsx';
+import { mcpAuthorizationReturnTo } from './utils/mcpAuthorization.js';
 import { useWorkspaceCertOps } from './components/certops/useCertOps.js';
 import { retireCertificateAndRefreshAssets } from './components/certops/certificateRetirement.js';
 import {
@@ -162,6 +169,7 @@ const Account = lazy(() => import('./pages/Account'));
 const NotFound = lazy(() => import('./pages/NotFound.jsx'));
 const AlertPreferences = lazy(() => import('./pages/AlertPreferences'));
 const UserPreferences = lazy(() => import('./pages/UserPreferences'));
+const McpAuthorizePage = lazy(() => import('./pages/McpAuthorizePage.jsx'));
 const ControlCenter = lazy(() => import('./pages/ControlCenter'));
 const CertOpsRoutes = lazy(() => import('./pages/certops/CertOpsRoutes.jsx'));
 const OnboardingRoutes = lazy(
@@ -171,6 +179,7 @@ const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
 import { useWorkspace } from './utils/WorkspaceContext.jsx';
+import { onboardingPath } from './utils/onboardingPath.js';
 import { ContactGroupWorkspaceProvider } from './utils/ContactGroupCreationContext.jsx';
 import {
   pickAccessibleWorkspace,
@@ -1959,49 +1968,51 @@ function App() {
     }
   };
 
-  // Determine whether the current user can create tokens in the selected workspace (admin or manager only)
-  const [_canCreateToken, setCanCreateToken] = useState(true);
-  const [isViewer, setIsViewer] = useState(false);
-  const [_workspaceMetaLoaded, setWorkspaceMetaLoaded] = useState(false);
+  // Do not render management/setup controls before this account's selected
+  // workspace role is known, or reuse the previous workspace's permissions.
+  const permissionWorkspaceId =
+    new URLSearchParams(location.search).get('workspace') || null;
+  const [workspaceAccess, setWorkspaceAccess] = useState(null);
+  const accessIsCurrent =
+    workspaceAccess?.workspaceId === permissionWorkspaceId &&
+    workspaceAccess?.accountId === session?.id;
+  const isViewer = !accessIsCurrent || !workspaceAccess.canManage;
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    async function loadWorkspaceMeta() {
+      let canManage = false;
       try {
-        let allowed = true;
-        const urlParams = new URLSearchParams(window.location.search);
-        const selectedWorkspaceId = urlParams.get('workspace') || null;
-        if (selectedWorkspaceId) {
-          try {
-            const ws = await workspaceAPI.get(selectedWorkspaceId);
-            const role = String(ws?.role || '').toLowerCase();
-            allowed = role === 'admin' || role === 'workspace_manager';
-            setIsViewer(role === 'viewer');
-          } catch (_) {
-            allowed = true;
-            setIsViewer(false);
-          }
+        if (permissionWorkspaceId) {
+          const workspace = await workspaceAPI.get(permissionWorkspaceId);
+          const role = String(workspace?.role || '').toLowerCase();
+          canManage = role === 'admin' || role === 'workspace_manager';
         } else {
-          // No workspace in URL (e.g. first login) - check highest role across all workspaces
-          try {
-            const ws = await workspaceAPI.list(50, 0);
-            const items = ws?.items || [];
-            const roles = items.map(w => String(w.role || '').toLowerCase());
-            const hasManagerOrAdmin =
-              roles.includes('admin') || roles.includes('workspace_manager');
-            allowed = hasManagerOrAdmin;
-            setIsViewer(items.length > 0 && !hasManagerOrAdmin);
-          } catch (_) {
-            allowed = true;
-            setIsViewer(false);
-          }
+          const response = await workspaceAPI.list(50, 0);
+          canManage = (response?.items || []).some(workspace =>
+            ['admin', 'workspace_manager'].includes(
+              String(workspace.role || '').toLowerCase()
+            )
+          );
         }
-        setCanCreateToken(allowed);
       } catch (_) {
-        setCanCreateToken(true);
-        setIsViewer(false);
+        // Permission metadata is unavailable: keep management controls hidden.
       }
-      setWorkspaceMetaLoaded(true);
-    })();
-  }, [location.search, session?.id]);
+      if (!cancelled) {
+        setWorkspaceAccess({
+          workspaceId: permissionWorkspaceId,
+          accountId: session?.id,
+          canManage,
+        });
+      }
+    }
+    loadWorkspaceMeta();
+    const refresh = () => loadWorkspaceMeta();
+    window.addEventListener('tt:workspaces-updated', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('tt:workspaces-updated', refresh);
+    };
+  }, [permissionWorkspaceId, session?.id]);
 
   /**
    * Auto-open token detail modal from URL parameter (deep linking)
@@ -2464,6 +2475,10 @@ function App() {
                       >
                         <Routes>
                           <Route
+                            path='/mcp/authorize'
+                            element={<McpAuthorizePage session={session} />}
+                          />
+                          <Route
                             path='/'
                             element={<Navigate to='/login' replace />}
                           />
@@ -2479,7 +2494,16 @@ function App() {
                                     replace
                                   />
                                 ) : (
-                                  <Navigate to='/dashboard' replace />
+                                  <Navigate
+                                    to={
+                                      mcpAuthorizationReturnTo(
+                                        new URLSearchParams(
+                                          window.location.search
+                                        ).get('returnTo')
+                                      ) || '/dashboard'
+                                    }
+                                    replace
+                                  />
                                 )
                               ) : (
                                 <Login />
@@ -2945,6 +2969,8 @@ function DashboardWrapper({
   const { pageBg } = useDashboardTheme();
   const navigateToOnboarding = useNavigate();
   const { workspaceId: nudgeWorkspaceId } = useWorkspace();
+  const openOnboarding = () =>
+    navigateToOnboarding(onboardingPath({ workspaceId: nudgeWorkspaceId }));
 
   // Restore product tour after hard navigation back from /workspace-preferences
   useEffect(() => {
@@ -3064,7 +3090,7 @@ function DashboardWrapper({
                   _showProductTour ||
                   location.pathname !== '/dashboard'
                 }
-                onStart={() => navigateToOnboarding('/onboarding')}
+                onStart={openOnboarding}
               />
             }
             _session={session}
@@ -3165,7 +3191,7 @@ function DashboardWrapper({
                 try {
                   localStorage.removeItem('tt_welcome_pending');
                 } catch (_) {}
-                navigateToOnboarding('/onboarding');
+                openOnboarding();
               }
         }
         introductionVideoUrl={
@@ -3851,6 +3877,9 @@ function DashboardView({
 
   const [assetPage, setAssetPage] = useState(1);
   const [selectedTokenIds, setSelectedTokenIds] = useState([]);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false);
+  const bulkDeleteCancelRef = useRef(null);
 
   useEffect(() => {
     setSelectedCategories(prev => {
@@ -3951,6 +3980,12 @@ function DashboardView({
   } = useDisclosure();
   // Form collapse state - collapsed by default for cleaner UI
   const [isCreateTokenModalOpen, setCreateTokenModalOpen] = useState(false);
+  const createTokenErrorRef = useRef(null);
+  useEffect(() => {
+    if (isCreateTokenModalOpen && formErrors.submit) {
+      createTokenErrorRef.current?.focus();
+    }
+  }, [isCreateTokenModalOpen, formErrors.submit]);
 
   useEffect(() => {
     const handleOpenCreate = () => setCreateTokenModalOpen(true);
@@ -3969,7 +4004,7 @@ function DashboardView({
     );
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = async (confirmed = false) => {
     if (isViewer) return;
     const selectedIds = selectedVisibleTokenIds;
     if (selectedIds.length === 0) return;
@@ -3987,32 +4022,23 @@ function DashboardView({
     }
     // Managed cert tokens cannot be hard-deleted; exclude them from bulk delete
     // (they must be revoked/decommissioned individually).
-    const managedSelected = selectedIds.filter(
-      id => getCertOpsForToken(id).hasManagedLinks
-    );
     const bulkDeleteIds = selectedIds.filter(
       id => !getCertOpsForToken(id).hasManagedLinks
     );
     if (bulkDeleteIds.length === 0) {
       try {
-        showSuccessMessage(
+        toast.error(
           'Selected certificates are managed and cannot be deleted. Revoke or decommission them individually.'
         );
       } catch (_) {}
       return;
     }
-    const managedNote =
-      managedSelected.length > 0
-        ? ` ${managedSelected.length} managed certificate(s) will be skipped (revoke/decommission those individually).`
-        : '';
-    if (
-      !window.confirm(
-        `Delete ${bulkDeleteIds.length} selected on this page? Any linked endpoint monitors will also be deleted.${managedNote}`
-      )
-    ) {
+    if (!confirmed) {
+      setBulkDeleteConfirmOpen(true);
       return;
     }
 
+    setBulkDeleteBusy(true);
     try {
       const response = await apiClient.delete('/api/tokens/bulk', {
         data: { ids: bulkDeleteIds },
@@ -4030,7 +4056,7 @@ function DashboardView({
 
       // Clear deleted ids from selection (other pages may retain selection)
       setSelectedTokenIds(prev =>
-        prev.filter(id => !bulkDeleteIds.includes(id))
+        prev.filter(id => !deletedIds.includes(String(id)))
       );
 
       // Notify user
@@ -4062,6 +4088,9 @@ function DashboardView({
     } catch (error) {
       console.error('Bulk delete error:', error);
       alert('Failed to delete tokens. Please try again.');
+    } finally {
+      setBulkDeleteBusy(false);
+      setBulkDeleteConfirmOpen(false);
     }
   };
 
@@ -4834,7 +4863,7 @@ function DashboardView({
   );
 
   const inventoryBulkActions =
-    !isViewer && selectedVisibleTokenIds.length > 0 ? (
+    !isViewer && selectedTokenIds.length > 0 ? (
       <Flex
         mb={4}
         gap={3}
@@ -4848,15 +4877,24 @@ function DashboardView({
         borderRadius='md'
       >
         <Text color={text} fontSize='sm'>
-          {selectedVisibleTokenIds.length} asset(s) selected
+          {selectedTokenIds.length} asset(s) selected in total ·{' '}
+          {selectedVisibleTokenIds.length} on this page
         </Text>
         <HStack spacing={2} flexWrap='wrap'>
+          <Button
+            size='xs'
+            variant='outline'
+            onClick={() => setSelectedTokenIds([])}
+          >
+            Clear selection
+          </Button>
           <Button
             size='xs'
             colorScheme='red'
             variant='outline'
             leftIcon={<FiTrash2 />}
-            onClick={handleBulkDelete}
+            onClick={() => handleBulkDelete()}
+            isDisabled={selectedVisibleTokenIds.length === 0}
           >
             Delete selected on this page
           </Button>
@@ -4968,6 +5006,7 @@ function DashboardView({
           onToggleSelect={toggleTokenSelection}
           onToggleSelectAll={handleToggleSelectAll}
           bulkActions={inventoryBulkActions}
+          onClearFilters={handleClearAllFilters}
           paginationControls={renderAssetPaginationControls()}
           visibleCount={sortedVisibleTokens.length}
           tokensLoading={tokensLoading}
@@ -5881,6 +5920,20 @@ function DashboardView({
                             placeholderColor={dashboardModalTokens.muted}
                           />
                         </FormControl>
+                        {formErrors.submit && (
+                          <Alert
+                            ref={createTokenErrorRef}
+                            tabIndex={-1}
+                            status='error'
+                            mt={4}
+                            role='alert'
+                          >
+                            <AlertIcon />
+                            <AlertDescription>
+                              {formErrors.submit}
+                            </AlertDescription>
+                          </Alert>
+                        )}
                       </form>
                     </Box>
                   </ModalBody>
@@ -5932,6 +5985,58 @@ function DashboardView({
         fetchGlobalFacets={fetchGlobalFacets}
         fetchTokensForCategoryReset={fetchTokensForCategoryReset}
       />
+
+      <AlertDialog
+        isOpen={bulkDeleteConfirmOpen}
+        leastDestructiveRef={bulkDeleteCancelRef}
+        onClose={() => !bulkDeleteBusy && setBulkDeleteConfirmOpen(false)}
+      >
+        <AlertDialogOverlay />
+        <AlertDialogContent>
+          <AlertDialogHeader>Delete selected assets?</AlertDialogHeader>
+          <AlertDialogBody>
+            <Text>{selectedVisibleTokenIds.length} selected on this page.</Text>
+            <Text mt={2}>
+              {
+                selectedVisibleTokenIds.filter(
+                  id => !getCertOpsForToken(id).hasManagedLinks
+                ).length
+              }{' '}
+              eligible for deletion.{' '}
+              {
+                selectedVisibleTokenIds.filter(
+                  id => getCertOpsForToken(id).hasManagedLinks
+                ).length
+              }{' '}
+              {selectedVisibleTokenIds.filter(
+                id => getCertOpsForToken(id).hasManagedLinks
+              ).length === 1
+                ? 'managed certificate'
+                : 'managed certificates'}{' '}
+              will be skipped.
+            </Text>
+            <Text mt={2}>
+              Linked endpoint monitors for deleted assets will also be deleted.
+            </Text>
+          </AlertDialogBody>
+          <AlertDialogFooter gap={3}>
+            <Button
+              ref={bulkDeleteCancelRef}
+              onClick={() => setBulkDeleteConfirmOpen(false)}
+              isDisabled={bulkDeleteBusy}
+            >
+              Cancel
+            </Button>
+            <Button
+              colorScheme='red'
+              isLoading={bulkDeleteBusy}
+              onClick={() => handleBulkDelete(true)}
+            >
+              Delete eligible assets
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <RetireCertificateModal
         isOpen={isRetireModalOpen}

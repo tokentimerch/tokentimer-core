@@ -288,6 +288,9 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
   const [workspaces, setWorkspaces] = React.useState([]);
   const [currentWorkspace, setCurrentWorkspace] = React.useState(null);
   const [members, setMembers] = React.useState([]);
+  const [roleChanges, setRoleChanges] = React.useState({});
+  const activeWorkspaceRef = React.useRef(null);
+  activeWorkspaceRef.current = currentWorkspace?.id;
   const [pendingInvitations, setPendingInvitations] = React.useState([]);
   const [inviteEmail, setInviteEmail] = React.useState('');
   const [inviteRole, setInviteRole] = React.useState('viewer');
@@ -589,7 +592,68 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
 
   async function reloadMembers(workspaceId) {
     const res = await workspaceAPI.listMembers(workspaceId, 100, 0);
-    setMembers(res?.items || []);
+    if (activeWorkspaceRef.current === workspaceId)
+      setMembers(res?.items || []);
+  }
+
+  async function changeMemberRole(member, nextRole) {
+    if (!currentWorkspace || !canManage || member.user_id === session?.id)
+      return;
+    const id = `${currentWorkspace.id}:${member.user_id}`;
+    setRoleChanges(previous => ({ ...previous, [id]: 'Saving role…' }));
+    try {
+      await workspaceAPI.changeRole(
+        currentWorkspace.id,
+        member.user_id,
+        nextRole
+      );
+      await reloadMembers(currentWorkspace.id);
+      setRoleChanges(previous => ({ ...previous, [id]: 'Role updated.' }));
+    } catch (_) {
+      setRoleChanges(previous => ({
+        ...previous,
+        [id]: 'Could not confirm the role change. Refresh members before retrying.',
+      }));
+    }
+  }
+
+  async function refreshRoleStatus(member) {
+    if (!currentWorkspace) return;
+    const id = `${currentWorkspace.id}:${member.user_id}`;
+    try {
+      await reloadMembers(currentWorkspace.id);
+      setRoleChanges(previous => ({
+        ...previous,
+        [id]: 'Members refreshed. Select a role to retry if needed.',
+      }));
+    } catch (_) {
+      setRoleChanges(previous => ({
+        ...previous,
+        [id]: 'Could not confirm the role change. Refresh members before retrying.',
+      }));
+    }
+  }
+
+  function roleChangeStatus(member) {
+    const status = roleChanges[`${currentWorkspace?.id}:${member.user_id}`];
+    if (!status) return null;
+    return (
+      <Box mt={1}>
+        <Text fontSize='xs' role='status'>
+          {status}
+        </Text>
+        {status.startsWith('Could not') && (
+          <Button
+            size='xs'
+            variant='outline'
+            mt={1}
+            onClick={() => refreshRoleStatus(member)}
+          >
+            Refresh members
+          </Button>
+        )}
+      </Box>
+    );
   }
 
   async function reloadInvitations(workspaceId) {
@@ -1083,35 +1147,16 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                               maxW={{ base: '180px', md: 'unset' }}
                               value={m.role}
                               isDisabled={
-                                !canManage || m.user_id === session?.id
+                                !canManage ||
+                                m.user_id === session?.id ||
+                                roleChanges[
+                                  `${currentWorkspace?.id}:${m.user_id}`
+                                ] === 'Saving role…'
                               }
-                              onChange={async e => {
-                                if (!currentWorkspace) return;
-                                const nextRole = e.target.value;
-                                if (
-                                  currentWorkspace.role !== 'admin' &&
-                                  currentWorkspace.role !== 'workspace_manager'
-                                ) {
-                                  showWarning(
-                                    'Insufficient permissions',
-                                    'Only workspace admins or managers can change member roles.'
-                                  );
-                                  return;
-                                }
-                                if (m.user_id === session?.id) {
-                                  showWarning(
-                                    'Action not allowed',
-                                    'You cannot change your own role.'
-                                  );
-                                  return;
-                                }
-                                await workspaceAPI.changeRole(
-                                  currentWorkspace.id,
-                                  m.user_id,
-                                  nextRole
-                                );
-                                await reloadMembers(currentWorkspace.id);
-                              }}
+                              aria-label={`Role for ${m.display_name || m.email}`}
+                              onChange={e =>
+                                changeMemberRole(m, e.target.value)
+                              }
                             >
                               {MEMBER_ROLE_OPTIONS.map(opt => (
                                 <option key={opt.value} value={opt.value}>
@@ -1120,6 +1165,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                               ))}
                             </Select>
                           )}
+                          {roleChangeStatus(m)}
                         </Td>
                         {isSystemAdmin ? (
                           <Td>
@@ -1204,34 +1250,15 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                           <Select
                             size='sm'
                             value={m.role}
-                            isDisabled={!canManage || m.user_id === session?.id}
-                            onChange={async e => {
-                              if (!currentWorkspace) return;
-                              const nextRole = e.target.value;
-                              if (
-                                currentWorkspace.role !== 'admin' &&
-                                currentWorkspace.role !== 'workspace_manager'
-                              ) {
-                                showWarning(
-                                  'Insufficient permissions',
-                                  'Only workspace admins or managers can change member roles.'
-                                );
-                                return;
-                              }
-                              if (m.user_id === session?.id) {
-                                showWarning(
-                                  'Action not allowed',
-                                  'You cannot change your own role.'
-                                );
-                                return;
-                              }
-                              await workspaceAPI.changeRole(
-                                currentWorkspace.id,
-                                m.user_id,
-                                nextRole
-                              );
-                              await reloadMembers(currentWorkspace.id);
-                            }}
+                            isDisabled={
+                              !canManage ||
+                              m.user_id === session?.id ||
+                              roleChanges[
+                                `${currentWorkspace?.id}:${m.user_id}`
+                              ] === 'Saving role…'
+                            }
+                            aria-label={`Role for ${m.display_name || m.email}`}
+                            onChange={e => changeMemberRole(m, e.target.value)}
                           >
                             {MEMBER_ROLE_OPTIONS.map(opt => (
                               <option key={opt.value} value={opt.value}>
@@ -1240,6 +1267,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                             ))}
                           </Select>
                         )}
+                        {roleChangeStatus(m)}
                       </Box>
                       {isSystemAdmin ? (
                         <HStack justify='space-between'>
@@ -1719,6 +1747,42 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                         </Td>
                       </Tr>
                     )}
+                    {transferState.tokens.length > 0 &&
+                      !transferState.tokens.some(t => {
+                        const nameMatch =
+                          !transferState.search ||
+                          (t.name || '')
+                            .toLowerCase()
+                            .includes(transferState.search.toLowerCase());
+                        const categoryMatch =
+                          !transferState.filterCategory ||
+                          t.category === transferState.filterCategory;
+                        const sectionMatch =
+                          !transferState.filterSection ||
+                          (Array.isArray(t.section) &&
+                            t.section.includes(transferState.filterSection));
+                        return nameMatch && categoryMatch && sectionMatch;
+                      }) && (
+                        <Tr>
+                          <Td colSpan={5} textAlign='center' py={4}>
+                            <Text mb={2}>No assets match these filters.</Text>
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              onClick={() =>
+                                setTransferState(prev => ({
+                                  ...prev,
+                                  search: '',
+                                  filterCategory: null,
+                                  filterSection: null,
+                                }))
+                              }
+                            >
+                              Clear filters
+                            </Button>
+                          </Td>
+                        </Tr>
+                      )}
                   </Tbody>
                 </Table>
               </Box>

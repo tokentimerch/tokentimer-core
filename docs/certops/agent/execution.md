@@ -85,7 +85,7 @@ Terminal outcomes clear the journal entry when reporting completes.
 Supported actions: `renew`, `deploy`, `reload`, `noop`, `distribute-trust`,
 `revoke-trust`. `revoke` (managed-certificate revocation, distinct from
 `revoke-trust`) is always `blocked` (out of scope for this agent build).
-`deploy` without a `certificatePem` field is `blocked` (see [Job contracts](protocol.md)).
+`deploy` without a `certificatePem` field is `blocked` (see [Job contracts](../../../.github/maintainers/certops/agent/protocol.md)).
 
 The control plane additionally has an `issue` job operation, used for
 first-time issuance of a certificate that has no inventory row yet. It is a
@@ -152,8 +152,8 @@ For `renew` (`executeRenewJob`):
    then crash while saving the chain (`OSError: [Errno 30] Read-only file
    system: '/0000_chain.pem'`), losing an already-issued certificate. See
    the argv/flags table in `src/acme/index.js`'s module docblock for the
-   exact contract, and the worked Cloudflare DNS-01 example in
-   `tokentimer-cloud`'s docs for a real reproduction and fix confirmation.
+   exact contract. Keep all certificate output paths within the configured
+   writable deployment directories.
    A separate, unrelated operator pitfall: certbot also needs an ACME
    account to run non-interactively, so `policy.allowedCommands.<profile>
    .argv` must include `--agree-tos` plus either `--email <address>` or
@@ -222,7 +222,7 @@ jobs run step 5 only; `noop` reports a `validation.passed` evidence item and
 succeeds.
 
 Dry-run mode is driven by the signed job's immutable `mode` field (see
-"Dry-run and reconciliation statuses" in [Protocol](protocol.md)). For supported mutating actions with `mode`
+"Dry-run and reconciliation statuses" in [Protocol](../../../.github/maintainers/certops/agent/protocol.md)). For supported mutating actions with `mode`
 `dry_run`, all trust gates still run, then instead of executing the agent
 reports one `policy.checked` evidence item per step the action would run
 (with `dryRun: true` metadata) and returns `dry_run_complete` with

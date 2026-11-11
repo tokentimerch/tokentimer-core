@@ -79,7 +79,8 @@ describe("installer packaging smoke (B9)", () => {
 
     runOrThrow(
       process.platform === "win32" ? "tar.exe" : "tar",
-      ["-xzf", tarballPath, "-C", stagingRoot],
+      ["-xzf", tarballName],
+      { cwd: stagingRoot },
     );
     extractedRoot = path.join(stagingRoot, "package");
     assert.ok(fs.existsSync(path.join(extractedRoot, "package.json")));
@@ -174,9 +175,11 @@ describe("installer packaging smoke (B9)", () => {
     );
     const tarball = fs.readdirSync(stagingRoot).find((name) => name.endsWith(".tgz"));
     assert.ok(tarball, "no packed tarball found to re-extract");
+    fs.copyFileSync(path.join(stagingRoot, tarball), path.join(noInstallRoot, tarball));
     runOrThrow(
       process.platform === "win32" ? "tar.exe" : "tar",
-      ["-xzf", path.join(stagingRoot, tarball), "-C", noInstallRoot],
+      ["-xzf", tarball],
+      { cwd: noInstallRoot },
     );
     const noInstallExtracted = path.join(noInstallRoot, "package");
     assert.ok(
@@ -366,7 +369,7 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
 
   it("reaches Running and survives a Stop-Service / Start-Service cycle", (t) => {
     if (skipReason) {
-      // skip-reason: no-host - requires an elevated Windows host to install a real service
+      // skip-reason: prerequisite - requires an elevated Windows host to install a real service
       t.skip(skipReason);
       return;
     }

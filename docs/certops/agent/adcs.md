@@ -6,7 +6,7 @@ A job with issuer kind `adcs` enrolls only when a local enrollment rule names th
 
 Use a released agent that declares this qualified capability. If it is absent, AD CS enrollment is unavailable on that package; do not edit its capability manifest to enable it. Qualification-lab capability overrides are not an operator installation step.
 
-Cloud Pro and Team, and the Enterprise dashboard, include this issuer under **Renewals**. The CA stays on the customer network. Neither product stores CA credentials.
+Cloud Pro and Team, and the Enterprise dashboard, include this issuer under **Renewals**. The CA stays on your network. Neither product stores CA credentials.
 
 Linux hosts, and Windows hosts that are not domain-joined, do not enroll over DCOM. Put AD CS enrollment on a domain-joined Windows agent, or keep an [ACME gateway in front of AD CS](dns-and-acme.md#acme-gateway-in-front-of-ad-cs).
 

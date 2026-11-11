@@ -36,7 +36,7 @@ async function githubRequest({
   );
   const headers = {
     Authorization: `token ${token}`,
-    Accept: "application/vnd.github.v3+json",
+    Accept: "application/vnd.github+json",
     "User-Agent": "TokenTimer-Integration",
   };
 

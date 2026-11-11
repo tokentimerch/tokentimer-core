@@ -21,10 +21,9 @@ function Get-OwnedOcspHistoricalRequest($Owner,[long]$RequestId,[byte[]]$Expecte
   }
   $serial=$certificate.SerialNumber
  } finally { $certificate.Dispose() }
- $view=$null;$rows=$null;$columns=$null
+ $view=$null;$rows=$null;$columns=$null;$connection=$null
  try {
-  $view=New-Object -ComObject 'CertificateAuthority.View'
-  [void]$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
+  $connection=Open-OwnedOcspCertView;$view=$connection.view
   $indices=@()
   foreach($aliases in @(@('RequestID'),@('CommonName'),@('RequesterName'),@('Request.Disposition','Disposition'),@('RawCertificate'))) {
    $resolved=@()
@@ -49,11 +48,13 @@ function Get-OwnedOcspHistoricalRequest($Owner,[long]$RequestId,[byte[]]$Expecte
      $rows.Next() -ne -1) { throw 'Historical/native request ownership changed' }
   return @{requestId=$RequestId;disposition=$Disposition;certificateSha256=$expectedDigest;serial=$serial}
  } finally {
-  foreach($resource in @($columns,$rows,$view)) {
-   if($null -ne $resource -and [Runtime.InteropServices.Marshal]::IsComObject($resource)) {
-    [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($resource)
+  try {
+   foreach($resource in @($columns,$rows)) {
+    if($null -ne $resource -and [Runtime.InteropServices.Marshal]::IsComObject($resource)) {
+     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($resource)
+    }
    }
-  }
+  } finally {if($connection){Close-OwnedOcspCertView $connection}}
  }
 }
 

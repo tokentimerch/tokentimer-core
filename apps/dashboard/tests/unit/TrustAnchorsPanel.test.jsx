@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
+import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 import TrustAnchorsPanel from '../../src/components/certops/TrustAnchorsPanel.jsx';
 
@@ -69,9 +70,11 @@ vi.mock('../../src/components/certops/certopsJobsApi.js', async () => {
 function renderPanel() {
   return render(
     <ChakraProvider>
-      <MemoryRouter>
-        <TrustAnchorsPanel />
-      </MemoryRouter>
+      <DashboardThemeProvider>
+        <MemoryRouter>
+          <TrustAnchorsPanel />
+        </MemoryRouter>
+      </DashboardThemeProvider>
     </ChakraProvider>
   );
 }

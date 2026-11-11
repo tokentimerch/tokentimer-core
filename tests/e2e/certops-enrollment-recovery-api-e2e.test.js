@@ -16,7 +16,7 @@ const required=["adcs-install-retry-api-boundaries","adcs-install-retry-api-conc
 test("AD CS installation retry through real API and PostgreSQL",{timeout:120000},async t=>{
   const url=process.env.CERTOPS_CSR_API_URL;
   if(!url&&process.env.CERTOPS_E2E_REQUIRED!=="1"){
-    // skip-reason: no-host - requires isolated real API and PostgreSQL
+    // skip-reason: prerequisite - requires isolated real API and PostgreSQL
     t.skip("Disposable API URL required");return;
   }
   assert.ok(url);const fixture=await createApiFixture(url);let primaryError;

@@ -1,4 +1,22 @@
 "use strict";
+/**
+ * Qualification notes: native browser existing-inventory renewal
+ *
+ * Flow creates issuer -> actual agent preflight -> observed CA pin -> fresh post-confirmation
+ * preflight -> profile -> attach existing RSA2048 inventory/enable automation; no browser first
+ * issuance/generic manual ADCS renewal exists. Observe six real mutations and both preflight jobs,
+ * never intercept. Parent provides SYSTEM/IIS/PG/ownership. Temporarily disable only fixture
+ * workspace other profiles, restore exact policy, invoke full production sweep using SQL NOW/
+ * actual expiry -> exactly one enrollment. Require new CA leaf/SPKI/request, CNG/journal/receipt,
+ * IIS/HTTP.sys/trusted TLS/claim evidence and matching installed dashboard row. Sweep!=timer.
+ * Candidate dashboard is loopback behind private HTTPS; frozen pnpm/Playwright tools. Receipt
+ * before exact SYSTEM CurrentUser Root API trust; preserve preexisting trust. Drain Chromium
+ * before owned-trust removal/profile restore; preserve state on unknown child/receipt. No
+ * traces/screenshots/cookies/raw bodies. Missing selected full-lane browser fails; elapsed lane
+ * separate and experimental base-suite evidence cannot qualify release.
+ *
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
+ */
 /** Pure native-browser proof checks; no browser/domain/certificate mutation. */
 const { test } = require("node:test"),
   assert = require("node:assert/strict"),
@@ -7,6 +25,69 @@ const { test } = require("node:test"),
   path = require("node:path"),
   os = require("node:os");
 const helper = require("../tests/e2e/helpers/certops-adcs-browser-journey");
+
+test("browser mutation failures expose only bounded operation and status", () => {
+  assert.doesNotThrow(() => helper.assertMutationStatus(201, 201, "/profiles"));
+  assert.throws(() => helper.assertMutationStatus(409, 201, "/private/replace-management"), error => error.code === "CERTOPS_BROWSER_ATTACH_HTTP_409" && !error.message.includes("private"));
+  assert.throws(() => helper.assertMutationStatus(409, 201, "/private/replace-management", "CERTOPS_MANAGED_CERT_LIMIT"), error => error.code === "CERTOPS_BROWSER_ATTACH_MANAGED_CERT_LIMIT");
+  for (const code of ["CERTOPS_CERTIFICATE_NOT_RENEWABLE", "CERTOPS_CERTIFICATE_PATH_IN_USE", "CERTOPS_LIFECYCLE_DOWNGRADE", "CERTOPS_CERTIFICATE_STILL_SERVING"]) {
+    assert.throws(() => helper.assertMutationStatus(409, 201, "/private/replace-management", code), error => error.code === `CERTOPS_BROWSER_ATTACH_${code.slice("CERTOPS_".length)}`);
+  }
+  assert.throws(() => helper.assertMutationStatus(409, 201, "/private/replace-management", "SECRET_TOKEN"), error => error.code === "CERTOPS_BROWSER_ATTACH_HTTP_409" && !String(error).includes("SECRET"));
+  assert.throws(() => helper.assertMutationStatus(500, 201, "/private/profiles"), error => error.code === "CERTOPS_BROWSER_CREATE_PROFILE_HTTP_500");
+});
+
+test("browser confirms only the independently rechecked owned management period", async () => {
+  const selectedSource = { id: crypto.randomUUID(), periodId: crypto.randomUUID() };
+  const response = (status, body) => ({ status: () => status, json: async () => body });
+  const conflict = response(409, { code: "CERTOPS_MANAGEMENT_ALREADY_OPEN", currentPeriod: { periodId: selectedSource.periodId } });
+  let confirmed = 0;
+  const invoke = (reply, current) => helper.confirmOwnedAttachmentConflict({ response: reply, selectedSource, reloadSource: async () => current, confirm: async () => { confirmed++; } });
+  await invoke(conflict, selectedSource);
+  assert.equal(confirmed, 1);
+  for (const current of [null, { ...selectedSource, id: crypto.randomUUID() }, { ...selectedSource, periodId: crypto.randomUUID() }]) {
+    await assert.rejects(invoke(conflict, current));
+  }
+  await assert.rejects(invoke(response(409, { code: "CERTOPS_MANAGEMENT_ALREADY_OPEN", currentPeriod: { periodId: crypto.randomUUID() } }), selectedSource));
+  await assert.rejects(invoke(response(409, { code: "CERTOPS_MANAGED_CERT_LIMIT" }), selectedSource));
+  assert.equal(confirmed, 1);
+});
+
+test("native browser selects a current owned IIS source without another open enrollment", () => {
+  const original = crypto.randomUUID(), observed = crypto.randomUUID();
+  const identityId = crypto.randomUUID(), periodId = crypto.randomUUID();
+  const fingerprint = "a".repeat(64);
+  const inventory = { items: [{ identityId, fingerprintSha256: fingerprint, lifecycleStatus: "active", sources: [original, observed].map(managedCertificateId => ({ managedCertificateId, periodId, currentIdentityId: identityId, endedAt: null, periodEndedAt: null })) }] };
+  assert.deepEqual(helper.currentIisBrowserSource(inventory, { certificateIds: [original, observed], openCertificateIds: [original], fingerprint }), { id: observed, periodId });
+  assert.equal(helper.currentIisBrowserSource(inventory, { certificateIds: [original], openCertificateIds: [original], fingerprint }), null);
+  assert.equal(helper.currentIisBrowserSource(inventory, { certificateIds: [observed], fingerprint: "b".repeat(64) }), null);
+  assert.throws(() => helper.currentIisBrowserSource(inventory, { certificateIds: [original, observed], fingerprint }));
+  assert.throws(() => helper.currentIisBrowserSource(inventory, { certificateIds: [observed, observed], fingerprint }));
+  assert.throws(() => helper.currentIisBrowserSource(inventory, { certificateIds: [observed], openCertificateIds: [crypto.randomUUID()], fingerprint }));
+  const ended = { items: [{ ...inventory.items[0], sources: [{ ...inventory.items[0].sources[1], periodEndedAt: "2026-11-03T00:00:00Z" }] }] };
+  assert.equal(helper.currentIisBrowserSource(ended, { certificateIds: [observed], fingerprint }), null);
+});
+test("native browser selects its owned current registration instead of observed source history", () => {
+  const certificateId=crypto.randomUUID(), periodId=crypto.randomUUID(), identityId=crypto.randomUUID();
+  const source={managedCertificateId:certificateId,periodId,currentIdentityId:identityId,endedAt:null,periodEndedAt:null};
+  const identity={identityId,fingerprintSha256:"a".repeat(64),lifecycleStatus:"active",sources:[
+    {...source,managedCertificateId:crypto.randomUUID(),source:"agent_windows"},
+    {...source,source:"agent_issuance"},
+  ]};
+  const expected={certificateId,fingerprint:"a".repeat(64)};
+  assert.deepEqual(helper.currentBrowserSource({items:[identity]},expected),{id:certificateId,periodId});
+  for(const fields of [
+    {managedCertificateId:crypto.randomUUID()},
+    {currentIdentityId:crypto.randomUUID()},
+    {endedAt:"2026-11-02T00:00:00Z"},
+    {periodEndedAt:"2026-11-02T00:00:00Z"},
+  ])assert.equal(helper.currentBrowserSource({items:[{...identity,sources:[{...source,...fields}]}]},expected),null);
+  for(const fields of [{fingerprintSha256:"b".repeat(64)},{lifecycleStatus:"revoked"}]){
+    assert.equal(helper.currentBrowserSource({items:[{...identity,...fields}]},expected),null);
+  }
+  assert.throws(()=>helper.currentBrowserSource({items:[identity,identity]},expected));
+  assert.throws(()=>helper.currentBrowserSource({items:[{...identity,sources:[source,source]}]},expected));
+});
 function valid() {
   return {
     scope: helper.SCOPE,
@@ -183,9 +264,17 @@ test("comprehensive browser integration is mandatory outside isolated issuer, el
   const provision=fs.readFileSync(path.join(root,"infra/certops-adcs/provision-lab.ps1"),"utf8");
   assert.ok(provision.includes("if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){Invoke-Stage 'windows-agent'"));
   assert.match(provision, /if\(\$IssuerReassignment -ne '1' -and \$PendingElapsedQualification -ne '1' -and \$Retention24hPrepare -ne '1' -and \$AdcsTtl24hPrepare -ne '1' -and \$RetentionCadencePrepare -ne '1'\)\{\s+Refresh-LabAuthentication/);
-  assert.ok(provision.includes("Only the core AD CS lab is included"));
-  assert.ok(!provision.includes("run-retention-cadence-prepare.ps1"));
-  assert.ok(!provision.includes("run-ttl24h-prepare.ps1"));
+  assert.ok(provision.includes("if($RetentionCadencePrepare -eq '1'){"));
+  assert.ok(provision.includes("run-retention-cadence-prepare.ps1"));
+  assert.ok(provision.includes("if($Retention24hPrepare -eq '1'){"));
+  assert.ok(provision.includes("'CERTOPS_STAGE=retention24h-prepared'"));
+  assert.ok(provision.includes("if($AdcsTtl24hPrepare -eq '1'){"));
+  assert.ok(provision.includes("run-ttl24h-prepare.ps1"));
+  assert.ok(provision.includes("'CERTOPS_STAGE=adcs-ttl24h-prepared'"));
+  const guest=fs.readFileSync(path.join(root,"infra/certops-adcs/run-windows-tests.ps1"),"utf8");
+  assert.ok(guest.includes("$env:CERTOPS_ADCS_BROWSER=if($IssuerReassignment -eq '1' -or $PendingElapsedQualification -eq '1' -or $Retention24hPrepare -eq '1'){$null}else{'1'}"));
+  assert.ok(guest.includes("scripts/certops-retention24h-bootstrap.ps1"));
+  assert.ok(guest.includes("}else{ & $runtime.node --test --test-force-exit tests/e2e/certops-adcs-real-e2e.test.js }"));
 });
 
 test("CA confirmation uses public metadata without DER and verifies the independently observed native key", () => {

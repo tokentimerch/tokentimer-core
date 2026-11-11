@@ -97,8 +97,8 @@ const {
   AGENT_PROTOCOL_ERROR_CODES,
   AgentProtocolError,
 } = require("./protocol");
-const { trustStoreCommandRefForFamily, resolveConcreteStore } = require("./trust-store");
-const { readReceipt } = require("./trust-store/receipt");
+const { trustStoreCommandRefForFamily } = require("./trust-store");
+const { readReceiptById } = require("./trust-store/receipt");
 
 function makeTempConfigDir() {
   // .native is required on Windows: os.tmpdir() can resolve through a
@@ -781,7 +781,7 @@ describe("registerIfNeeded", () => {
         : [
             ...(AGENT_TRUST_STORE_PREREQUISITES.candidate ? ["trust-anchor-deploy-v1"] : []),
             ...(process.platform === "linux"
-              ? ["material-store-vault-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1"]
+              ? ["material-store-vault-kv2-v1", "material-store-openbao-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1"]
               : []),
           ]),
       "agent-id-binding-v1",
@@ -974,6 +974,10 @@ describe("registerIfNeeded", () => {
 });
 
 describe("createCandidateAgentId", () => {
+  it("trims a long trailing separator run without repeated regex backtracking", () => {
+    assert.equal(createCandidateAgentId("host" + "-".repeat(100000), 1), "candidate-host-1");
+    assert.equal(createCandidateAgentId("-_.:".repeat(25000), 1), "candidate-host-1");
+  });
   it("normalizes hostile hostnames into a bounded protocol-valid candidate id", () => {
     const candidate = createCandidateAgentId("host name/with/unsafe😀characters".repeat(8), 1234);
     assert.match(candidate, /^[A-Za-z0-9_.:-]{1,128}$/);
@@ -4207,7 +4211,7 @@ describe("renew chain deployment", () => {
     assert.equal(client.calls.reportEvidence.length, 0);
   });
 
-  // skip-reason: no-host - Linux declares the material capabilities, so this refusal only applies to other hosts.
+  // skip-reason: platform - Linux declares the material capabilities, so this refusal only applies to other hosts.
   it("refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities", { skip: process.platform === "linux" }, async () => {
     const shared = {
       jobId: "job-material",
@@ -4228,7 +4232,7 @@ describe("renew chain deployment", () => {
     assert.equal(publication.status, "blocked");
     assert.match(
       publication.errorMessage,
-      /has not qualified material-store-vault-kv2-v1; material distribution jobs are refused/,
+      /has not qualified (material-store-vault-kv2-v1|certificate-publication-v1); material distribution jobs are refused/,
     );
 
     const deployment = await executeJob({
@@ -4238,7 +4242,7 @@ describe("renew chain deployment", () => {
     assert.equal(deployment.status, "blocked");
     assert.match(
       deployment.errorMessage,
-      /has not qualified material-store-vault-kv2-v1; material distribution jobs are refused/,
+      /has not qualified (material-store-vault-kv2-v1|windows-material-iis-v1); material distribution jobs are refused/,
     );
     assert.equal(shared.client.calls.reportEvidence.length, 0);
   });
@@ -5703,6 +5707,36 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     assert.equal(hasUnresolvedJournalForJob(workDir, "job-1"), true);
   });
 
+  it("removes an exact pending request before checking orphan key survivors", async () => {
+    workDir = makeTempConfigDir();
+    const containerName = "tokentimer-job-1-pendingreq";
+    const thumbprint = "AB".repeat(20);
+    seedOrphanedContainerJournalEntry(workDir, { containerName });
+    let pending = true, deleted = false;
+    const fallback = makeReconcileExecStub();
+    const result = await reconcileOrphanedWindowsCngContainers({
+      stateDir: workDir,
+      keySurvivorHelperPath: __filename,
+      execFileImpl(file, args, options, callback) {
+        if (args[0] === "--key-survivors") {
+          const shared = pending;
+          return process.nextTick(() => callback(null, JSON.stringify({ complete: true, shared, storesScanned: 25, certificatesScanned: shared ? 1 : 0, matches: shared ? 1 : 0 }), ""));
+        }
+        if (file === "certutil.exe" && args[0] === "-store" && args[2] === "REQUEST")
+          return process.nextTick(() => callback(null, pending ? `==== 0 ====\nContainer = ${containerName}\nCert Hash(sha1): ${thumbprint}\n` : "", ""));
+        if (file === "certutil.exe" && args[0] === "-delstore" && args[1] === "REQUEST") {
+          assert.equal(args[2], thumbprint); pending = false;
+          return process.nextTick(() => callback(null, "", ""));
+        }
+        if (args.includes("-delkey")) deleted = true;
+        return fallback(file, args, options, callback);
+      },
+    });
+    assert.equal(pending, false);
+    assert.equal(deleted, true);
+    assert.deepEqual(result.freed, [containerName]);
+  });
+
   it("preserves a key referenced only in a different machine store and reconciles its crash receipt", async () => {
     workDir = makeTempConfigDir();
     const containerName = "tokentimer-job-1-otherstore";
@@ -6388,11 +6422,11 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
     // The receipt this run persisted is readable from the SAME stateDir
     // executeJob itself derived from executionContext, proving the
     // dispatch path wires receiptDir consistently end to end.
-    const persisted = readReceipt(
+    const persisted = readReceiptById(
       path.join(workDir, "trust-receipts"),
-      resolveConcreteStore(family, "root"),
-      CA_FINGERPRINT,
+      outcome.trustResult.receipt.id,
     );
+    assert.ok(persisted?.row, "the result's receipt id must resolve to a persisted receipt on every platform");
     assert.equal(persisted.row.state, "installed");
   });
 

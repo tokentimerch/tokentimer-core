@@ -1,4 +1,16 @@
 "use strict";
+/**
+ * Qualification notes: native preflight cohort containment
+ *
+ * Additional genuine CLI checks start suspended in retained Windows Job; verify original root
+ * native identity/SYSTEM SID before resume. Bootstrap private inherited env, protocol args/owner
+ * receipts never artifact. Close requires empty Job/root exit/native+protocol handle closure/
+ * wrapper close; unknown drain preserves cohort/state, no numeric-PID kill fallback. Shared
+ * mechanical support proves no ADCS/installed service. Keep primary budget 18, roll idle cohort at
+ * actual 45min before one-hour deadline; drain old job before local-rule rewrite/new CLI.
+ *
+ * Shared setup, evidence and cleanup policy: .github/maintainers/certops/e2e-qualification.md.
+ */
 /** Source budget audit, not native execution. Count the actual descriptor sets
  * and pin every primary dispatch/cache boundary so adding a new caller requires
  * explicit budget review rather than silently producing an impossible lane. */
@@ -57,9 +69,9 @@ test("actual native descriptor and cache generations fit the original18 primary 
     rootCaRechecks +
     pendingNewKeyRecovery;
   const hierarchyMaximum =
-    initial.size + automaticFreshChecks + freshCapacity + 1; // cache cleared by flags; tail repopulates RSAshort
+    initial.size + automaticFreshChecks + freshCapacity;
   assert.equal(rootMaximum, 18);
-  assert.equal(hierarchyMaximum, 16);
+  assert.equal(hierarchyMaximum, 15);
   assert.ok(rootMaximum + 2 <= 20);
 });
 test("all primary caller and cache invalidation sites are explicitly audited", () => {
@@ -81,24 +93,25 @@ test("all primary caller and cache invalidation sites are explicitly audited", (
     main,
     /preflightCache\.set\(item\.template,\{issuerId,result:preflightResult\}\)/,
   );
-  const helpers = [
-    "algorithm-boundaries",
-    "issued-cancellation",
-    "journal-phase-experiment",
-    "local-rules",
-    "pending-elapsed",
-    "submission-boundaries",
-    "uncertain-abandon",
-    "validity-boundaries",
-  ];
-  for (const name of helpers)
+  // Uncertain journeys reuse the current confirmed issuer after key rotation.
+  const helpers = {
+    "algorithm-boundaries": 1,
+    "issued-cancellation": 1,
+    "journal-phase-experiment": 1,
+    "local-rules": 1,
+    "pending-elapsed": 1,
+    "submission-boundaries": 1,
+    "uncertain-abandon": 0,
+    "validity-boundaries": 1,
+  };
+  for (const [name, count] of Object.entries(helpers))
     assert.equal(
       (
         read(`tests/e2e/helpers/certops-adcs-${name}.js`).match(
           /await preflight\(/g,
         ) || []
       ).length,
-      1,
+      count,
       name,
     );
   const capacity = read("tests/e2e/helpers/certops-adcs-capacity.js");

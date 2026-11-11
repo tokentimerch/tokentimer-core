@@ -208,6 +208,18 @@ DB_SSL: {{ .Values.postgresql.external.sslMode | quote }}
 ALERT_THRESHOLDS: {{ .Values.config.alertThresholds | quote }}
 {{- end }}
 CERTOPS_ENABLED: {{ ternary "true" "false" (not (eq .Values.config.certopsEnabled false)) | quote }}
+{{- /* Both assistant flags fail closed: only an explicit true turns them on. */}}
+{{- if eq .Values.config.mcpOperatorInterfaceEnabled true }}
+MCP_OPERATOR_INTERFACE_ENABLED: "true"
+{{- end }}
+{{- if and (eq .Values.config.mcpOperatorInterfaceEnabled true) (eq .Values.config.mcpOperatorRemoteEnabled true) }}
+MCP_OPERATOR_REMOTE_ENABLED: "true"
+MCP_PUBLIC_URL: {{ required "config.mcpPublicUrl is required for remote MCP" .Values.config.mcpPublicUrl | quote }}
+MCP_ALLOWED_ORIGINS: {{ .Values.config.mcpAllowedOrigins | default "" | quote }}
+{{- end }}
+{{- if and (eq .Values.config.mcpOperatorInterfaceEnabled true) (eq .Values.config.mcpOperatorWritesEnabled true) }}
+MCP_OPERATOR_WRITES_ENABLED: "true"
+{{- end }}
 {{- /* Explicit checks, not truthiness: retention 0 means "store nothing".
        Reject values the API would silently replace (retention > 3650, or a
        daily-byte quota above Number.MAX_SAFE_INTEGER which becomes unlimited).
@@ -288,6 +300,10 @@ NODE_OPTIONS: "--disable-warning=UNDICI-EHPA"
 {{- if .Values.monitoring.metrics.enabled }}
 ENABLE_METRICS: "true"
 {{- end }}
+AUTO_SYNC_METRICS_ENABLED: {{ .Values.monitoring.metrics.autoSyncEnabled | toString | quote }}
+AUTO_SYNC_METRICS_LABELS: {{ .Values.monitoring.metrics.autoSyncLabels | default (list) | join "," | quote }}
+AUTO_SYNC_METRICS_MONITORING_GROUP: {{ .Values.monitoring.metrics.autoSyncMonitoringGroup | quote }}
+AUTO_SYNC_METRICS_EXTRA_LABELS: {{ .Values.monitoring.metrics.extraLabels | default (list) | join "," | quote }}
 {{- if .Values.monitoring.metrics.pushgatewayUrl }}
 PUSHGATEWAY_URL: {{ .Values.monitoring.metrics.pushgatewayUrl | quote }}
 {{- end }}

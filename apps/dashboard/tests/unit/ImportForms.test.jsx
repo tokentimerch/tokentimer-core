@@ -25,6 +25,8 @@ const {
   awsScanMock,
   gcpScanMock,
   azureScanMock,
+  githubScanMock,
+  gitlabScanMock,
   integrationImportMock,
   checkDuplicatesMock,
 } = vi.hoisted(() => ({
@@ -34,6 +36,8 @@ const {
   awsScanMock: vi.fn(),
   gcpScanMock: vi.fn(),
   azureScanMock: vi.fn(),
+  githubScanMock: vi.fn(),
+  gitlabScanMock: vi.fn(),
   integrationImportMock: vi.fn(),
   checkDuplicatesMock: vi.fn(),
 }));
@@ -76,6 +80,8 @@ vi.mock('../../src/utils/apiClient', async () => {
     azureAPI: {
       scan: azureScanMock,
     },
+    githubAPI: { scan: githubScanMock },
+    gitlabAPI: { scan: gitlabScanMock },
     integrationAPI: {
       checkDuplicates: checkDuplicatesMock,
       import: integrationImportMock,
@@ -216,6 +222,58 @@ describe('Dashboard import forms', () => {
       expect(
         screen.queryByRole('status', { name: 'Filter results' })
       ).toBeNull();
+    }
+  );
+
+  it.each([
+    [
+      'GitHub',
+      ImportGitHubForm,
+      githubScanMock,
+      'https://api.github.com',
+      'Paste token',
+    ],
+    [
+      'GitLab',
+      ImportGitLabForm,
+      gitlabScanMock,
+      'https://gitlab.com',
+      'Paste token (read_api)',
+    ],
+  ])(
+    '%s excludes an incomplete type from cleanup',
+    async (_name, Form, scan, url, token) => {
+      scan.mockResolvedValue({
+        items: [],
+        scan_id: 'synthetic-scan',
+        summary: [{ type: 'tokens', found: 0, complete: false }],
+      });
+      renderWithProviders(
+        <Form
+          workspaceId='ws-1'
+          onError={vi.fn()}
+          borderColor='gray.200'
+          helpTextColor='gray.500'
+        />
+      );
+      fireEvent.change(screen.getByPlaceholderText(url), {
+        target: { value: url },
+      });
+      fireEvent.change(screen.getByPlaceholderText(token), {
+        target: { value: 'synthetic-token' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+      expect(
+        await screen.findByText(
+          /item type if any required scope failed or was incomplete/
+        )
+      ).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: /Remove previously imported/ })
+      );
+      expect(
+        screen.getByText(/Only fully scanned item types are eligible/)
+      ).toBeInTheDocument();
     }
   );
 

@@ -23,6 +23,17 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
     await material.lockGroup(client, workspaceId, groupId);
     const old = (await client.query(`SELECT * FROM certops_consumer_bindings WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, [workspaceId, bindingId])).rows[0];
     if (old && old.group_id !== groupId) fail("CERTOPS_BINDING_GROUP_IMMUTABLE");
+    if (old && old.assigned_agent_id !== binding.agentId) {
+      const live = await client.query(`SELECT 1 FROM certops_consumer_deployments d
+        LEFT JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=d.job_id
+        WHERE d.workspace_id=$1 AND d.binding_id=$2
+          AND (j.status IN ('claimed','running','orphaned_unknown_effect') OR d.stage='orphaned_unknown_effect') LIMIT 1`, [workspaceId, bindingId]);
+      if (live.rowCount) fail("CERTOPS_CONSUMER_REASSIGNMENT_REQUIRES_RECONCILIATION");
+    }
+    if (binding.verificationPolicy === "installed") {
+      const agent = (await client.query("SELECT platform FROM certops_agents WHERE workspace_id=$1 AND id=$2", [workspaceId,binding.agentId])).rows[0];
+      if (agent?.platform === "win32") fail("CERTOPS_DEPLOYMENT_ASSURANCE_MISMATCH",422);
+    }
     // Compare validated typed values while holding the group and binding locks.
     // An identical PUT must preserve approvals, proofs and local authorization.
     const authorization = { assigned_agent_id: binding.agentId, deployment_profile_ref: binding.deploymentProfileRef,
@@ -103,6 +114,13 @@ async function setRolloutState({ workspaceId, groupId, rolloutId, state, actorUs
     // Containment must remain possible after a source is disabled or retired.
     // Only resuming can enqueue execution and requires current admission.
     await material.lockGroup(client,workspaceId,groupId,{allowInactive:state!=="deploying"});
+    if (state === "deploying") {
+      const existing = (await client.query(`SELECT approval_job_id FROM certops_distribution_rollouts
+        WHERE workspace_id=$1 AND group_id=$2 AND id=$3 AND state<>'retired' FOR UPDATE`,
+      [workspaceId,groupId,rolloutId])).rows[0];
+      if (!existing) fail("CERTOPS_ROLLOUT_NOT_FOUND",404);
+      await require("./manualRolloutAuthority").assertManualRolloutAuthority(client,workspaceId,groupId,existing.approval_job_id);
+    }
     const row = (await client.query(`UPDATE certops_distribution_rollouts SET state=$4
       WHERE workspace_id=$1 AND group_id=$2 AND id=$3 AND state<>'retired' RETURNING *`, [workspaceId,groupId,rolloutId,state])).rows[0];
     if (!row) fail("CERTOPS_ROLLOUT_NOT_FOUND",404);
@@ -117,7 +135,7 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
   // Read inactive groups under the same locks solely to retire stale work.
   // Admission/dispatch continue to require an active group and valid version.
   const group = await material.lockGroup(client,workspaceId,groupId,{allowInactive:true});
-  const rollout = (await client.query(`SELECT r.*,v.provider_version,v.fingerprint_sha256,v.valid_to FROM certops_distribution_rollouts r
+  const rollout = (await client.query(`SELECT r.*,v.provider_version,v.provider_version_ref,v.fingerprint_sha256,v.valid_to FROM certops_distribution_rollouts r
     JOIN certops_material_versions v ON v.workspace_id=r.workspace_id AND v.id=r.material_version_id
     WHERE r.workspace_id=$1 AND r.group_id=$2 AND r.id=$3 FOR UPDATE OF r`,[workspaceId,groupId,rolloutId])).rows[0];
   if (!rollout || ["retired","installed","verified"].includes(rollout.state)) return { queued: false,reason:"rollout_inactive" };
@@ -132,6 +150,13 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
   if (stale) {
     await client.query(`UPDATE certops_distribution_rollouts SET state='retired' WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId]);
     return { queued:false,reason:"rollout_superseded" };
+  }
+  try {
+    await require("./manualRolloutAuthority").assertManualRolloutAuthority(client,workspaceId,groupId,rollout.approval_job_id);
+  } catch (error) {
+    if (error.code !== "CERTOPS_DISTRIBUTION_AUTHORIZATION_STALE") throw error;
+    await client.query("UPDATE certops_distribution_rollouts SET state='paused' WHERE workspace_id=$1 AND id=$2",[workspaceId,rolloutId]);
+    return { queued:false,reason:"rollout_authorization_stale" };
   }
   if (rollout.state === "paused") return {queued:false,reason:"rollout_inactive"};
   const rows = (await client.query(`SELECT d.*,j.status AS job_status,b.state AS binding_state,b.authorization_revision AS current_revision
@@ -164,7 +189,9 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
       idempotencyKey:`distribution:${rolloutId}:${d.binding_id}`,payload:{ keyMode:"vault-managed",
         target:{ type:"endpoint",reference:d.binding_id },materialDeployment:{ bindingId:d.binding_id,
           rolloutId,groupId,materialVersionId:rollout.material_version_id,materialStoreRef:group.material_store_ref,
-          providerVersion:rollout.provider_version,fingerprintSha256:rollout.fingerprint_sha256,generation:Number(rollout.generation),
+          providerVersion:rollout.provider_version_ref ?? rollout.provider_version,
+          ...(group.material_store_provider && group.material_store_provider !== "vault-kv2" ? {provider:group.material_store_provider} : {}),
+          fingerprintSha256:rollout.fingerprint_sha256,generation:Number(rollout.generation),
           deploymentProfileRef:d.deployment_profile_ref,profileRevision:d.profile_revision,
           authorizationRevision:d.authorization_revision,verificationPolicy:d.verification_policy,
           ...(rollout.verification_only?{verificationOnly:true}:{}) } } });
@@ -202,7 +229,7 @@ async function processDistributionIntent({client,row,payload}) {
         // A fresh request/approval is required; never rewrite the frozen intent
         // or retry it against changed membership, validity or generation.
         if (job.status !== "pending" || !["CERTOPS_ROLLOUT_APPROVAL_MISMATCH","CERTOPS_ROLLOUT_VERSION_INVALID",
-          "CERTOPS_ROLLOUT_POLICY_INVALID","CERTOPS_DISTRIBUTION_INACTIVE"].includes(error.code)) throw error;
+          "CERTOPS_ROLLOUT_POLICY_INVALID","CERTOPS_DISTRIBUTION_INACTIVE","CERTOPS_DISTRIBUTION_AUTHORIZATION_STALE"].includes(error.code)) throw error;
         await client.query(`UPDATE certificate_jobs SET status='failed',error_code='CERTOPS_ROLLOUT_APPROVAL_STALE',
           error_message='Rollout authorization changed; request a new rollout approval',completed_at=clock_timestamp(),updated_at=clock_timestamp(),
           approved_by_user_id=NULL,approved_at=NULL,approved_payload_hash=NULL,approved_canonical_intent_hash=NULL
@@ -228,8 +255,33 @@ async function retryDistributionJob({ workspaceId,jobId,actorUserId }) {
     const job=(await client.query(`SELECT * FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[workspaceId,jobId])).rows[0];
     if(!job || !(job.payload?.publication || job.payload?.materialDeployment))fail("CERTOPS_MATERIAL_JOB_NOT_FOUND",404);
     const intent=job.payload.publication||job.payload.materialDeployment;
-    await material.lockGroup(client,workspaceId,intent.groupId);
+    const group = await material.lockGroup(client,workspaceId,intent.groupId);
     if(!["failed","blocked","orphaned_unknown_effect"].includes(job.status) || job.attempt_count>=3)fail("CERTOPS_MATERIAL_RETRY_UNAVAILABLE");
+    if (job.payload.materialDeployment) {
+      const current = (await client.query(`SELECT d.authorization_revision,b.authorization_revision AS current_revision,
+        d.assigned_agent_id,b.assigned_agent_id AS current_agent,b.state AS binding_state,r.generation,r.material_version_id,
+        r.id AS rollout_id,r.state AS rollout_state,r.verification_only,r.approval_job_id,s.desired_generation,s.desired_material_version_id
+        FROM certops_consumer_deployments d JOIN certops_consumer_bindings b ON b.workspace_id=d.workspace_id AND b.id=d.binding_id
+        JOIN certops_distribution_rollouts r ON r.workspace_id=d.workspace_id AND r.id=d.rollout_id
+        JOIN certops_consumer_current_state s ON s.workspace_id=d.workspace_id AND s.binding_id=d.binding_id
+        WHERE d.workspace_id=$1 AND d.job_id=$2 FOR SHARE OF d,b,r,s`, [workspaceId,jobId])).rows[0];
+      const degraded = current?.rollout_state === "degraded" && current.verification_only === false;
+      if (!current || current.binding_state !== "active" || current.current_revision !== current.authorization_revision ||
+        current.assigned_agent_id !== current.current_agent || current.assigned_agent_id !== job.assigned_agent_id ||
+        (!["pending","deploying","paused"].includes(current.rollout_state) && !degraded) ||
+        Number(current.generation) !== Number(group.generation) || Number(current.generation) !== Number(current.desired_generation) ||
+        current.material_version_id !== intent.materialVersionId || current.desired_material_version_id !== intent.materialVersionId)
+        fail("CERTOPS_MATERIAL_RETRY_AUTHORIZATION_STALE");
+      await material.assertDeployableVersion(client,workspaceId,intent.groupId,intent.materialVersionId);
+      await require("./manualRolloutAuthority").assertManualRolloutAuthority(client,workspaceId,group.id,current.approval_job_id);
+      if (degraded) await client.query(`UPDATE certops_distribution_rollouts SET state='paused'
+        WHERE workspace_id=$1 AND id=$2 AND state='degraded' AND verification_only=false`, [workspaceId,current.rollout_id]);
+    } else {
+      await material.resolveDistributionJobDefaults({ client, workspaceId, operation:job.operation,
+        subjectId:job.subject_id, payload:job.payload, assignedAgentId:job.assigned_agent_id, jobId:job.id });
+    }
+    if (job.approved_payload_hash && require("./jobApprovals").computeJobPayloadApprovalHash(job.payload) !== job.approved_payload_hash)
+      fail("CERTOPS_MATERIAL_RETRY_AUTHORIZATION_STALE");
     // The payload/version/approval/consumer membership remain unchanged.
     // An uncertain local deployment still needs read-only reconciliation.
     const workspace=(await client.query(`SELECT certops_require_approval_always FROM workspaces WHERE id=$1 FOR SHARE`,[workspaceId])).rows[0];
@@ -238,7 +290,7 @@ async function retryDistributionJob({ workspaceId,jobId,actorUserId }) {
       lease_renewed_at=NULL,completed_at=NULL,started_at=NULL,next_attempt_at=NULL,error_code=NULL,error_message=NULL,updated_at=clock_timestamp()
       WHERE workspace_id=$1 AND id=$2`,[workspaceId,jobId,status]);
     if(job.payload.materialDeployment)await client.query(`UPDATE certops_consumer_deployments SET stage='pending',failure_code=NULL
-      WHERE workspace_id=$1 AND job_id=$2`,[workspaceId,jobId]);
+      WHERE workspace_id=$1 AND job_id=$2 AND stage<>'orphaned_unknown_effect'`,[workspaceId,jobId]);
     await require("../audit").writeAudit({client,workspaceId,actorUserId,action:"CERTOPS_MATERIAL_JOB_RETRY_REQUESTED",targetType:"certificate_job",targetId:jobId,metadata:{materialVersionId:intent.materialVersionId,status}});
     return {jobId,status,materialVersionId:intent.materialVersionId};
   });

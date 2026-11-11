@@ -14,6 +14,74 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Import filters across providers.** AWS, Azure Key Vault, Entra ID and GCP expose include/exclude rules for name, description and location, with exact or regex matching. Excluding inventory does not silence its alerts; contact groups, preferences and alert controls remain separate.
 - **Separate Entra managed identities.** Scan all identities (default), exclude managed identities, or scan only managed identities, covering both assigned types. Managed credentials use `azure-ad:managedIdentities/...` locations without changing source identity; saved location rules also match the old path. **Operator guidance:** for Enterprise schedules, create and run a managed-only configuration before changing the remaining one to exclude. Keep cleanup off for both first runs and inspect associations before enabling it. Multiple configurations require System settings activation. See the [import and sync guide](docs/AUTO_SYNC.md#safely-split-a-saved-entra-connection).
 
+## [0.19.2-rc.1] - 2026-11-11
+
+### Added
+
+- **Verified workspace-member recipients.** Contacts matching a current member's exact verified email can receive workspace notifications without another confirmation. Membership removal or lost mailbox proof ends this eligibility; explicit refusals still apply. Self-hosted verification remains off by default; use `shadow` to observe eligibility before enabling `enforce`.
+
+### Changed
+
+- **MCP contact creation.** When recipient verification is enforced, the response reports confirmation status for each email or WhatsApp destination. Creating a contact does not send an invitation.
+
+- **Short-lived certificate renewal.** The default renewal window adapts to certificate lifetime; profile and deployment overrides take priority. AD CS profiles can inherit the default. **Operator guidance:** clients consuming `renewBeforeDays` must accept fractional values; schedule sweeps and jobs to fit the remaining lifetime.
+
+- **Microsoft Teams alerts.** Alerts, weekly digests, and webhook tests use Adaptive Cards. **Operator action:** use a Teams Workflows webhook and confirm the card appears; retain any required proxy settings.
+
+- **Dashboard usability.** Review recipient confirmations in a dedicated dialog, with clearer setup guidance and recovery states throughout the dashboard.
+
+### Fixed
+
+- **Certificate management history.** Deleting a former certificate manager now clears their attribution from closed management periods while retaining the history.
+
+- **Webhook proxy delivery.** HTTP and HTTPS webhook requests use the configured proxy correctly when `NODE_USE_ENV_PROXY=1`, without being sent through the proxy twice.
+
+- **API logging.** Successful health and metrics probes no longer generate completion logs; failed probes remain logged with their matching `X-Request-Id`. Background logs no longer inherit an unrelated request ID after its response ends.
+
+## [0.19.1] - 2026-11-06
+
+### Fixed
+
+- **Helm example ingress routes.** Recipient verification and Twilio inbound requests now reach the API when using the external database or full test example. **Operator action:** reapply the updated example values if you use either ingress configuration.
+
+### Security
+
+- **Subfinder dependencies.** Update Brotli and zstd to address denial-of-service vulnerabilities ([GO-2026-6888](https://osv.dev/vulnerability/GO-2026-6888), [GO-2026-6865](https://osv.dev/vulnerability/GO-2026-6865)). **Operator action:** upgrade API images that include subfinder.
+
+## [0.19.0] - 2026-11-06
+
+### Added
+
+- **MCP assistant access.** Connect by URL and browser sign-in without Node; the local adapter is optional. Inspect inventory and certificate state, or grant reviewed inventory updates, contact and webhook setup, viewer invitations, and ACME issuance and renewal requests. Certificate jobs follow workspace **Job approval**. Connections default to 30 days, with longer or explicitly acknowledged non-expiring access available. **Operator guidance:** MCP deployment flags default off; configure HTTPS access and grant only the permissions needed. Remote clients must support dynamic registration. See the visual [setup guide](https://tokentimer.ch/docs/api/mcp-setup).
+
+- **Global auto-sync overrides.** System Settings can force metric exposure/labels and the monitoring group independently across all integrations. Managed controls prevent local changes; a Configured badge identifies active overrides. Otherwise, connections keep their saved choices. Import forms use consistent typography and structured run history. Environment values retain priority; extra asset labels default off and increase series/alert cardinality. Names/scopes cover future creations; existing provider counters stay unchanged. **Operator action:** apply migrations 81–82 with matching API/dashboard code.
+
+- **API request correlation.** Responses include a generated `X-Request-Id` that matches `correlationId` in request-scoped API logs and completion records. Use it when reporting API failures; incoming request IDs are replaced to prevent forged or sensitive values from entering logs. Dashboard API errors display the matching request reference when available. Worker propagation remains follow-up work.
+
+- **Recipient confirmation before workspace email and WhatsApp alerts.** Cloud requires consent; self-hosted delivery keeps verification off until enabled. **Operator action:** run the standard migrations before matching API/worker images; canonical main uses 84 for recipient verification and 85 for digest claims. Supported preview histories retain applied versions and timestamps. Set `RECIPIENT_FINGERPRINT_SECRET` and `PUBLIC_BASE_URL` or `API_URL` before invitations, then switch self-hosted to `enforce` after recipients confirm. Existing contacts remain unverified. Retries follow current contact routing and retain successful deliveries. Bulk requeue retries repaired webhook endpoints. Uncertain provider outcomes can delay retries, and SMTP cannot guarantee exactly-once delivery. See [recipient verification](docs/recipient-verification.md) for setup, limits and recovery.
+
+- **PagerDuty incident actions.** Managers can acknowledge or resolve incidents from the token details. Resolve asks for a reason. TokenTimer also resolves the expiry incident after confirmed managed-certificate revocation or decommissioning. A pending or failed action leaves the incident open. See [PagerDuty setup](docs/PAGERDUTY.md).
+
+### Fixed
+
+- **Approved jobs remain discoverable while queued.** The Jobs filter **Approved (queued)** includes human-approved jobs waiting for an agent, with matching pagination totals.
+- **Setup invitations respect workspace access.** Viewer and unresolved-role sessions keep management controls hidden. Setup copy describes the asset/site alert inventory rather than declaring the whole workspace empty.
+
+- **Rollout authorization follows current workspace authority.** **Operator action:** apply migration 98 with matching API and worker images. Request a new rollout and, if required, fresh approval to continue pre-upgrade work; changes to manager membership, workspace ownership, pause state or approval policy also require a new request. Existing deployment evidence is retained.
+
+- **Vault material setup** can recover after a failed publication and explains when the selected consumer needs an active assignment before installed material can be verified.
+
+- Windows discovery reports non-SNI IIS sites with host headers that share an HTTP.sys certificate binding and distinguishes SNI sites when IIS binding metadata is available. **Operator action:** update affected Windows agents and install IIS Management Scripts and Tools.
+
+- **AD CS on localized Windows agents.** Issuer preflight now returns the CA certificates needed for key confirmation on German and French hosts. **Operator action:** update affected Windows agents.
+
+- **Alert dates and times stay correct on non-UTC API hosts.** The alert queue and asset delivery state preserve calendar due dates and the actual update, retry and delivery-attempt timestamps.
+- **AD CS profile reattachment works after stopping management.** Creating a profile can attach it to the same certificate and start a new management period while keeping its history. The certificate must still be in inventory.
+
+### Security
+
+- Browser request and response diagnostics redact deeply nested metadata instead of returning unfiltered values at the nesting limit. **Operator guidance:** update the dashboard on development, staging and localhost installations where browser diagnostics are enabled.
+
 ## [0.18.2] - 2026-10-27
 
 ### Added
@@ -223,7 +291,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- `docs/certops/CONTEXT.md` documents the previously-undocumented `GET /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/installations` endpoint.
+- `.github/maintainers/certops/CONTEXT.md` documents the previously-undocumented `GET /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/installations` endpoint.
 - `docs/certops/agent.md` documents `PrivateTmp=true` in the shipped systemd unit: without it, `ProtectSystem=strict` leaves `/tmp` read-only, and `update-ca-certificates`/`update-ca-trust extract` both fail at `mktemp` before ever touching the anchors directory - easy to mistake for the anchors-directory grant itself being missing.
 
 ## [0.14.1] - 2026-09-01

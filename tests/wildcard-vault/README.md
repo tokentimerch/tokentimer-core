@@ -2,7 +2,7 @@
 
 For PR #358's strict enrolled-agent/browser qualification, dedicated CI,
 disposable PostgreSQL/Vault controllers and coverage gaps, see
-[distribution qualification](../../docs/certops/qualification/distribution/README.md).
+[distribution qualification](../../.github/maintainers/certops/qualification/distribution/README.md).
 The original fixtures below remain supporting evidence at their declared scope.
 
 Run from the separate implementation checkout. Never point these commands at

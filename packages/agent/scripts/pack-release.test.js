@@ -57,12 +57,15 @@ describe("pack-release (H10)", () => {
     const result = main([`--out-dir=${outDir}`]);
     assert.doesNotThrow(() => assertNoPrivateKeyMaterial(result.tarballPath));
 
-    const list = spawnSync("tar", ["-tzf", result.tarballPath], {
-      encoding: "utf8",
+    const list = spawnSync("tar", ["-tzf", path.basename(result.tarballPath)], {
+      cwd: path.dirname(result.tarballPath), encoding: "utf8",
     });
     assert.equal(list.status, 0);
     assert.doesNotMatch(list.stdout, /\.key\.pem$/m);
     assert.doesNotMatch(list.stdout, /fixtures\//);
+    assert.match(list.stdout,/package\/src\/windows-material\/connector\.ps1/);
+    assert.match(list.stdout,/package\/src\/windows-material\/MaterialImport\.cs/);
+    assert.match(list.stdout,/package\/src\/material-store\/azure\.js/);
   });
 
   it("ships Windows service host binaries under package/bin, not --out-dir", () => {
@@ -86,8 +89,8 @@ describe("pack-release (H10)", () => {
     } finally {
       if (ownedStale) fs.unlinkSync(stale);
     }
-    const list = spawnSync("tar", ["-tzf", result.tarballPath], {
-      encoding: "utf8",
+    const list = spawnSync("tar", ["-tzf", path.basename(result.tarballPath)], {
+      cwd: path.dirname(result.tarballPath), encoding: "utf8",
     });
     assert.equal(list.status, 0);
     assert.match(list.stdout, /package\/bin\/tokentimer-agent-host-amd64\.exe/);
@@ -114,7 +117,7 @@ describe("pack-release (H10)", () => {
     const extracted = path.join(outDir, "extracted");
     fs.mkdirSync(extracted);
     assert.equal(
-      spawnSync("tar", ["-xzf", result.tarballPath, "-C", extracted]).status,
+      spawnSync("tar", ["-xzf", `../${path.basename(result.tarballPath)}`], { cwd: extracted }).status,
       0,
     );
     const { assertPeArchitecture } = require("./build-windows-chain-helper");
@@ -177,8 +180,9 @@ describe("pack-release (H10)", () => {
       const badTarball = path.join(scratchDir, "bad.tgz");
       const tarResult = spawnSync(
         "tar",
-        ["-czf", badTarball, "-C", payloadDir, "."],
+        ["-czf", "bad.tgz", "-C", "payload", "."],
         {
+          cwd: scratchDir,
           encoding: "utf8",
         },
       );
@@ -186,7 +190,7 @@ describe("pack-release (H10)", () => {
 
       assert.throws(
         () => assertNoPrivateKeyMaterial(badTarball),
-        /private-key material/,
+        /refusing to ship a tarball containing private-key material/,
       );
     } finally {
       fs.rmSync(scratchDir, { recursive: true, force: true });
@@ -200,7 +204,7 @@ describe("pack-release (H10)", () => {
       { cwd: path.resolve(__dirname, ".."), encoding: "utf8" },
     );
     if (ls.status !== 0 || !ls.stdout.trim()) {
-      // skip-reason: no-host - requires a git checkout with tracked installer modes
+      // skip-reason: prerequisite - requires a git checkout with tracked installer modes
       t.skip("not a git checkout");
       return;
     }
@@ -209,7 +213,7 @@ describe("pack-release (H10)", () => {
 
   it("assertExecutableEntries rejects a tarball whose installer lost the exec bit", (t) => {
     if (process.platform === "win32") {
-      // skip-reason: no-host - tar modes are not controllable on win32
+      // skip-reason: platform - tar modes are not controllable on win32
       t.skip("tar modes are not controllable on win32");
       return;
     }

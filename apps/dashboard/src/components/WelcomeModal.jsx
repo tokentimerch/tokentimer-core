@@ -1,10 +1,12 @@
 import { useRef } from 'react';
+import { SELF_HOSTED_DOCS_BASE } from '../utils/docsUrls';
 import {
   Modal,
   ModalOverlay,
   ModalHeader,
   ModalBody,
   ModalFooter,
+  ModalCloseButton,
   Button,
   VStack,
   Text,
@@ -12,6 +14,10 @@ import {
   Box,
   Icon,
   HStack,
+  Stack,
+  List,
+  ListItem,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import {
   DashboardModalFrame,
@@ -19,9 +25,18 @@ import {
   DashboardModalTitle,
   useDashboardModalProps,
 } from './DashboardModalFrame.jsx';
-import { FaRocket, FaCheckCircle } from 'react-icons/fa';
-import { FiPlay } from 'react-icons/fi';
-import { SELF_HOSTED_DOCS_BASE } from '../utils/docsUrls';
+import {
+  FiPlay,
+  FiShield,
+  FiDownload,
+  FiBell,
+  FiServer,
+  FiArrowRight,
+  FiBookOpen,
+  FiClock,
+  FiCheck,
+  FiCheckCircle,
+} from 'react-icons/fi';
 
 function WelcomeModal({
   isOpen,
@@ -38,13 +53,46 @@ function WelcomeModal({
     headerProps,
     bodyProps,
     footerProps,
+    closeButtonProps,
     fieldProps,
-    outlineButtonProps,
     primaryButtonProps,
-    tokens: modalTokens,
+    tokens,
   } = useDashboardModalProps();
+  const accentBg = useColorModeValue('blue.50', 'rgba(59, 130, 246, 0.1)');
+  const accent = tokens.sectionAccent;
   const showSetupAction = Boolean(onStartSetup);
-  const showIntroVideoAction = Boolean(introductionVideoUrl);
+  const name = data?.userName || displayName;
+  const steps = showSetupAction
+    ? [
+        {
+          icon: FiShield,
+          title: 'Monitor what matters',
+          description: 'Website certificates, keys, secrets and licenses.',
+        },
+        {
+          icon: FiDownload,
+          title: 'Bring your assets together',
+          description:
+            'Import from a file, GitHub, GitLab, Vault, AWS and more.',
+        },
+        {
+          icon: FiBell,
+          title: 'Stay ahead of expiry',
+          description: 'Choose who gets alerted by email or webhook.',
+        },
+      ]
+    : [
+        {
+          icon: FiShield,
+          title: 'Add your first token or secret',
+          description: 'Keep its expiration in sight.',
+        },
+        {
+          icon: FiBell,
+          title: 'Set up your alerts',
+          description: 'Choose contact groups and alert thresholds.',
+        },
+      ];
 
   return (
     <Modal
@@ -58,180 +106,239 @@ function WelcomeModal({
       initialFocusRef={primaryActionRef}
     >
       <ModalOverlay {...overlayProps} />
-      <DashboardModalFrame maxW='560px'>
+      <DashboardModalFrame maxW='560px' fontFamily='body' fontWeight='normal'>
+        <ModalCloseButton {...closeButtonProps} />
         <ModalHeader
           {...headerProps}
-          pr={headerProps.px}
+          pr={{ base: 5, md: 6 }}
           textAlign='center'
-          display='flex'
-          justifyContent='center'
+          bgGradient={`linear(to-b, ${accentBg}, transparent)`}
         >
-          <VStack spacing={3} align='center' w='full' maxW='420px' mx='auto'>
-            <Icon as={FaRocket} w={8} h={8} color={modalTokens.focusBorder} />
-            <DashboardModalTitle color={modalTokens.text} textAlign='center'>
-              Welcome on board!
-            </DashboardModalTitle>
-            <DashboardModalDescription
-              color={modalTokens.muted}
-              textAlign='center'
-              maxW='420px'
+          <VStack spacing={3} px={5}>
+            <Box
+              display='flex'
+              alignItems='center'
+              justifyContent='center'
+              boxSize='48px'
+              borderRadius='xl'
+              bg={accentBg}
+              color={accent}
             >
-              Your TokenTimer account is ready.
-            </DashboardModalDescription>
+              <Icon as={FiShield} boxSize={6} />
+            </Box>
+            <Box>
+              <HStack justify='center' spacing={1.5} mb={2} color={accent}>
+                <Icon as={FiCheckCircle} boxSize={3.5} />
+                <Text fontSize='xs' fontFamily='body' fontWeight='medium'>
+                  {emailSent
+                    ? 'Your account is ready'
+                    : 'Your email is verified'}
+                </Text>
+              </HStack>
+              <DashboardModalTitle
+                fontSize={{ base: 'xl', md: '2xl' }}
+                letterSpacing='-0.02em'
+              >
+                {name ? `Welcome, ${name}!` : 'Welcome to TokenTimer'}
+              </DashboardModalTitle>
+              <DashboardModalDescription
+                fontFamily='body'
+                fontWeight='normal'
+                fontSize='sm'
+                maxW='360px'
+                mx='auto'
+              >
+                Keep your certificates and secrets one step ahead of expiry.
+              </DashboardModalDescription>
+            </Box>
           </VStack>
         </ModalHeader>
-
         <ModalBody {...bodyProps}>
-          <VStack spacing={4} textAlign='center'>
-            <Box>
-              <Text
-                fontSize={{ base: 'md', md: 'lg' }}
-                fontWeight='semibold'
-                color={modalTokens.text}
-                mb={2}
+          <VStack spacing={4} align='stretch'>
+            <Box {...fieldProps} p={{ base: 4, md: 5 }}>
+              <HStack
+                justify='space-between'
+                align='start'
+                spacing={2}
+                mb={4}
+                flexWrap='wrap'
               >
-                Hi {data?.userName || displayName || 'there'}!
-              </Text>
-              <Text color={modalTokens.subtleText} fontSize='sm'>
-                Your TokenTimer account has been created successfully.
-              </Text>
-            </Box>
-
-            <Box {...fieldProps} p={4} w='full'>
-              <VStack spacing={3}>
-                <Icon
-                  as={FaCheckCircle}
-                  w={6}
-                  h={6}
-                  color={modalTokens.focusBorder}
-                />
                 <Text
-                  fontSize='sm'
-                  color={modalTokens.text}
+                  fontFamily='heading'
                   fontWeight='semibold'
+                  fontSize='md'
+                  color={tokens.text}
                 >
-                  {emailSent ? 'Account Ready!' : 'Email Verified!'}
+                  {showSetupAction
+                    ? 'Start with the essentials'
+                    : 'Your first steps'}
                 </Text>
-                <Text fontSize='sm' color={modalTokens.subtleText}>
-                  {emailSent
-                    ? 'Your account has been created and is ready to use.'
-                    : 'Your email has been verified and your account is now active.'}
-                </Text>
-                <Text fontSize='xs' color={modalTokens.muted}>
-                  You can start managing your tokens right away.
-                </Text>
-              </VStack>
-            </Box>
-
-            <Box {...fieldProps} p={4} w='full'>
-              <Text fontSize='sm' color={modalTokens.text}>
-                <strong>
-                  {showSetupAction ? 'Set up your environment' : "What's next?"}
-                </strong>
-              </Text>
-              <VStack spacing={2} mt={2} align='start'>
-                {showSetupAction ? (
-                  <>
-                    <Text fontSize='xs' color={modalTokens.muted}>
-                      A guided setup that leaves you with something working.
-                      Websites, assets and alerts take about 2 minutes:
-                    </Text>
-                    <Text fontSize='xs' color={modalTokens.muted}>
-                      Monitor a website certificate or track a key, secret or
-                      license
-                    </Text>
-                    <Text fontSize='xs' color={modalTokens.muted}>
-                      Import from a file, GitHub, GitLab, Vault, AWS and more
-                    </Text>
-                    <Text fontSize='xs' color={modalTokens.muted}>
-                      Choose who gets alerted, by email or webhook
-                    </Text>
-                    <Text fontSize='xs' color={modalTokens.muted}>
-                      Discover and renew certificates on your servers (needs a
-                      server, about 20 minutes)
-                    </Text>
-                    <Text fontSize='xs' color={modalTokens.muted}>
-                      Progress is saved. Reopen the guide any time from
-                      Preferences.
-                    </Text>
-                  </>
-                ) : (
-                  <>
-                    <Text fontSize='xs' color={modalTokens.muted}>
-                      Add your first token or secret
-                    </Text>
-                    <Text fontSize='xs' color={modalTokens.muted}>
-                      Set up your contact groups and thresholds
-                    </Text>
-                  </>
-                )}
-                {showIntroVideoAction && (
-                  <Text fontSize='xs' color={modalTokens.muted}>
-                    <Link
-                      href={introductionVideoUrl}
-                      isExternal
-                      onClick={onClose}
-                      color={modalTokens.focusBorder}
-                      textDecoration='underline'
-                      _hover={{ textDecoration: 'underline' }}
-                    >
-                      Watch the introduction video
-                    </Link>
-                  </Text>
-                )}
-                <Text fontSize='xs' color={modalTokens.muted}>
-                  <Link
-                    href={SELF_HOSTED_DOCS_BASE}
-                    isExternal
-                    color={modalTokens.focusBorder}
-                    textDecoration='underline'
+                {showSetupAction && (
+                  <HStack
+                    spacing={1}
+                    color={tokens.muted}
+                    flexShrink={0}
+                    pt={0.5}
                   >
-                    Check the documentation to see how it works
-                  </Link>
-                </Text>
-                <Text fontSize='xs' color={modalTokens.muted}>
-                  Add your first token or secret
-                </Text>
-                <Text fontSize='xs' color={modalTokens.muted}>
-                  Set up your contact groups and thresholds
-                </Text>
-              </VStack>
+                    <Icon as={FiClock} boxSize={3} />
+                    <Text fontSize='xs'>About 2 min</Text>
+                  </HStack>
+                )}
+              </HStack>
+              <List spacing={4}>
+                {steps.map(({ icon, title, description }) => (
+                  <ListItem key={title}>
+                    <HStack spacing={3} align='start'>
+                      <Box
+                        display='flex'
+                        alignItems='center'
+                        justifyContent='center'
+                        boxSize={8}
+                        borderRadius='lg'
+                        bg={accentBg}
+                        color={accent}
+                        flexShrink={0}
+                      >
+                        <Icon as={icon} boxSize={4} />
+                      </Box>
+                      <Box minW={0}>
+                        <Text
+                          fontSize='sm'
+                          fontWeight='semibold'
+                          color={tokens.text}
+                        >
+                          {title}
+                        </Text>
+                        <Text
+                          mt={0.5}
+                          fontSize='sm'
+                          fontWeight='normal'
+                          lineHeight='1.5'
+                          color={tokens.subtleText}
+                        >
+                          {description}
+                        </Text>
+                      </Box>
+                    </HStack>
+                  </ListItem>
+                ))}
+              </List>
             </Box>
+            {showSetupAction && (
+              <>
+                <HStack spacing={3} align='start' px={1}>
+                  <Icon
+                    as={FiServer}
+                    boxSize={4}
+                    mt={1}
+                    color={tokens.muted}
+                    flexShrink={0}
+                  />
+                  <Box minW={0}>
+                    <HStack spacing={2} flexWrap='wrap'>
+                      <Text
+                        fontSize='sm'
+                        fontWeight='semibold'
+                        color={tokens.text}
+                      >
+                        Server certificates
+                      </Text>
+                      <Text fontSize='xs' color={tokens.muted}>
+                        Optional · About 20 min
+                      </Text>
+                    </HStack>
+                    <Text
+                      mt={1}
+                      fontSize='xs'
+                      lineHeight='tall'
+                      color={tokens.subtleText}
+                    >
+                      Discover and renew certificates on your servers. Requires
+                      a server.
+                    </Text>
+                  </Box>
+                </HStack>
+                <HStack spacing={2} align='start' px={1} color={tokens.muted}>
+                  <Icon as={FiCheck} boxSize={3.5} mt={0.5} flexShrink={0} />
+                  <Text fontSize='xs' lineHeight='tall'>
+                    Progress saved. Pick up where you left off in Preferences.
+                  </Text>
+                </HStack>
+              </>
+            )}
           </VStack>
         </ModalBody>
-
-        <ModalFooter {...footerProps} justifyContent='center'>
-          <HStack spacing={3} flexWrap='wrap' justify='center' w='full'>
-            {showIntroVideoAction && (
-              <Button
-                as='a'
-                href={introductionVideoUrl}
-                target='_blank'
-                rel='noopener noreferrer'
-                leftIcon={<Icon as={FiPlay} />}
-                onClick={onClose}
-                {...outlineButtonProps}
-              >
-                Watch Video
-              </Button>
-            )}
-            <Button
-              ref={primaryActionRef}
-              onClick={showSetupAction ? onStartSetup : onClose}
-              {...primaryButtonProps}
+        <ModalFooter
+          {...footerProps}
+          display='block'
+          sx={{ ...footerProps.sx, '& > *': { width: '100%' } }}
+        >
+          <VStack spacing={4} w='full'>
+            <Stack
+              direction={{ base: 'column', sm: 'row' }}
+              spacing={2}
+              w='full'
             >
-              {showSetupAction
-                ? 'Set up my environment'
-                : emailSent
-                  ? 'Go to Dashboard'
-                  : 'Get Started'}
-            </Button>
-            {showSetupAction && (
-              <Button onClick={onClose} {...outlineButtonProps}>
-                {emailSent ? 'Go to Dashboard' : 'Skip for now'}
+              <Button
+                ref={primaryActionRef}
+                onClick={showSetupAction ? onStartSetup : onClose}
+                {...primaryButtonProps}
+                flex={1}
+                minH='44px'
+                rightIcon={
+                  showSetupAction ? <Icon as={FiArrowRight} /> : undefined
+                }
+              >
+                {showSetupAction
+                  ? 'Start guided setup'
+                  : emailSent
+                    ? 'Go to Dashboard'
+                    : 'Get Started'}
               </Button>
-            )}
-          </HStack>
+              {showSetupAction && (
+                <Button
+                  onClick={onClose}
+                  variant='ghost'
+                  color={tokens.subtleText}
+                  minH='44px'
+                >
+                  Skip for now
+                </Button>
+              )}
+            </Stack>
+            <HStack
+              spacing={5}
+              justify='center'
+              flexWrap='wrap'
+              rowGap={2}
+              fontSize='xs'
+              color={tokens.subtleText}
+            >
+              <Link
+                href={SELF_HOSTED_DOCS_BASE}
+                isExternal
+                display='inline-flex'
+                alignItems='center'
+                gap={1.5}
+                _hover={{ color: accent, textDecoration: 'underline' }}
+              >
+                <Icon as={FiBookOpen} /> Setup documentation
+              </Link>
+              {introductionVideoUrl && (
+                <Link
+                  href={introductionVideoUrl}
+                  isExternal
+                  onClick={onClose}
+                  display='inline-flex'
+                  alignItems='center'
+                  gap={1.5}
+                  _hover={{ color: accent, textDecoration: 'underline' }}
+                >
+                  <Icon as={FiPlay} /> Watch introduction
+                </Link>
+              )}
+            </HStack>
+          </VStack>
         </ModalFooter>
       </DashboardModalFrame>
     </Modal>
