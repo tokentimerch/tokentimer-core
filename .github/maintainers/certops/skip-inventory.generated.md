@@ -8,14 +8,18 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `prerequisite`: needs the fixture or privilege supplied by its owning CI job
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 160
+Total skips found: 177
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
 | `packages/agent/scripts/host/windows-contained-process.test.js` | 13 | closed gate publication prevents Windows reader sharing failures and refuses clobber | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/host/windows-contained-process.test.js` | 77 | real owned JobObject preserves suspended identity and drains an actual descendant | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/host/windows-host.test.js` | 91 | Windows real-host discovery and service-host qualification | dynamic (this.skip() / t.skip()) | `platform` |
-| `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 14 | actual installer filesystem branches preserve literal brackets and wildcard siblings | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 15 | prepare-only preserves restored state across simulated SCM interruption | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 41 | installer isolates Node environment without changing the caller | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 63 | privileged installer paths verify source and stage before executing package code | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 175 | actual installer filesystem branches preserve literal brackets and wildcard siblings | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 253 | installer rejects writable and unverified predecessor applications | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/install-agent-sh.test.js` | 36 | install-agent.sh polkit grants on re-run | describe(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/installer-revocation-default.test.js` | 30 | Linux installer writes the requested default only to a new config | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/installer-revocation-default.test.js` | 57 | Windows installer writes the requested default only to a new config | test(..., { skip }) option-object | `platform` |
@@ -54,7 +58,7 @@ Total skips found: 160
 | `packages/agent/src/discovery/windows.test.js` | 479 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 532 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 620 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/index.test.js` | 4248 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/index.test.js` | 4310 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/issuers/adcs-enrollment-reconcile.test.js` | 420 | skips E_ACCESSDENIED and denied probes so a later unique match can attach | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/issuers/adcs-enrollment.test.js` | 170 | pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `platform` |
@@ -153,6 +157,19 @@ Total skips found: 160
 | `tests/e2e/certops-trust-api-e2e.test.js` | 20 | trust approval and workspace pause through real API | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-trust-multiple-e2e.test.js` | 13 | independent public trust anchors remain scoped through concurrent approval and retirement | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-unmanaged-discovery-e2e.test.js` | 30 | quota-blocked real filesystem discovery preserves unmanaged visibility | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/helpers/certops-acme-ca-watch.test.js` | 31 | real Windows process exit aborts the dedicated watcher without claiming coverage | test(..., { skip }) option-object | `platform` |
+| `tests/e2e/helpers/certops-acme-ca-watch.test.js` | 46 | real watcher interruption aborts the run while its target stays alive | test(..., { skip }) option-object | `platform` |
+| `tests/e2e/helpers/certops-acme-store-native-qualification.test.js` | 143 | incomplete capture or CA baseline prevents key generation and orders | test(..., { skip }) option-object | `platform` |
+| `tests/e2e/helpers/certops-acme-store-native-qualification.test.js` | 173 | failed capture drainage is reported alongside the original refusal | test(..., { skip }) option-object | `platform` |
+| `tests/e2e/helpers/certops-acme-store-native-qualification.test.js` | 202 | the CA baseline is taken before either native issue attempt | test(..., { skip }) option-object | `platform` |
+| `tests/e2e/helpers/certops-acme-store-native-qualification.test.js` | 256 | partially initialized capture is drained before refusing to issue | test(..., { skip }) option-object | `platform` |
+| `tests/e2e/helpers/certops-acme-store-native-qualification.test.js` | 284 | invalid fault checkpoints do not restart the agent | test(..., { skip }) option-object | `platform` |
+| `tests/e2e/helpers/certops-acme-store-native-qualification.test.js` | 323 | preparation cannot create native operations or replace either observation | test(..., { skip }) option-object | `platform` |
+| `tests/e2e/helpers/certops-acme-store-native-qualification.test.js` | 359 | a CA start failure drains both observers and preserves all cleanup errors | test(..., { skip }) option-object | `platform` |
+| `tests/e2e/helpers/certops-acme-store-native-qualification.test.js` | 409 | evidence readback or flush failure blocks issue or recovery without saving secrets | test(..., { skip }) option-object | `platform` |
+| `tests/e2e/helpers/certops-acme-store-native-qualification.test.js` | 467 | a native capture start failure is drained and recorded | test(..., { skip }) option-object | `platform` |
+| `tests/e2e/helpers/certops-acme-store-native-qualification.test.js` | 502 | drainage refuses late activity and reused evidence receipts | test(..., { skip }) option-object | `platform` |
+| `tests/e2e/helpers/certops-acme-store-native-qualification.test.js` | 614 | undrained in-flight action retains observers and requires intervention | test(..., { skip }) option-object | `platform` |
 | `tests/e2e/material-providers-real.test.js` | 80 | real KV v2: AppRole, ACLs, rotation, exact versions, CAS and uncertain writes | test(..., { skip }) option-object | `prerequisite` |
 | `tests/e2e/material-providers-real.test.js` | 244 | real Azure Key Vault Secrets: publication, recovery and exact immutable retrieval | test(..., { skip }) option-object | `prerequisite` |
 | `tests/e2e/windows-material-custody-real.test.js` | 10 | native Windows existing-key custody and association reject unsafe reuse without mutation | test(..., { skip }) option-object | `platform` |

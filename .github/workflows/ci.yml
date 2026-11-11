@@ -1021,6 +1021,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Temporary response barrier supporting controls failed' }
       - name: Run complete qualification tooling including all AD CS language package gates
         run: pnpm run test:certops:qualification
+      - name: Test Windows store qualification safeguards
+        if: runner.os == 'Windows'
+        run: node --test tests/e2e/helpers/certops-acme-ca-watch.test.js tests/e2e/helpers/certops-acme-store-native-qualification.test.js
       - name: Run complete release collector inventory
         if: runner.os == 'Linux'
         run: pnpm run test:certops:release-collector

@@ -292,8 +292,14 @@ export function evaluateVerification({
           (adcs?.profiles || 0) > 0;
         // The server sees the issuer, the profile and whether a CA-signed
         // certificate reached the install step.
-        const storeIssue = scopeStoreIssuance(adcs, { storeIssueJobId, chosenAgentId: agentId, chosenIssuerId: issuerId });
-        const installed = storeIssueJobId ? storeIssue?.installed === true : (adcs?.installedIisEnrollments || 0) > 0;
+        const storeIssue = scopeStoreIssuance(adcs, {
+          storeIssueJobId,
+          chosenAgentId: agentId,
+          chosenIssuerId: issuerId,
+        });
+        const installed = storeIssueJobId
+          ? storeIssue?.installed === true
+          : (adcs?.installedIisEnrollments || 0) > 0;
         checks.push(
           installed
             ? check(
@@ -310,8 +316,8 @@ export function evaluateVerification({
                 storeIssueJobId
                   ? 'Windows store installation is not verified yet'
                   : ready
-                  ? 'Issuer and profile exist, enrollment is not verified'
-                  : 'The AD CS issuer or profile is missing',
+                    ? 'Issuer and profile exist, enrollment is not verified'
+                    : 'The AD CS issuer or profile is missing',
                 storeIssueJobId
                   ? 'Follow the issuance job until the agent verifies the certificate and key in the Windows store.'
                   : 'Attach the profile to a certificate and confirm the first enrollment in Certificate Management.'

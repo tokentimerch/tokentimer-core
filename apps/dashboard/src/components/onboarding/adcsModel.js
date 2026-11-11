@@ -256,16 +256,28 @@ export function scopeAdcs(adcs, chosenId) {
     issuers,
     profiles: perIssuer ? sum('profileCount') : adcs.profiles,
     attached: perIssuer ? sum('attachedCertificates') : null,
-    installedIisEnrollments: issuers.every(i => Number.isInteger(i.installedIisEnrollments))
-      ? sum('installedIisEnrollments') : null,
+    installedIisEnrollments: issuers.every(i =>
+      Number.isInteger(i.installedIisEnrollments)
+    )
+      ? sum('installedIisEnrollments')
+      : null,
   };
 }
 
-export function scopeStoreIssuance(adcs, { storeIssueJobId, chosenAgentId, chosenIssuerId } = {}) {
+export function scopeStoreIssuance(
+  adcs,
+  { storeIssueJobId, chosenAgentId, chosenIssuerId } = {}
+) {
   const issue = adcs?.storeIssuance;
-  return issue && storeIssueJobId && chosenAgentId && chosenIssuerId &&
-    issue.jobId === storeIssueJobId && issue.agentId === chosenAgentId && issue.issuerId === chosenIssuerId
-    ? issue : null;
+  return issue &&
+    storeIssueJobId &&
+    chosenAgentId &&
+    chosenIssuerId &&
+    issue.jobId === storeIssueJobId &&
+    issue.agentId === chosenAgentId &&
+    issue.issuerId === chosenIssuerId
+    ? issue
+    : null;
 }
 
 /**

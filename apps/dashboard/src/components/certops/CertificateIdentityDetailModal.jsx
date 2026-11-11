@@ -983,8 +983,8 @@ export default function CertificateIdentityDetailModal({
                 ))}
               </Select>
               <FormHelperText fontSize='xs' color='dashboard.modal.muted'>
-                Picks which registration&apos;s jobs, deployment and renewal profile
-                are shown for this certificate.
+                Picks which registration&apos;s jobs, deployment and renewal
+                profile are shown for this certificate.
               </FormHelperText>
               {!selectedManagedId ? (
                 <Text fontSize='sm' mt={2}>

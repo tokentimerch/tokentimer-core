@@ -139,6 +139,7 @@ test("run names are unique and candidate archive digest is independently checked
   } finally { fs.unlinkSync(path.join(dir, "agent.zip")); fs.rmdirSync(dir); }
 });
 
+// skip-reason: platform
 test("incomplete capture or CA baseline prevents key generation and orders", { skip: process.platform !== "win32" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acme-baseline-"));
   const archive = path.join(dir, "agent.zip");
@@ -168,6 +169,7 @@ test("incomplete capture or CA baseline prevents key generation and orders", { s
   }
 });
 
+// skip-reason: platform
 test("failed capture drainage is reported alongside the original refusal", { skip: process.platform !== "win32" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acme-drain-"));
   const archive = path.join(dir, "agent.zip");
@@ -196,6 +198,7 @@ test("failed capture drainage is reported alongside the original refusal", { ski
   }
 });
 
+// skip-reason: platform
 test("the CA baseline is taken before either native issue attempt", { skip: process.platform !== "win32" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acme-order-"));
   const archive = path.join(dir, "agent.zip");
@@ -249,6 +252,7 @@ test("the CA baseline is taken before either native issue attempt", { skip: proc
   }
 });
 
+// skip-reason: platform
 test("partially initialized capture is drained before refusing to issue", { skip: process.platform !== "win32" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acme-partial-"));
   const archive = path.join(dir, "agent.zip");
@@ -276,6 +280,7 @@ test("partially initialized capture is drained before refusing to issue", { skip
   }
 });
 
+// skip-reason: platform
 test("invalid fault checkpoints do not restart the agent", { skip: process.platform !== "win32" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acme-fault-"));
   const archive = path.join(dir, "agent.zip");
@@ -314,6 +319,7 @@ test("invalid fault checkpoints do not restart the agent", { skip: process.platf
   }
 });
 
+// skip-reason: platform
 test("preparation cannot create native operations or replace either observation", { skip: process.platform !== "win32" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acme-prepare-"));
   const archive = path.join(dir, "agent.zip");
@@ -349,6 +355,7 @@ test("preparation cannot create native operations or replace either observation"
   }
 });
 
+// skip-reason: platform
 test("a CA start failure drains both observers and preserves all cleanup errors", { skip: process.platform !== "win32" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acme-ca-cleanup-"));
   const archive = path.join(dir, "agent.zip");
@@ -398,6 +405,7 @@ test("a CA start failure drains both observers and preserves all cleanup errors"
   }
 });
 
+// skip-reason: platform
 test("evidence readback or flush failure blocks issue or recovery without saving secrets", { skip: process.platform !== "win32" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acme-evidence-"));
   const archive = path.join(dir, "agent.zip");
@@ -455,6 +463,7 @@ test("evidence readback or flush failure blocks issue or recovery without saving
   }
 });
 
+// skip-reason: platform
 test("a native capture start failure is drained and recorded", { skip: process.platform !== "win32" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acme-native-start-"));
   const archive = path.join(dir, "agent.zip");
@@ -489,6 +498,7 @@ test("a native capture start failure is drained and recorded", { skip: process.p
 });
 
 
+// skip-reason: platform
 test("drainage refuses late activity and reused evidence receipts", { skip: process.platform !== "win32" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acme-final-drain-"));
   const archive = path.join(dir, "agent.zip");
@@ -600,6 +610,7 @@ test("a stuck action-drain hook times out and preserves the coverage-loss error"
   assert.equal(drains, 1);
 });
 
+// skip-reason: platform
 test("undrained in-flight action retains observers and requires intervention", { skip: process.platform !== "win32" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acme-retain-observers-"));
   const archive = path.join(dir, "agent.zip");

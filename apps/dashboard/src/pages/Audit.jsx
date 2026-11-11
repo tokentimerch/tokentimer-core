@@ -1627,7 +1627,13 @@ export default function Audit({ session, onLogout, onAccountClick }) {
 
   function getRecentCertOpsMetadataEntries(ev) {
     const action = String(ev?.action || '');
-    if (['CERTOPS_MANAGEMENT_STARTED', 'CERTOPS_MANAGEMENT_STOPPED', 'CERTOPS_WINDOWS_STORE_REASSOCIATED'].includes(action)) {
+    if (
+      [
+        'CERTOPS_MANAGEMENT_STARTED',
+        'CERTOPS_MANAGEMENT_STOPPED',
+        'CERTOPS_WINDOWS_STORE_REASSOCIATED',
+      ].includes(action)
+    ) {
       const md = ev?.metadata || {};
       return [
         ['Certificate', md.commonName || md.dnsName],
@@ -1641,8 +1647,18 @@ export default function Audit({ session, onLogout, onAccountClick }) {
         ['Renewal profile ID', md.renewalProfileId || md.profileId],
         ['Agent ID', md.agentId],
         ['Fingerprint', md.fingerprintSha256],
-        ['Automatic renewal', md.automationEnabled == null ? null : md.automationEnabled ? 'enabled' : 'disabled'],
-      ].filter(([, value]) => value !== undefined && value !== null && value !== '')
+        [
+          'Automatic renewal',
+          md.automationEnabled == null
+            ? null
+            : md.automationEnabled
+              ? 'enabled'
+              : 'disabled',
+        ],
+      ]
+        .filter(
+          ([, value]) => value !== undefined && value !== null && value !== ''
+        )
         .map(([label, value]) => ({ label, value: String(value) }));
     }
     if (

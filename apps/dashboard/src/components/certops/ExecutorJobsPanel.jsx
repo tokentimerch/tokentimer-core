@@ -221,10 +221,25 @@ export default function ExecutorJobsPanel({
         description='Executor-reported certificate jobs from agents and the API'
         action={
           <HStack spacing={2}>
-            {canManage && agents.some(agent => agent.status === 'active' && agent.platform === 'win32' &&
-              agent.declaredCapabilities?.includes('windows-store-only-acme-v1') && agent.declaredCapabilities?.includes('evidence-claim-binding-v1')) && (
-              <DashboardActionButton onClick={() => setAcmeIssueOpen(true)} isDisabled={certOpsPaused}>Issue to Windows store</DashboardActionButton>
-            )}
+            {canManage &&
+              agents.some(
+                agent =>
+                  agent.status === 'active' &&
+                  agent.platform === 'win32' &&
+                  agent.declaredCapabilities?.includes(
+                    'windows-store-only-acme-v1'
+                  ) &&
+                  agent.declaredCapabilities?.includes(
+                    'evidence-claim-binding-v1'
+                  )
+              ) && (
+                <DashboardActionButton
+                  onClick={() => setAcmeIssueOpen(true)}
+                  isDisabled={certOpsPaused}
+                >
+                  Issue to Windows store
+                </DashboardActionButton>
+              )}
             {canManage ? (
               <Tooltip
                 label={certOpsPaused ? PAUSED_CREATE_REASON : undefined}
@@ -596,7 +611,13 @@ export default function ExecutorJobsPanel({
         onClose={() => setCreateOpen(false)}
         onCreated={refreshAll}
       />
-      <AcmeStoreIssueDialog isOpen={acmeIssueOpen} onClose={() => setAcmeIssueOpen(false)} workspaceId={workspaceId} agents={agents} onCreated={refreshAll} />
+      <AcmeStoreIssueDialog
+        isOpen={acmeIssueOpen}
+        onClose={() => setAcmeIssueOpen(false)}
+        workspaceId={workspaceId}
+        agents={agents}
+        onCreated={refreshAll}
+      />
       <ApprovalDecisionModal
         isOpen={Boolean(decisionTarget)}
         onClose={() => setDecisionTarget(null)}

@@ -48,6 +48,7 @@ function environmentFor(site) {
   if (site.file === "packages/agent/src/issuers/adcs-enrollment-reconcile.test.js") return "openssl-fixtures";
   if (site.file === "packages/agent/src/material-store/material-store.test.js" && site.name.startsWith("real ")) return "distribution-vault-adapter";
   if (site.file === windowsPathFile) return "windows-powershell-filesystem";
+  if (["tests/e2e/helpers/certops-acme-ca-watch.test.js", "tests/e2e/helpers/certops-acme-store-native-qualification.test.js"].includes(site.file)) return "windows-store-qualification-helpers";
   if (site.file === windowsContainedFile) return "windows-native-process-containment";
   const text = `${site.file} ${site.name}`;
   if (site.file === "packages/agent/src/config/config.test.js" && /re-asserts 0700/.test(site.name)) return "linux-filesystem";
@@ -74,6 +75,7 @@ const environments = {
   "distribution-vault-adapter": {capabilities:["linux","disposable-vault-kv2","synthetic-credentials"],owner:"Certificate distribution qualification",workflow:".github/workflows/certops-distribution-qualification.yml",status:"candidate-environment-not-qualified"},
   "windows-native-process-containment": {capabilities:["windows","powershell","cim","native-job-object"],owner:"Owned benign process containment regression",workflow:windowsPathWorkflow,status:"candidate-environment-not-qualified"},
   "windows-powershell-filesystem": { capabilities: ["windows", "powershell", "owned-temporary-filesystem"], owner: "Windows installer path supporting controls", workflow: windowsPathWorkflow, status: "candidate-environment-not-qualified" },
+  "windows-store-qualification-helpers": { capabilities: ["windows", "owned-temporary-filesystem", "process-observation"], owner: "Windows store qualification tooling", workflow: ".github/workflows/ci.yml", status: "candidate-environment-not-qualified" },
   "core-exclusive-scheduler-api": { capabilities: ["postgres", "core-api", "openssl", "disposable-stack", "exclusive-scheduler-stack"], owner: "Exclusive scheduler API qualification", workflow: schedulerWorkflow, status: "candidate-environment-not-qualified" },
   "windows-elevated": { capabilities: ["windows", "elevated"], owner: "Windows qualification", workflow: ".github/workflows/certops-qualification.yml", status: "candidate-environment-not-qualified" },
   "linux-filesystem": { capabilities: ["linux", "posix-permissions", "symlinks", "git-checkout"], owner: "Cross-platform agent qualification", workflow: ".github/workflows/ci.yml", status: "candidate-environment-not-qualified" },
@@ -89,6 +91,7 @@ for (const [name, file] of Object.values(dedicatedSuites)) {
 }
 function routeFor(site, environment) {
   const direct = (workflow, job, command = `node --test ${site.file}`) => ({workflow, job, command});
+  if (environment === "windows-store-qualification-helpers") return direct(".github/workflows/ci.yml", "certops_tooling", "node --test tests/e2e/helpers/certops-acme-ca-watch.test.js tests/e2e/helpers/certops-acme-store-native-qualification.test.js");
   if (environment === "windows-material-iis") return direct(".github/workflows/ci.yml", "windows_material_qualification", site.file);
   if (environment === "distribution-kv-live") return direct(".github/workflows/ci.yml", "material_store_compatibility");
   if (environment === "distribution-azure-live") return direct(".github/workflows/certops-azure-keyvault-qualification.yml", "lab");

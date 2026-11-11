@@ -162,6 +162,9 @@ describe("CertOps identity HTTP authorization and admission", function () {
       assert.equal(response.body.certificate.locations[0].targetHostname, expected);
       if (!expected) assert(!response.text.includes(machine));
     }
+    await TestUtils.execQuery("DELETE FROM certificate_instances WHERE workspace_id=$1 AND target_id=$2", [ws, target]);
+    await TestUtils.execQuery("DELETE FROM managed_certificates WHERE workspace_id=$1 AND id=$2", [ws, cert]);
+    await TestUtils.execQuery("DELETE FROM certificate_targets WHERE workspace_id=$1 AND id=$2", [ws, target]);
   });
   it("rejects every management/lifecycle write from viewers", async () => {
     await post(`management-periods/${firstPeriod}/stop`, viewer).expect(403);

@@ -37,6 +37,7 @@ test(
   },
 );
 
+// skip-reason: platform
 test("installer isolates Node environment without changing the caller", { skip: process.platform !== "win32" }, () => {
   const installer = path.resolve(__dirname, "../install-agent.ps1").replace(/'/g, "''");
   const script = `$ErrorActionPreference='Stop';

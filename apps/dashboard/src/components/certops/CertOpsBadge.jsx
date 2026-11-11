@@ -39,13 +39,23 @@ export const CertificateLifecycleBadge = forwardRef(
         const current = Date.now();
         setNow(current);
         if (Number.isFinite(expiry) && expiry > current)
-          timer = setTimeout(update, Math.min(expiry - current + 1, 2147483647));
+          timer = setTimeout(
+            update,
+            Math.min(expiry - current + 1, 2147483647)
+          );
       };
       update();
       return () => clearTimeout(timer);
     }, [result?.validUntil]);
     const observed = observedRevocationDescriptor(result, now);
-    const revoked = ['Revoked', 'Revoked (stale)', 'CA revoked', 'CA revoked (stale)', 'Last known revoked', 'Last known CA revoked'].includes(observed.label);
+    const revoked = [
+      'Revoked',
+      'Revoked (stale)',
+      'CA revoked',
+      'CA revoked (stale)',
+      'Last known revoked',
+      'Last known CA revoked',
+    ].includes(observed.label);
     if (descriptor.status === 'active' && revoked) return null;
     return (
       <CertOpsBadge ref={ref} colorScheme={descriptor.scheme} {...props}>

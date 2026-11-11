@@ -282,7 +282,8 @@
           "returns { items: [] } for an admin on an anchor with no installations",
           "returns 404 for an anchor id that does not exist in this workspace",
           "rejects a viewer and a workspace_manager with 403, and allows admin",
-          "omits requireWorkspaceCertOpsActive: a paused workspace can still be read"
+          "omits requireWorkspaceCertOpsActive: a paused workspace can still be read",
+          "prevents distributing an observed revoked CA at admission and dispatch"
         ]
       }
     ]
@@ -417,7 +418,8 @@
           "isolates transferred token and source data in original-workspace HTTP history",
           "returns global visibility and full counts with only 20 HTTP locations",
           "retains stopped identity details with workspace authorization and never hydrates a moved token",
-          "projects current renewal facts for a rotated identity without a token and clears them when management stops"
+          "projects current renewal facts for a rotated identity without a token and clears them when management stops",
+          "shows the observed machine to managers but not viewers"
         ]
       },
       {

@@ -22,7 +22,11 @@ import {
   viewerHasScope,
 } from './editionModules.js';
 import { recipientsSatisfied } from './groupAttachment.js';
-import { issuerNeedsRecheck, scopeAdcs, scopeStoreIssuance } from './adcsModel.js';
+import {
+  issuerNeedsRecheck,
+  scopeAdcs,
+  scopeStoreIssuance,
+} from './adcsModel.js';
 import { scopeDistribution } from './distributionModel.js';
 import {
   materialStoreSatisfied,

@@ -60,9 +60,13 @@ export function observedRevocationDescriptor(result, now = Date.now()) {
   const previous = result.lastVerified;
   const previousChecked = Date.parse(previous?.checkedAt);
   const previousUntil = Date.parse(previous?.validUntil);
-  const previousAdverse = ['revoked', 'issuer_revoked'].includes(previous?.verdict) &&
-    previous?.chainStatus === 'valid' && Number.isFinite(previousChecked) &&
-    Number.isFinite(previousUntil) && previousChecked <= now && previousUntil > previousChecked;
+  const previousAdverse =
+    ['revoked', 'issuer_revoked'].includes(previous?.verdict) &&
+    previous?.chainStatus === 'valid' &&
+    Number.isFinite(previousChecked) &&
+    Number.isFinite(previousUntil) &&
+    previousChecked <= now &&
+    previousUntil > previousChecked;
   if (
     ['not_configured', 'disabled', 'invalid_observation'].includes(
       result.verdict
@@ -103,9 +107,12 @@ export function observedRevocationDescriptor(result, now = Date.now()) {
   const checked = Number.isFinite(checkedAt)
     ? formatDateTime(result.checkedAt)
     : 'unknown';
-  const issuerFingerprint = result.verdict === 'issuer_revoked'
-    ? result.revokedIssuerFingerprintSha256
-    : previousAdverse && previous.verdict === 'issuer_revoked' ? previous.revokedIssuerFingerprintSha256 : null;
+  const issuerFingerprint =
+    result.verdict === 'issuer_revoked'
+      ? result.revokedIssuerFingerprintSha256
+      : previousAdverse && previous.verdict === 'issuer_revoked'
+        ? previous.revokedIssuerFingerprintSha256
+        : null;
   const issuerDetail = /^[a-f0-9]{64}$/.test(issuerFingerprint || '')
     ? ` Revoked CA certificate: ${issuerFingerprint}.`
     : '';
@@ -129,7 +136,10 @@ export function observedRevocationDescriptor(result, now = Date.now()) {
   }
   if (result.chainStatus === 'invalid' && previousAdverse)
     return {
-      label: previous.verdict === 'revoked' ? 'Last known revoked' : 'Last known CA revoked',
+      label:
+        previous.verdict === 'revoked'
+          ? 'Last known revoked'
+          : 'Last known CA revoked',
       scheme: 'red',
       help: 'The latest chain validation failed; the previous revocation remains unresolved.',
     };
@@ -160,10 +170,12 @@ export function observedRevocationDescriptor(result, now = Date.now()) {
     !Number.isFinite(validUntil) ||
     validUntil <= checkedAt ||
     now >= validUntil;
-  if (result.verdict === 'good' && stale &&
-      previousAdverse)
+  if (result.verdict === 'good' && stale && previousAdverse)
     return {
-      label: result.lastVerified.verdict === 'revoked' ? 'Last known revoked' : 'Last known CA revoked',
+      label:
+        result.lastVerified.verdict === 'revoked'
+          ? 'Last known revoked'
+          : 'Last known CA revoked',
       scheme: 'red',
       help: 'The latest successful check is stale; a previous revocation remains unresolved.',
     };

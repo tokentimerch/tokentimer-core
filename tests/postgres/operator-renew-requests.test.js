@@ -1634,6 +1634,8 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
   describe("an agent will not start work from a connection that has ended", () => {
     const { afterEach } = require("node:test");
     const dispatch = require("../../apps/api/services/certops/agentDispatch");
+    const { bindAuthenticatedCredential } = require("../../apps/api/services/certops/agentCredentialFence");
+    const agentCredential = crypto.randomBytes(32).toString("hex");
     let agentRow;
     before(async () => {
       await restoreRoles();
@@ -1645,7 +1647,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
          VALUES ($1, $2, 'claim-agent', '0.18.0', '1.0.0', $3, $4, 'active', '[]'::jsonb, NOW(), NOW(), '["renew"]'::jsonb,
                  '["host/web"]'::jsonb, '["acme-renew-default"]'::jsonb, '["cloudflare"]'::jsonb)
          RETURNING id, agent_id`,
-        [workspaceId, `claim-${crypto.randomUUID()}`, `ttagent_${crypto.randomBytes(8).toString("hex")}`, crypto.randomBytes(32).toString("hex")],
+        [workspaceId, `claim-${crypto.randomUUID()}`, `ttagent_${crypto.randomBytes(8).toString("hex")}`, crypto.createHash("sha256").update(agentCredential).digest("hex")],
       );
       agentRow = made.rows[0];
     });
@@ -1657,7 +1659,7 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
     // Signing is the one dependency stubbed; the selection SQL under test is real.
     const claim = () =>
       dispatch.claimJobs({
-        agent: { id: agentRow.id, workspaceId, agentId: agentRow.agent_id, status: "active", protocolVersion: "1.0.0", agentVersion: "0.18.0" },
+        agent: bindAuthenticatedCredential({ id: agentRow.id, workspaceId, agentId: agentRow.agent_id, status: "active", protocolVersion: "1.0.0", agentVersion: "0.18.0" }, agentCredential),
         body: { supportedActions: ["renew"], supportedDnsProviders: ["cloudflare"], maxJobs: 5 },
         deps: {
           // Return whatever id the claim handed to signing, whatever it is named.

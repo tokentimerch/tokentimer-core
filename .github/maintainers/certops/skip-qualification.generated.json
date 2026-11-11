@@ -85,6 +85,16 @@
       "workflow": ".github/workflows/certops-windows-e2e.yml",
       "status": "candidate-environment-not-qualified"
     },
+    "windows-store-qualification-helpers": {
+      "capabilities": [
+        "windows",
+        "owned-temporary-filesystem",
+        "process-observation"
+      ],
+      "owner": "Windows store qualification tooling",
+      "workflow": ".github/workflows/ci.yml",
+      "status": "candidate-environment-not-qualified"
+    },
     "core-exclusive-scheduler-api": {
       "capabilities": [
         "postgres",
@@ -249,10 +259,54 @@
       "workflowJob": "windows"
     },
     {
+      "id": "72fcacd90f0a7f878554",
+      "file": "packages/agent/scripts/host/windows-installed-paths-filesystem.test.js",
+      "line": 15,
+      "name": "prepare-only preserves restored state across simulated SCM interruption",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-powershell-filesystem",
+      "workflow": ".github/workflows/certops-windows-e2e.yml",
+      "workflowJob": "windows-e2e"
+    },
+    {
+      "id": "ebbae6bb06e126a90704",
+      "file": "packages/agent/scripts/host/windows-installed-paths-filesystem.test.js",
+      "line": 41,
+      "name": "installer isolates Node environment without changing the caller",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-powershell-filesystem",
+      "workflow": ".github/workflows/certops-windows-e2e.yml",
+      "workflowJob": "windows-e2e"
+    },
+    {
+      "id": "a67bde6472c01be62b57",
+      "file": "packages/agent/scripts/host/windows-installed-paths-filesystem.test.js",
+      "line": 63,
+      "name": "privileged installer paths verify source and stage before executing package code",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-powershell-filesystem",
+      "workflow": ".github/workflows/certops-windows-e2e.yml",
+      "workflowJob": "windows-e2e"
+    },
+    {
       "id": "75191f12f5ef96e1487a",
       "file": "packages/agent/scripts/host/windows-installed-paths-filesystem.test.js",
-      "line": 14,
+      "line": 175,
       "name": "actual installer filesystem branches preserve literal brackets and wildcard siblings",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-powershell-filesystem",
+      "workflow": ".github/workflows/certops-windows-e2e.yml",
+      "workflowJob": "windows-e2e"
+    },
+    {
+      "id": "804b1b181b6fdb25eaba",
+      "file": "packages/agent/scripts/host/windows-installed-paths-filesystem.test.js",
+      "line": 253,
+      "name": "installer rejects writable and unverified predecessor applications",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
       "environment": "windows-powershell-filesystem",
@@ -626,7 +680,7 @@
     {
       "id": "b45f65881e8f3ba572b1",
       "file": "packages/agent/src/index.test.js",
-      "line": 4248,
+      "line": 4310,
       "name": "refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -1469,6 +1523,136 @@
       "name": "quota-blocked real filesystem discovery preserves unmanaged visibility",
       "environment": "core-certificate-api",
       "workflow": ".github/workflows/certops-qualification.yml"
+    },
+    {
+      "id": "507c27d7f28020c5dc58",
+      "file": "tests/e2e/helpers/certops-acme-ca-watch.test.js",
+      "line": 31,
+      "name": "real Windows process exit aborts the dedicated watcher without claiming coverage",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-store-qualification-helpers",
+      "workflowJob": "certops_tooling"
+    },
+    {
+      "id": "7e8ea4a24104384339eb",
+      "file": "tests/e2e/helpers/certops-acme-ca-watch.test.js",
+      "line": 46,
+      "name": "real watcher interruption aborts the run while its target stays alive",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-store-qualification-helpers",
+      "workflowJob": "certops_tooling"
+    },
+    {
+      "id": "623d1974df11a6cb25a1",
+      "file": "tests/e2e/helpers/certops-acme-store-native-qualification.test.js",
+      "line": 143,
+      "name": "incomplete capture or CA baseline prevents key generation and orders",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-store-qualification-helpers",
+      "workflowJob": "certops_tooling"
+    },
+    {
+      "id": "969c742faf9e0498fedb",
+      "file": "tests/e2e/helpers/certops-acme-store-native-qualification.test.js",
+      "line": 173,
+      "name": "failed capture drainage is reported alongside the original refusal",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-store-qualification-helpers",
+      "workflowJob": "certops_tooling"
+    },
+    {
+      "id": "3158cb07292da5235709",
+      "file": "tests/e2e/helpers/certops-acme-store-native-qualification.test.js",
+      "line": 202,
+      "name": "the CA baseline is taken before either native issue attempt",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-store-qualification-helpers",
+      "workflowJob": "certops_tooling"
+    },
+    {
+      "id": "439765cadc9ed548bb24",
+      "file": "tests/e2e/helpers/certops-acme-store-native-qualification.test.js",
+      "line": 256,
+      "name": "partially initialized capture is drained before refusing to issue",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-store-qualification-helpers",
+      "workflowJob": "certops_tooling"
+    },
+    {
+      "id": "63a8577d744ee3fd5448",
+      "file": "tests/e2e/helpers/certops-acme-store-native-qualification.test.js",
+      "line": 284,
+      "name": "invalid fault checkpoints do not restart the agent",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-store-qualification-helpers",
+      "workflowJob": "certops_tooling"
+    },
+    {
+      "id": "58d630d1f28158e92994",
+      "file": "tests/e2e/helpers/certops-acme-store-native-qualification.test.js",
+      "line": 323,
+      "name": "preparation cannot create native operations or replace either observation",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-store-qualification-helpers",
+      "workflowJob": "certops_tooling"
+    },
+    {
+      "id": "447bbf5178ff077d17d6",
+      "file": "tests/e2e/helpers/certops-acme-store-native-qualification.test.js",
+      "line": 359,
+      "name": "a CA start failure drains both observers and preserves all cleanup errors",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-store-qualification-helpers",
+      "workflowJob": "certops_tooling"
+    },
+    {
+      "id": "2f312d207845ba84acf6",
+      "file": "tests/e2e/helpers/certops-acme-store-native-qualification.test.js",
+      "line": 409,
+      "name": "evidence readback or flush failure blocks issue or recovery without saving secrets",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-store-qualification-helpers",
+      "workflowJob": "certops_tooling"
+    },
+    {
+      "id": "77d9c9b454aed7c242e2",
+      "file": "tests/e2e/helpers/certops-acme-store-native-qualification.test.js",
+      "line": 467,
+      "name": "a native capture start failure is drained and recorded",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-store-qualification-helpers",
+      "workflowJob": "certops_tooling"
+    },
+    {
+      "id": "bac78060cdbc5189e6e8",
+      "file": "tests/e2e/helpers/certops-acme-store-native-qualification.test.js",
+      "line": 502,
+      "name": "drainage refuses late activity and reused evidence receipts",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-store-qualification-helpers",
+      "workflowJob": "certops_tooling"
+    },
+    {
+      "id": "464a59feaabdad3b817f",
+      "file": "tests/e2e/helpers/certops-acme-store-native-qualification.test.js",
+      "line": 614,
+      "name": "undrained in-flight action retains observers and requires intervention",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-store-qualification-helpers",
+      "workflowJob": "certops_tooling"
     },
     {
       "id": "4f780fdb59305998ec03",

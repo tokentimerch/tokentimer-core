@@ -479,7 +479,13 @@ export default function RenewalProfilesPanel({
     return () => {
       cancelled = true;
     };
-  }, [canManage, workspaceId, profileWizardOpen, issuerRefreshSignal, storeIssueOpen]);
+  }, [
+    canManage,
+    workspaceId,
+    profileWizardOpen,
+    issuerRefreshSignal,
+    storeIssueOpen,
+  ]);
 
   const [disableTarget, setDisableTarget] = useState(null);
   const [detailsTarget, setDetailsTarget] = useState(null);

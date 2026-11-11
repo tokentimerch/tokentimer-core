@@ -199,9 +199,10 @@ describe("CertOps AD CS enrollments (real database)", function () {
     };
   }
 
+  let independentPort = 10000;
   function independentTarget() {
     const target = enrollmentInput().target;
-    return { ...target, binding: { ...target.binding, site: `Fixture ${crypto.randomUUID()}` } };
+    return { ...target, binding: { ...target.binding, site: `Fixture ${crypto.randomUUID()}`, port: independentPort++ } };
   }
 
   async function assertNoForeignDueRows() {

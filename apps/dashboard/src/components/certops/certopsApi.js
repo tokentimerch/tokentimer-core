@@ -15,12 +15,22 @@ function workspaceBase(workspaceId) {
 }
 
 export async function getWindowsRenewal(workspaceId, identityId) {
-  const res = await apiClient.get(`${workspaceBase(workspaceId)}/certificate-identities/${encodeURIComponent(identityId)}/windows-renewal`);
+  const res = await apiClient.get(
+    `${workspaceBase(workspaceId)}/certificate-identities/${encodeURIComponent(identityId)}/windows-renewal`
+  );
   return res.data;
 }
 
-export async function setWindowsIisConsumer(workspaceId, periodId, targetId, enabled) {
-  const res = await apiClient.put(`${workspaceBase(workspaceId)}/management-periods/${encodeURIComponent(periodId)}/iis-consumers/${encodeURIComponent(targetId)}`, { enabled });
+export async function setWindowsIisConsumer(
+  workspaceId,
+  periodId,
+  targetId,
+  enabled
+) {
+  const res = await apiClient.put(
+    `${workspaceBase(workspaceId)}/management-periods/${encodeURIComponent(periodId)}/iis-consumers/${encodeURIComponent(targetId)}`,
+    { enabled }
+  );
   return res.data;
 }
 

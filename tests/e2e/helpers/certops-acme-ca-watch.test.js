@@ -27,6 +27,7 @@ test("watcher failure, stream loss, stale heartbeat and identity change fail clo
  }
 });
 
+// skip-reason: platform
 test("real Windows process exit aborts the dedicated watcher without claiming coverage", {skip:process.platform!=="win32"}, async()=>{
  const {spawn}=require("node:child_process"),fs=require("node:fs"),crypto=require("node:crypto");
  const target=spawn(process.execPath,["-e","setTimeout(()=>{},30000)"],{windowsHide:true,stdio:"ignore"});
@@ -41,6 +42,7 @@ test("real Windows process exit aborts the dedicated watcher without claiming co
  } finally {target.kill();if(watch)await watch.stop();}
 });
 
+// skip-reason: platform
 test("real watcher interruption aborts the run while its target stays alive", {skip:process.platform!=="win32"}, async()=>{
  const {spawn}=require("node:child_process"),fs=require("node:fs"),crypto=require("node:crypto");
  const target=spawn(process.execPath,["-e","setTimeout(()=>{},30000)"],{windowsHide:true,stdio:"ignore"});
