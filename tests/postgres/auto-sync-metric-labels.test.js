@@ -513,6 +513,61 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     assert.ok(inventory.every(row => !Object.hasOwn(row.source_dimensions, "owner_username")));
   });
 
+  it("saves a system-wide owner override, applies it to opted-out connections and respects deployment restrictions", async () => {
+    const config = await configuration();
+    const local = { enabled: false, labels: ["kind"], inherit_system: false };
+    await pool.query("UPDATE auto_sync_configs SET metrics_settings=$2 WHERE id=$1", [config.id, local]);
+    delete process.env.AUTO_SYNC_METRICS_EXTRA_LABELS;
+    await pool.query("UPDATE users SET is_admin=TRUE WHERE id=$1", [userId]);
+    const url = "/api/v1/admin/auto-sync/metrics";
+    const policy = { override_metrics: true, enabled: true, labels: ["kind", "owner_username"] };
+    const saved = await request(app).put(url).send(policy);
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    assert.equal(saved.body.override_metrics, true);
+    assert.equal(saved.body.extra_labels_locked, false);
+    assert.ok(saved.body.labels.includes("owner_username"));
+    const loaded = await request(app).get(url);
+    assert.equal(loaded.status, 200);
+    assert.ok(loaded.body.labels.includes("owner_username"));
+    const connectionUrl = `/api/v1/workspaces/${workspaceId}/auto-sync`;
+    const connections = await request(app).get(connectionUrl);
+    assert.equal(connections.status, 200);
+    assert.equal(connections.body.metric_label_policy.system.override_metrics, true);
+    assert.ok(connections.body.metric_label_policy.system.labels.includes("owner_username"));
+    const change = await request(app).put(`${connectionUrl}/${config.id}`)
+      .send({ metrics_settings: { ...local, enabled: true } });
+    assert.equal(change.status, 409, JSON.stringify(change.body));
+    const run = await start(config);
+    await ownerScan(run, [["global", "global-owner"]]);
+    await ownerImport(run, "global");
+    for (const name of ["auto_sync_items_created_detailed_total", "auto_sync_last_creation_timestamp_seconds"]) {
+      const samples = await metric(name);
+      assert.equal(samples.length, 1);
+      assert.equal(samples[0].labels.owner_username, "global-owner");
+      assert.ok(samples[0].value > 0);
+    }
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "none";
+    assert.ok(!(await request(app).get(url)).body.labels.includes("owner_username"));
+    await ownerScan(run, [["restricted", "must-not-persist"]]);
+    await ownerImport(run, "restricted");
+    const rows = await ownerRows(config);
+    assert.deepEqual(rows.map(row => row.owner_username).sort(), ["", "global-owner"]);
+    const restricted = await request(app).get("/metrics");
+    assert.equal(restricted.status, 200);
+    assert.ok(!restricted.text.includes("global-owner"));
+    assert.ok(!restricted.text.includes("must-not-persist"));
+    delete process.env.AUTO_SYNC_METRICS_EXTRA_LABELS;
+    assert.ok((await metric("auto_sync_items_created_detailed_total"))
+      .some(sample => sample.labels.owner_username === "global-owner"));
+    const released = await request(app).put(url).send({ ...policy, override_metrics: false });
+    assert.equal(released.status, 200);
+    assert.deepEqual(await metric("auto_sync_items_created_detailed_total"), []);
+    assert.deepEqual(await metric("auto_sync_last_creation_timestamp_seconds"), []);
+    assert.deepEqual((await pool.query(
+      "SELECT metrics_settings FROM auto_sync_configs WHERE id=$1", [config.id],
+    )).rows[0].metrics_settings, local);
+  });
+
   it("emits valid HTTP scrape text with escaped owners, stable counts and immediate policy changes", async () => {
     const config = await configuration(); await ownerSettings(config);
     const run = await start(config);
