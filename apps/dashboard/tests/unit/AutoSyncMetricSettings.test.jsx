@@ -33,13 +33,18 @@ const defaults = {
   extra_labels_locked: false,
 };
 const local = { enabled: true, labels: ['kind'], monitoring_group: 'local' };
-function view(policy = {}, value = local, onChange = vi.fn()) {
+function view(
+  policy = {},
+  value = local,
+  onChange = vi.fn(),
+  allowedExtraLabels = ['project']
+) {
   return (
     <ChakraProvider>
       <AutoSyncMetricSettings
         value={value}
         systemPolicy={{ ...defaults, ...policy }}
-        allowedExtraLabels={['project']}
+        allowedExtraLabels={allowedExtraLabels}
         onChange={onChange}
       />
     </ChakraProvider>
@@ -162,6 +167,70 @@ describe('connection metric settings', () => {
     expect(
       screen.getByRole('checkbox', { name: 'Project / repository' })
     ).toBeEnabled();
+  });
+  it('keeps owner usernames disabled unless deployment permits them', async () => {
+    const saved = { ...local, labels: ['kind', 'owner_username'] };
+    const change = vi.fn();
+    const { rerender } = render(view({}, saved, change));
+    await expand();
+    const owner = screen.getByRole('checkbox', {
+      name: 'GitLab PAT owner username',
+    });
+    expect(owner).toBeDisabled();
+    expect(owner).not.toBeChecked();
+    fireEvent.click(owner);
+    expect(change).not.toHaveBeenCalled();
+    rerender(view({}, saved, change, ['owner_username']));
+    expect(owner).toBeEnabled();
+    expect(owner).toBeChecked();
+    fireEvent.click(owner);
+    expect(change).toHaveBeenLastCalledWith({ ...saved, labels: ['kind'] });
+  });
+  it('does not select owner usernames when first enabling metrics', async () => {
+    const change = vi.fn();
+    render(
+      view({}, { enabled: false, labels: [], monitoring_group: '' }, change, [
+        'owner_username',
+      ])
+    );
+    await expand();
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Expose additional auto-sync metrics',
+      })
+    );
+    expect(change).toHaveBeenCalledWith({
+      enabled: true,
+      labels: low,
+      monitoring_group: '',
+    });
+  });
+  it('selects owner usernames explicitly and restores saved choices after global overrides', async () => {
+    const change = vi.fn();
+    const allowed = ['owner_username'];
+    const { rerender } = render(view({}, local, change, allowed));
+    await expand();
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'GitLab PAT owner username' })
+    );
+    const saved = { ...local, labels: ['kind', 'owner_username'] };
+    expect(change).toHaveBeenLastCalledWith(saved);
+    rerender(
+      view(
+        { override_metrics: true, enabled: true, labels: ['kind'] },
+        saved,
+        change,
+        allowed
+      )
+    );
+    const owner = screen.getByRole('checkbox', {
+      name: 'GitLab PAT owner username',
+    });
+    expect(owner).toBeDisabled();
+    expect(owner).not.toBeChecked();
+    rerender(view({}, saved, change, allowed));
+    expect(owner).toBeEnabled();
+    expect(owner).toBeChecked();
   });
 });
 describe('global overrides', () => {
@@ -489,6 +558,7 @@ it('locks every global label checkbox when the complete selection comes from dep
     'Token / asset name',
     'Project / repository',
     'Source group',
+    'GitLab PAT owner username',
   ])
     expect(screen.getByRole('checkbox', { name })).toBeDisabled();
   expect(screen.getByText('Labels set by environment')).toBeVisible();
@@ -499,4 +569,61 @@ it('identifies the complete deployment label source in the Managed tooltip', asy
   const tip = await screen.findByRole('tooltip');
   expect(tip).toHaveTextContent('AUTO_SYNC_METRICS_LABELS');
   expect(tip).not.toHaveTextContent('other labels: System Settings');
+});
+
+it('keeps saved global owner selections inactive while deployment denies them', async () => {
+  apiClient.get.mockResolvedValue({
+    data: {
+      ...defaults,
+      enabled: true,
+      override_metrics: true,
+      labels: ['kind', 'owner_username'],
+    },
+  });
+  render(
+    <ChakraProvider>
+      <AutoSyncSystemMetricSettings />
+    </ChakraProvider>
+  );
+  const owner = await screen.findByRole('checkbox', {
+    name: 'GitLab PAT owner username',
+  });
+  expect(owner).toBeDisabled();
+  expect(owner).not.toBeChecked();
+});
+
+it('persists an explicitly permitted global owner selection', async () => {
+  apiClient.get.mockResolvedValue({
+    data: {
+      ...defaults,
+      enabled: true,
+      override_metrics: true,
+      extra_labels: ['owner_username'],
+    },
+  });
+  apiClient.put.mockImplementation((_url, body) =>
+    Promise.resolve({
+      data: { ...defaults, ...body, extra_labels: ['owner_username'] },
+    })
+  );
+  render(
+    <ChakraProvider>
+      <AutoSyncSystemMetricSettings />
+    </ChakraProvider>
+  );
+  const owner = await screen.findByRole('checkbox', {
+    name: 'GitLab PAT owner username',
+  });
+  expect(owner).toBeEnabled();
+  expect(owner).not.toBeChecked();
+  fireEvent.click(owner);
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Save auto-sync settings' })
+  );
+  await screen.findByRole('status');
+  expect(apiClient.put).toHaveBeenCalledWith(
+    '/api/v1/admin/auto-sync/metrics',
+    expect.objectContaining({ labels: [...low, 'owner_username'] })
+  );
+  expect(owner).toBeChecked();
 });

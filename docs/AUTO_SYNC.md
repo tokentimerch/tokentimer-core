@@ -70,13 +70,27 @@ freshness/grace periods for your longest schedule. Alertmanager controls deliver
 Collector errors can return HTTP 500; connection failures may terminate the API.
 Both cause scrape failures, not evidence of zero activity.
 
+Owner labels do not belong on aggregates: `auto_sync_items_created_total` spans
+owners, `auto_sync_items_created_by_kind_total` groups asset types, and enabled
+configuration, run-outcome, attempt and success metrics describe connection/run
+health rather than a PAT. The worker's process-local run metrics likewise have
+no single asset owner. These metrics retain their low-cardinality labels.
+
 ### Optional configuration and asset labels
 
-- Apply migrations 81–82 with matching API/dashboard code; aggregate counters stay unchanged.
+- Apply migrations through 111 with matching API/dashboard code; aggregate counters stay unchanged.
 - System Settings → Auto-sync independently overrides metrics/labels and monitoring group, locking integration controls. Otherwise, integrations retain their choices.
 - Environment wins: `AUTO_SYNC_METRICS_ENABLED=true/false`, optional `AUTO_SYNC_METRICS_LABELS` (CSV or `none`), and independent `AUTO_SYNC_METRICS_MONITORING_GROUP`. Empty restores saved values; `AUTO_SYNC_METRICS_EXTRA_LABELS` optionally restricts asset labels.
 - Helm: `monitoring.metrics.autoSyncEnabled`, `autoSyncLabels`, `autoSyncMonitoringGroup` (under `tokentimer` in Enterprise). Available labels are listed beside these settings.
 - **Warning:** label combinations multiply detailed series and expose metadata. Names/scopes cover future creations; old samples remain until retention expires.
+
+### GitLab PAT owner labels
+
+- `owner_username` resolves the GitLab PAT's owner ID to a username, never the importer or configuration creator. Missing IDs, inaccessible/deleted users, older servers and lookup limits leave it empty; old PAT coverage is not guaranteed.
+- Disabled by default. Select **GitLab PAT owner username** in **System Settings → Auto-sync → Override integration metrics** for all connections, or in individual connection settings. Deployment restrictions still apply: allow it with `AUTO_SYNC_METRICS_EXTRA_LABELS=owner_username` (Helm: `monitoring.metrics.extraLabels: [owner_username]`), appending other permitted labels if needed.
+- Both `auto_sync_last_creation_timestamp_seconds` and `auto_sync_items_created_detailed_total` use creation-time metadata, not expiry. Rediscovery or renaming does not create an event or enrich old inventory; unknown/unselected owners are empty.
+- Usernames increase cardinality and expose personal metadata to metrics readers and alert recipients. Effective opt-ins gate scan/statistics capture, not just display. Opt-out hides retained statistics; configuration deletion removes them. Persisted scan metadata remains until its scan/workspace is deleted; old Prometheus samples follow Prometheus retention.
+- In Grafana/Prometheus, explicit `max by (...)` lists must preserve `owner_username`; annotations can use `{{ $labels.owner_username }}`. Aggregation that drops it cannot show the owner.
 
 ## Cleanup and removal
 
@@ -85,6 +99,12 @@ Enable destructive cleanup only when it matches your retention policy. Partial, 
 **Disable auto-sync** deletes the selected configuration and detaches its associations; it does not blanket-delete inventory. Retained or manually adopted assets stay visible. Other configurations continue to protect their associated records. Inspect run/provenance history before deleting anything manually.
 
 ## Deployment activation and rollback
+
+Apply migration 111 before the new API reads or writes statistics. Upgrade the
+entire API/dashboard fleet before saving owner selections: older validators do
+not recognize them. Keep this label off during mixed-version rollout; existing
+settings and ownerless dimension hashes remain unchanged. No ownership backfill
+is performed.
 
 For an installation upgrading to multiple configurations, migration leaves activation off. As a system administrator:
 

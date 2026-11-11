@@ -18,13 +18,14 @@ fs.mkdirSync(evidence, { recursive: true });
 const rulePath = path.join(root, "deploy/helm/examples/values-auto-sync-alerts.yaml");
 const rules = { groups: yaml.load(fs.readFileSync(rulePath, "utf8")).monitoring.prometheusRules.groups };
 const group = rules.groups[0];
-const sources = [rulePath, path.join(root, "deploy/helm/examples/values-full-test.yaml")];
+const sources = [rulePath, path.join(root, "deploy/helm/examples/values-full-test.yaml"),
+  path.join(root, "deploy/prometheus/auto-sync.rules.yaml")];
 for (let i = 0; i < args.length; i++) if (args[i] === "--values") sources.push(path.resolve(args[++i]));
 for (const file of sources.slice(1)) {
   const values = yaml.load(fs.readFileSync(file, "utf8"));
   const monitoring = (values.tokentimer || values).monitoring;
-  if (values.kind !== "PrometheusRule") assert.equal(monitoring.prometheusRules.enabled, true, `${file}: rules must be enabled`);
-  const groups = values.kind === "PrometheusRule" ? values.spec.groups : monitoring.prometheusRules.groups;
+  if (!values.groups && values.kind !== "PrometheusRule") assert.equal(monitoring.prometheusRules.enabled, true, `${file}: rules must be enabled`);
+  const groups = values.groups || (values.kind === "PrometheusRule" ? values.spec.groups : monitoring.prometheusRules.groups);
   assert.deepEqual(groups.find(g => g.name === group.name), group, `${file}: example drift`);
 }
 const labelTestPath = path.join(root, "tests/prometheus/auto-sync-labels.test.yaml");

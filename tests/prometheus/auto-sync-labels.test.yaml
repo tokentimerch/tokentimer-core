@@ -5,6 +5,145 @@
   "evaluation_interval": "1m",
   "tests": [
     {
+      "name": "PAT owners stay distinct while duplicate API replicas and extra scrape labels collapse",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{installation=\"test\",provider=\"gitlab\",configuration_id=\"cfg-pat\",monitoring_group=\"critical\",kind=\"gitlab-pat\",asset_name=\"deployment-token\",owner_username=\"alice\",label_set=\"asset_name,kind,monitoring_group,owner_username\",pod=\"api-a\",instance=\"10.0.0.1:4000\",replica_zone=\"one\"}",
+          "values": "240x25"
+        },
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{installation=\"test\",provider=\"gitlab\",configuration_id=\"cfg-pat\",monitoring_group=\"critical\",kind=\"gitlab-pat\",asset_name=\"deployment-token\",owner_username=\"alice\",label_set=\"asset_name,kind,monitoring_group,owner_username\",pod=\"api-b\",instance=\"10.0.0.2:4000\",replica_zone=\"two\"}",
+          "values": "180x25"
+        },
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{installation=\"test\",provider=\"gitlab\",configuration_id=\"cfg-pat\",monitoring_group=\"critical\",kind=\"gitlab-pat\",asset_name=\"deployment-token\",owner_username=\"bob\",label_set=\"asset_name,kind,monitoring_group,owner_username\",pod=\"api-a\",instance=\"10.0.0.1:4000\"}",
+          "values": "240x25"
+        },
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{installation=\"test\",provider=\"gitlab\",configuration_id=\"cfg-pat\",monitoring_group=\"critical\",kind=\"gitlab-pat\",asset_name=\"deployment-token\",owner_username=\"bob\",label_set=\"asset_name,kind,monitoring_group,owner_username\",pod=\"api-b\",instance=\"10.0.0.2:4000\"}",
+          "values": "240x25"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "5m",
+          "alertname": "AutoSyncCriticalAssetsCreated",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "installation": "test",
+                "provider": "gitlab",
+                "configuration_id": "cfg-pat",
+                "monitoring_group": "critical",
+                "kind": "gitlab-pat",
+                "asset_name": "deployment-token",
+                "owner_username": "alice",
+                "label_set": "asset_name,kind,monitoring_group,owner_username",
+                "severity": "info"
+              },
+              "exp_annotations": {
+                "summary": "Auto-sync imported deployment-token",
+                "description": "Configuration cfg-pat imported inventory within the last 15 minutes. Type: gitlab-pat. Owner: alice."
+              }
+            },
+            {
+              "exp_labels": {
+                "installation": "test",
+                "provider": "gitlab",
+                "configuration_id": "cfg-pat",
+                "monitoring_group": "critical",
+                "kind": "gitlab-pat",
+                "asset_name": "deployment-token",
+                "owner_username": "bob",
+                "label_set": "asset_name,kind,monitoring_group,owner_username",
+                "severity": "info"
+              },
+              "exp_annotations": {
+                "summary": "Auto-sync imported deployment-token",
+                "description": "Configuration cfg-pat imported inventory within the last 15 minutes. Type: gitlab-pat. Owner: bob."
+              }
+            }
+          ]
+        },
+        {
+          "eval_time": "20m",
+          "alertname": "AutoSyncCriticalAssetsCreated",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "name": "empty owner omits owner annotation and empty optional labels keep inventory fallback",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{installation=\"test\",provider=\"gitlab\",configuration_id=\"cfg-pat\",monitoring_group=\"critical\",owner_username=\"\",asset_name=\"\",kind=\"\",project=\"\",group=\"\",pod=\"api-a\"}",
+          "values": "240x25"
+        },
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{installation=\"test\",provider=\"gitlab\",configuration_id=\"cfg-pat\",monitoring_group=\"critical\",pod=\"api-b\"}",
+          "values": "240x25"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "5m",
+          "alertname": "AutoSyncCriticalAssetsCreated",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "installation": "test",
+                "provider": "gitlab",
+                "configuration_id": "cfg-pat",
+                "monitoring_group": "critical",
+                "severity": "info"
+              },
+              "exp_annotations": {
+                "summary": "Auto-sync imported inventory",
+                "description": "Configuration cfg-pat imported inventory within the last 15 minutes."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "future owner series cannot suppress a different recent owner's alert",
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{provider=\"gitlab\",configuration_id=\"cfg-pat\",monitoring_group=\"critical\",owner_username=\"alice\"}",
+          "values": "240x25"
+        },
+        {
+          "series": "auto_sync_last_creation_timestamp_seconds{provider=\"gitlab\",configuration_id=\"cfg-pat\",monitoring_group=\"critical\",owner_username=\"bob\"}",
+          "values": "900x25"
+        }
+      ],
+      "alert_rule_test": [
+        {
+          "eval_time": "5m",
+          "alertname": "AutoSyncCriticalAssetsCreated",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "provider": "gitlab",
+                "configuration_id": "cfg-pat",
+                "monitoring_group": "critical",
+                "owner_username": "alice",
+                "severity": "info"
+              },
+              "exp_annotations": {
+                "summary": "Auto-sync imported inventory",
+                "description": "Configuration cfg-pat imported inventory within the last 15 minutes. Owner: alice."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "recent creation already in initial scrape baseline",
       "interval": "1m",
       "input_series": [
