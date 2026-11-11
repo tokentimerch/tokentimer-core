@@ -4800,15 +4800,17 @@ export default function AlertPreferences({
                   ))}
                 </Select>
               </FormControl>
-              <Button
-                size='sm'
-                variant='outline'
-                alignSelf='flex-start'
-                onClick={refreshContacts}
-                isLoading={refreshingContacts}
-              >
-                Refresh confirmation status
-              </Button>
+              {verificationControlsVisible(recipientVerificationMode) && (
+                <Button
+                  size='sm'
+                  variant='outline'
+                  alignSelf='flex-start'
+                  onClick={refreshContacts}
+                  isLoading={refreshingContacts}
+                >
+                  Refresh confirmation status
+                </Button>
+              )}
               {contactsLoadError && (
                 <Text role='alert' fontSize='sm'>
                   Could not refresh confirmation status. Try again.

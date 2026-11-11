@@ -8,12 +8,16 @@ const vm = require("node:vm");
 
 const source = fs.readFileSync(path.resolve(__dirname, "../../apps/dashboard/src/pages/AlertPreferences.jsx"), "utf8");
 
-test("contacts header has no refresh button while confirmation and retry refresh remain available", () => {
+test("contacts header has no refresh button while confirmation and retry refresh remain available", async () => {
   assert.doesNotMatch(source, />\s*Refresh contacts\s*</);
   const modal = source.slice(source.indexOf("isOpen={isConfirmationOpen}"), source.indexOf("isOpen={isEditContactOpen}"));
-  assert.match(modal, /onClick=\{refreshContacts\}[\s\S]*?Refresh confirmation status/);
+  assert.match(modal, /verificationControlsVisible\(recipientVerificationMode\)\s*&&\s*\(\s*<Button[\s\S]*?onClick=\{refreshContacts\}[\s\S]*?Refresh confirmation status/);
   assert.match(modal, /contactsLoadError[\s\S]*?Could not refresh confirmation status/);
   assert.match(source, /onClick=\{refreshContacts\}[\s\S]*?Retry contacts/);
+  const statusSource = fs.readFileSync(path.resolve(__dirname, "../../apps/dashboard/src/pages/contactVerificationStatus.js"), "utf8");
+  const ui = await import(`data:text/javascript;base64,${Buffer.from(statusSource).toString("base64")}`);
+  for (const mode of ["enforce", "shadow"]) assert.equal(ui.verificationControlsVisible(mode), true);
+  for (const mode of ["off", null, undefined]) assert.equal(ui.verificationControlsVisible(mode), false);
 });
 
 // Evaluate the actual page handlers with API, toast and clipboard boundaries
