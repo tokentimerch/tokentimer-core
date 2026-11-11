@@ -14,6 +14,7 @@ const {
   multiConfigDisabledBody,
   normalizeConnectionName,
   validateAutoSyncSettings,
+  preserveIntegrationSelection,
   scanSettingsEqual,
   sanitizePublicAutoSyncError,
 } = require("../services/autoSyncProvenance");
@@ -566,9 +567,10 @@ router.put(
           scanAffecting = true;
         }
         if (scan_params !== undefined) {
+          const nextScanParams = preserveIntegrationSelection(scan_params, existing.rows[0].scan_params);
           updates.push(`scan_params = $${idx++}`);
-          values.push(scan_params);
-          scanAffecting = !scanSettingsEqual(scan_params, existing.rows[0].scan_params) || scanAffecting;
+          values.push(nextScanParams);
+          scanAffecting = !scanSettingsEqual(nextScanParams, existing.rows[0].scan_params) || scanAffecting;
         }
         if (frequency !== undefined) {
           updates.push(`frequency = $${idx++}`);

@@ -77,6 +77,10 @@ import ImportAWSForm, {
   buildAwsAutoSyncPayload,
 } from './imports/ImportAWSForm';
 import ImportAzureForm from './imports/ImportAzureForm';
+import FilterRulesEditor, {
+  sanitizeFilterRules,
+  FilterRulesSummary,
+} from './FilterRulesEditor';
 import AzureInventoryAuthFields from './imports/AzureInventoryAuthFields';
 import {
   azureInventoryCredentialsHaveSecrets,
@@ -845,6 +849,13 @@ function _getAzureItemDetails(item) {
 
 function getAzureADItemDetails(item) {
   const details = [];
+  details.push({
+    label: 'Identity',
+    value:
+      item.servicePrincipalType === 'ManagedIdentity'
+        ? 'Managed identity'
+        : item.servicePrincipalType || 'App registration / service principal',
+  });
   if (item.app_id) {
     details.push({ label: 'App ID', value: item.app_id });
   }
@@ -1181,10 +1192,13 @@ function ImportTokensModalContent({
   const [azureADClientSecret, setAzureADClientSecret] = React.useState('');
   const [replacingAzureAdCredentials, setReplacingAzureAdCredentials] =
     React.useState(false);
+  const [managedIdentityMode, setManagedIdentityMode] = React.useState('all');
+  const [azureADFilterRules, setAzureADFilterRules] = React.useState([]);
   const [azureADIncludeApps, setAzureADIncludeApps] = React.useState(true);
   const [azureADIncludeSPs, setAzureADIncludeSPs] = React.useState(true);
   const [azureADItems, setAzureADItems] = React.useState([]);
   const [azureADSummary, setAzureADSummary] = React.useState([]);
+  const [azureADFilterSummary, setAzureADFilterSummary] = React.useState(null);
   const azureADSummaryRows = React.useMemo(
     () => collapseScanSummaryByType(azureADSummary),
     [azureADSummary]
@@ -1196,6 +1210,36 @@ function ImportTokensModalContent({
     React.useState(false);
   // The backend-authoritative scan record cleanup is driven from.
   const [azureADLastScanId, setAzureADLastScanId] = React.useState(null);
+  const [azureADPreviewReady, setAzureADPreviewReady] = React.useState(false);
+  const {
+    beginScanVerification: beginAzureADPreview,
+    isScanCurrent: isAzureADPreviewCurrent,
+  } = useScanVerification({
+    identity: {
+      isOpen,
+      workspaceId,
+      source,
+      managedIdentityMode,
+      azureADFilterRules,
+      azureADIncludeApps,
+      azureADIncludeSPs,
+      azureADAuthMethod,
+      azureADToken,
+      azureADTenantId,
+      azureADClientId,
+      azureADClientSecret,
+    },
+    provider: 'azure-ad',
+    onScanInvalidated: () => {
+      setAzureADPreviewReady(false);
+      setAzureADItems([]);
+      setAzureADSummary([]);
+      setAzureADFilterSummary(null);
+      setSelectedRowsAzureAD(new Set());
+      setAzureADDuplicates(new Set());
+      setAzureADLastScanId(null);
+    },
+  });
 
   // Show/hide toggle for secret fields
   const [showSecrets, setShowSecrets] = React.useState({});
@@ -1391,6 +1435,10 @@ function ImportTokensModalContent({
               if (sp.vaultUrl) setAzureVaultUrl(sp.vaultUrl);
               break;
             case 'azure-ad':
+              setManagedIdentityMode(sp.managedIdentityMode || 'all');
+              setAzureADFilterRules(
+                Array.isArray(sp.filterRules) ? sp.filterRules : []
+              );
               if (sp.include) {
                 if (sp.include.applications !== undefined)
                   setAzureADIncludeApps(sp.include.applications);
@@ -1592,9 +1640,13 @@ function ImportTokensModalContent({
       }
       case 'azure-ad':
         scanParams = {
+          managedIdentityMode,
+          filterRules: sanitizeFilterRules(azureADFilterRules),
           include: {
-            applications: azureADIncludeApps,
-            servicePrincipals: azureADIncludeSPs,
+            applications:
+              managedIdentityMode === 'only' ? false : azureADIncludeApps,
+            servicePrincipals:
+              managedIdentityMode === 'only' ? true : azureADIncludeSPs,
           },
         };
         if (autoSyncManageMode && !replacingAzureAdCredentials) {
@@ -2344,6 +2396,7 @@ function ImportTokensModalContent({
 
   // Microsoft Entra ID scan and import
   const doAzureADScan = async () => {
+    const previewTicket = beginAzureADPreview();
     const scanTicket = beginScanVerification();
     const workspaceId = getWorkspaceId();
     if (!workspaceId) {
@@ -2368,6 +2421,7 @@ function ImportTokensModalContent({
     setIsScanning(true);
     setAzureADItems([]);
     setAzureADSummary([]);
+    setAzureADFilterSummary(null);
     try {
       const credentials = buildAzureInventoryCredentials({
         authMethod: azureADAuthMethod,
@@ -2377,17 +2431,23 @@ function ImportTokensModalContent({
         clientSecret: azureADClientSecret,
       });
       const res = await azureADAPI.scan({
+        managedIdentityMode,
+        filterRules: sanitizeFilterRules(azureADFilterRules),
         workspaceId,
         include: {
-          applications: azureADIncludeApps,
-          servicePrincipals: azureADIncludeSPs,
+          applications:
+            managedIdentityMode === 'only' ? false : azureADIncludeApps,
+          servicePrincipals:
+            managedIdentityMode === 'only' ? true : azureADIncludeSPs,
         },
         maxItems: 2000,
         ...azureInventoryScanAuthPayload(credentials),
       });
+      if (!isAzureADPreviewCurrent(previewTicket)) return;
       const items = Array.isArray(res?.items) ? res.items : [];
       setAzureADItems(items);
       setAzureADSummary(Array.isArray(res?.summary) ? res.summary : []);
+      setAzureADFilterSummary(res?.filterSummary || null);
       setAzureADLastScanId(res?.scan_id || null);
 
       // Update quota from response (if available) or refresh from API
@@ -2397,12 +2457,16 @@ function ImportTokensModalContent({
 
       // Check for duplicates
       const dups = await checkDuplicatesForItems(items, workspaceId);
+      if (!isAzureADPreviewCurrent(previewTicket)) return;
       setAzureADDuplicates(dups);
+      setAzureADPreviewReady(true);
       completeScanVerification(scanTicket);
     } catch (e) {
+      if (!isAzureADPreviewCurrent(previewTicket)) return;
       // Clear summary on error to prevent showing partial/error data
       setAzureADItems([]);
       setAzureADSummary([]);
+      setAzureADFilterSummary(null);
       setAzureADLastScanId(null);
       // Handle quota exceeded error
       if (isQuotaExceededError(e)) {
@@ -2420,6 +2484,12 @@ function ImportTokensModalContent({
   };
 
   const importAzureADSelected = async () => {
+    if (!azureADPreviewReady || isScanning) {
+      setError(
+        'Run a scan with the current identity selection and filters before importing.'
+      );
+      return;
+    }
     try {
       setIsImporting(true);
       const selected = azureADItems
@@ -2437,6 +2507,7 @@ function ImportTokensModalContent({
       }
 
       await integrationAPI.import({
+        filterRules: sanitizeFilterRules(azureADFilterRules),
         workspaceId,
         items: selected,
         defaults: contactGroupFieldsForImportDefaults(bulkContactGroupIds),
@@ -3318,6 +3389,11 @@ function ImportTokensModalContent({
                   hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={vaultFormRef}
+                  initialScanParams={
+                    restoredScanParamsFor === 'vault'
+                      ? restoredScanParams
+                      : null
+                  }
                   workspaceId={workspaceId}
                   onImportComplete={selected => {
                     setIsImporting(false);
@@ -3471,6 +3547,11 @@ function ImportTokensModalContent({
                   hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={azureFormRef}
+                  initialScanParams={
+                    restoredScanParamsFor === 'azure'
+                      ? restoredScanParams
+                      : null
+                  }
                   workspaceId={workspaceId}
                   onImportComplete={selected => {
                     setIsImporting(false);
@@ -3503,6 +3584,9 @@ function ImportTokensModalContent({
                   hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={gcpFormRef}
+                  initialScanParams={
+                    restoredScanParamsFor === 'gcp' ? restoredScanParams : null
+                  }
                   workspaceId={workspaceId}
                   onImportComplete={selected => {
                     setIsImporting(false);
@@ -3593,7 +3677,12 @@ function ImportTokensModalContent({
                     <VStack align='start' spacing={2}>
                       <HStack>
                         <Switch
-                          isChecked={azureADIncludeApps}
+                          isChecked={
+                            managedIdentityMode === 'only'
+                              ? false
+                              : azureADIncludeApps
+                          }
+                          isDisabled={managedIdentityMode === 'only'}
                           onChange={e =>
                             setAzureADIncludeApps(e.target.checked)
                           }
@@ -3603,7 +3692,12 @@ function ImportTokensModalContent({
                       </HStack>
                       <HStack>
                         <Switch
-                          isChecked={azureADIncludeSPs}
+                          isChecked={
+                            managedIdentityMode === 'only'
+                              ? true
+                              : azureADIncludeSPs
+                          }
+                          isDisabled={managedIdentityMode === 'only'}
                           onChange={e => setAzureADIncludeSPs(e.target.checked)}
                           colorScheme='blue'
                         />
@@ -3621,6 +3715,36 @@ function ImportTokensModalContent({
                       </Button>
                     ) : null}
                   </HStack>
+                  <FormControl>
+                    <FormLabel fontSize='sm'>Identity selection</FormLabel>
+                    <Select
+                      aria-label='Identity selection'
+                      value={managedIdentityMode}
+                      onChange={e => setManagedIdentityMode(e.target.value)}
+                    >
+                      <option value='all'>All identities</option>
+                      <option value='exclude'>
+                        Exclude managed identities
+                      </option>
+                      <option value='only'>Managed identities only</option>
+                    </Select>
+                    <Text fontSize='xs'>
+                      Managed identities only scans service principals
+                      regardless of scope switches. Filtering does not disable
+                      existing inventory alerts.
+                    </Text>
+                  </FormControl>
+                  <FilterRulesEditor
+                    rules={azureADFilterRules}
+                    onChange={setAzureADFilterRules}
+                  />
+                  <FilterRulesSummary summary={azureADFilterSummary} />
+                  {managedIdentityMode !== 'all' && (
+                    <Text fontSize='xs' color={muted}>
+                      Manual obsolete-item cleanup skips service principals when
+                      an identity class is selected.
+                    </Text>
+                  )}
                   {!autoSyncManageMode ? renderErrorAlert() : null}
                   <Box
                     border='1px solid'
@@ -3988,7 +4112,12 @@ function ImportTokensModalContent({
                     onClick={importAzureADSelected}
                     {...primaryButtonProps}
                     colorScheme='green'
-                    isDisabled={selectedRowsAzureAD.size === 0 || isImporting}
+                    isDisabled={
+                      !azureADPreviewReady ||
+                      isScanning ||
+                      selectedRowsAzureAD.size === 0 ||
+                      isImporting
+                    }
                     isLoading={isImporting}
                   >
                     Import selected

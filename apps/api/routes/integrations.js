@@ -42,7 +42,8 @@ const {
   awsScanPersistRecords,
 } = require("../services/awsScanPersist");
 const { scanAzure } = require("../services/azureIntegration");
-const { scanAzureAD } = require("../services/azureADIntegration");
+const { scanAzureAD, validateManagedIdentityMode } = require("../services/azureADIntegration");
+const { legacyManagedIdentityLocation } = require("../services/entraIdentity");
 const {
   KEY_VAULT_SCOPE,
   GRAPH_SCOPE,
@@ -2094,6 +2095,8 @@ router.post(
           .status(400)
           .json(withQuota({ error: "maxItems must be between 1 and 2000" }));
       }
+      try { validateManagedIdentityMode(req.body?.managedIdentityMode); }
+      catch (error) { return res.status(400).json(withQuota({ error: error.message })); }
       const resolved = await resolveAzureScanAuth({
         authMethod,
         token,
@@ -2106,6 +2109,7 @@ router.post(
         token: resolved.token,
         authProvider: resolved.authProvider,
         tenantId: resolved.tenantId,
+        managedIdentityMode: req.body?.managedIdentityMode,
         include: {
           applications:
             include && typeof include.applications === "boolean"
@@ -2137,14 +2141,23 @@ router.post(
             items: (result.items || []).map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: {},
+              dimensions: item.servicePrincipalType
+                ? { servicePrincipalType: item.servicePrincipalType } : {},
             })),
-            subScopes: (result.summary || []).map((s) => ({
-              sourceKind: s.sourceKind,
-              dimensions: {},
-              complete: s.complete === true,
-              reason: s.error ? "error" : s.truncated ? "truncated" : null,
-            })),
+            subScopes: (result.summary || []).map((s) => {
+              // Manual cleanup cannot delete principals outside the selected class.
+              // Fenced workers reconcile only their own configuration's links.
+              const partialIdentityClass =
+                !(req.isWorkerCall && req.body?.auto_sync_run) &&
+                (req.body?.managedIdentityMode ?? "all") !== "all" &&
+                s.type === "service_principals";
+              return {
+                sourceKind: s.sourceKind,
+                dimensions: {},
+                complete: s.complete === true && !partialIdentityClass,
+                reason: s.error ? "error" : s.truncated ? "truncated" : partialIdentityClass ? "managed_identity_filter" : null,
+              };
+            }),
           });
           result.scan_id = scan.scanId;
         }
@@ -2760,6 +2773,7 @@ router.post(
           let tok;
           const imported = await upsertImportedToken({ context: autoSyncRun,
             payload: tokenPayload, workspaceId, userId: req.user.id, manual: !req.isWorkerCall,
+            legacyLocation: legacyManagedIdentityLocation(it),
             assignMembership: (payload, options) => assignTokenContactGroups(payload, membership, options) });
           tok = imported.token;
           if (!imported.created) {

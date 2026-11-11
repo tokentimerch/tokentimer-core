@@ -1801,7 +1801,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProviderScanRequest"
+              $ref: "#/components/schemas/AwsScanRequest"
       responses:
         "200":
           description: Integration scan result
@@ -1891,7 +1891,11 @@ paths:
         clouds are not supported. Graph inventory recommends
         Application.Read.All. This is not CertOps Azure DNS. OpenID
         discovery is used only for Graph, to canonicalize the tenant GUID
-        before minting.
+        before minting. `managedIdentityMode` defaults to `all`. `only`
+        forces service-principal scanning on and application scanning off;
+        `all` and `exclude` honor `include`. Managed identities are exactly
+        service principals whose Graph `servicePrincipalType` is
+        `ManagedIdentity`, covering system-assigned and user-assigned identities.
       requestBody:
         required: true
         content:
@@ -2336,9 +2340,7 @@ paths:
                   type: object
                   additionalProperties: true
                 scan_params:
-                  type: object
-                  description: Scan filters and scope. `contactGroupIds` (array of contact group IDs) sets the alert groups for assets this configuration creates; assets it already imported or later edited keep their groups, and an empty or missing list uses the workspace default. Changing it does not restart a scan.
-                  additionalProperties: true
+                  $ref: "#/components/schemas/AutoSyncScanParams"
                 frequency:
                   type: string
                 schedule_time:
@@ -2494,6 +2496,9 @@ paths:
             schema:
               type: object
               additionalProperties: true
+              properties:
+                scan_params:
+                  $ref: "#/components/schemas/AutoSyncScanParams"
       responses:
         "200":
           description: Updated auto-sync config
@@ -12921,13 +12926,20 @@ components:
         credentials:
           type: object
           additionalProperties: true
-    AzureScanFilterRules:
+    IntegrationScanFilterRules:
       type: array
       maxItems: 50
       description: >-
-        Ordered include/exclude rules applied to scan results before
-        import. Exclude rules always win; when include rules exist,
-        only matching items are kept.
+        Include/exclude rules applied to scan results before import.
+        Exclude rules always win; when include rules exist, only matching
+        items are kept. Exact matches are case-sensitive whole-field
+        matches; regex uses JavaScript syntax, case-sensitive unless explicit
+        flags such as /pattern/i are supplied. Unsafe regex is rejected.
+        For Entra managed
+        identities, location rules evaluate both the current managedIdentities
+        path and the derived legacy servicePrincipals path without rewriting
+        exact values or regex expressions. Use managedIdentityMode for a true
+        managed/non-managed split. Exclusion does not silence existing alerts.
       items:
         type: object
         additionalProperties: false
@@ -12944,7 +12956,91 @@ components:
             enum: [name, description, location]
           value:
             type: string
+            minLength: 1
             maxLength: 500
+    AzureScanFilterRules:
+      $ref: "#/components/schemas/IntegrationScanFilterRules"
+    EntraManagedIdentityMode:
+      type: string
+      enum: [all, exclude, only]
+      default: all
+      description: >-
+        Entra only. Omitted means all. all and exclude honor the applications
+        and servicePrincipals include flags. only disables application scanning
+        and forces service-principal scanning, even if its include flag is false.
+        Only the exact Graph servicePrincipalType ManagedIdentity is classified
+        as managed, covering both system-assigned and user-assigned identities.
+        exclude retains other and unknown service-principal types.
+    AutoSyncScanParams:
+      type: object
+      additionalProperties: true
+      description: >-
+        Provider scan scope and filters. Core schedules GitHub/GitLab;
+        Enterprise adds providers including AWS, Azure Key Vault, Entra and GCP.
+        Cloud supports manual scans only. Cleanup is explicit opt-in and never
+        uses partial or incomplete scope as disappearance evidence.
+        contactGroupIds applies only to newly created assets; changing it does
+        not restart a scan or replace existing asset assignments.
+      properties:
+        filterRules:
+          $ref: "#/components/schemas/IntegrationScanFilterRules"
+        managedIdentityMode:
+          $ref: "#/components/schemas/EntraManagedIdentityMode"
+        include:
+          type: object
+          additionalProperties:
+            type: boolean
+          description: Provider-specific resource-kind switches.
+        contactGroupIds:
+          type: array
+          items:
+            type: string
+          description: Alert groups for new assets; empty or omitted uses the workspace default.
+    AwsScanRequest:
+      type: object
+      additionalProperties: false
+      required: [accessKeyId, secretAccessKey]
+      properties:
+        accessKeyId:
+          type: string
+          minLength: 1
+        secretAccessKey:
+          type: string
+          minLength: 1
+        sessionToken:
+          type: string
+          nullable: true
+        region:
+          type: string
+          default: us-east-1
+        regions:
+          type: array
+          items:
+            type: string
+          description: Regions to scan in all-regions mode.
+        scanMode:
+          type: string
+          enum: [single, global, all-regions]
+        include:
+          type: object
+          additionalProperties: false
+          properties:
+            secrets:
+              type: boolean
+              default: true
+            iam:
+              type: boolean
+              default: true
+            certificates:
+              type: boolean
+              default: true
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          $ref: "#/components/schemas/IntegrationScanFilterRules"
     AzureKeyVaultScanRequest:
       oneOf:
         - $ref: "#/components/schemas/AzureKeyVaultBearerScanRequest"
@@ -13046,6 +13142,8 @@ components:
           type: string
           minLength: 1
           maxLength: 5000
+        managedIdentityMode:
+          $ref: "#/components/schemas/EntraManagedIdentityMode"
         authMethod:
           type: string
           enum: [token]
@@ -13077,6 +13175,8 @@ components:
         authMethod:
           type: string
           enum: [client_credentials]
+        managedIdentityMode:
+          $ref: "#/components/schemas/EntraManagedIdentityMode"
         tenantId:
           type: string
           minLength: 1
@@ -13148,28 +13248,7 @@ components:
           maximum: 2000
           default: 500
         filterRules:
-          type: array
-          maxItems: 50
-          description: >-
-            Ordered include/exclude rules applied to scan results before
-            import. Exclude rules always win; when include rules exist,
-            only matching items are kept.
-          items:
-            type: object
-            required: [action, matchType, field, value]
-            properties:
-              action:
-                type: string
-                enum: [include, exclude]
-              matchType:
-                type: string
-                enum: [regex, exact]
-              field:
-                type: string
-                enum: [name, description, location]
-              value:
-                type: string
-                maxLength: 500
+          $ref: "#/components/schemas/IntegrationScanFilterRules"
     VaultScanRequest:
       allOf:
         - type: object
@@ -13311,8 +13390,7 @@ components:
         items:
           type: array
           items:
-            type: object
-            additionalProperties: true
+            $ref: "#/components/schemas/IntegrationScanItem"
         summary:
           type: array
           description: >-
@@ -13353,6 +13431,35 @@ components:
         quota:
           type: object
           additionalProperties: true
+    IntegrationScanItem:
+      type: object
+      additionalProperties: true
+      properties:
+        location:
+          type: string
+          description: >-
+            Entra managed-identity credentials use
+            azure-ad:managedIdentities/{appId}/secrets/{keyId} or
+            azure-ad:managedIdentities/{appId}/certificates/{keyId}.
+            Application and ordinary service-principal locations are unchanged.
+            Canonical source identity is unchanged by this display-path change.
+        servicePrincipalType:
+          type: string
+          nullable: true
+          description: Graph servicePrincipalType on Entra service-principal items; null if absent.
+        identityType:
+          type: string
+          enum: [managedIdentity, servicePrincipal]
+          description: Normalized Entra service-principal classification, not an assigned-identity subtype.
+        isManagedIdentity:
+          type: boolean
+          description: True only when Graph servicePrincipalType is exactly ManagedIdentity.
+        legacyLocation:
+          type: string
+          description: >-
+            Derived old azure-ad:servicePrincipals path for a managed identity.
+            Import may adopt a legacy row only when its exact old location and
+            canonical source match; this is not a blanket inventory migration.
     IntegrationImportRequest:
       type: object
       required: [items]

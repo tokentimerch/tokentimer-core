@@ -9,6 +9,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Import filters across providers.** AWS, Azure Key Vault, Entra ID and GCP expose include/exclude rules for name, description and location, with exact or regex matching. Excluding inventory does not silence its alerts; contact groups, preferences and alert controls remain separate.
+- **Separate Entra managed identities.** Scan all identities (default), exclude managed identities, or scan only managed identities, covering both assigned types. Managed credentials use `azure-ad:managedIdentities/...` locations without changing source identity; saved location rules also match the old path. **Operator guidance:** for Enterprise schedules, create and run a managed-only configuration before changing the remaining one to exclude. Keep cleanup off for both first runs and inspect associations before enabling it. Multiple configurations require System settings activation. See the [import and sync guide](docs/AUTO_SYNC.md#safely-split-a-saved-entra-connection).
+
 ## [0.18.2] - 2026-10-27
 
 ### Added

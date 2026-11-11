@@ -19,6 +19,10 @@ import { awsAPI, integrationAPI, formatDate } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
 import LearnMorePanel from '../LearnMorePanel';
+import FilterRulesEditor, {
+  sanitizeFilterRules,
+  FilterRulesSummary,
+} from '../FilterRulesEditor';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -114,6 +118,7 @@ export function buildAwsAutoSyncPayload({
   secretAccessKey,
   awsRegion,
   awsDetectedRegions = [],
+  filterRules = [],
 }) {
   const scanMode =
     awsRegion === 'all-regions'
@@ -135,6 +140,7 @@ export function buildAwsAutoSyncPayload({
       detectedRegions:
         scanMode === 'all-regions' ? [...awsDetectedRegions] : [],
       maxItems: 500,
+      filterRules: sanitizeFilterRules(filterRules),
     },
   };
 }
@@ -181,6 +187,11 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupIds, setBulkContactGroupIds] = React.useState([]);
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
+  const [filterRules, setFilterRules] = React.useState([]);
+  const [filterSummary, setFilterSummary] = React.useState(null);
+  React.useEffect(() => {
+    setFilterSummary(null);
+  }, [filterRules]);
   // Backend-authoritative scan record cleanup is driven from. Set after
   // any completed scan that returned a scan_id, including All Regions
   // (one persist covering IAM plus every region that actually ran).
@@ -193,6 +204,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   React.useEffect(() => {
     if (!initialAutoSyncScanParams) return;
     const sp = initialAutoSyncScanParams;
+    setFilterRules(Array.isArray(sp.filterRules) ? sp.filterRules : []);
     if (sp.scanMode === 'all-regions' || sp.region === 'all-regions') {
       setAwsRegion('all-regions');
     } else if (sp.scanMode === 'global' || sp.region === 'global') {
@@ -278,6 +290,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
     setIsScanning(true);
     setAwsItems([]);
     setAwsSummary([]);
+    setFilterSummary(null);
     try {
       const isGlobalScan = awsRegion === 'global';
       const isAllRegionsScan = awsRegion === 'all-regions';
@@ -289,6 +302,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
           secretAccessKey: awsSecretAccessKey,
           region: 'us-east-1',
           scanMode: 'all-regions',
+          filterRules: sanitizeFilterRules(filterRules),
           regions: [...awsDetectedRegions],
           maxItems: 2000,
           include: { secrets: true, iam: true, certificates: true },
@@ -296,6 +310,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         const allItems = Array.isArray(res?.items) ? res.items : [];
         setAwsItems(allItems);
         setAwsSummary(aggregateAwsSummary(res?.summary));
+        setFilterSummary(res?.filterSummary || null);
         setLastScanId(res?.scan_id || null);
 
         const dups = await checkDuplicatesForItems(allItems, workspaceId);
@@ -311,6 +326,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
           accessKeyId: awsAccessKeyId,
           secretAccessKey: awsSecretAccessKey,
           region: scanRegion,
+          filterRules: sanitizeFilterRules(filterRules),
           maxItems: 2000,
           include: {
             secrets: !isGlobalScan,
@@ -321,6 +337,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         const items = Array.isArray(res?.items) ? res.items : [];
         setAwsItems(items);
         setAwsSummary(Array.isArray(res?.summary) ? res.summary : []);
+        setFilterSummary(res?.filterSummary || null);
         // A single backend call (global IAM sweep, or one specific region)
         // maps to exactly one persisted scan record, so its scan_id can
         // drive cleanup scoped to whatever the backend confirms it fully
@@ -338,6 +355,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
     } catch (e) {
       setAwsItems([]);
       setAwsSummary([]);
+      setFilterSummary(null);
       setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
@@ -377,6 +395,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
       await integrationAPI.import({
         workspaceId,
         items: selected,
+        filterRules: sanitizeFilterRules(filterRules),
         defaults: contactGroupFieldsForImportDefaults(bulkContactGroupIds),
         // scan_id is sent whenever this import followed a scan, regardless
         // of whether cleanup is enabled -- provenance attribution must not
@@ -403,6 +422,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
       secretAccessKey: awsSecretAccessKey,
       awsRegion,
       awsDetectedRegions,
+      filterRules,
     });
   const { beginScanVerification, completeScanVerification } =
     useScanVerification({
@@ -701,6 +721,13 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
             )}
         </VStack>
       )}
+      <FilterRulesEditor
+        rules={filterRules}
+        onChange={setFilterRules}
+        borderColor={borderColor}
+        helpTextColor={helpTextColor}
+      />
+      <FilterRulesSummary summary={filterSummary} />
       {awsSummary.length > 0 && (
         <Box
           border='1px solid'

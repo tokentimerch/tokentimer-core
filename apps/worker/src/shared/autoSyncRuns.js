@@ -6,7 +6,7 @@ export function settingsSnapshot(config) {
   const params = config.scan_params || {};
   const snapshot = { cleanup_obsolete: config.cleanup_obsolete === true };
   // Values are scope/filter metadata, never the credential object or arbitrary scan_params keys.
-  for (const key of ["scanMode", "region", "projectId", "subscriptionId", "tenantId", "pathPrefix", "namespace", "authMount", "authMethod"])
+  for (const key of ["scanMode", "region", "projectId", "subscriptionId", "tenantId", "pathPrefix", "namespace", "authMount", "authMethod", "managedIdentityMode"])
     if (typeof params[key] === "string") snapshot[key] = params[key].slice(0, 500);
   for (const key of ["maxItems", "maxItemsPerMount"])
     if (Number.isSafeInteger(params[key])) snapshot[key] = params[key];

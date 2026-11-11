@@ -13,6 +13,18 @@ import { FiPlus, FiTrash2 } from 'react-icons/fi';
 
 const MAX_RULES = 50;
 
+export function FilterRulesSummary({ summary }) {
+  if (!summary) return null;
+  return (
+    <HStack role='status' aria-label='Filter results' spacing={2}>
+      <Badge colorScheme='green'>{summary.matchedCount} matched</Badge>
+      <Badge colorScheme='orange'>
+        {summary.excludedCount} excluded by rules
+      </Badge>
+    </HStack>
+  );
+}
+
 // ReDoS hardening (issue #69 follow-up): mirrors the same heuristic used
 // server-side in importFilterRules.js so the UI can reject nested
 // quantifiers and overlapping quantified alternatives immediately. Keep

@@ -22,6 +22,10 @@ import {
   Spinner,
   Radio,
   RadioGroup,
+  Alert,
+  AlertIcon,
+  AlertTitle,
+  AlertDescription,
 } from '@chakra-ui/react';
 import { FiEye, FiEyeOff, FiHelpCircle, FiRefreshCw } from 'react-icons/fi';
 import { vaultAPI, integrationAPI } from '../../utils/apiClient';
@@ -141,6 +145,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     extractQuotaFromError,
     contactGroups,
     onSelectionChange,
+    initialScanParams = null,
   },
   ref
 ) {
@@ -217,6 +222,23 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   // Shared bulk assignment state
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupIds, setBulkContactGroupIds] = React.useState([]);
+  const [restoredMounts, setRestoredMounts] = React.useState(null);
+  React.useEffect(() => {
+    if (!initialScanParams) return;
+    const sp = initialScanParams;
+    setVaultAddress(sp.address || '');
+    setVaultNamespace(sp.namespace || '');
+    setIncludeKV(sp.include?.kv ?? true);
+    setIncludePKI(sp.include?.pki ?? true);
+    setPathPrefix(sp.pathPrefix || '');
+    setFilterRules(Array.isArray(sp.filterRules) ? sp.filterRules : []);
+    setSelectedCategories(
+      new Set(sp.categories || VAULT_CATEGORY_OPTIONS.map(c => c.value))
+    );
+    setRestoredMounts(Array.isArray(sp.mounts) ? sp.mounts : null);
+    setSelectedMountPaths(new Set(sp.mounts || []));
+    setAvailableMounts([]);
+  }, [initialScanParams]);
 
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsVault.size);
@@ -265,7 +287,9 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       });
       const scannable = mounts.filter(m => m.type === 'kv' || m.type === 'pki');
       setAvailableMounts(scannable);
-      setSelectedMountPaths(new Set(scannable.map(m => m.path)));
+      setSelectedMountPaths(
+        new Set(restoredMounts ?? scannable.map(m => m.path))
+      );
     } catch (e) {
       setAvailableMounts([]);
       setMountsError(e?.message || 'Failed to load secrets engines');
@@ -295,7 +319,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   // Only send an explicit mount list when the picker was used and the user
   // narrowed it down; otherwise every mount is scanned (unchanged default).
   const mountsFilterForScan = () => {
-    if (availableMounts.length === 0) return null;
+    if (availableMounts.length === 0) return restoredMounts;
     if (selectedMountPaths.size >= availableMounts.length) return null;
     return Array.from(selectedMountPaths);
   };
@@ -401,6 +425,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       await vaultAPI.import({
         workspaceId,
         items: selected,
+        filterRules: sanitizeFilterRules(filterRules),
         defaults: {
           ...vaultDefaults,
           ...contactGroupFieldsForImportDefaults(bulkContactGroupIds),
@@ -428,6 +453,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     credentials: { address: vaultAddress, ...vaultAuthPayload() },
     scanParams: {
       address: vaultAddress,
+      namespace: vaultNamespace.trim(),
       include: { kv: includeKV, pki: includePKI },
       pathPrefix: pathPrefix || '',
       maxItemsPerMount,
@@ -705,16 +731,18 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
               </Text>
             ) : null}
             {cleanupObsolete ? (
-              <Text fontSize='xs' color='red.400' pl={6}>
-                Deletes previously imported items of the asset kinds scanned
-                above (KV, PKI, or both) that no longer appear anywhere in this
-                scan's results, regardless of which items you select for import
-                below. Mounts you did not scan, or that this scan couldn't fully
-                complete, are never affected -- and neither is a category
-                (certificates / secrets &amp; keys) you left unchecked above:
-                cleanup only ever considers the categories this specific scan
-                was run with. This cannot be undone.
-              </Text>
+              <Alert status='warning' borderRadius='md' alignItems='start'>
+                <AlertIcon mt='1' />
+                <Box>
+                  <AlertTitle fontSize='sm'>Items will be deleted</AlertTitle>
+                  <AlertDescription fontSize='sm'>
+                    Previously imported items missing from this scan will be
+                    deleted, even if they are not selected below. This cannot be
+                    undone. Only fully scanned mounts and selected asset kinds
+                    are affected.
+                  </AlertDescription>
+                </Box>
+              </Alert>
             ) : null}
           </VStack>
         </Box>

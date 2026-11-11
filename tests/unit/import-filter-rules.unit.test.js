@@ -16,6 +16,51 @@ after(() => {
   regexBudgetTest.killWorker();
 });
 
+describe("managed identity location compatibility", () => {
+  const legacy = "azure-ad:servicePrincipals/app/certificates/key";
+  const item = {
+    name: "production", description: "platform",
+    location: "azure-ad:managedIdentities/app/certificates/key",
+    servicePrincipalType: "ManagedIdentity",
+    sourceKind: "azure-ad-sp-certificate", sourceObjectId: "app:key",
+  };
+  for (const [matchType, value] of [
+    ["exact", legacy],
+    ["exact", item.location],
+    ["regex", "^azure-ad:service[P]rincipals/app/certificates/key$"],
+    ["regex", "^azure-ad:managed[I]dentities/"],
+  ]) {
+    it(`matches ${matchType} ${value} without changing the rule`, () => {
+      const rule = { field: "location", action: "include", matchType, value };
+      const before = JSON.stringify(rule);
+      assert.equal(applyFilterRules([rule], [item]).items.length, 1);
+      assert.equal(applyFilterRules([rule, { ...rule, action: "exclude" }], [item]).items.length, 0);
+      assert.equal(JSON.stringify(rule), before);
+    });
+  }
+  it("does not alias unknown types, other sources, mismatched identities or unrelated fields", () => {
+    const rule = { field: "location", action: "include", matchType: "exact", value: legacy };
+    for (const patch of [
+      { servicePrincipalType: undefined, isManagedIdentity: true },
+      { servicePrincipalType: "Application" },
+      { sourceKind: "azure-ad-certificate" },
+      { sourceObjectId: "other:key" },
+      { location: "vault:secret/other", legacyLocation: legacy },
+    ]) {
+      assert.equal(applyFilterRules([rule], [{ ...item, ...patch }]).items.length, 0);
+    }
+    assert.equal(applyFilterRules([{ ...rule, field: "description" }], [item]).items.length, 0);
+  });
+  it("composes identity locations with ordinary name and description rules", () => {
+    const rules = [
+      { field: "location", action: "include", matchType: "regex", value: "^azure-ad:managedIdentities/" },
+      { field: "name", action: "exclude", matchType: "exact", value: "development" },
+      { field: "description", action: "exclude", matchType: "exact", value: "retired" },
+    ];
+    assert.deepEqual(applyFilterRules(rules, [item, { ...item, name: "development" }, { ...item, description: "retired" }]).items, [item]);
+  });
+});
+
 describe("importFilterRules.validateFilterRules", () => {
   it("accepts undefined/null (no rules)", () => {
     assert.strictEqual(validateFilterRules(undefined), null);

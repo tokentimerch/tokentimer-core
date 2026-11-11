@@ -91,6 +91,7 @@ function buildAzureAutoSyncScanBody(provider, creds, scanParams) {
   if (provider === "azure-ad") {
     return {
       ...auth,
+      managedIdentityMode: scanParams?.managedIdentityMode || "all",
       include: scanParams?.include || {
         applications: true,
         servicePrincipals: true,

@@ -14,6 +14,10 @@ import { azureAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
 import LearnMorePanel from '../LearnMorePanel';
+import FilterRulesEditor, {
+  sanitizeFilterRules,
+  FilterRulesSummary,
+} from '../FilterRulesEditor';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -91,6 +95,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     autoSyncTokenPlaceholder,
     autoSyncManageMode = false,
     initialVaultUrl = '',
+    initialScanParams = null,
     updateQuotaFromResponse,
     refreshIntegrationQuota,
     isQuotaExceededError,
@@ -122,6 +127,19 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupIds, setBulkContactGroupIds] = React.useState([]);
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
+  const [filterRules, setFilterRules] = React.useState([]);
+  const [filterSummary, setFilterSummary] = React.useState(null);
+  React.useEffect(() => {
+    setFilterSummary(null);
+  }, [filterRules]);
+  React.useEffect(() => {
+    if (!initialScanParams) return;
+    setFilterRules(
+      Array.isArray(initialScanParams.filterRules)
+        ? initialScanParams.filterRules
+        : []
+    );
+  }, [initialScanParams]);
   // The backend-authoritative scan record cleanup is driven from.
   const [lastScanId, setLastScanId] = React.useState(null);
 
@@ -164,6 +182,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     setIsScanning(true);
     setAzureItems([]);
     setAzureSummary([]);
+    setFilterSummary(null);
     try {
       const credentials = buildAzureInventoryCredentials({
         vaultUrl: azureVaultUrl,
@@ -177,11 +196,13 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
         workspaceId,
         vaultUrl: azureVaultUrl,
         maxItems: 2000,
+        filterRules: sanitizeFilterRules(filterRules),
         ...azureInventoryScanAuthPayload(credentials),
       });
       const items = Array.isArray(res?.items) ? res.items : [];
       setAzureItems(items);
       setAzureSummary(Array.isArray(res?.summary) ? res.summary : []);
+      setFilterSummary(res?.filterSummary || null);
       setLastScanId(res?.scan_id || null);
 
       if (updateQuotaFromResponse && !updateQuotaFromResponse(res)) {
@@ -194,6 +215,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     } catch (e) {
       setAzureItems([]);
       setAzureSummary([]);
+      setFilterSummary(null);
       setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
@@ -233,6 +255,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
       await integrationAPI.import({
         workspaceId,
         items: selected,
+        filterRules: sanitizeFilterRules(filterRules),
         defaults: contactGroupFieldsForImportDefaults(bulkContactGroupIds),
         // scan_id is sent whenever this import followed a scan, regardless
         // of whether cleanup is enabled -- provenance attribution must not
@@ -265,6 +288,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     const scanParams = {
       vaultUrl: azureVaultUrl,
       include: { secrets: true, certificates: true, keys: true },
+      filterRules: sanitizeFilterRules(filterRules),
     };
     if (autoSyncManageMode && !replacingCredentials) {
       return { credentials: {}, scanParams };
@@ -392,6 +416,13 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
           clearAzureAuthFields();
         }}
       />
+      <FilterRulesEditor
+        rules={filterRules}
+        onChange={setFilterRules}
+        borderColor={borderColor}
+        helpTextColor={helpTextColor}
+      />
+      <FilterRulesSummary summary={filterSummary} />
       {errorContent}
       <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
         <VStack align='stretch' spacing={2}>

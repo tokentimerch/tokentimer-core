@@ -20,6 +20,7 @@
 
 const MAX_RULES = 50;
 const MAX_VALUE_LENGTH = 500;
+const { legacyManagedIdentityLocation } = require("./entraIdentity");
 
 // ReDoS hardening: Node's regex engine is synchronous and not
 // preemptible, so a catastrophic-backtracking pattern can hang the process.
@@ -357,6 +358,9 @@ function getItemField(item, field) {
 }
 
 function ruleMatches(rule, item) {
+  const legacyLocation = rule.field === "location"
+    ? legacyManagedIdentityLocation(item) : null;
+  if (legacyLocation && ruleMatches(rule, { location: legacyLocation })) return true;
   const value = getItemField(item, rule.field);
   if (rule.matchType === "exact") {
     return value === rule.value;
