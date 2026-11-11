@@ -67,7 +67,7 @@ test(
     try {
       const script = `$ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
-$fixture='${q(parent)}'
+$fixture=(Get-Item -LiteralPath '${q(parent)}').FullName
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile('${q(path.resolve(__dirname, "../install-agent.ps1"))}',[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'Installer parse failed'}
@@ -293,6 +293,9 @@ Assert-Refused {Get-ProtectedPackageFingerprint -Directory $root -Verify} '*no m
 $fingerprint=Get-ProtectedPackageFingerprint -Directory $root
 [IO.File]::WriteAllText($seal,$fingerprint)
 if((Get-ProtectedPackageFingerprint -Directory $root -Verify) -cne $fingerprint){throw 'Protected predecessor rejected'}
+# Verify the same sealed tree through its Windows 8.3 spelling when available.
+$shortRoot=(New-Object -ComObject Scripting.FileSystemObject).GetFolder($root).ShortPath
+if($shortRoot -and (Get-ProtectedPackageFingerprint -Directory $shortRoot -Verify) -cne $fingerprint){throw 'Short-path predecessor rejected'}
 [IO.File]::WriteAllText($fixture,'after')
 Assert-Refused {Get-ProtectedPackageFingerprint -Directory $root -Verify} '*no matching protected installation fingerprint*'
 [IO.File]::WriteAllText($fixture,'before')

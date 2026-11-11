@@ -209,7 +209,10 @@ function Test-PackageCopyExclusion {
 
 function Get-ProtectedPackageFingerprint {
     param([Parameter(Mandatory)][string]$Directory, [switch]$Verify, [switch]$SourceTree)
-    $null = Get-UnlinkedInstallItem -Path $Directory -Directory
+    # Child paths returned by the provider can use the expanded long path
+    # even when the caller supplied an 8.3 alias. Use one canonical spelling
+    # for relative paths and the fingerprint file comparison.
+    $Directory = (Get-UnlinkedInstallItem -Path $Directory -Directory).FullName.TrimEnd([IO.Path]::DirectorySeparatorChar)
     Assert-TrustedInstallAccess -Path $Directory -MutationMask 0x500d0156
     $records = [Collections.Generic.List[string]]::new()
     $pending = [Collections.Generic.Stack[string]]::new()
@@ -222,7 +225,7 @@ function Get-ProtectedPackageFingerprint {
                 if ($SourceTree -and (Test-PackageCopyExclusion -Entry $entry)) { continue }
                 Assert-TrustedInstallAccess -Path $entry.FullName -MutationMask 0x500d0156
                 $relative = $entry.FullName.Substring($Directory.Length + 1)
-                if ($entry.FullName -ceq $seal) {
+                if ($entry.FullName -ieq $seal) {
                     if (-not $Verify -or $entry.PSIsContainer) { throw 'unexpected package fingerprint file' }
                     continue
                 }
