@@ -8,6 +8,14 @@ const vm = require("node:vm");
 
 const source = fs.readFileSync(path.resolve(__dirname, "../../apps/dashboard/src/pages/AlertPreferences.jsx"), "utf8");
 
+test("contacts header has no refresh button while confirmation and retry refresh remain available", () => {
+  assert.doesNotMatch(source, />\s*Refresh contacts\s*</);
+  const modal = source.slice(source.indexOf("isOpen={isConfirmationOpen}"), source.indexOf("isOpen={isEditContactOpen}"));
+  assert.match(modal, /onClick=\{refreshContacts\}[\s\S]*?Refresh confirmation status/);
+  assert.match(modal, /contactsLoadError[\s\S]*?Could not refresh confirmation status/);
+  assert.match(source, /onClick=\{refreshContacts\}[\s\S]*?Retry contacts/);
+});
+
 // Evaluate the actual page handlers with API, toast and clipboard boundaries
 // recorded. This catches false success messages when the server withheld delivery.
 function handler(channel, data, { viewer = false, pageSource = source, clipboardFailure = false, clipboardAvailable = true } = {}) {
