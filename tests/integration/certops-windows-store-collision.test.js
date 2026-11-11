@@ -412,6 +412,22 @@ describe("Windows store certificate collision on PostgreSQL", function () {
     await db.query('UPDATE certops_management_periods SET renewal_profile_id=NULL,automation_enabled=FALSE WHERE id=$1',[period(wrongId)]);
     const result=await reassociateWindowsStore(params);
     assert.equal(result.managedCertificateId,currentId);
+    const audit=(await db.query(`SELECT action,metadata FROM audit_events WHERE workspace_id=$1
+      AND action IN ('CERTOPS_MANAGEMENT_STOPPED','CERTOPS_MANAGEMENT_STARTED','CERTOPS_WINDOWS_STORE_REASSOCIATED')`,[workspaceId])).rows;
+    const started=audit.find(row=>row.action==='CERTOPS_MANAGEMENT_STARTED' && row.metadata.periodId===result.periodId);
+    assert.equal(started.metadata.managedCertificateId,currentId);
+    assert.equal(started.metadata.renewalProfileId,profileId);
+    assert.equal(started.metadata.automationEnabled,true);
+    assert.equal(started.metadata.fingerprintSha256,fingerprint);
+    const stopped=audit.find(row=>row.action==='CERTOPS_MANAGEMENT_STOPPED' && row.metadata.periodId===period(legacyId));
+    assert.equal(stopped.metadata.managedCertificateId,legacyId);
+    assert.equal(stopped.metadata.renewalProfileId,profileId);
+    assert.equal(stopped.metadata.automationEnabled,true);
+    const reassociated=audit.find(row=>row.action==='CERTOPS_WINDOWS_STORE_REASSOCIATED');
+    assert.equal(reassociated.metadata.currentId,currentId);
+    assert.equal(reassociated.metadata.legacyId,legacyId);
+    assert.equal(reassociated.metadata.profileId,profileId);
+    assert.equal(reassociated.metadata.fingerprintSha256,fingerprint);
     const rows=(await db.query('SELECT managed_certificate_id,renewal_profile_id FROM certops_management_periods WHERE workspace_id=$1 AND ended_at IS NULL',[workspaceId])).rows;
     assert.equal(rows.find(r=>r.managed_certificate_id===currentId).renewal_profile_id,profileId);
     assert.equal(rows.find(r=>r.managed_certificate_id===wrongId).renewal_profile_id,null);

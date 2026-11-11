@@ -158,6 +158,9 @@ const ALL_ACTION_TYPES = [
   'CERTOPS_RENEWAL_PROFILE_DERIVATION_DECLINED',
   'CERTOPS_RENEWAL_PROFILE_UPDATED',
   'CERTOPS_RENEWAL_PROFILE_DETACHED',
+  'CERTOPS_MANAGEMENT_STARTED',
+  'CERTOPS_MANAGEMENT_STOPPED',
+  'CERTOPS_WINDOWS_STORE_REASSOCIATED',
   'CERTOPS_WORKSPACE_PAUSED',
   'CERTOPS_WORKSPACE_RESUMED',
   'CERTOPS_CONTROLLER_PROVISION_INTENT_CREATED',
@@ -1624,6 +1627,24 @@ export default function Audit({ session, onLogout, onAccountClick }) {
 
   function getRecentCertOpsMetadataEntries(ev) {
     const action = String(ev?.action || '');
+    if (['CERTOPS_MANAGEMENT_STARTED', 'CERTOPS_MANAGEMENT_STOPPED', 'CERTOPS_WINDOWS_STORE_REASSOCIATED'].includes(action)) {
+      const md = ev?.metadata || {};
+      return [
+        ['Certificate', md.commonName || md.dnsName],
+        ['Certificate ID', md.managedCertificateId],
+        ['Previous registration ID', md.legacyId],
+        ['New registration ID', md.currentId],
+        ['Management period ID', md.periodId],
+        ['Previous period ID', md.legacyPeriodId],
+        ['Replaced period ID', md.currentPeriodId],
+        ['New period ID', md.newPeriodId],
+        ['Renewal profile ID', md.renewalProfileId || md.profileId],
+        ['Agent ID', md.agentId],
+        ['Fingerprint', md.fingerprintSha256],
+        ['Automatic renewal', md.automationEnabled == null ? null : md.automationEnabled ? 'enabled' : 'disabled'],
+      ].filter(([, value]) => value !== undefined && value !== null && value !== '')
+        .map(([label, value]) => ({ label, value: String(value) }));
+    }
     if (
       action.startsWith('CERTOPS_ISSUER_') ||
       action.startsWith('CERTOPS_ENROLLMENT_') ||

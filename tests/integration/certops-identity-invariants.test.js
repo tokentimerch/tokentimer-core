@@ -1043,7 +1043,17 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       automationEnabled: false,
       client: db,
     });
-    assert.notEqual((await period(mc)).id, old.id);
+    const replacement = await period(mc);
+    assert.notEqual(replacement.id, old.id);
+    const audits = (await db.query("SELECT action,metadata FROM audit_events WHERE workspace_id=$1 AND action IN ('CERTOPS_MANAGEMENT_STARTED','CERTOPS_MANAGEMENT_STOPPED')", [ws])).rows;
+    const stopped = audits.find(row => row.action === 'CERTOPS_MANAGEMENT_STOPPED' && row.metadata.periodId === old.id);
+    const started = audits.find(row => row.action === 'CERTOPS_MANAGEMENT_STARTED' && row.metadata.periodId === replacement.id);
+    for (const row of [stopped, started]) {
+      assert.equal(row.metadata.managedCertificateId, mc.id);
+      assert.equal(row.metadata.commonName, mc.common_name);
+      assert.equal(row.metadata.fingerprintSha256, A);
+      assert.equal(typeof row.metadata.automationEnabled, 'boolean');
+    }
     for (const assignment of [
       "ended_at=NULL",
       "ended_reason='rewritten'",

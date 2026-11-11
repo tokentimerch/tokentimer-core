@@ -1332,8 +1332,9 @@ async function stopManagingSource({
   return inTransaction(client, async (tx) => {
     await acquireManagedCertificateImportLock(tx, workspaceId);
     const result = await tx.query(
-      `SELECT p.*
+      `SELECT p.*, mc.common_name AS audit_common_name, mc.fingerprint_sha256 AS audit_fingerprint_sha256
          FROM certops_management_periods p
+         LEFT JOIN managed_certificates mc ON mc.workspace_id = p.workspace_id AND mc.id = p.managed_certificate_id
         WHERE p.workspace_id = $1 AND p.id = $2 FOR UPDATE OF p`,
       [workspaceId, periodId],
     );
@@ -1373,6 +1374,10 @@ async function stopManagingSource({
         JSON.stringify({
           periodId,
           managedCertificateId: period.managed_certificate_id,
+          commonName: period.audit_common_name,
+          fingerprintSha256: period.audit_fingerprint_sha256,
+          renewalProfileId: period.renewal_profile_id,
+          automationEnabled: period.automation_enabled,
         }),
         workspaceId,
       ],
@@ -1492,7 +1497,9 @@ async function readdManagingSource({
         $2::jsonb, $3)`,
       [
         actorUserId,
-        JSON.stringify({ periodId: inserted.rows[0].id, managedCertificateId }),
+        JSON.stringify({ periodId: inserted.rows[0].id, managedCertificateId,
+          commonName: mc.rows[0].common_name, fingerprintSha256: mc.rows[0].fingerprint_sha256,
+          renewalProfileId: renewalProfileId || null, automationEnabled }),
         workspaceId,
       ],
     );
