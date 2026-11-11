@@ -55,6 +55,8 @@ included in the audit metadata.
 - **CERTOPS_RENEWAL_PROFILE_DERIVED** metadata: `{ profileId, profileName, created, managedCertificateId, renewBeforeDays, acmeKind, commandRef, caEndpoint, certPath, targetType, windowsStore, windowsBindingSite, windowsBindingPort, windowsBindingSniHost, dnsProvider, dnsZone, keyAlgorithm, keySize }`.
 - **CERTOPS_RENEWAL_PROFILE_DERIVATION_DECLINED** metadata: `{ managedCertificateId, commonName, jobId, operation, agentId, derivationReason, reconciliationReason, detail, targetType }`.
 - **CERTOPS_RENEWAL_PROFILE_UPDATED** metadata: `{ profileId, profileName, issuerId, issuerName, previousIssuerName, changes }`.
+- **CERTOPS_MANAGEMENT_STARTED** / **CERTOPS_MANAGEMENT_STOPPED** identify the certificate and management period; new events also include the certificate name, fingerprint, renewal profile ID and automatic-renewal setting when available. Older events may contain only IDs.
+- **CERTOPS_WINDOWS_STORE_REASSOCIATED** identifies the previous and new registrations and periods, certificate name and fingerprint, agent, and renewal profile.
 - **CERTOPS_RENEWAL_PROFILE_DETACHED** metadata: `{ managedCertificateId, commonName, profileId, profileName, invalidatedIntents }`.
 - **CERTOPS_JOB_APPROVAL_GRANTED** metadata: `{ jobId, status, payloadHash, canonicalIntentHash, reason }` (`reason` present only when the approver supplied one).
 - **CERTOPS_JOB_APPROVAL_REJECTED** metadata: `{ jobId, status, reason }` (`reason` present only when the approver supplied one).
