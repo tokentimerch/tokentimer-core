@@ -137,7 +137,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
     const source=(await pool.query("SELECT key_reference,public_metadata FROM managed_certificates WHERE workspace_id=$1 AND id=$2",[workspaceId,certificateId])).rows[0];
     assert.equal(source.key_reference,`winstore://WebHosting/${site}:${port}`);assert.equal(source.public_metadata.issuance.target.store,"WebHosting");
     const enrollment=await createEnrollment(enrollmentInput({certificateId,authorizedDnsNames:[domain],target:{type:"windows-iis",reference:domain,store:"WebHosting",binding:{site,port,sniHost:domain}}}));
-    const {claimJobs,_test:dispatchCaps}=require("../../apps/api/services/certops/agentDispatch");
+    const {claimJobs,_test:dispatchCaps}=require("./helpers/authenticated-agent-dispatch");
     await pool.query("UPDATE certops_agents SET agent_version='0.18.0',declared_capabilities=$2::jsonb,capabilities_updated_at=NOW(),declared_target_selectors=$3::jsonb WHERE id=$1",[agentRowId,JSON.stringify(["adcs-enroll-v1",dispatchCaps.EVIDENCE_CLAIM_BINDING_CAPABILITY,dispatchCaps.SIGNED_PAYLOAD_B64_CAPABILITY]),JSON.stringify([domain])]);
     const agent=(await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1",[agentRowId])).rows[0];
     const claimed=await claimJobs({dbPool:pool,agent:{id:agentRowId,workspaceId,agentId:agent.agent_id,agentVersion:"0.18.0",protocolVersion:"1.0.0",status:"active"},envelope:{agentId:agent.agent_id,protocolVersion:"1.0.0"},body:{supportedActions:["renew"],maxJobs:16},deps:{enforceAgentSequence:async()=>({sequence:1}),signJobForDispatch:async({job,envelopeVersion})=>({...job,envelopeVersion})}});
@@ -149,7 +149,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
   it("claims the continuation of a first enrollment that has no certificate identity yet", async () => {
     const assert = require("node:assert/strict");
     const { provisionSurvivorSource } = require("../e2e/helpers/certops-adcs-local-rules");
-    const { claimJobs, _test: dispatchCaps } = require("../../apps/api/services/certops/agentDispatch");
+    const { claimJobs, _test: dispatchCaps } = require("./helpers/authenticated-agent-dispatch");
     const domain = "first-enrollment.example.test";
     const certificateId = await provisionSurvivorSource({
       fixture: { workspaceId, pool, request: async () => { throw new Error("Unexpected readd of an open source"); } },
@@ -902,7 +902,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
   });
 
   it("fences recovery and claims of every non-terminal continuation after retirement", async () => {
-    const { claimJobs, _test: dispatchCaps } = require("../../apps/api/services/certops/agentDispatch");
+    const { claimJobs, _test: dispatchCaps } = require("./helpers/authenticated-agent-dispatch");
     await assertNoForeignDueRows();
     await pool.query(
       `UPDATE certops_agents SET agent_version='0.18.0', declared_capabilities=$2::jsonb,

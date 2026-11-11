@@ -13,16 +13,25 @@ const {
   CERTOPS_AGENT_RESULT_NONCE_REJECTED,
   CERTOPS_AGENT_RESULT_STATUS_INVALID,
   CERTOPS_AGENT_SEQUENCE_REGRESSION,
-  claimJobs,
+  claimJobs: claimJobsImpl,
   enforceAgentSequence,
-  ingestResult,
-  recordHeartbeat,
+  ingestResult: ingestResultImpl,
+  recordHeartbeat: recordHeartbeatImpl,
   registerAgent,
-  renewJobLease,
+  renewJobLease: renewJobLeaseImpl,
   _test: dispatchTest,
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/agentDispatch.js"),
 );
+// These protocol unit fixtures start after authentication. Credential-fence
+// behavior is exercised separately against a real concurrent database.
+const passthroughFence = async () => {};
+const wrap = (fn, fence = passthroughFence) => options => fn({ ...options,
+  deps: { assertCurrentAgentCredential: fence, ...options.deps } });
+const claimJobs = wrap(claimJobsImpl);
+const recordHeartbeat = wrap(recordHeartbeatImpl);
+const renewJobLease = wrap(renewJobLeaseImpl);
+const ingestResult = wrap(ingestResultImpl, async ({ client, agent }) => client.query("SELECT id FROM certops_agents WHERE id = $1 FOR UPDATE", [agent.id]));
 const {
   ENCRYPTION_VERSION,
   encryptRegistrationCredential,
@@ -1255,6 +1264,44 @@ describe("agentDispatch.claimJobs", () => {
     }),
   };
 
+  it("does not claim a persisted store-only job before the executor is qualified", async () => {
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT last_sequence")) return { rows: [{ last_sequence: 0 }] };
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return { rows: [{
+          declared_target_selectors: ["app.example.com"],
+          declared_command_profile_names: [],
+          supported_dns_providers: [],
+          declared_capabilities: ["windows-store-only-acme-v1"],
+          capabilities_updated_at: new Date().toISOString(),
+          platform: "win32",
+        }] };
+      }
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+        return { rows: [{
+          id: 42,
+          workspace_id: WORKSPACE_A,
+          operation: "renew",
+          subject_type: "certificate",
+          subject_id: "cert-1",
+          executor_kind: "agent",
+          payload: { target: { type: "windows-cert-store", reference: "app.example.com", store: "My" } },
+        }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const result = await claimJobs({
+      dbPool,
+      agent: agentFixture(),
+      body: { maxJobs: 1, supportedActions: ["renew"] },
+      env: { CERTOPS_AGENT_LOG_STORAGE_ENABLED: "false" },
+      deps: CLAIM_DEPS_BASE,
+    });
+    assert.equal(result.jobs.length, 0);
+    assert.equal(dbPool.state.queries.some((q) => q.text.includes("SET status = 'claimed'")), false);
+  });
+
   it("claims pending jobs, sets lease fields, and returns signed payloads", async () => {
     let livenessUpdates = 0;
     const dbPool = createMockPool((sql, params) => {
@@ -2408,6 +2455,18 @@ describe("agentDispatch.hasFreshCapability (ADR-0012 decision 17)", () => {
 });
 
 describe("agentDispatch.renewJobLease", () => {
+  it("refuses to extend a trust distribution after the CA is observed revoked", async () => {
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT last_sequence")) return { rows: [{ last_sequence: 0 }] };
+      if (sql.includes("SELECT id, workspace_id, operation, subject_id, payload, assigned_agent_id, status, claimed_by_agent_id"))
+        return { rows: [{ id:"job-1", operation:"distribute-trust", payload:{fingerprintSha256:"a".repeat(64)}, status:"running", claimed_by_agent_id:"agent-row-1", claim_id:"claim-1" }] };
+      if (sql.includes("FROM certificate_instances observed")) return { rows: [{ result:{verdict:"revoked",chainStatus:"valid",checkedAt:new Date(Date.now()-60000).toISOString(),validUntil:new Date(Date.now()+60000).toISOString()} }] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await assert.rejects(renewJobLease({dbPool,agent:agentFixture(),jobId:"job-1",claimId:"claim-1",deps:{extendJobNonceExpiry:async()=>({extended:false})}}), {code:"CERTOPS_AGENT_CERTIFICATE_REVOKED"});
+    assert.deepEqual(dbPool.state.transaction,["BEGIN","ROLLBACK"]);
+  });
+
   it("transitions claimed→running, extends lease, and extends the nonce", async () => {
     let extendedNonce = null;
     const dbPool = createMockPool((sql, params) => {
@@ -2562,6 +2621,25 @@ describe("agentDispatch.ingestResult", () => {
     );
     assert.equal(nonceConsulted, false);
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+  });
+
+  it("rejects expired store claims for AD CS, ACME and proof-only before processing a result", async () => {
+    for (const variant of [
+      { operation: "renew", enrollment_id: "adcs-enrollment" },
+      { operation: "renew", enrollment_id: null },
+      { operation: "adcs-installation-proof", enrollment_id: "adcs-enrollment" },
+    ]) {
+      let nonceConsulted = false;
+      const dbPool = createMockPool(sql => {
+        if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow({ ...variant,
+          payload: { target: { type: "windows-cert-store", reference: "host.example.com", store: "My" } }, lease_live: false })] };
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      await assert.rejects(ingestResult({ dbPool, agent: agentFixture(), body: resultBody(),
+        deps: { consumeNonce: async () => { nonceConsulted = true; return { consumed: true }; } } }), { code: CERTOPS_AGENT_LEASE_INVALID });
+      assert.equal(nonceConsulted, false);
+      assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+    }
   });
 
   it("rejects a replayed nonce", async () => {
@@ -3164,6 +3242,42 @@ describe("agentDispatch.ingestResult", () => {
     assert.equal(result.status, "orphaned_unknown_effect");
     assert.equal(updateCount, 0);
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+  });
+
+  it("never changes enrollment or preflight facts on a duplicate nonce", async () => {
+    const enrollments = require("../../apps/api/services/certops/certificateEnrollments");
+    const mocks = require("node:test").mock;
+    const enrollment = mocks.method(enrollments, "recordEnrollmentResult", async () => { throw new Error("unexpected enrollment write"); });
+    const preflight = mocks.method(enrollments, "recordPreflightResult", async () => { throw new Error("unexpected preflight write"); });
+    try {
+      for (const variant of [
+        { operation: "renew", enrollment_id: "enrollment", body: { enrollmentResult: { state: "issued" } } },
+        { operation: "adcs-preflight", body: { preflightResult: { verdict: "safe" } } },
+      ]) {
+        const dbPool = createMockPool(sql => {
+          if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow({ status: "failed", completed_at: new Date(), ...variant, body: undefined })] };
+          throw new Error(`unexpected query: ${sql}`);
+        });
+        const result = await ingestResult({ dbPool, agent: agentFixture(), body: resultBody(variant.body),
+          deps: { consumeNonce: async () => ({ consumed: false, code: "CERTOPS_NONCE_REPLAYED" }) } });
+        assert.equal(result.duplicate, true);
+        await assert.rejects(ingestResult({ dbPool, agent: agentFixture(), body: resultBody(variant.body),
+          deps: { consumeNonce: async () => ({ consumed: true }) } }), { code: CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH });
+      }
+      assert.equal(enrollment.mock.callCount(), 0);
+      assert.equal(preflight.mock.callCount(), 0);
+    } finally { enrollment.mock.restore(); preflight.mock.restore(); }
+  });
+
+  it("still acknowledges an already committed store result after its lease is cleared", async () => {
+    const dbPool = createMockPool(sql => {
+      if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow({ status: "succeeded", completed_at: new Date(),
+        payload: { target: { type: "windows-cert-store", reference: "host.example.com", store: "My" } }, lease_live: false })] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const result = await ingestResult({ dbPool, agent: agentFixture(), body: resultBody({ status: "succeeded" }),
+      deps: { consumeNonce: async () => ({ consumed: false, code: "CERTOPS_NONCE_REPLAYED" }) } });
+    assert.equal(result.duplicate, true);
   });
 
   it("parses agent reconciliation markers from errorMessage", () => {

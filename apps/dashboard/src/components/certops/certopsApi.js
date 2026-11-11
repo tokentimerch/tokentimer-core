@@ -14,6 +14,50 @@ function workspaceBase(workspaceId) {
   return `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/certops`;
 }
 
+export async function getWindowsRenewal(workspaceId, identityId) {
+  const res = await apiClient.get(`${workspaceBase(workspaceId)}/certificate-identities/${encodeURIComponent(identityId)}/windows-renewal`);
+  return res.data;
+}
+
+export async function setWindowsIisConsumer(workspaceId, periodId, targetId, enabled) {
+  const res = await apiClient.put(`${workspaceBase(workspaceId)}/management-periods/${encodeURIComponent(periodId)}/iis-consumers/${encodeURIComponent(targetId)}`, { enabled });
+  return res.data;
+}
+
+export async function listIisReassociationCandidates(workspaceId, sourceId) {
+  const res = await apiClient.get(
+    `${workspaceBase(workspaceId)}/sources/${encodeURIComponent(sourceId)}/reassociate-windows-store/candidates`
+  );
+  return res.data;
+}
+
+export async function reassociateWindowsSource(
+  workspaceId,
+  sourceId,
+  candidate
+) {
+  const {
+    currentId,
+    legacyPeriodId,
+    currentPeriodId,
+    agentId,
+    expectedFingerprintSha256,
+    expectedDnsName,
+  } = candidate;
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/sources/${encodeURIComponent(sourceId)}/reassociate-windows-store`,
+    {
+      currentId,
+      legacyPeriodId,
+      currentPeriodId,
+      agentId,
+      expectedFingerprintSha256,
+      expectedDnsName,
+    }
+  );
+  return res.data;
+}
+
 /**
  * List managed certificates for a workspace.
  * @returns {Promise<{ items: object[], pagination: { limit: number, offset: number, total: number } }>}

@@ -971,6 +971,20 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       const parts = [];
       if (md.profileName) parts.push(`Profile: ${md.profileName}`);
       if (md.profileId) parts.push(`ID: ${md.profileId}`);
+      if (md.issuerName) parts.push(`Issuer: ${md.issuerName}`);
+      if (md.issuerId) parts.push(`Issuer ID: ${md.issuerId}`);
+      if (md.changes?.issuerId) {
+        const previous =
+          md.previousIssuerName || md.changes.issuerId.from || 'none';
+        const next = md.issuerName || md.changes.issuerId.to || 'none';
+        parts.push(`Issuer changed: ${previous} → ${next}`);
+        if (md.changes.issuerId.from)
+          parts.push(`Previous issuer ID: ${md.changes.issuerId.from}`);
+      }
+      if (md.changes?.status?.from && md.changes?.status?.to)
+        parts.push(
+          `Status changed: ${md.changes.status.from} → ${md.changes.status.to}`
+        );
       if (md.managedCertificateId)
         parts.push(`Certificate: ${md.managedCertificateId}`);
       if (md.commonName) parts.push(`CN: ${md.commonName}`);
@@ -1623,10 +1637,13 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     ) {
       const md = ev?.metadata || {};
       return [
-        ['Issuer', md.issuerId],
+        ['Issuer', md.issuerName || md.issuerId],
+        ['Issuer ID', md.issuerName ? md.issuerId : null],
         ['Kind', md.kind],
         ['Version', md.version],
         ['CA key SHA-256', md.caKeySha256],
+        ['CA', md.caConfig],
+        ['Template', md.template],
         ['Enrollment', md.enrollmentId],
         ['Job', md.jobId],
         ['Agent', md.agentId],

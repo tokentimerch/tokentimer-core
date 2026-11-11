@@ -245,6 +245,7 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
             },
           ],
           deps: {
+            assertCurrentAgentCredential: async () => {},
             enforceAgentSequence: async ({ client: c, envelope }) => {
               await c.query("SET last_sequence = $1", [envelope.sequence]);
             },
@@ -331,6 +332,7 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
         },
       ],
       deps: {
+        assertCurrentAgentCredential: async () => {},
         enforceAgentSequence: async ({ client: c, envelope }) => {
           await c.query("SET last_sequence = $1", [envelope.sequence]);
         },
@@ -450,6 +452,7 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
         },
       ],
       deps: {
+        assertCurrentAgentCredential: async () => {},
         enforceAgentSequence: async ({ client: c, envelope }) => {
           await c.query("SET last_sequence = $1", [envelope.sequence]);
         },
@@ -1074,14 +1077,69 @@ describe("certSourceRefFor / targetSourceRefFor - Windows location identity", ()
   }
 
   it("keeps the same certSourceRef across a fingerprint rotation at the same binding", () => {
-    const before = windowsObservation({ fingerprintSha256: "3".repeat(64) });
-    const after = windowsObservation({ fingerprintSha256: "4".repeat(64) });
+    const metadata = [
+      { name: "locationKind", value: "iis_binding" },
+      { name: "locationSlot", value: "Site-A:443" },
+      { name: "targetHost", value: "iis-01.example" },
+    ];
+    const before = windowsObservation({ metadata, fingerprintSha256: "3".repeat(64) });
+    const after = windowsObservation({ metadata, fingerprintSha256: "4".repeat(64) });
 
     assert.equal(
       _test.certSourceRefFor(before),
       _test.certSourceRefFor(after),
       "a renewed certificate at the same location must keep the same logical identity, not create a duplicate",
     );
+  });
+
+  it("keeps same-CN store entries separate even for agents with legacy CN slots", () => {
+    const first = windowsObservation({ fingerprintSha256: "3".repeat(64) });
+    const second = windowsObservation({ fingerprintSha256: "4".repeat(64) });
+    assert.notEqual(_test.certSourceRefFor(first), _test.certSourceRefFor(second));
+    assert.notEqual(_test.targetSourceRefFor(first), _test.targetSourceRefFor(second));
+    assert.match(_test.certSourceRefFor(first), /windows_store_v2\/LocalMachine\/My\/sha256-3{64}$/);
+  });
+
+  it("keeps a bounded, unambiguous source reference for long host and agent names", () => {
+    const original = windowsObservation();
+    const first = { ...original, agentId: "a".repeat(128), targetHost: "h".repeat(255),
+      windowsFields: { ...original.windowsFields, storeName: "s".repeat(64) } };
+    const second = { ...first, targetHost: `${"h".repeat(254)}i` };
+    assert.ok(_test.certSourceRefFor(first).length <= 512);
+    assert.notEqual(_test.certSourceRefFor(first), _test.certSourceRefFor(second));
+    assert.equal(_test.certSourceRefFor(first), _test.certSourceRefFor({ ...first, targetHost: first.targetHost.toUpperCase() }));
+  });
+
+  it("keeps a revoked observation on its own certificate in either discovery order", () => {
+    const metadata = (verdict) => [
+      { name: "locationKind", value: "windows_store" },
+      { name: "locationSlot", value: "LocalMachine/My/shared.example" },
+      { name: "targetHost", value: "iis-01.example" },
+      { name: "observedRevocationVerdict", value: verdict },
+      { name: "observedChainStatus", value: "valid" },
+      { name: "observedRevocationCheckedAt", value: "2026-07-24T08:00:00.000Z" },
+      { name: "observedRevocationValidUntil", value: "2027-07-24T08:00:00.000Z" },
+    ];
+    const good = windowsObservation({ fingerprintSha256: "3".repeat(64), metadata: metadata("good") });
+    const revoked = windowsObservation({ fingerprintSha256: "4".repeat(64), metadata: metadata("revoked") });
+    const indexed = (items) => Object.fromEntries(items.map((item) => [
+      _test.certSourceRefFor(item), item.observedRevocation.verdict,
+    ]));
+    const forward = indexed([good, revoked]);
+    assert.deepEqual(indexed([revoked, good]), forward);
+    assert.equal(Object.keys(forward).length, 2);
+    assert.equal(forward[_test.certSourceRefFor(good)], "good");
+    assert.equal(forward[_test.certSourceRefFor(revoked)], "revoked");
+  });
+
+  it("keeps a store certificate identity when an agent changes its descriptive slot", () => {
+    const original = windowsObservation();
+    const renamed = windowsObservation({ metadata: [
+      { name: "locationKind", value: "windows_store" },
+      { name: "locationSlot", value: "LocalMachine/My/a-different-description" },
+      { name: "targetHost", value: "iis-01.example" },
+    ] });
+    assert.equal(_test.certSourceRefFor(original), _test.certSourceRefFor(renamed));
   });
 
   it("produces a distinct certSourceRef for two different bindings on the same host", () => {
@@ -1232,6 +1290,7 @@ describe("persistAgentDiscoveryEvidenceBatch - Windows discovery persistence (ob
         },
       ],
       deps: {
+        assertCurrentAgentCredential: async () => {},
         enforceAgentSequence: async ({ client: c, envelope }) => {
           await c.query("SET last_sequence = $1", [envelope.sequence]);
         },
@@ -1297,7 +1356,7 @@ describe("persistAgentDiscoveryEvidenceBatch - Windows discovery persistence (ob
     );
   });
 
-  it("targets the same certificate/target identity on a repeated scan of the same binding (no duplicate location)", async () => {
+  it("targets the same certificate identity on a repeated Windows store scan", async () => {
     const firstScanQueries = [];
     const secondScanQueries = [];
     const evidenceItemFor = (evidenceId, fingerprintSha256) => ({
@@ -1317,6 +1376,7 @@ describe("persistAgentDiscoveryEvidenceBatch - Windows discovery persistence (ob
       ],
     });
     const deps = {
+      assertCurrentAgentCredential: async () => {},
       enforceAgentSequence: async ({ client: c, envelope }) => {
         await c.query("SET last_sequence = $1", [envelope.sequence]);
       },
@@ -1330,14 +1390,12 @@ describe("persistAgentDiscoveryEvidenceBatch - Windows discovery persistence (ob
       deps,
     });
 
-    // Second scan observes a rotated fingerprint at the exact same binding
-    // (same locationSlot). The renewed certificate must resolve to the same
-    // logical location, not a new one.
+    // Re-observing the same certificate must preserve its store identity.
     await persistAgentDiscoveryEvidenceBatch({
       dbPool: { async connect() { return buildWindowsClient(secondScanQueries); } },
       agent: AGENT,
       envelope: { sequence: 7 },
-      evidenceItems: [evidenceItemFor("ev_scan_2", "8".repeat(64))],
+      evidenceItems: [evidenceItemFor("ev_scan_2", "7".repeat(64))],
       deps,
     });
 
@@ -1351,7 +1409,7 @@ describe("persistAgentDiscoveryEvidenceBatch - Windows discovery persistence (ob
     assert.equal(
       firstRef,
       secondRef,
-      "a rotated fingerprint at the same binding must reuse the same source_ref identity across scans",
+      "the same certificate in the same store must reuse its source_ref identity across scans",
     );
   });
 });

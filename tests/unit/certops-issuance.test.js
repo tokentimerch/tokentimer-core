@@ -47,6 +47,43 @@ const BASE_PAYLOAD = Object.freeze({
   dnsProvider: "cloudflare",
 });
 
+describe("AD CS machine-store issuance request", () => {
+  const request = () => ({ workspaceId: WORKSPACE_A, idempotencyKey: "adcs-issue-1",
+    assignedAgentId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    payload: { issuerId: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+      target: { type: "windows-cert-store", reference: "APP.example.com", store: "My" }, automationEnabled: false } });
+  it("accepts the issuer and agent without IIS and defaults RSA", () => {
+    const normalized = normalizeIssuanceRequest(request());
+    assert.equal(normalized.commonName, "app.example.com");
+    assert.equal(normalized.keyAlgorithm, "rsa");
+    assert.equal(normalized.keySize, 2048);
+  });
+  it("refuses missing owner, extra destination or ACME fields, and implicit automation", () => {
+    for (const mutate of [
+      (r) => { delete r.assignedAgentId; },
+      (r) => { r.payload.target.binding = { site: "x", port: 443 }; },
+      (r) => { r.payload.commandRef = "x"; },
+      (r) => { r.payload.automationEnabled = true; },
+      (r) => { r.payload.keySize = 0; },
+      (r) => { r.payload.keySize = null; },
+      (r) => { r.payload.keyAlgorithm = ""; },
+      (r) => { r.payload.keyAlgorithm = null; },
+    ]) {
+      const r = request(); mutate(r); assert.throws(() => normalizeIssuanceRequest(r));
+    }
+  });
+  it("rejects malformed issuer and agent UUIDs before any database access", () => {
+    for (const field of ["agent", "issuer"]) {
+      for (const value of ["-".repeat(36), "a".repeat(36), "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee-"]) {
+        const r = request();
+        if (field === "agent") r.assignedAgentId = value;
+        else r.payload.issuerId = value;
+        assert.throws(() => normalizeIssuanceRequest(r), { code: "CERTOPS_JOB_INVALID" });
+      }
+    }
+  });
+});
+
 /**
  * A valid issue request. `payload` overrides are merged into BASE_PAYLOAD, and
  * an explicit `undefined` removes the base key, so a test can assert a
@@ -1290,7 +1327,7 @@ describe("migration 34 issue job operation", () => {
       .split(",")
       .map((entry) => entry.trim().replace(/^'|'$/g, ""));
     const operationsAsOfMigration34 = JOB_OPERATIONS.filter(
-      (operation) => operation !== "continue-enrollment" && operation !== "protocol_smoke" && operation !== "deploy-from-store" && operation !== "adcs-preflight" && !isTrustAnchorOperation(operation),
+      (operation) => operation !== "continue-enrollment" && operation !== "protocol_smoke" && operation !== "deploy-from-store" && operation !== "adcs-preflight" && operation !== "adcs-installation-proof" && !isTrustAnchorOperation(operation),
     );
     assert.deepEqual([...values].sort(), [...operationsAsOfMigration34].sort());
   });

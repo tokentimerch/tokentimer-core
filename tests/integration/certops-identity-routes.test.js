@@ -133,6 +133,36 @@ describe("CertOps identity HTTP authorization and admission", function () {
       assert.equal(item.locationCount, 1);
     }
   });
+  it("shows the observed machine to managers but not viewers", async () => {
+    const fingerprint = require("node:crypto").createHash("sha256").update(randomUUID()).digest("hex");
+    const sourceRef = `test-agent/host-sha256-${"a".repeat(64)}/windows_store_v2/LocalMachine/My/sha256-${fingerprint}`;
+    const machine = "private-pilot.example.test";
+    const cert = (await TestUtils.execQuery(
+      `INSERT INTO managed_certificates(workspace_id,source,source_ref,fingerprint_sha256,common_name,key_mode)
+       VALUES($1,'agent_windows',$2,$3,'Private machine certificate','external-unknown') RETURNING id`,
+      [ws, sourceRef, fingerprint],
+    )).rows[0].id;
+    const target = (await TestUtils.execQuery(
+      `INSERT INTO certificate_targets(workspace_id,name,target_type,source,source_ref,hostname)
+       VALUES($1,$2,'agent-host','agent_windows',$3,$2) RETURNING id`,
+      [ws, machine, sourceRef],
+    )).rows[0].id;
+    await TestUtils.execQuery(
+      `INSERT INTO certificate_instances(workspace_id,managed_certificate_id,target_id,source,source_ref,
+         observed_fingerprint_sha256,observed_at,location_kind,deployment_reference)
+       VALUES($1,$2,$3,'agent_windows',$4,$5,NOW(),'windows_store','winstore://LocalMachine/My/test')`,
+      [ws, cert, target, sourceRef, fingerprint],
+    );
+    const id = (await TestUtils.execQuery(
+      "SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2", [ws, fingerprint],
+    )).rows[0].id;
+    for (const [who, expected] of [[manager, machine], [viewer, undefined]]) {
+      const response = await request(BASE).get(path(`certificate-identities/${id}`)).set("Cookie", who.cookie).expect(200);
+      assert.equal(response.body.certificate.sources[0].targetHostname, expected);
+      assert.equal(response.body.certificate.locations[0].targetHostname, expected);
+      if (!expected) assert(!response.text.includes(machine));
+    }
+  });
   it("rejects every management/lifecycle write from viewers", async () => {
     await post(`management-periods/${firstPeriod}/stop`, viewer).expect(403);
     await post(`sources/${mc}/readd`, viewer, {

@@ -5,6 +5,8 @@
 const test = require("node:test"),
   assert = require("node:assert/strict"),
   fs = require("node:fs"),
+  os = require("node:os"),
+  { EventEmitter } = require("node:events"),
   path = require("node:path"),
   vm = require("node:vm"),
   { createRequire } = require("node:module");
@@ -17,7 +19,12 @@ function deferred() {
   });
   return { promise, resolve };
 }
-function runtime(platform, { failRegistration = false } = {}) {
+function runtime(platform, {
+  failRegistration = false,
+  configDir = path.join(__dirname, "nonexistent-signal-fixture"),
+  execution = { enabled: false },
+  moduleOverrides = {},
+} = {}) {
   const heartbeat = deferred(),
     aborted = deferred(),
     drain = deferred(),
@@ -34,20 +41,19 @@ function runtime(platform, { failRegistration = false } = {}) {
   const config = {
     agentId: "actual-runtime-signal-fixture",
     serverUrl: "http://127.0.0.1",
-    execution: { enabled: false },
+    execution,
     heartbeatIntervalMs: 60000,
     pollIntervalMs: 60000,
     protocolVersion: "1.0",
     policy: {},
     dnsProviders: {},
     windowsDiscovery: { enabled: false },
-    windows: { enabled: false },
+    windows: { sweepIntervalMs: 60000, supersededRetentionHours: 24 },
   };
   const overrides = {
     "./config": {
       ...realRequire("./config"),
-      resolveConfigDir: () =>
-        path.join(__dirname, "nonexistent-signal-fixture"),
+      resolveConfigDir: () => configDir,
       loadAgentConfig: () => config,
       readCredential: () =>
         failRegistration ? null : "public-supporting-credential",
@@ -83,6 +89,7 @@ function runtime(platform, { failRegistration = false } = {}) {
     "./protocol": {
       ...realRequire("./protocol"),
       createProtocolClient: ({ signal }) => ({
+        claim: async () => [],
         heartbeat: async () => {
           heartbeat.resolve();
           await new Promise((resolve) => {
@@ -104,7 +111,7 @@ function runtime(platform, { failRegistration = false } = {}) {
   const context = {
     module: { exports: {} },
     exports: {},
-    require: (name) => overrides[name] || realRequire(name),
+    require: (name) => moduleOverrides[name] || overrides[name] || realRequire(name),
     __dirname,
     __filename: entry,
     process: ownedProcess,
@@ -208,3 +215,153 @@ test("actual pre-aborted external signal never installs owned runtime handlers",
     before,
   );
 });
+
+const maintenanceSteps = ["store lookup", "REQUEST cleanup", "survivor inventory", "key cleanup"];
+const maintenanceEffects = ["pending request", "orphan key", "retention sweep"];
+for (const { name, enabled, dryRun, preAborted, failRegistration, allowCleanup, interrupt, abortAfter } of [
+  { name: "observe-only", enabled: false },
+  { name: "dry-run", enabled: true, dryRun: true },
+  { name: "real execution", enabled: true, dryRun: false, allowCleanup: true },
+  { name: "pre-aborted", enabled: true, dryRun: false, preAborted: true },
+  { name: "failed registration", enabled: true, dryRun: false, failRegistration: true },
+  { name: "shutdown during the REQUEST lookup and restart", enabled: true, dryRun: false, interrupt: true },
+  ...maintenanceSteps.map((step) => ({
+    name: `shutdown after ${step} and restart`, enabled: true, dryRun: false, abortAfter: step,
+  })),
+]) {
+  test(`actual runAgent applies Windows maintenance gate in ${name}`, { timeout: 30000 }, async (t) => {
+    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-cng-startup-"));
+    t.after(() => fs.rmSync(configDir, { recursive: true, force: true }));
+    const journal = realRequire("./job-journal");
+    const containerName = "tokentimer-job-orphan-01";
+    const thumbprint = "AB".repeat(20);
+    const ids = { stateDir: configDir, jobId: "job-1", attemptId: "attempt-1" };
+    journal.markSideEffectReached({ ...ids, stage: "keygen" });
+    journal.recordWindowsCngContainer({ ...ids, containerName, store: "My" });
+    const before = journal.scanUnresolvedJournalEntries(configDir);
+    fs.mkdirSync(path.join(configDir, "windows-retention"));
+    const certStore = realRequire("./windows-cert-store");
+    const survivors = realRequire("./windows-key-survivors");
+    const mutations = [];
+    const completedSteps = [];
+    let pending = true;
+    let keyPresent = true;
+    let interruptLookup = interrupt;
+    let abortAfterStep = abortAfter;
+    let inventoryStopped = false;
+    let controller;
+    function checkpoint(step, result) {
+      completedSteps.push(step);
+      if (abortAfterStep === step) controller.abort();
+      return result;
+    }
+    const native = (file, args, _options, callback) => {
+      if (args[0] === "--key-survivors") {
+        const shared = abortAfterStep === "survivor inventory";
+        return callback(null, JSON.stringify({
+          complete: true, shared, storesScanned: 25, certificatesScanned: shared ? 1 : 0, matches: shared ? 1 : 0,
+        }), "");
+      }
+      assert.equal(file, "certutil.exe");
+      if (args[0] === "-store") {
+        assert.deepEqual(args, ["-store", "-silent", "REQUEST"]);
+        if (interruptLookup) {
+          const child = new EventEmitter();
+          child.kill = () => setImmediate(() => {
+            inventoryStopped = true;
+            child.emit("exit");
+          });
+          queueMicrotask(() => controller.abort());
+          return child;
+        }
+        return callback(null, pending ? `==== 0 ====\nContainer = ${containerName}\nCert Hash(sha1): ${thumbprint}\n` : "", "");
+      }
+      if (args[0] === "-delstore") {
+        assert.deepEqual(args, ["-delstore", "REQUEST", thumbprint]);
+        pending = false;
+        mutations.push("pending request");
+      } else {
+        assert.deepEqual(args, ["-csp", "Microsoft Software Key Storage Provider", "-delkey", containerName]);
+        if (!keyPresent) {
+          return callback(Object.assign(new Error("key absent"), { code: 1 }), "", "0x80090016 (NTE_BAD_KEYSET)");
+        }
+        keyPresent = false;
+        mutations.push("orphan key");
+      }
+      return callback(null, "", "");
+    };
+    const options = {
+      configDir, failRegistration, execution: {
+        enabled, dryRun, outboxDir: path.join(configDir, "outbox"),
+        replayStorePath: path.join(configDir, "replay.json"), clockDriftToleranceMs: 30000,
+      },
+      moduleOverrides: {
+        "./job-journal": journal,
+        "./issuers/adcs-enrollment-journal": realRequire("./issuers/adcs-enrollment-journal"),
+        "./windows-discovery": {
+          ...realRequire("./windows-discovery"),
+          listMachineStoreCertificates: async () => checkpoint("store lookup", {
+            ok: true, certificates: abortAfterStep === "store lookup" ? [{ keyContainer: containerName }] : [],
+          }),
+        },
+        "./windows-key-survivors": {
+          ...survivors,
+          inspectMachineKeySurvivors: async (args) => checkpoint("survivor inventory",
+            await survivors.inspectMachineKeySurvivors({ ...args, helperPath: __filename, execFileImpl: native })),
+        },
+        "./windows-cert-store": {
+          ...certStore,
+          removePendingRequestEntries: async (args) => checkpoint("REQUEST cleanup",
+            await certStore.removePendingRequestEntries({ ...args, execFileImpl: native })),
+          removeAbandonedKeyContainer: async (args) => checkpoint("key cleanup",
+            await certStore.removeAbandonedKeyContainer({ ...args, keySurvivorHelperPath: __filename, execFileImpl: native })),
+        },
+        "./windows-retention": {
+          ...realRequire("./windows-retention"),
+          sweepLedger: async () => {
+            mutations.push("retention sweep");
+            return { removed: [], deferred: [] };
+          },
+        },
+      },
+    };
+    async function startAndStop({ shouldClean, stopsBeforeHeartbeat, effects }) {
+      controller = new AbortController();
+      if (preAborted) controller.abort();
+      const r = runtime("win32", options);
+      r.releaseDrain.resolve();
+      const running = r.run([], { signal: controller.signal });
+      try {
+        if (failRegistration) await assert.rejects(running, /no stored credential/);
+        else if (stopsBeforeHeartbeat) await running;
+        else await Promise.race([r.heartbeat.promise, running.then(() => assert.fail("expected a heartbeat"))]);
+        assert.deepEqual(mutations, effects);
+        const after = journal.scanUnresolvedJournalEntries(configDir);
+        if (shouldClean) {
+          assert.equal(after.length, 1, "key cleanup must leave the outcome unresolved");
+          assert.equal(typeof after[0].windowsCngContainerReconciledAt, "string");
+        } else {
+          assert.deepEqual(after, before);
+          assert.equal(pending, !effects.includes("pending request"));
+          assert.equal(keyPresent, !effects.includes("orphan key"));
+        }
+      } finally {
+        controller.abort();
+        await running.catch(() => {});
+      }
+    }
+    const index = maintenanceSteps.indexOf(abortAfter);
+    await startAndStop({
+      shouldClean: allowCleanup,
+      stopsBeforeHeartbeat: preAborted || interrupt || abortAfter,
+      effects: allowCleanup ? maintenanceEffects : maintenanceEffects.slice(0, index === 3 ? 2 : index > 0 ? 1 : 0),
+    });
+    if (interrupt || abortAfter) {
+      if (interrupt) assert.equal(inventoryStopped, true);
+      else assert.deepEqual(completedSteps, maintenanceSteps.slice(0, index + 1));
+      interruptLookup = false;
+      abortAfterStep = null;
+      await startAndStop({ shouldClean: true, effects: maintenanceEffects });
+    }
+  });
+}

@@ -56,7 +56,7 @@ test("Linux installer writes the requested default only to a new config", { skip
 // skip-reason: platform - the Windows installer needs Windows PowerShell.
 test("Windows installer writes the requested default only to a new config", { skip: process.platform !== "win32" }, (t) => {
   const source = fs.readFileSync(path.join(__dirname, "install-agent.ps1"), "utf8");
-  const code = section(source, 'if ((Test-Path -LiteralPath $configPath) -and -not $script:DryRun)', "# --------------------------------------- bootstrap token");
+  const code = section(source, 'if (-not $script:DryRun -and (Test-Path -LiteralPath $configPath))', "# --------------------------------------- bootstrap token");
   const dir = temporaryDirectory(t);
   const target = path.join(dir, "config.json");
   const script = `$ErrorActionPreference='Stop'\n$configPath=$env:TT_TEST_CONFIG_PATH\n$caBundleDest=$env:TT_TEST_CA_DEST\n$script:DryRun=$false\n$script:ApiUrl='https://cp.example.test'\n$script:WorkspaceId='workspace'\n$script:AllowInsecureLocalHttp=($env:TT_TEST_ALLOW_HTTP -eq '1')\nfunction Write-Log { param($Message) }\nfunction Invoke-Step { param($Message, $Action) & $Action }\nfunction Invoke-PlatformAcl { param($TargetPath,$Kind,[switch]$IncludeAdministrators) if (-not $IncludeAdministrators -or $TargetPath -ne $configPath) { throw 'wrong ACL target' }; Write-Output 'operator ACL applied' }\nfunction Fail { param($Message) throw $Message }\n${code}`;

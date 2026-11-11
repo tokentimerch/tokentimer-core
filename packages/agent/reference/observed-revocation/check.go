@@ -2,18 +2,21 @@ package revocation
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/asn1"
+	"encoding/hex"
 	"time"
 
 	"golang.org/x/crypto/ocsp"
 )
 
 type ChainResult struct {
-	Verdict    string
-	CheckedAt  time.Time
-	ValidUntil time.Time
-	Detail     string
+	Verdict                        string
+	CheckedAt                      time.Time
+	ValidUntil                     time.Time
+	Detail                         string
+	RevokedIssuerFingerprintSha256 string
 }
 
 // CheckChain checks each non-root certificate on an already validated chain.
@@ -50,6 +53,8 @@ func checkChain(ctx context.Context, chain []*x509.Certificate, allowedOrigins [
 				result.Verdict = "revoked"
 			} else {
 				result.Verdict = "issuer_revoked"
+				fingerprint := sha256.Sum256(cert.Raw)
+				result.RevokedIssuerFingerprintSha256 = hex.EncodeToString(fingerprint[:])
 			}
 			result.ValidUntil = until
 			return result

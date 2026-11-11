@@ -799,6 +799,19 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return json ?? {};
   }
 
+  async function authorizeIisConsumer({ jobId, claimId, consumerId, authorizationRevision } = {}) {
+    if (typeof jobId !== "string" || !AGENT_ID_PATTERN.test(jobId) || jobId.length > 128 ||
+        typeof claimId !== "string" || !AGENT_ID_PATTERN.test(claimId) || claimId.length > 128 ||
+        typeof consumerId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(consumerId) ||
+        !Number.isSafeInteger(authorizationRevision) || authorizationRevision < 1) {
+      throw new AgentProtocolError("invalid IIS consumer authorization", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+    }
+    const token = await resolveCredential(getCredential);
+    const path = `${ROUTES.LEASE}/${encodeURIComponent(jobId)}/iis-consent`;
+    const { ok, json } = await enqueueSequencedSend((sequence) =>
+      sendPlain(path, token, { claimId, consumerId, authorizationRevision, sequence }));
+    return ok === true && isPlainObject(json) && json.allowed === true;
+  }
   /**
    * Reports the terminal outcome of a job attempt.
    *
@@ -865,7 +878,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return json ?? {};
   }
 
-  return { register, heartbeat, claim, renewLease, reportResult, reportEvidence, postJobLogs };
+  return { register, heartbeat, claim, renewLease, authorizeIisConsumer, reportResult, reportEvidence, postJobLogs };
 }
 
 module.exports = {

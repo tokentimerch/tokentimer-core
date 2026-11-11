@@ -317,7 +317,7 @@ function createUpdatePool({
       if (normalized.startsWith("UPDATE certificate_profiles")) {
         return { rows: [{ id: row.id }] };
       }
-      if (normalized.startsWith("SELECT id FROM certificate_issuers")) {
+      if (normalized.startsWith("SELECT id, name FROM certificate_issuers")) {
         return { rows: issuers.includes(params[1]) ? [{ id: params[1] }] : [] };
       }
       if (normalized.startsWith("SELECT i.kind")) {

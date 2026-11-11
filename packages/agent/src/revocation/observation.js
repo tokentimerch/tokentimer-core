@@ -40,6 +40,7 @@ async function enrichObservedItems(entries, check, { concurrency = 4, now = () =
           validUntil: checked.validUntil,
           chainStatus,
           detail: typeof result?.detail === "string" ? result.detail.slice(0, 256) : null,
+          ...(checked.verdict === "issuer_revoked" && /^[a-f0-9]{64}$/.test(result?.revokedIssuerFingerprintSha256 || "") ? { revokedIssuerFingerprintSha256: result.revokedIssuerFingerprintSha256 } : {}),
         };
       })());
     }
@@ -57,6 +58,7 @@ async function enrichObservedItems(entries, check, { concurrency = 4, now = () =
     metadata.push({ name: "observedRevocationCheckedAt", value: result.checkedAt });
     metadata.push({ name: "observedChainStatus", value: result.chainStatus });
     if (result.validUntil) metadata.push({ name: "observedRevocationValidUntil", value: result.validUntil });
+    if (result.revokedIssuerFingerprintSha256) metadata.push({ name: "observedRevokedIssuerFingerprintSha256", value: result.revokedIssuerFingerprintSha256 });
     if (result.detail) metadata.push({ name: "observedRevocationDetail", value: result.detail });
   }
   const count = Math.min(Math.max(1, Math.floor(concurrency)), 8, entries.length);

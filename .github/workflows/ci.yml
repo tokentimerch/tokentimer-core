@@ -1070,13 +1070,53 @@ jobs:
       - name: Dry-run install-agent.ps1
         shell: pwsh
         run: |
-          ./packages/agent/scripts/install-agent.ps1 `
-            --api-url https://example.com `
-            --workspace-id ws_ci_dry_run `
-            --bootstrap-token ttboot_ci_dry_run_placeholder_token_value `
-            --write-path "C:\certs\ci-example" `
-            --reload-service nginx `
-            --dry-run
+          $dryRunArgs = @('--api-url', 'https://example.com', '--workspace-id', 'ws_ci_dry_run',
+            '--bootstrap-token', 'ttboot_ci_dry_run_placeholder_token_value',
+            '--write-path', 'C:\certs\ci-example', '--reload-service', 'nginx', '--dry-run')
+          $source = (Resolve-Path ./packages/agent).Path
+          $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            & "$source/scripts/install-agent.ps1" @dryRunArgs
+            exit $LASTEXITCODE
+          }
+          $programFiles = (Resolve-Path -LiteralPath $env:ProgramFiles).ProviderPath.TrimEnd('\')
+          $fixture = Join-Path $programFiles ("TokenTimerDryRun-" + [guid]::NewGuid().ToString('N'))
+          $priorPath = $env:PATH
+          try {
+            $acl = [Security.AccessControl.DirectorySecurity]::new()
+            $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
+            if ($PSVersionTable.PSEdition -eq 'Desktop') {
+              $null = [IO.Directory]::CreateDirectory($fixture, $acl)
+            } else {
+              $null = [IO.FileSystemAclExtensions]::CreateDirectory($acl, $fixture)
+            }
+            $runtime = (New-Item -ItemType Directory -Path "$fixture\runtime").FullName
+            Copy-Item -LiteralPath (Get-Command node.exe -CommandType Application).Source -Destination "$runtime\node.exe"
+            $copyCode = & {
+              # Robocopy uses exit codes 1 through 7 for successful work.
+              $PSNativeCommandUseErrorActionPreference = $false
+              & robocopy.exe $source "$fixture\package" /E /XD node_modules .git /XJ /R:0 /W:0 /NFL /NDL /NP | Out-Host
+              $LASTEXITCODE
+            }
+            if ($copyCode -lt 0 -or $copyCode -ge 8) { throw 'Unable to copy the dry-run package' }
+            & icacls.exe $fixture /setowner '*S-1-5-32-544' /T /Q
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to set the dry-run fixture owner' }
+            $env:PATH = "$runtime;$priorPath"
+            & "$fixture\package\scripts\install-agent.ps1" @dryRunArgs
+            if ($LASTEXITCODE -ne 0) { throw 'Elevated installer dry-run failed' }
+          } finally {
+            $env:PATH = $priorPath
+            $item = Get-Item -LiteralPath $fixture -ErrorAction SilentlyContinue
+            if ($item) {
+              $resolved = (Resolve-Path -LiteralPath $item.FullName).ProviderPath
+              if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                  $resolved -ine $fixture -or [IO.Path]::GetDirectoryName($resolved) -ine $programFiles -or
+                  [IO.Path]::GetFileName($resolved) -cnotmatch '^TokenTimerDryRun-[a-f0-9]{32}$') {
+                throw 'Refusing to remove an unexpected dry-run fixture path'
+              }
+              Remove-Item -LiteralPath $resolved -Recurse -Force
+            }
+          }
 
       - name: Dry-run install-agent.ps1 --uninstall
         shell: pwsh

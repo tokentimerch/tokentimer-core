@@ -176,7 +176,7 @@ URL from the agent. This relaxes request filtering for that directory.
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `enabled` | boolean | false | Opt-in; an upgraded agent never starts executing without it. |
-| `dryRun` | boolean | true | Refuses real mutating jobs; real read-only AD CS preflight is handled separately. Action planning requires a signed job with `mode: "dry_run"` and `enabled: true`; it does not convert real jobs into plans (see [Execution](execution.md)). |
+| `dryRun` | boolean | true | Refuses real mutating jobs. Action planning requires a signed job with `mode: "dry_run"` and `enabled: true` (see [Execution](execution.md)). Real read-only AD CS preflight can still run. Windows cleanup of pending requests, orphan keys and superseded certificates requires `enabled: true` and `dryRun: false`. |
 | `keysDir` | string | `<configDir>/keys` | Private keys, 0600 in 0700 dir. |
 | `replayStorePath` | string | `<configDir>/replay-store.json` | Persisted replay cache. |
 | `outboxDir` | string | `<configDir>/outbox` | Durable queue for terminal results/evidence that could not be delivered yet, so an outage does not lose a completed job's outcome. Retention-capped (5000 entries / 7 days); see the [state-directory table](configuration.md#config-directory) for the `dead-letter/` quarantine subdirectory and its own retention. |

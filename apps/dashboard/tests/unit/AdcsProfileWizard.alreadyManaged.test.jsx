@@ -6,6 +6,7 @@ const replaceCalls = [];
 let replaceResults = [];
 vi.mock('../../src/components/certops/certopsApi.js', () => ({
   listCertificates: vi.fn(),
+  getWindowsRenewal: vi.fn(),
   replaceManagingSource: (...args) => {
     replaceCalls.push(args);
     const next = replaceResults.shift();
@@ -23,7 +24,11 @@ vi.mock('../../src/utils/toast.js', () => ({
   showError: vi.fn(),
 }));
 
-import { listCertificates } from '../../src/components/certops/certopsApi.js';
+import {
+  listCertificates,
+  getWindowsRenewal,
+} from '../../src/components/certops/certopsApi.js';
+import { createAdcsRenewalProfile } from '../../src/components/certops/certopsRenewalApi.js';
 import AdcsProfileWizard from '../../src/components/certops/AdcsProfileWizard.jsx';
 
 const OPEN_PERIOD = '11111111-1111-4111-8111-111111111111';
@@ -65,6 +70,12 @@ async function openAtAttachStep(sources, expectAttach = true) {
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
   fireEvent.change(screen.getByLabelText('Certificate name'), {
     target: { value: 'app.example' },
+  });
+  fireEvent.change(screen.getByLabelText('IIS site'), {
+    target: { value: 'Default Web Site' },
+  });
+  fireEvent.change(screen.getByLabelText('IIS port'), {
+    target: { value: '443' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
@@ -219,4 +230,71 @@ describe('AD CS wizard when the certificate is already managed', () => {
       screen.queryByRole('button', { name: /Replace the current management/ })
     ).not.toBeInTheDocument();
   });
+});
+
+it('creates a Store renewal without IIS fields and offers only confirmed Store registrations', async () => {
+  listCertificates.mockResolvedValue({
+    items: [
+      {
+        identityId: 'identity-store',
+        commonName: 'app.example',
+        sources: [
+          {
+            managedCertificateId: 'store',
+            periodId: OPEN_PERIOD,
+            source: 'agent_windows',
+            sourceRef: 'agent/host/windows_store/LocalMachine/My/app.example',
+            currentIdentityId: 'identity-store',
+          },
+          {
+            managedCertificateId: 'iis',
+            periodId: 'iis-period',
+            source: 'agent_windows',
+            sourceRef: 'agent/host/iis_binding/Site:443',
+            currentIdentityId: 'identity-store',
+          },
+        ],
+      },
+    ],
+  });
+  getWindowsRenewal.mockResolvedValue({
+    groups: [{ managedCertificateId: 'store' }],
+  });
+  render(
+    <ChakraProvider>
+      <WizardHost />
+    </ChakraProvider>
+  );
+  fireEvent.change(screen.getByLabelText('Profile name'), {
+    target: { value: 'Store AD CS' },
+  });
+  fireEvent.change(screen.getByLabelText('AD CS issuer'), {
+    target: { value: 'issuer-1' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  fireEvent.change(screen.getByLabelText('Certificate name'), {
+    target: { value: 'app.example' },
+  });
+  fireEvent.change(screen.getByLabelText('Renewal destination'), {
+    target: { value: 'windows-cert-store' },
+  });
+  expect(screen.queryByLabelText('IIS site')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
+  await waitFor(() =>
+    expect(createAdcsRenewalProfile).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        target: {
+          type: 'windows-cert-store',
+          reference: 'app.example',
+          store: 'My',
+        },
+      })
+    )
+  );
+  await screen.findByRole('button', { name: 'Attach and enable automation' });
+  expect(
+    screen.queryAllByRole('option').some(option => option.value === 'iis')
+  ).toBe(false);
 });

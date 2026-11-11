@@ -70,6 +70,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const tls = require("node:tls");
+const crypto = require("node:crypto");
 
 const {
   resolveConfigDir,
@@ -354,6 +355,16 @@ function isNonEmptyStringValue(value) {
   return typeof value === "string" && value.length > 0;
 }
 
+function isAdcsWindowsTarget(job) {
+  return job?.keyMode === "os-store-managed" && ["windows-iis", "windows-cert-store"].includes(job?.target?.type);
+}
+
+function isStoreOnlyQualified(job, { windows = isWindows(), filter = filterQualifiedCapabilities } = {}) {
+  if (!windows || !["adcs", "acme"].includes(job?.issuerKind)) return false;
+  const capability = `windows-store-only-${job.issuerKind}-v1`;
+  return filter([capability]).includes(capability);
+}
+
 /**
  * Actions this agent build can actually execute (executeJob): "revoke" is
  * deliberately absent (always blocked in this build). distribute-trust/
@@ -421,6 +432,10 @@ const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
         "iis-binding-v1",
         "trust-anchor-deploy-v1",
         ADCS_ENROLL_CAPABILITY,
+        "windows-store-only-adcs-v1",
+        "windows-store-only-acme-v1",
+        "windows-store-iis-consumers-v1",
+        "adcs-store-proof-only-v1",
       ]
     : AGENT_TRUST_STORE_PREREQUISITES.candidate
       ? ["evidence-claim-binding-v1", "job-log-stream-v1", "trust-anchor-deploy-v1"]
@@ -493,7 +508,9 @@ const OBSERVE_ONLY_CLAIM_ACTIONS = Object.freeze([]);
  */
 function resolveClaimSupportedActions(executionContext) {
   if (executionContext !== null && executionContext !== undefined && executionContext.enabled === true) {
-    return EXECUTABLE_JOB_ACTIONS;
+    return AGENT_DECLARED_CAPABILITIES.includes("adcs-store-proof-only-v1")
+      ? Object.freeze([...EXECUTABLE_JOB_ACTIONS, "adcs-installation-proof"])
+      : EXECUTABLE_JOB_ACTIONS;
   }
   return OBSERVE_ONLY_CLAIM_ACTIONS;
 }
@@ -1575,6 +1592,15 @@ async function reportStepEvidence(client, jobId, items, claimId = null) {
   await client.reportEvidence(body);
 }
 
+function completedJobLeaseLossOutcome(job, outcome, heartbeatAbort) {
+  if (outcome?.status === "succeeded" && job?.target?.type === "windows-cert-store" &&
+      ["renew", "continue-enrollment"].includes(job?.action)) {
+    return { status: "orphaned_unknown_effect", keyRotated: null,
+      errorMessage: "Machine store installation requires reconciliation after lease loss (needsOperatorReconciliation=true; reconciliationReason=store_installation_uncertain)" };
+  }
+  return heartbeatAbort;
+}
+
 /**
  * Handles a single claimed job.
  *
@@ -2149,7 +2175,10 @@ async function handleSignedJob({
         outcome &&
         (outcome.status === "succeeded" || outcome.status === "dry_run_complete")
       ) {
-        outcome = heartbeatAbort;
+        // A completed store installation may already have changed the host.
+        // Losing the lease after it finished must leave an operator recovery
+        // path even if the server accepts this result before its lease expires.
+        outcome = completedJobLeaseLossOutcome(job, outcome, heartbeatAbort);
       }
     } catch (err) {
       emitLog(log, `job ${jobId} execution error: ${err.message}`, {
@@ -2373,6 +2402,14 @@ async function executeJob({
 }) {
   const { execution } = executionContext;
   const action = job.action;
+  // Only a build with an embedded qualification for this issuer can execute
+  // store-only. Both issuers remain independently qualified.
+  if (job?.target?.type === "windows-cert-store" && !isStoreOnlyQualified(job)) {
+    return {
+      status: "blocked",
+      errorMessage: "Windows store-only installation is not qualified in this agent build",
+    };
+  }
   const observedAt = new Date().toISOString();
   const jobMode = resolveJobMode(job);
   const leaseOpts = { leaseClient, jobId, claimId, log, leaseState };
@@ -2565,6 +2602,7 @@ async function executeJob({
   if (
     action !== "renew" &&
     action !== "continue-enrollment" &&
+    action !== "adcs-installation-proof" &&
     action !== "deploy" &&
     action !== "reload"
   ) {
@@ -2575,7 +2613,7 @@ async function executeJob({
   }
 
   let resolvedIssuerKind = null;
-  if (action === "renew" || action === "continue-enrollment") {
+  if (action === "renew" || action === "continue-enrollment" || action === "adcs-installation-proof") {
     resolvedIssuerKind = resolveJobIssuerKind(job);
     if (resolvedIssuerKind.error) {
       return { status: "blocked", errorMessage: boundErrorMessage(resolvedIssuerKind.error) };
@@ -2629,7 +2667,22 @@ async function executeJob({
     };
   }
 
+  if (action === "adcs-installation-proof") {
+    if (resolvedIssuerKind.kind !== "adcs" || !AGENT_DECLARED_CAPABILITIES.includes("adcs-store-proof-only-v1")) {
+      return { status: "blocked", errorMessage: "AD CS installation proof is not qualified in this agent build" };
+    }
+    const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
+    if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
+    return require("./adcs-proof-only").executeAdcsProofOnly({ job, jobId, claimId, client: claimBoundClient,
+      stateDir, execFileImpl: executionContext.windowsExecFileImpl, signal, reportEvidence: reportStepEvidence });
+  }
+
   if (action === "continue-enrollment") {
+    if (resolvedIssuerKind.kind === "acme" && job.keyMode === "os-store-managed" && job?.target?.type === "windows-cert-store") {
+      return executeWindowsIisRenewJob({ job, signal, jobId, policyEngine, client: claimBoundClient,
+        receiptClient: leaseClient ? bindEvidenceClientToClaim(leaseClient, claimId) : null,
+        executionContext, log, leaseOpts, onBeforeMutation: markMutation, journalCtx, recoveryOnly: true });
+    }
     if (resolvedIssuerKind.kind !== "adcs") {
       return {
         status: "blocked",
@@ -2640,7 +2693,7 @@ async function executeJob({
       job,
       jobId,
       client: claimBoundClient,
-      executionContext,
+      executionContext: { ...executionContext, jobAbortSignal: signal, adcsExpectedIdentityClient: leaseClient ? bindEvidenceClientToClaim(leaseClient, claimId) : null },
       log,
       leaseOpts,
       onBeforeMutation: markMutation,
@@ -2650,12 +2703,12 @@ async function executeJob({
   if (action === "renew") {
     // AD CS must never fall through to the ACME file-based renew path.
     if (resolvedIssuerKind.kind === "adcs") {
-      if (job.keyMode === "os-store-managed" && job?.target?.type === "windows-iis") {
+      if (isAdcsWindowsTarget(job)) {
         return getAdcsWindowsIisExecutors().executeWindowsIisAdcsRenewJob({
           job,
           jobId,
           client: claimBoundClient,
-          executionContext,
+          executionContext: { ...executionContext, jobAbortSignal: signal, adcsExpectedIdentityClient: leaseClient ? bindEvidenceClientToClaim(leaseClient, claimId) : null },
           log,
           leaseOpts,
           onBeforeMutation: markMutation,
@@ -2665,7 +2718,7 @@ async function executeJob({
       return {
         status: "blocked",
         errorMessage: boundErrorMessage(
-          "AD CS renew requires keyMode os-store-managed and a windows-iis target",
+          "AD CS renew requires keyMode os-store-managed and a Windows certificate target",
         ),
       };
     }
@@ -2677,13 +2730,14 @@ async function executeJob({
     // defense in depth: apps/api/services/certops/jobs.js's
     // AGENT_DEPLOYABLE_KEY_MODES is the control-plane's own gate on
     // dispatching such a job at all.
-    if (job.keyMode === "os-store-managed" && job?.target?.type === "windows-iis") {
+    if (job.keyMode === "os-store-managed" && ["windows-iis", "windows-cert-store"].includes(job?.target?.type)) {
       return executeWindowsIisRenewJob({
         job,
       signal,
         jobId,
         policyEngine,
         client: claimBoundClient,
+        receiptClient: leaseClient ? bindEvidenceClientToClaim(leaseClient, claimId) : null,
         executionContext,
         log,
         leaseOpts,
@@ -3308,6 +3362,7 @@ function getAdcsWindowsIisExecutors() {
       renewJobLeaseOrAbort,
       reportIssuanceEvidence,
       reportStepEvidence,
+      reportAdcsExpectedIdentity,
       runWindowsIisDeployTail,
       finalizeWindowsIisDeployBookkeeping,
       emitInfo,
@@ -3470,6 +3525,85 @@ async function cngKeyAbsentFromStoresAfterAcceptFailure({
  *   on verify-only / unbound resume when the live binding is already the
  *   new cert or null.
  */
+function buildWindowsStoreProofEvidence({ storeEnrollmentId, storeDestinationSha256, facts, fingerprintSha256 }) {
+  const metadata = [
+    { name: "step", value: "store-verify" }, { name: "store", value: "LocalMachine\\My" },
+    { name: "enrollmentId", value: storeEnrollmentId }, { name: "destinationType", value: "windows-cert-store" },
+    { name: "destinationSha256", value: storeDestinationSha256 }, { name: "serialNumber", value: facts.serialNumber },
+    { name: "validFrom", value: facts.validFrom }, { name: "validTo", value: facts.validTo },
+    { name: "subject", value: facts.subject }, { name: "issuer", value: facts.issuer },
+    { name: "keyPossessionVerified", value: true }, { name: "machineKey", value: true }, { name: "nonExportable", value: true },
+    ...(facts.dnsSans.length ? [{ name: "subjectAltNames", value: facts.dnsSans.join(",") }] : []),
+  ].filter((entry) => entry.value !== null && entry.value !== undefined);
+  return buildEvidenceItem({ eventType: "validation.passed", observedAt: new Date().toISOString(), fingerprintSha256,
+    summary: "Verified certificate and protected key in the Windows machine store.", metadata });
+}
+
+async function reportAdcsExpectedIdentity({ client, jobId, claimId, enrollmentId, destinationSha256, csrSpkiSha256, certificatePem }) {
+  if (!client || typeof client.reportEvidence !== "function" || typeof claimId !== "string" || !claimId ||
+      !/^[a-f0-9]{64}$/.test(destinationSha256 || "") || !/^[a-f0-9]{64}$/.test(csrSpkiSha256 || "")) {
+    throw new Error("AD CS expected identity requires an active claim and receipt transport");
+  }
+  const leaf = new crypto.X509Certificate(certificatePem);
+  const leafSpkiSha256 = crypto.createHash("sha256").update(leaf.publicKey.export({ type: "spki", format: "der" })).digest("hex");
+  if (leafSpkiSha256 !== csrSpkiSha256) throw new Error("AD CS issued leaf does not match the recorded CSR");
+  const fingerprintSha256 = crypto.createHash("sha256").update(leaf.raw).digest("hex");
+  const item = buildEvidenceItem({ eventType: "validation.passed", observedAt: new Date().toISOString(), fingerprintSha256,
+    summary: "Validated AD CS issued leaf identity before installation.", metadata: [
+      { name: "step", value: "adcs.expected-identity" }, { name: "enrollmentId", value: enrollmentId },
+      { name: "destinationSha256", value: destinationSha256 }, { name: "csrSpkiSha256", value: csrSpkiSha256 },
+      { name: "leafSpkiSha256", value: leafSpkiSha256 },
+    ] });
+  const body = buildEvidenceBody({ jobId, evidenceItems: [item], claimId });
+  body.evidenceItems[0].evidenceId = crypto.createHash("sha256").update(`adcs-expected:${enrollmentId}:${claimId}:${fingerprintSha256}`).digest("hex");
+  assertEvidencePayloadSafe(body);
+  await client.reportEvidence(body);
+}
+
+async function reportAcmeStoreReceipt(receiptClient, jobId, receipt, claimId) {
+  const item = require("./issuers/acme-store-journal").buildAcmeStoreReceiptEvidence(receipt, claimId);
+  const body = buildEvidenceBody({ jobId, evidenceItems: [item], claimId });
+  // Preserve the claim-specific id after revalidating the evidence item.
+  body.evidenceItems[0].evidenceId = item.evidenceId;
+  assertEvidencePayloadSafe(body);
+  await receiptClient.reportEvidence(body);
+}
+
+async function runWindowsStoreConsumerTail({ snapshot, certificatePem, jobId, client, stateDir,
+  leaseOpts, onBeforeMutation, signal, windowsExecFileImpl, windowsConnectImpl }) {
+  if (!snapshot?.iisConsumers?.length) return { status: "succeeded", keyRotated: null };
+  if (!filterQualifiedCapabilities(["windows-store-iis-consumers-v1"]).length) {
+    return { status: "orphaned_unknown_effect", keyRotated: null, retryableInterrupt: true,
+      errorMessage: "Store installation is verified; this build is not qualified for dependent IIS updates." };
+  }
+  try {
+    const result = await require("./windows-iis/store-consumer-tail").runStoreConsumerTail({
+      snapshot, certificatePem, jobId, claimId: leaseOpts?.claimId, client, signal,
+      acquireLock: () => acquireWindowsStoreLocksWithWait(stateDir, "My"),
+      execFileImpl: windowsExecFileImpl, connectImpl: windowsConnectImpl,
+      ensureLease: async () => {
+        const gate = await renewJobLeaseOrAbort(leaseOpts || {});
+        if (gate?.ok === false) throw new Error("Store consumer claim lease is unavailable");
+      },
+      onBeforeMutation,
+      reportOutcome: async (outcome) => reportStepEvidence(client, jobId, [buildEvidenceItem({
+        eventType: outcome.ok ? "deployment.updated" : "validation.failed",
+        observedAt: new Date().toISOString(),
+        summary: outcome.ok ? "Dependent IIS binding updated and verified." : "Store certificate renewed; dependent IIS binding requires attention.",
+        metadata: [ { name: "step", value: "windows-store-iis-consumer" },
+          { name: "consumerId", value: outcome.id }, { name: "updated", value: outcome.ok },
+          { name: "code", value: outcome.code || "VERIFIED" } ],
+      })], leaseOpts?.claimId),
+    });
+    if (!result.allAttempted) throw new Error("Store consumer updates were interrupted");
+    return { status: "succeeded", keyRotated: null,
+      ...(result.outcomes.some((item) => !item.ok) ? { errorMessage: "Store renewal succeeded; some IIS bindings require attention. See job evidence." } : {}) };
+  } catch (error) {
+    return { status: "orphaned_unknown_effect", keyRotated: null, retryableInterrupt: true,
+      errorMessage: boundErrorMessage(`Store installation is verified; IIS updates require reconciliation: ${error.message}`) };
+  }
+}
+
 async function runWindowsIisDeployTail({
   jobId,
   client,
@@ -3485,11 +3619,46 @@ async function runWindowsIisDeployTail({
   startAtStep = "accept",
   retainKeyOnAcceptFailure = false,
   requireStoreAbsenceBeforeKeyDelete = false,
+  storeValidated = false,
+  storeRecovery = false,
+  storeEnrollmentId = null,
+  storeDestinationSha256 = null,
+  storeConsumerSnapshot = null,
+  signal,
   journaledPredecessorThumbprint = null,
   windowsExecFileImpl,
   windowsConnectImpl,
   windowsKeySurvivorHelperPath,
 }) {
+  if (target?.type === "windows-cert-store") {
+    if (!storeEnrollmentId || !/^[a-f0-9]{64}$/.test(storeDestinationSha256 || "")) {
+      return { status: "failed", errorMessage: "store enrollment identity is missing" };
+    }
+    const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
+    if (leaseGate && leaseGate.ok === false) return { ...leaseGate.abort, status: "orphaned_unknown_effect", retryableInterrupt: true,
+      errorMessage: "AD CS installation requires reconciliation after lease loss (needsOperatorReconciliation=true; reconciliationReason=store_installation_uncertain)" };
+    const { installStoreOnlyCertificate } = require("./windows-cert-store/store-only");
+    const installed = await installStoreOnlyCertificate({
+      certificatePem, containerName, stateDir, workDir: cngWorkDir,
+      mode: storeRecovery ? "recovery" : "initial", certificateValidated: storeValidated,
+      onBeforeMutation, onInstallStep, execFileImpl: windowsExecFileImpl, signal,
+    });
+    if (installed.status !== "succeeded") {
+      if (installed.retryableInterrupt === true) return { ...installed, status: "orphaned_unknown_effect",
+        errorMessage: `${installed.errorMessage || "Machine store installation requires reconciliation"} (needsOperatorReconciliation=true; reconciliationReason=store_installation_uncertain)` };
+      return installed;
+    }
+    const proof = installed.storeProof;
+    const facts = describeDeployedCertificate(certificatePem);
+    if (!facts) return { status: "orphaned_unknown_effect", retryableInterrupt: true, errorMessage: "Cannot describe verified store certificate (needsOperatorReconciliation=true; reconciliationReason=store_installation_uncertain)" };
+    const evidenceLease = await renewJobLeaseOrAbort(leaseOpts || {});
+    if (evidenceLease && evidenceLease.ok === false) return { ...evidenceLease.abort, status: "orphaned_unknown_effect", retryableInterrupt: true, errorMessage: "Store proof requires reconciliation after lease loss (needsOperatorReconciliation=true; reconciliationReason=store_installation_uncertain)" };
+    if (typeof onBeforeMutation === "function") onBeforeMutation("report-store-proof");
+    await reportStepEvidence(client, jobId, [buildWindowsStoreProofEvidence({ storeEnrollmentId, storeDestinationSha256,
+      facts, fingerprintSha256: proof.fingerprintSha256 })], leaseOpts?.claimId);
+    return runWindowsStoreConsumerTail({ snapshot: storeConsumerSnapshot, certificatePem, jobId, client,
+      stateDir, leaseOpts, onBeforeMutation, signal, windowsExecFileImpl, windowsConnectImpl });
+  }
   const retainKeyOnAcceptFailureEffective =
     retainKeyOnAcceptFailure === true || requireStoreAbsenceBeforeKeyDelete === true;
   {
@@ -4083,12 +4252,13 @@ function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.conn
  * @param {Function} [input.execFileImpl] injection point for certutil.exe/netsh.exe.
  * @param {Function} [input.connectImpl] injection point for the replacement handshake probe.
  * @param {string} [input.keySurvivorHelperPath] explicit helper override for embedded runs/tests.
+ * @param {AbortSignal} [input.signal] agent shutdown signal.
  * @returns {Promise<{removed: string[], deferred: object[], deferredCountByReason: Record<string, number>}|null>}
- *   null when there is no ledger directory yet (nothing has ever been superseded).
+ *   null when shutdown has begun or there is no ledger directory yet.
  */
-async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFileImpl, connectImpl, keySurvivorHelperPath }) {
+async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFileImpl, connectImpl, keySurvivorHelperPath, signal: shutdownSignal }) {
   const ledgerDir = path.join(stateDir, WINDOWS_RETENTION_LEDGER_DIR_NAME);
-  if (!fs.existsSync(ledgerDir)) return null;
+  if (shutdownSignal?.aborted || !fs.existsSync(ledgerDir)) return null;
 
   async function gatherContext(row, { signal, assertHeld }) {
     const store = row.store || "My";
@@ -4180,18 +4350,31 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
         `removeCertificateAndKeyContainer failed at stage ${result.stage} (exit code ${result.exitCode}): ` + result.stderrExcerpt,
       );
     }
-    removeIssuedContainerRecord({ stateDir, containerName: row.cngKeyContainerId });
   }
 
   const summary = await sweepLedger({
     ledgerDir, retentionHours, gatherContext, performCleanup,
+    afterRemoved: (row) => removeIssuedContainerRecord({ stateDir, containerName: row.cngKeyContainerId }),
+    signal: shutdownSignal,
     withRowLock: async (row, work) => {
       // Agent acceptance/mirroring always takes My before its target store.
       // Share that lock scope so a concurrent cutover cannot introduce another
       // machine-key reference between inventory and irreversible deletion.
+      if (shutdownSignal?.aborted) return;
       const storeLock = acquireWindowsStoreLocks(stateDir, row.store || "My");
-      try { return await storeLock.run(signal => work({ signal, assertHeld: () => storeLock.assertHeld() })); }
-      finally { storeLock.release(); }
+      try {
+        await storeLock.run((lockSignal) => work({
+          signal: shutdownSignal ? AbortSignal.any([shutdownSignal, lockSignal]) : lockSignal,
+          assertHeld: () => {
+            storeLock.assertHeld();
+            shutdownSignal?.throwIfAborted();
+          },
+        }));
+      } catch (error) {
+        if (!shutdownSignal?.aborted || error !== shutdownSignal.reason) throw error;
+      } finally {
+        storeLock.release();
+      }
     },
   });
   emitLog(
@@ -4420,9 +4603,10 @@ function acquireWindowsStoreLocks(stateDir, targetStore) {
  * @param {object} [input.log]
  * @param {Function} [input.execFileImpl] injection point for certutil.exe.
  * @param {string} [input.keySurvivorHelperPath] explicit helper override for embedded runs/tests.
+ * @param {AbortSignal} [input.signal] startup shutdown signal.
  * @returns {Promise<{ freed: string[], skipped: { containerName: string, reason: string }[] }>}
  */
-async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileImpl, keySurvivorHelperPath }) {
+async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileImpl, keySurvivorHelperPath, signal: shutdownSignal }) {
   const freed = [];
   const skipped = [];
 
@@ -4474,6 +4658,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
   }
 
   async function attemptOrphanContainerDelete(entry, containerName, targetStore) {
+    if (shutdownSignal?.aborted) return;
     // Deduplicated: the common case (store: "My", or no store recorded at
     // all) checks the same store only once. Must match
     // acquireWindowsStoreLocks' own store set exactly, since the lock
@@ -4495,10 +4680,12 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
     }
 
     try {
-      await storeLocks.run(async (signal) => {
+      await storeLocks.run(async (lockSignal) => {
+        const signal = shutdownSignal ? AbortSignal.any([shutdownSignal, lockSignal]) : lockSignal;
         let enrolled = false;
         let queryFailure = null;
         for (const storeName of storesToCheck) {
+          if (signal.aborted) return;
           storeLocks.assertHeld();
           const storeResult = await listMachineStoreCertificates({
             store: storeName,
@@ -4506,6 +4693,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
             ...(execFileImpl ? { execFileImpl } : {}),
           });
           storeLocks.assertHeld();
+          if (signal.aborted) return;
           if (storeResult.ok !== true) {
             queryFailure = `store ${storeName} query failed: ${storeResult.stderrExcerpt}`;
             break;
@@ -4525,6 +4713,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
             ...(execFileImpl ? { execFileImpl } : {}),
           });
           storeLocks.assertHeld();
+          if (signal.aborted) return;
           if (pending.aborted) queryFailure = "pending request cleanup aborted";
         }
 
@@ -4537,6 +4726,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
             ...(execFileImpl ? { execFileImpl } : {}),
           });
           storeLocks.assertHeld();
+          if (signal.aborted) return;
           if (survivors.ok !== true) queryFailure = "global machine-store inventory unavailable";
           else enrolled = survivors.shared === true;
         }
@@ -4580,6 +4770,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
           ...(keySurvivorHelperPath ? { keySurvivorHelperPath } : {}),
         });
         storeLocks.assertHeld();
+        if (signal.aborted) return;
         if (cleanup.ok !== true) {
           if (cleanup.reason === "key_container_referenced") {
             try { markWindowsCngContainerReconciled({stateDir,jobId:entry.jobId,attemptId:entry.attemptId}); } catch { /* Preserve the key even if receipt update fails. */ }
@@ -4624,6 +4815,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
   }
 
   for (const entry of entries) {
+    if (shutdownSignal?.aborted) break;
     const containerName = entry.windowsCngContainerName;
     if (!isNonEmptyStringValue(containerName)) continue;
     if (isNonEmptyStringValue(entry.windowsCngContainerReconciledAt)) continue;
@@ -4675,6 +4867,10 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
               containerName,
               reason: recheck.reason || "open AD CS enrollment journal protects this container",
             });
+            return;
+          }
+          if (require("./issuers/acme-store-journal").isAcmeStoreContainerProtected({ stateDir, jobId: entry.jobId, containerName })) {
+            skipped.push({ containerName, reason: "open ACME enrollment journal protects this container" });
             return;
           }
           await attemptOrphanContainerDelete(entry, containerName, targetStore);
@@ -4738,11 +4934,13 @@ async function executeWindowsIisRenewJob({
   jobId,
   policyEngine,
   client,
+  receiptClient = null,
   executionContext,
   log,
   leaseOpts = null,
   onBeforeMutation = null,
   journalCtx = null,
+  recoveryOnly = false,
 }) {
   const { execution } = executionContext;
   const commonName = job?.target?.reference;
@@ -4772,12 +4970,13 @@ async function executeWindowsIisRenewJob({
     sansResolved && Array.isArray(sansResolved.sans) ? sansResolved.sans : [commonName];
   const csrCommonName = domains.includes(commonName) ? commonName : domains[0];
 
-  const deployTargetsResolved = resolveJobDeployTargets(job);
+  const storeOnly = job?.target?.type === "windows-cert-store";
+  const deployTargetsResolved = storeOnly ? { targets: [job.target] } : resolveJobDeployTargets(job);
   if (deployTargetsResolved.error) {
     return { status: "failed", keyRotated: null, errorMessage: deployTargetsResolved.error };
   }
   const deployTargets = deployTargetsResolved.targets;
-  if (deployTargets.length !== 1 || deployTargets[0].type !== "windows-iis") {
+  if (deployTargets.length !== 1 || !["windows-iis", "windows-cert-store"].includes(deployTargets[0].type)) {
     return {
       status: "failed",
       keyRotated: null,
@@ -4787,13 +4986,13 @@ async function executeWindowsIisRenewJob({
     };
   }
   const windowsTarget = deployTargets[0];
-  if (
+  if (!storeOnly && (
     !isNonEmptyStringValue(windowsTarget.store) ||
     windowsTarget.binding === null ||
     typeof windowsTarget.binding !== "object" ||
     !isNonEmptyStringValue(windowsTarget.binding.site) ||
     !Number.isInteger(windowsTarget.binding.port)
-  ) {
+  )) {
     return {
       status: "failed",
       keyRotated: null,
@@ -4851,7 +5050,7 @@ async function executeWindowsIisRenewJob({
 
   let eabCredentials = null;
   const eabAccountRef = resolveJobEabAccountRef(job);
-  if (eabAccountRef !== null) {
+  if (!recoveryOnly && eabAccountRef !== null) {
     try {
       eabCredentials = resolveAcmeAccountCredentials(eabAccountRef, {
         acmeAccounts: executionContext.acmeAccounts,
@@ -4888,6 +5087,60 @@ async function executeWindowsIisRenewJob({
     execFileImpl: executionContext.acmeExecFileImpl,
     info: emitInfo,
   });
+
+  if (storeOnly) {
+    const { decodeAcmeStoreDispatch, runAcmeStoreOperationForJob } = require("./issuers/acme-store-journal");
+    let binding;
+    try { binding = decodeAcmeStoreDispatch(job); }
+    catch (error) { return { status: "failed", keyRotated: null, errorMessage: boundErrorMessage(error.message) }; }
+    if (!journalCtx || typeof onBeforeMutation !== "function" || !receiptClient || typeof receiptClient.reportEvidence !== "function") {
+      return { status: "failed", keyRotated: null, errorMessage: "ACME store execution requires a durable claim journal and acknowledged receipts" };
+    }
+    const ensureLease = async () => {
+      const gate = await renewJobLeaseOrAbort(leaseOpts || {});
+      if (gate && gate.ok === false) throw new Error("ACME store claim lease is unavailable");
+    };
+    let installedPem = null;
+    const storeResult = await runAcmeStoreOperationForJob({
+      stateDir, jobId: binding.originalJobId, enrollmentId: binding.enrollmentId, agentId: job.agentId,
+      domains, requestSha256: binding.requestSha256, acquireLock: acquireEnrollmentLock, recoveryOnly,
+      recordContainer: async (containerName) => {
+        await ensureLease(); onBeforeMutation("keygen");
+        recordWindowsCngContainer({ ...journalCtx, containerName, store: "My" });
+        recordIssuedContainer({ stateDir, containerName, jobId, certificateId: job.certificateId });
+      },
+      generateCsr: async ({ enrollmentId, signal: lockSignal }) => {
+        await ensureLease();
+        return generateCsrViaCng({ commonName: csrCommonName, altNames: domains, jobId: job.certificateId,
+          enrollmentId, algorithm: cngAlgorithm, workDir: cngWorkDir, execFileImpl: windowsExecFileImpl,
+          signal: signal && lockSignal ? AbortSignal.any([signal, lockSignal]) : signal || lockSignal });
+      },
+      submit: async ({ csrPem, domains: requestedDomains, signal: lockSignal }) => { await ensureLease(); onBeforeMutation("acme"); return issuer.submit({ csrPem, domains: requestedDomains, signal: lockSignal }); },
+      reportReceipt: async (receipt) => {
+        await ensureLease();
+        let publicReceipt = receipt;
+        if (receipt.state === "installed") {
+          const facts = describeDeployedCertificate(installedPem);
+          if (!facts) throw new Error("ACME installed leaf metadata is unavailable");
+          publicReceipt = { ...receipt, serialNumber: facts.serialNumber, validFrom: facts.validFrom,
+            validTo: facts.validTo, subject: facts.subject, issuer: facts.issuer,
+            ...(facts.dnsSans.length ? { subjectAltNames: facts.dnsSans.join(",") } : {}) };
+        }
+        await reportAcmeStoreReceipt(receiptClient, jobId, publicReceipt, leaseOpts?.claimId);
+      },
+      reportIssuance: async (issuance) => { await ensureLease(); await reportIssuanceEvidence(client, jobId, issuance); },
+      install: async ({ certificatePem, containerName: ownedContainer, recovery, signal: lockSignal }) => {
+        await ensureLease(); installedPem = certificatePem;
+        return require("./windows-cert-store/store-only").installStoreOnlyCertificate({ certificatePem, containerName: ownedContainer,
+          stateDir, workDir: cngWorkDir, mode: recovery ? "recovery" : "initial", certificateValidated: true,
+          onBeforeMutation, onInstallStep: async () => {}, execFileImpl: windowsExecFileImpl,
+          signal: signal && lockSignal ? AbortSignal.any([signal, lockSignal]) : signal || lockSignal });
+      },
+    });
+    if (storeResult.status !== "succeeded") return storeResult;
+    return runWindowsStoreConsumerTail({ snapshot: binding.snapshot, certificatePem: installedPem, jobId,
+      client, stateDir, leaseOpts, onBeforeMutation, signal, windowsExecFileImpl, windowsConnectImpl });
+  }
 
   // Steps 1-2: CNG-native key + CSR. The private key never exists as a
   // file (it is a CNG key handle inside containerName); only the CSR
@@ -6474,7 +6727,7 @@ async function executeTrustJob({
     return { status: "dry_run_complete", keyRotated: null, errorMessage: null };
   }
 
-  const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
+  const leaseGate = await renewJobLeaseOrAbort({ ...(leaseOpts || {}), required: action === "distribute-trust" && Boolean(leaseOpts?.claimId) });
   if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
 
   if (typeof onBeforeMutation === "function") {
@@ -6995,6 +7248,8 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   // Execution context (null in bootstrap/observe-only mode). Built before
   // any network call so a corrupted replay store fails startup immediately.
   const executionContext = buildExecutionContext({ config });
+  const canRunWindowsMaintenance =
+    process.platform === "win32" && executionContext?.execution.dryRun === false;
 
   // Emitted once at startup via the error sink - not just a code comment -
   // so a misconfigured observe-only agent (no `execution` block, or
@@ -7027,27 +7282,6 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   } catch (err) {
     console.error(
       `tokentimer-agent: job-journal scan failed at startup: ${err.message}`,
-    );
-  }
-
-  // Windows CNG container crash-reconciliation: autonomously frees any
-  // key container a windows-iis renewal created but never enrolled to a
-  // certificate before the process died (see this function's own doc
-  // comment for why this is safe without resolving the journal entry
-  // itself). Best-effort and non-fatal: on a non-Windows host, or one with
-  // no windows-cert-store activity yet, every unresolved entry simply has
-  // no windowsCngContainerName field and this loop does nothing.
-  try {
-    await reconcileOrphanedWindowsCngContainers({
-      stateDir: configDir,
-      log: console.error,
-      ...(executionContext?.windowsExecFileImpl
-        ? { execFileImpl: executionContext.windowsExecFileImpl }
-        : {}),
-    });
-  } catch (err) {
-    console.error(
-      `tokentimer-agent: windows-cng-container reconciliation failed at startup: ${err.message}`,
     );
   }
 
@@ -7113,6 +7347,25 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
       config,
       configDir,
     });
+    // Unresolved journals are reported in every mode. Removing a pending
+    // request or unused key is local Windows maintenance and requires real
+    // execution. Keep it ahead of new claims and inside the shutdown fence.
+    if (canRunWindowsMaintenance && !controller.signal.aborted) {
+      try {
+        await reconcileOrphanedWindowsCngContainers({
+          stateDir: configDir,
+          log: console.error,
+          signal: controller.signal,
+          ...(executionContext.windowsExecFileImpl
+            ? { execFileImpl: executionContext.windowsExecFileImpl }
+            : {}),
+        });
+      } catch (err) {
+        console.error(
+          `tokentimer-agent: windows-cng-container reconciliation failed at startup: ${err.message}`,
+        );
+      }
+    }
   } catch (err) {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
@@ -7308,13 +7561,8 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     );
   }
 
-  // Windows superseded-certificate retention sweep (ADR-0012 decision 18):
-  // only meaningful with execution enabled, since without it no windows-iis
-  // renewal can ever have written a ledger row in the first place.
-  // runWindowsRetentionSweep itself no-ops (returns null) until the ledger
-  // directory exists, so this loop is harmless to start unconditionally on
-  // an execution-enabled agent that has never touched Windows targets.
-  if (executionContext) {
+  // The retention sweep can delete a superseded certificate and its key.
+  if (canRunWindowsMaintenance) {
     const retentionStateDir = resolveAgentStateDir(executionContext);
     if (retentionStateDir) {
       loops.push(
@@ -7327,6 +7575,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
               stateDir: retentionStateDir,
               retentionHours: config.windows.supersededRetentionHours,
               log: defaultAgentLogger,
+              signal: controller.signal,
               ...(executionContext.windowsExecFileImpl
                 ? { execFileImpl: executionContext.windowsExecFileImpl }
                 : {}),
@@ -7390,8 +7639,15 @@ module.exports = {
   executeDeployJob,
   executeRenewJob,
   executeWindowsIisRenewJob,
+  isAdcsWindowsTarget,
+  isStoreOnlyQualified,
   executeTrustJob,
   runWindowsIisDeployTail,
+  buildWindowsStoreProofEvidence,
+  reportAdcsExpectedIdentity,
+  reportAcmeStoreReceipt,
+  reportStepEvidence,
+  completedJobLeaseLossOutcome,
   finalizeWindowsIisDeployBookkeeping,
   cngKeyAbsentFromStoresAfterAcceptFailure,
   recordSupersededWindowsCertificate,

@@ -39,6 +39,7 @@ async function main() {
     for (const item of items) {
       const metadata = Object.fromEntries(item.metadata.map(({ name, value }) => [name, value]));
       if (metadata.observedRevocationVerdict !== data.expected) throw new Error(`agent returned ${metadata.observedRevocationVerdict}; expected ${data.expected}`);
+      if (data.expected === "issuer_revoked" && metadata.observedRevokedIssuerFingerprintSha256 !== new X509Certificate(data.intermediate).fingerprint256.replaceAll(":", "").toLowerCase()) throw new Error("agent returned the wrong revoked issuer fingerprint");
       if (/BEGIN CERTIFICATE|PRIVATE KEY/.test(JSON.stringify(item))) throw new Error("certificate material escaped agent");
     }
     process.stdout.write(JSON.stringify(items));

@@ -87,17 +87,17 @@ function fakePool({
       }
       if (sql.includes("certificate_issuer_versions v")) return { rows: versionRows };
       if (sql.includes("SELECT a.id")) return { rows: agentRows };
-      if (sql.includes("SELECT id") && sql.includes("FROM certops_agents")) return { rows: agentRows.length ? agentRows.map(({ id }) => ({ id })) : declaredRows };
+      if (sql.includes("SELECT id") && sql.includes("FROM certops_agents")) return { rows: agentRows.length ? agentRows.filter(({ id }) => !params[2] || id === params[2]).map(({ id }) => ({ id })) : declaredRows };
       if (sql.includes("FROM certificate_enrollments")) return { rows: openRows };
       throw new Error(`unexpected query: ${sql.slice(0, 80)}`);
     },
   };
 }
 
-function run(pool) {
+function run(pool, certificate = CERTIFICATE) {
   return createAutomaticAdcsRenewal({
     dbPool: pool,
-    certificate: CERTIFICATE,
+    certificate,
     mode: "real",
     env: {},
     auditWriter: async () => {},
@@ -120,6 +120,40 @@ describe("AD CS automatic renewal agent readiness", () => {
     assert.equal(requests[0].caConfig, CA_CONFIG);
     assert.equal(requests[0].template, TEMPLATE);
     assert.equal(requests[0].automatic, true);
+  });
+  it("requires a fresh preflight on the owning store agent even after enrollment closed", async () => {
+    const certificate = {
+      ...CERTIFICATE,
+      deployed_agent_id: "agent-a",
+      profile_public_metadata: {
+        renewalProfile: {
+          ...CERTIFICATE.profile_public_metadata.renewalProfile,
+          target: { type: "windows-cert-store", reference: "www.example.com", store: "My" },
+        },
+      },
+    };
+    const stale = fakePool({
+      agentRows: [
+        preflightEvidence({ id: "agent-b", createdAgoMs: HOUR_MS }),
+        preflightEvidence({ id: "agent-a", createdAgoMs: 25 * HOUR_MS }),
+      ],
+    });
+    await assert.rejects(run(stale, certificate), {
+      code: CERTOPS_ADCS_AGENT_NOT_PREPARED,
+      message: /owning agent/,
+    });
+    assert.deepEqual(stale.queries.find(q => q.sql.includes("SELECT id") && q.sql.includes("FROM certops_agents")).params,
+      ["ws-1", "www.example.com", "agent-a"]);
+
+    const refreshed = fakePool({
+      agentRows: [
+        preflightEvidence({ id: "agent-b" }),
+        preflightEvidence({ id: "agent-a" }),
+      ],
+      openRows: [{ id: "existing-enrollment" }],
+    });
+    assert.deepEqual(await run(refreshed, certificate),
+      { job: { id: null, operation: "renew" }, created: false });
   });
   it("waits when a declaring agent has no qualifying adcs-preflight for this CA", async () => {
     const pool = fakePool({ declaredRows: [{ "?column?": 1 }] });

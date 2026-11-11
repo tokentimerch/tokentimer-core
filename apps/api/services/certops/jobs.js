@@ -202,6 +202,7 @@ const JOB_OPERATIONS = Object.freeze([
   "continue-enrollment",
   // Read-only AD CS issuer validation. Created only by the issuer service.
   "adcs-preflight",
+  "adcs-installation-proof",
 ]);
 const JOB_OPERATION_SET = new Set(JOB_OPERATIONS);
 
@@ -795,6 +796,7 @@ const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
   // AD CS continuation carries the same Windows key custody marker as the
   // original renew. The scheduler copies that payload forward.
   "continue-enrollment": new Set(["keyMode"]),
+  "adcs-installation-proof": new Set(["keyMode"]),
   noop: new Set(),
   // Adds nothing certificate-shaped (packages/contracts/certops/
   // protocol-smoke-payload.schema.json): a smoke job can never be mistaken
@@ -837,7 +839,7 @@ function requiredExecutionFieldsForOperation(payload, operation) {
   if (operation !== "issue") return base;
   const required = new Set(base);
   if (payload?.publication) return required;
-  required.add(payload?.target?.type === "windows-iis" ? "keyMode" : "certPath");
+  required.add(["windows-iis", "windows-cert-store"].includes(payload?.target?.type) ? "keyMode" : "certPath");
   return required;
 }
 
@@ -877,9 +879,9 @@ function validateIssueDeploymentTargets(payload, operation) {
 // from the control plane's issuer and enrollment records (ADR-0014). Signed
 // dispatch spreads the stored payload, so a client-supplied value would be
 // signed as if the control plane had resolved it. Refused even when null.
-const DISPATCH_ATTACHED_FIELD_NAMES = Object.freeze(["issuerKind", "enrollment"]);
+const DISPATCH_ATTACHED_FIELD_NAMES = Object.freeze(["issuerKind", "enrollment", "acmeStoreEnrollment", "adcsProof"]);
 
-function validateExecutionFields(payload, operation) {
+function validateExecutionFields(payload, operation, { adcsEnrollmentIssue = false } = {}) {
   for (const fieldName of DISPATCH_ATTACHED_FIELD_NAMES) {
     if (!Object.prototype.hasOwnProperty.call(payload, fieldName)) continue;
     throw serviceError(
@@ -917,6 +919,17 @@ function validateExecutionFields(payload, operation) {
 
   validateIssueDeploymentTargets(payload, operation);
 
+  if (adcsEnrollmentIssue) {
+    for (const fieldName of EXECUTION_FIELD_NAMES) {
+      if (fieldName !== "keyMode" && payload[fieldName] != null) {
+        throw serviceError("AD CS issuance cannot carry ACME execution fields", CERTOPS_JOB_EXECUTION_FIELD_INVALID);
+      }
+    }
+    if (payload.keyMode !== "os-store-managed") {
+      throw serviceError("AD CS issuance requires machine-store custody", CERTOPS_JOB_EXECUTION_FIELD_INVALID);
+    }
+    return;
+  }
   const requiredForOperation = requiredExecutionFieldsForOperation(
     payload,
     operation,
@@ -946,7 +959,7 @@ function validateExecutionFields(payload, operation) {
 function validateRenewalProfileOnPayload(
   payload,
   operation,
-  { required = false } = {},
+  { required = false, adcsStoreEnrollment = false } = {},
 ) {
   if (operation !== "renew") {
     if (
@@ -968,7 +981,8 @@ function validateRenewalProfileOnPayload(
   if (
     !hasProfile &&
     payload?.keyMode === "os-store-managed" &&
-    payload?.target?.type === "windows-iis"
+    (payload?.target?.type === "windows-iis" ||
+      (adcsStoreEnrollment && payload?.target?.type === "windows-cert-store"))
   ) {
     return null;
   }
@@ -1421,6 +1435,8 @@ async function resolveManagedCertificateJobDefaults({
                FOR SHARE
             ) END AS identity_lifecycle_status,
             mc.source,
+            mc.source_ref,
+            mc.reconciliation_reason,
             mc.deployed_agent_id,
             mc.public_metadata->'controllerObservation'->>'agentId'
               AS discovery_agent_id,
@@ -1435,6 +1451,12 @@ async function resolveManagedCertificateJobDefaults({
   );
   const row = result.rows[0];
   if (!row) return { autoAssignedAgentId: null };
+
+  if (operation === "renew" && row.source === "agent_windows" &&
+      (String(row.source_ref || "").includes("/windows_store/") ||
+       row.reconciliation_reason === "windows_store_identity_conflict")) {
+    throw serviceError("Verify the Windows store certificate and associate its renewal profile with the correct current entry before renewing", CERTOPS_CERTIFICATE_NOT_RENEWABLE);
+  }
 
   // A scan result is only a hint. Serialize final renewal admission against
   // retirement on the authoritative identity, not its deliberately skippable
@@ -1526,6 +1548,7 @@ async function loadManagedCertificateForRenewal({ db, workspaceId, certificateId
             mc.subject_alt_names,
             mc.not_after,
             mc.key_mode,
+            mc.deployed_agent_id,
             mc.profile_id,
             cp.name AS profile_name,
             cp.key_mode AS profile_key_mode,
@@ -1637,6 +1660,18 @@ function manualRenewalJobCreator({
       : await materializeManualRenewalPayload({
           db: client, workspaceId, certificateId, overrides, loadCertificate,
         });
+
+    if (payload.target?.type === "windows-cert-store") {
+      const source = (await client.query(`SELECT mc.deployed_agent_id,cp.issuer_id FROM managed_certificates mc
+        JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id
+        WHERE mc.workspace_id=$1 AND mc.id=$2::uuid`, [workspaceId, certificateId])).rows[0];
+      if (source && !source.issuer_id) {
+        return require("./acmeStoreIssuance").createAcmeStoreRenewalTx({ ...options, client,
+          operation: "renew", subjectType: "managed_certificate", subjectId: certificateId,
+          assignedAgentId: existing?.assignedAgentId || assignedAgentId || source.deployed_agent_id,
+          payload: options.payload || {}, transactionOwned: true, returnOutcome: true });
+      }
+    }
 
     // Distinct manual requests need distinct immutable versions even if the
     // source expiry has not changed (e.g. rejection followed by correction).
@@ -1943,6 +1978,9 @@ async function createCertificateJob(options) {
       CERTOPS_JOB_OPERATION_INVALID,
     );
   }
+  if (operation === "adcs-installation-proof" && options.allowAdcsProofOnly !== true) {
+    throw serviceError("AD CS installation proof jobs can only be created from a bound receipt", CERTOPS_JOB_OPERATION_INVALID);
+  }
   if (operation === "adcs-preflight" && options.allowIssuerPreflight !== true) {
     throw serviceError(
       "adcs-preflight jobs can only be created by the CertOps issuer service",
@@ -2057,10 +2095,79 @@ async function createCertificateJob(options) {
   // even when a caller forgets to select the column. The row column remains
   // the source of truth and is never updated after insert.
   payload.mode = mode;
-  validateExecutionFields(payload, operation);
+  if (operation === "adcs-installation-proof") {
+    if (!options.client || options.transactionOwned !== true || options.returnOutcome !== true ||
+        !options.enrollmentId || !options.assignedAgentId || !options.adcsProofIntentId ||
+        subjectType !== "managed_certificate" || mode !== "real" || payload.target?.type !== "windows-cert-store" ||
+        Object.keys(payload).some(key => !["schemaVersion", "certificateId", "target", "keyMode", "mode"].includes(key))) {
+      throw serviceError("AD CS proof requires a transaction and a bound receipt", CERTOPS_JOB_INVALID);
+    }
+    const intent = await db.query(`SELECT i.id FROM certops_adcs_proof_recovery_intents i
+      JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id
+      JOIN certificate_enrollments e ON e.workspace_id=i.workspace_id AND e.id=i.enrollment_id
+      WHERE i.workspace_id=$1 AND i.id=$2::uuid AND i.enrollment_id=$3::uuid AND i.agent_id=$4::uuid
+        AND e.certificate_id::text=$5 AND e.deploy_target=$6::jsonb AND i.state='transport_unavailable' AND i.proof_job_id IS NULL`,
+      [workspaceId, options.adcsProofIntentId, options.enrollmentId, options.assignedAgentId, subjectId, JSON.stringify(payload.target)]);
+    if (!intent.rows[0]) throw serviceError("AD CS proof intent is not available", CERTOPS_JOB_INVALID);
+  }
+  let adcsStoreEnrollment = false;
+  const acmeStoreRecovery = options.acmeStoreRecoveryEnrollmentId != null;
+  if (acmeStoreRecovery) {
+    if (!options.client || options.transactionOwned !== true || options.returnOutcome !== true ||
+        (typeof options.client.connect === "function" && typeof options.client.idleCount === "number") ||
+        options.allowEnrollmentContinuation !== true || operation !== "continue-enrollment" || mode !== "real" ||
+        subjectType !== "managed_certificate" || !options.assignedAgentId || options.enrollmentId ||
+        payload.target?.type !== "windows-cert-store") {
+      throw serviceError("ACME recovery requires a transaction and its original owner", CERTOPS_JOB_INVALID);
+    }
+    const original = await db.query(`SELECT j.payload FROM certops_acme_store_enrollments e
+      JOIN certificate_jobs j ON j.workspace_id=e.workspace_id AND j.id=e.original_job_id
+      WHERE e.workspace_id=$1::uuid AND e.id=$2::uuid AND e.certificate_id=$3::uuid AND e.agent_id=$4::uuid FOR UPDATE OF e`,
+    [workspaceId, options.acmeStoreRecoveryEnrollmentId, subjectId, options.assignedAgentId]);
+    const prior = original.rows[0]?.payload;
+    const fields = ["target", "sans", "caEndpoint", "commandRef", "dnsProvider", "dnsZone", "keyAlgorithm", "keySize", "acmeKind", "preferredChain", "eabRef", "accountRef", "keyRotation"];
+    if (!prior || fields.some(field => JSON.stringify(canonicalizeJson(prior[field] ?? null)) !== JSON.stringify(canonicalizeJson(payload[field] ?? null)))) {
+      throw serviceError("ACME recovery must retain the original signed request", CERTOPS_JOB_INVALID);
+    }
+  }
+  const acmeStoreBinding = typeof options.createAcmeStoreBinding === "function";
+  if (acmeStoreBinding && (!options.client || options.transactionOwned !== true || options.returnOutcome !== true ||
+      (typeof options.client.connect === "function" && typeof options.client.idleCount === "number") ||
+      !["issue", "renew"].includes(operation) || subjectType !== "managed_certificate" ||
+      mode !== "real" || !["pending", "pending_approval"].includes(status) ||
+      !options.assignedAgentId || options.enrollmentId || payload.target?.type !== "windows-cert-store")) {
+    throw serviceError("ACME store job requires an internal transaction and explicit owner binding", CERTOPS_JOB_INVALID);
+  }
+  if (["issue", "renew"].includes(operation) && payload.target?.type === "windows-cert-store" && !options.enrollmentId && !acmeStoreBinding) {
+    throw serviceError("machine-store enrollment requires its persisted owner binding", CERTOPS_JOB_INVALID);
+  }
+  if (options.enrollmentId && ["issue", "renew"].includes(operation) &&
+      payload.target?.type === "windows-cert-store") {
+    // This exemption is available only for a persisted enrollment created
+    // inside the same transaction. Client payloads cannot assert issuerKind.
+    const bound = await db.query(
+      `SELECT e.id
+         FROM certificate_enrollments e
+         JOIN certificate_issuers i ON i.workspace_id=e.workspace_id AND i.id=e.issuer_id
+         JOIN managed_certificates mc ON mc.workspace_id=e.workspace_id AND mc.id=e.certificate_id
+        WHERE e.workspace_id=$1 AND e.id=$2::uuid AND e.certificate_id::text=$3
+          AND e.agent_id=$4::uuid AND mc.deployed_agent_id=e.agent_id
+          AND i.kind='adcs' AND e.deploy_target=$5::jsonb AND e.state='requested'
+          AND (($6='issue' AND mc.status='provisioning')
+            OR ($6='renew' AND mc.status<>'provisioning'))`,
+      [workspaceId, options.enrollmentId, subjectId, options.assignedAgentId,
+        JSON.stringify(payload.target), operation],
+    );
+    if (subjectType !== "managed_certificate" || bound.rows.length !== 1) {
+      throw serviceError("AD CS job does not match its persisted enrollment", CERTOPS_JOB_INVALID);
+    }
+    adcsStoreEnrollment = true;
+  }
+  validateExecutionFields(payload, acmeStoreRecovery ? "issue" : operation, { adcsEnrollmentIssue: adcsStoreEnrollment && operation === "issue" });
   validateRenewalProfileOnPayload(payload, operation, {
     required:
       source === "automation" || options.requireRenewalProfile === true,
+    adcsStoreEnrollment,
   });
   assertModeAllowsTerminalStatus(mode, status);
   // Retirement is immutable. Refuse a store deployment before distribution
@@ -2089,6 +2196,10 @@ async function createCertificateJob(options) {
     requiredDnsProvider,
     requiredCommandProfile,
   } = resolveExecutorKindAndRouting(options, source, payload, autoAssignedAgentId);
+  if (["renew", "issue", "continue-enrollment"].includes(operation) && payload.target?.type === "windows-iis") {
+    await require("./windowsIisConsent").assertIndependentIisTarget({ client:db,workspaceId,
+      agentId:assignedAgentId,target:payload.target });
+  }
   if (options.expectedRenewalRouting && (
     executorKind !== options.expectedRenewalRouting.executorKind ||
     assignedAgentId !== options.expectedRenewalRouting.assignedAgentId ||
@@ -2133,6 +2244,13 @@ async function createCertificateJob(options) {
     completedAt: dateToIso(explicitLifecycleTimestamps.completedAt),
     cancelledAt: dateToIso(explicitLifecycleTimestamps.cancelledAt),
   });
+  async function assertAcmeStoreBinding(job) {
+    if (!acmeStoreBinding) return;
+    const match = await db.query(`SELECT id FROM certops_acme_store_enrollments
+      WHERE workspace_id=$1::uuid AND original_job_id=$2::uuid
+        AND certificate_id=$3::uuid AND agent_id=$4::uuid`, [workspaceId, job.id, subjectId, assignedAgentId]);
+    if (match.rows.length !== 1) throw serviceError("ACME store job is missing its durable owner binding", CERTOPS_JOB_INVALID);
+  }
 
   // Idempotent replays must not be rejected by the per-CA cap: a retry of an
   // already-created renew job is not a new capacity reservation.
@@ -2157,6 +2275,7 @@ async function createCertificateJob(options) {
             payload,
           });
       if (isMatchingReplay) {
+        await assertAcmeStoreBinding(existingBeforeInsert);
         return options.returnOutcome === true
           ? { job: existingBeforeInsert, created: false }
           : existingBeforeInsert;
@@ -2284,6 +2403,10 @@ async function createCertificateJob(options) {
 
     const job = jobFromRow(result.rows[0]);
     if (job) {
+      if (acmeStoreBinding) {
+        await options.createAcmeStoreBinding({ client: db, job });
+        await assertAcmeStoreBinding(job);
+      }
       if (payload.publication) {
         await require("./materialDistribution").allocateMaterialVersion({ client: db, workspaceId,
           groupId: payload.publication.groupId, job: { ...result.rows[0], payload } });
@@ -2322,6 +2445,7 @@ async function createCertificateJob(options) {
               payload,
             });
         if (isMatchingReplay) {
+          await assertAcmeStoreBinding(existing);
           return options.returnOutcome === true
             ? { job: existing, created: false }
             : existing;
@@ -2362,6 +2486,7 @@ async function createCertificateJob(options) {
               payload,
             });
         if (isMatchingReplay) {
+          await assertAcmeStoreBinding(existing);
           return options.returnOutcome === true
             ? { job: existing, created: false }
             : existing;

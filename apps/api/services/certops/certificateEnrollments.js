@@ -23,6 +23,7 @@ const { redactGenericSecrets } = require("../../utils/secretMaterial");
 const { createCertificateJob, TERMINAL_JOB_STATUSES } = require("./jobs");
 const { adcsCaBucket } = require("./renewalCapacity");
 const { lockWorkspaceForCertOpsSideEffect } = require("./workspaceKillSwitch");
+const { iisSelectorKey } = require("./windowsRenewalOwnership");
 const {
   PREFLIGHT_PER_HOUR,
   UNREACHABLE_ERROR,
@@ -46,6 +47,16 @@ function dbOf(client) {
 const CERTIFICATE_ID_UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+function validAdcsTarget(target) {
+  if (!target || typeof target !== "object" || Array.isArray(target)) return false;
+  if (target.type === "windows-iis") return Boolean(target.binding);
+  return target.type === "windows-cert-store" && target.store === "My" &&
+    typeof target.reference === "string" &&
+    target.reference.length <= 253 &&
+    /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/.test(target.reference) &&
+    Object.keys(target).every(key => ["type", "store", "reference"].includes(key));
+}
+
 // A job can be terminal while its CA enrollment remains in progress.
 const OPEN_ENROLLMENT_STATES = Object.freeze([
   "requested", "prepared", "submitting", "pending_issuance", "submission_uncertain",
@@ -64,21 +75,22 @@ async function findOpenEnrollment(db, workspaceId, certificateId) {
 
 // Lock and compare the IIS destination, not the registration: a store copy
 // and an IIS observation can both point to the same certificate and binding.
-async function assertIisTargetAvailable(tx, { workspaceId, certificateId, target, source }) {
-  const reference = String(target.reference || "").trim().toLowerCase();
-  const site = String(target.binding.site || "").trim().toLowerCase();
+async function assertIisTargetAvailable(tx, { workspaceId, certificateId, agentId, target, source }) {
+  if (!CERTIFICATE_ID_UUID.test(String(agentId || ""))) {
+    throw serviceError("IIS enrollment requires a specific agent", "CERTOPS_SNAPSHOT_INVALID");
+  }
   const port = String(target.binding.port || "");
   const sni = String(target.binding.sniHost || "").trim().toLowerCase();
-  const key = JSON.stringify([String(workspaceId).toLowerCase(), reference, site, port, sni]);
+  const selector = iisSelectorKey(target.binding);
+  const key = JSON.stringify([String(workspaceId).toLowerCase(), String(agentId).toLowerCase(), selector]);
   await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))", [`certops-iis-enrollment:${key}`]);
   const result = await tx.query(
     `SELECT 1 FROM certificate_enrollments e
       WHERE e.workspace_id = $1 AND e.deploy_target->>'type' = 'windows-iis'
-        AND lower(btrim(e.deploy_target->>'reference')) = $2
-        AND lower(btrim(e.deploy_target->'binding'->>'site')) = $3
-        AND e.deploy_target->'binding'->>'port' = $4
-        AND lower(btrim(COALESCE(e.deploy_target->'binding'->>'sniHost', ''))) = $5
-        AND (e.state = ANY($6::text[]) OR ($7 = 'automation'
+        AND (e.agent_id = $2::uuid OR e.agent_id IS NULL)
+        AND e.deploy_target->'binding'->>'port' = $3
+        AND lower(btrim(COALESCE(e.deploy_target->'binding'->>'sniHost', ''))) = $4
+        AND (e.state = ANY($5::text[]) OR ($6 = 'automation'
           AND (e.state = 'installed' OR EXISTS (SELECT 1 FROM certificate_jobs j
             WHERE j.workspace_id = e.workspace_id AND j.enrollment_id = e.id AND j.source = 'automation'))
           AND EXISTS (
@@ -90,12 +102,12 @@ async function assertIisTargetAvailable(tx, { workspaceId, certificateId, target
             ON association.workspace_id = identity.workspace_id AND association.identity_id = identity.id
           JOIN certops_management_periods period
             ON period.workspace_id = association.workspace_id AND period.id = association.period_id
-          WHERE current_cert.workspace_id = $1 AND current_cert.id = $8
+          WHERE current_cert.workspace_id = $1 AND current_cert.id = $7
             AND period.managed_certificate_id = e.certificate_id
             AND association.associated_at <= e.created_at
             AND (association.superseded_at IS NULL OR association.superseded_at >= e.created_at)
         ))) LIMIT 1`,
-    [workspaceId, reference, site, port, sni, OPEN_ENROLLMENT_STATES, source, certificateId || null],
+    [workspaceId, agentId, port, sni, OPEN_ENROLLMENT_STATES, source, certificateId || null],
   );
   if (result.rows.length) {
     const error = serviceError("This IIS binding already has an enrollment in progress or was renewed for this certificate.", "CERTOPS_ENROLLMENT_OPEN");
@@ -177,7 +189,7 @@ async function createIssuer({ client, workspaceId, kind, name, actorUserId }) {
     action: "CERTOPS_ISSUER_CREATED",
     targetType: "certificate_issuer",
     workspaceId,
-    metadata: { issuerId: row.id, kind },
+    metadata: { issuerId: row.id, issuerName: row.name, kind },
   });
   return row;
 }
@@ -277,7 +289,7 @@ function dispatchPreflight({
       `UPDATE certificate_issuers
           SET preflight_seq = preflight_seq + 1, updated_at = NOW()
         WHERE workspace_id = $1 AND id = $2
-        RETURNING preflight_seq`,
+        RETURNING preflight_seq, name`,
       [workspaceId, issuerId],
     );
     const preflightSeq = sequenced.rows[0]?.preflight_seq;
@@ -297,7 +309,7 @@ function dispatchPreflight({
       action: "CERTOPS_ISSUER_PREFLIGHT_DISPATCHED",
       targetType: "certificate_issuer",
       workspaceId,
-      metadata: { issuerId, jobId: job.id, agentId },
+      metadata: { issuerId, issuerName: sequenced.rows[0]?.name, jobId: job.id, agentId, caConfig, template },
     });
     return job;
   });
@@ -316,7 +328,7 @@ function confirmIssuerKey({
   const db = dbOf(client);
   return withTransaction(db, async (tx) => {
   const issuer = await tx.query(
-    `SELECT id, kind, current_version, last_preflight
+    `SELECT id, name, kind, current_version, last_preflight
        FROM certificate_issuers
       WHERE workspace_id = $1 AND id = $2
       FOR UPDATE`,
@@ -375,7 +387,7 @@ function confirmIssuerKey({
     action: "CERTOPS_ISSUER_KEY_CONFIRMED",
     targetType: "certificate_issuer",
     workspaceId,
-    metadata: { issuerId, version, caKeySha256 },
+    metadata: { issuerId, issuerName: row.name, version, caKeySha256, caConfig: preflight.caConfig, template: preflight.template },
   });
   return { issuerId, version, caKeySha256 };
   });
@@ -401,17 +413,29 @@ function createEnrollment({
   env,
   idempotencyKey,
   actorUserId,
+  requestedByApiTokenId,
   createJob = createCertificateJob,
   audit = writeAudit,
+  transactionOwned = false,
+  initialOperation = "renew",
+  workspaceRequiresApprovalAlways = false,
+  requiresApproval,
 }) {
-  if (!target || target.type !== "windows-iis" || !target.binding) {
+  if (!validAdcsTarget(target)) {
     throw serviceError(
-      "enrollment target must be a windows-iis binding",
+      "enrollment target must be a valid Windows certificate destination",
       "CERTOPS_SNAPSHOT_INVALID",
     );
   }
+  if (transactionOwned && (!client || isPool(client))) {
+    throw serviceError("transaction-owned enrollment requires a transaction client", "CERTOPS_SNAPSHOT_INVALID");
+  }
+  if (!["issue", "renew"].includes(initialOperation) ||
+      (initialOperation === "issue" && !transactionOwned)) {
+    throw serviceError("invalid initial enrollment operation", "CERTOPS_SNAPSHOT_INVALID");
+  }
   const db = dbOf(client);
-  return withTransaction(db, async (tx) => {
+  const run = async (tx) => {
     if (source === "automation") {
       await lockWorkspaceForCertOpsSideEffect({
         client: tx,
@@ -434,7 +458,9 @@ function createEnrollment({
         throw error;
       }
     }
-    await assertIisTargetAvailable(tx, { workspaceId, certificateId, target, source });
+    if (target.type === "windows-iis") {
+      await assertIisTargetAvailable(tx, { workspaceId, certificateId, agentId, target, source });
+    }
     let resolvedIssuerId = issuerId;
     if (profileId) {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(profileId))) {
@@ -486,6 +512,36 @@ function createEnrollment({
       );
     }
     assertIssuerKind(issuer.kind);
+    let storeSnapshot = {};
+    if (target.type === "windows-cert-store") {
+      if (!Array.isArray(authorizedDnsNames) || !authorizedDnsNames.some((name) =>
+        typeof name === "string" && name.toLowerCase() === target.reference.toLowerCase())) {
+        throw serviceError("the store destination must be included in the authorized DNS names", "CERTOPS_SNAPSHOT_INVALID");
+      }
+      const owner = await tx.query(
+        `SELECT status, fingerprint_sha256, deployed_agent_id
+           FROM managed_certificates WHERE workspace_id = $1 AND id = $2::uuid FOR UPDATE`,
+        [workspaceId, certificateId],
+      );
+      const certificate = owner.rows[0];
+      if (!certificate || !agentId || String(certificate.deployed_agent_id || "") !== String(agentId)) {
+        throw serviceError("the selected agent does not own this store installation", "CERTOPS_SNAPSHOT_INVALID");
+      }
+      const previous = certificate.fingerprint_sha256 == null ? null :
+        String(certificate.fingerprint_sha256).replace(/:/g, "").toLowerCase();
+      if ((certificate.status === "provisioning") !== (initialOperation === "issue") ||
+          (certificate.status === "provisioning" && previous !== null) ||
+          (certificate.status !== "provisioning" && !/^[a-f0-9]{64}$/.test(previous || ""))) {
+        throw serviceError("the store installation predecessor identity is unavailable", "CERTOPS_SNAPSHOT_INVALID");
+      }
+      const destinationSha256 = require("crypto").createHash("sha256").update(JSON.stringify({
+        type: "windows-cert-store", reference: target.reference, store: "My",
+      }), "utf8").digest("hex");
+      const iisConsumers = initialOperation === "renew"
+        ? await require("./windowsIisConsent").snapshotWindowsIisConsumers({ client: tx, workspaceId, certificateId, agentId })
+        : [];
+      storeSnapshot = { destinationType: "windows-cert-store", destinationSha256, predecessorFingerprintSha256: previous, iisConsumers };
+    }
     const frozen = freezeSnapshot({
       issuerId: resolvedIssuerId,
       issuerVersion: issuer.version,
@@ -499,6 +555,7 @@ function createEnrollment({
       pendingTimeout,
       minimumRemainingValidity,
       requireLaterNotAfter,
+      ...storeSnapshot,
     });
     const inserted = await tx.query(
       `INSERT INTO certificate_enrollments (
@@ -522,11 +579,11 @@ function createEnrollment({
     const outcome = await createJob({
       client: tx,
       workspaceId,
-      operation: "renew",
+      operation: initialOperation,
       source,
       requestedByUserId: actorUserId || null,
+      requestedByApiTokenId: requestedByApiTokenId || null,
       mode,
-      requestedByUserId: actorUserId || null,
       idempotencyKey,
       env,
       subjectType: "managed_certificate",
@@ -534,6 +591,8 @@ function createEnrollment({
       assignedAgentId: agentId,
       payload,
       enrollmentId,
+      workspaceRequiresApprovalAlways,
+      requiresApproval,
       capacityBucket: resolvedIssuerId ? adcsCaBucket(resolvedIssuerId) : null,
       returnOutcome: Boolean(idempotencyKey),
     });
@@ -559,8 +618,9 @@ function createEnrollment({
       workspaceId,
       metadata: { enrollmentId, issuerId: resolvedIssuerId, jobId: job.id },
     });
-    return { enrollmentId, snapshotSha256: frozen.sha256, jobId: job.id };
-  });
+    return { enrollmentId, snapshotSha256: frozen.sha256, jobId: job.id, ...(transactionOwned ? { job } : {}) };
+  };
+  return transactionOwned ? run(db) : withTransaction(db, run);
 }
 
 // lock: false | true (wait for the row) | "skip" (return null if another tx holds it).
@@ -968,7 +1028,7 @@ async function retryEnrollmentInstallation({ client, workspaceId, enrollmentId, 
       if (current.rows.length !== 1) throw serviceError("current installation job is not bound to this enrollment", "CERTOPS_ENROLLMENT_UNBOUND");
       if (enrollmentView({ ...row, job_status: current.rows[0].status }).activeJob) return { jobId: row.current_job_id, created: false };
     }
-    if (!row.deploy_target || row.deploy_target.type !== "windows-iis" || !row.agent_id) {
+    if (!validAdcsTarget(row.deploy_target) || !row.agent_id) {
       throw serviceError("enrollment is missing its frozen installation target or agent", "CERTOPS_SNAPSHOT_INVALID");
     }
     if (await identityRetired(tx, workspaceId, row.certificate_id)) {
@@ -1014,8 +1074,10 @@ async function recoverOrphanedEnrollment({ client, workspaceId, enrollmentId, or
       [workspaceId,enrollmentId,[orphanedJobId,row.current_job_id].filter(Boolean)]);
     const original = jobs.rows.find(job => job.id === orphanedJobId);
     const current = jobs.rows.find(job => job.id === row.current_job_id);
+    const recoverableOperation = original && (["renew", "continue-enrollment"].includes(original.operation) ||
+      (original.operation === "issue" && row.deploy_target?.type === "windows-cert-store"));
     if (!original || original.status !== "orphaned_unknown_effect" || original.needs_operator_reconciliation !== true ||
-        original.mode !== "real" || original.executor_kind !== "agent" || !["renew", "continue-enrollment"].includes(original.operation) || original.assigned_agent_id !== row.agent_id) {
+        original.mode !== "real" || original.executor_kind !== "agent" || !recoverableOperation || original.assigned_agent_id !== row.agent_id) {
       throw serviceError("Recovery requires the exact enrollment-bound orphaned job awaiting reconciliation", "CERTOPS_ENROLLMENT_UNBOUND");
     }
     if (row.current_job_id !== orphanedJobId) {
@@ -1026,7 +1088,7 @@ async function recoverOrphanedEnrollment({ client, workspaceId, enrollmentId, or
       }
       throw serviceError("Another enrollment attempt has superseded the orphaned job", "CERTOPS_ENROLLMENT_JOB_ACTIVE");
     }
-    if (!row.deploy_target || row.deploy_target.type !== "windows-iis" || !row.agent_id) {
+    if (!validAdcsTarget(row.deploy_target) || !row.agent_id) {
       throw serviceError("enrollment is missing its frozen installation target or agent", "CERTOPS_SNAPSHOT_INVALID");
     }
     // Recovery always starts a continuation that can retrieve and install, so
@@ -1128,9 +1190,9 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
         return null;
       }
       const target = row.deploy_target;
-      if (!target || target.type !== "windows-iis") {
+      if (!validAdcsTarget(target)) {
         throw serviceError(
-          "enrollment is missing its IIS deployment target",
+          "enrollment is missing its Windows certificate destination",
           "CERTOPS_SNAPSHOT_INVALID",
         );
       }

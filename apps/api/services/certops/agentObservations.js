@@ -1,6 +1,7 @@
 "use strict";
 
 const { isIP } = require("node:net");
+const { createHash } = require("node:crypto");
 
 /**
  * Agent certificate discovery, generalized beyond filesystem paths to Windows
@@ -32,6 +33,7 @@ const {
   ensureManagedCertificateToken,
   findManagedCertificateBySourceRef,
   findManagedCertificateByDeployedPath,
+  acquireManagedCertificateImportLock,
 } = require("./inventory");
 const { createControllerObservationEvidence, createCertificateEvidence } = require("./evidence");
 const { recordCsrObservation } = require("./csrWorkflow");
@@ -591,12 +593,23 @@ function certSourceRefFor(observation) {
   if (observation.locationKind === "filesystem") {
     return `${observation.agentId}/${observation.targetHost}/${observation.filePath}`;
   }
+  if (observation.locationKind === "windows_store") {
+    // A machine store can contain several unrelated certificates with the same
+    // subject. A certificate, unlike a binding, has no stable location across
+    // renewals; fingerprint identifies the actual store entry for its lifetime.
+    const { storeLocation, storeName } = observation.windowsFields;
+    const hostHash = createHash("sha256").update(observation.targetHost.toLowerCase()).digest("hex");
+    return `${observation.agentId}/host-sha256-${hostHash}/windows_store_v2/${storeLocation}/${storeName}/sha256-${observation.fingerprintSha256}`;
+  }
   return `${observation.agentId}/${observation.targetHost}/${observation.locationKind}/${observation.locationSlot}`;
 }
 
 function targetSourceRefFor(observation) {
   if (observation.locationKind === "filesystem") {
     return `${observation.agentId}/${observation.targetHost}`;
+  }
+  if (observation.locationKind === "windows_store") {
+    return certSourceRefFor(observation);
   }
   // Store entries and bindings carry distinct topology. Including the stable
   // location slot prevents one IIS site's store/site/port fields from
@@ -660,6 +673,15 @@ async function findExistingEvidenceByClientId(client, observation) {
 async function upsertInventoryForObservation(client, observation) {
   const certificate = certificateFor(observation);
   const certSourceRef = certSourceRefFor(observation);
+  if (observation.locationKind === "windows_store") {
+    await acquireManagedCertificateImportLock(client, observation.workspaceId);
+    // Serialize lookup and refresh with claim-verified renewal reconciliation.
+    // The lock covers the complete store, not the changing fingerprint.
+    const storeRef = certSourceRef.slice(0, certSourceRef.lastIndexOf("/sha256-"));
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      `${observation.workspaceId}/${storeRef}`,
+    ]);
+  }
   const isFilesystem = observation.locationKind === "filesystem";
   const displayName =
     certificate.commonName || observation.filePath || observation.locationSlot;
@@ -1025,6 +1047,7 @@ async function persistAgentDiscoveryEvidenceBatch({
   const client = await dbPool.connect();
   try {
     await client.query("BEGIN");
+    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
     await enforceSequence({
       client,
       agentRowId: agent.id,
@@ -1086,6 +1109,7 @@ async function persistAgentJobEvidenceBatch({
   const client = await dbPool.connect();
   try {
     await client.query("BEGIN");
+    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
     await enforceSequence({
       client,
       agentRowId: agent.id,
@@ -1113,6 +1137,27 @@ async function persistAgentJobEvidenceBatch({
       }
 
       const clientMeta = metadataMapFromItem(item);
+      if (clientMeta.step === "acme-store-receipt") {
+        if (item.eventType !== "validation.passed" || !binding?.claimId) {
+          throw observationError("ACME store receipt requires a verified claim");
+        }
+        // Reconstruct authenticated identity from the server context. The
+        // receipt and ordinary evidence commit together or neither does.
+        const receipt = {
+          agentId: String(agent.id), jobId, claimId: String(binding.claimId),
+          enrollmentId: clientMeta.enrollmentId, requestSha256: clientMeta.requestSha256,
+          containerName: clientMeta.containerName, state: clientMeta.state,
+        };
+        for (const field of ["csrSha256", "csrSpkiSha256", "leafSpkiSha256", "orderReferenceSha256", "store", "keyPossessionVerified", "machineKey", "nonExportable"]) {
+          if (clientMeta[field] !== undefined) receipt[field] = clientMeta[field];
+        }
+        if (item.fingerprintSha256 !== undefined && item.fingerprintSha256 !== null) receipt.fingerprintSha256 = item.fingerprintSha256;
+        await (deps.applyAcmeStoreReceiptTx || require("./acmeStorePersistence").applyAcmeStoreReceiptTx)({
+          client, workspaceId: agent.workspaceId, enrollmentId: clientMeta.enrollmentId,
+          authenticatedAgentRowId: String(agent.id), claimId: String(binding.claimId),
+          receiptId: clientMeta.receiptId, evidence: receipt,
+        });
+      }
       // Security-relevant invariant (B18): server-owned fields win.
       const metadata = {
         ...clientMeta,
@@ -1142,6 +1187,12 @@ async function persistAgentJobEvidenceBatch({
         claimId: binding?.claimId || null,
         attemptCount: binding?.attemptCount ?? null,
       });
+      if (clientMeta.step === "adcs.expected-identity") {
+        if (item.eventType !== "validation.passed" || !evidence?.id) throw observationError("AD CS expected identity requires persisted claim evidence");
+        await (deps.recordAdcsExpectedIdentityTx || require("./adcsProofRecovery").recordAdcsExpectedIdentityTx)({
+          client, agent, jobId, evidenceId: String(evidence.id),
+        });
+      }
       if (evidence) created.push(evidence);
     }
 

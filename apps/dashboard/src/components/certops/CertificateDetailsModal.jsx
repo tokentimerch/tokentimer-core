@@ -51,6 +51,7 @@ import {
 import CertificateDeployments from './CertificateDeployments.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
 import CertificateTimeline from './CertificateTimeline.jsx';
+import CertificateObservationHistory from './CertificateObservationHistory.jsx';
 import KeyLocalityBadge from './KeyLocalityBadge.jsx';
 import KeyLocalityList from './KeyLocalityList.jsx';
 import RenewalBadge from './RenewalBadge.jsx';
@@ -1047,6 +1048,25 @@ export default function CertificateDetailsModal({
               </Section>
             ) : null}
 
+            {certificate?.id ? (
+              <Section
+                title='Observation history'
+                enclosed
+                icon={History}
+                description='Only observations for this registration’s current fingerprint are shown; previous fingerprints are excluded.'
+                contentBorder={false}
+              >
+                <Box data-detail-row py={2}>
+                  <CertificateObservationHistory
+                    workspaceId={
+                      workspaceId || certOps.workspaceId || token.workspace_id
+                    }
+                    certificateId={certificate.id}
+                    fingerprintSha256={certificate.fingerprintSha256}
+                  />
+                </Box>
+              </Section>
+            ) : null}
             {certificate?.id ? (
               <CertificateTimeline
                 compact

@@ -6,7 +6,7 @@ const CHAIN_STATES = new Set(["valid", "invalid", "unknown"]);
 // An absent legacy result is distinct from a malformed current observation.
 function normalizeObservedRevocation(metadata, serverObservedAt) {
   const recognized = metadata && Object.keys(metadata).some((key) =>
-    key.startsWith("observedRevocation") || key === "observedChainStatus");
+    key.startsWith("observedRevocation") || key === "observedChainStatus" || key === "observedRevokedIssuerFingerprintSha256");
   if (!recognized) return null;
   const reported = Date.parse(serverObservedAt);
   if (!Number.isFinite(reported)) return null;
@@ -39,8 +39,10 @@ function normalizeObservedRevocation(metadata, serverObservedAt) {
     validUntil = new Date(until).toISOString();
   }
   if (verdict !== "unknown" && (chainStatus !== "valid" || !validUntil)) return invalid();
+  const revokedIssuerFingerprintSha256 = metadata.observedRevokedIssuerFingerprintSha256;
+  if (revokedIssuerFingerprintSha256 !== undefined && (verdict !== "issuer_revoked" || typeof revokedIssuerFingerprintSha256 !== "string" || !/^[a-f0-9]{64}$/.test(revokedIssuerFingerprintSha256))) return invalid();
   const detail = typeof metadata.observedRevocationDetail === "string" ? metadata.observedRevocationDetail.slice(0, 256) : null;
-  return { verdict, chainStatus, checkedAt: new Date(checked).toISOString(), validUntil, detail, ...revisionField };
+  return { verdict, chainStatus, checkedAt: new Date(checked).toISOString(), validUntil, detail, ...(revokedIssuerFingerprintSha256 ? { revokedIssuerFingerprintSha256 } : {}), ...revisionField };
 }
 
 module.exports = { normalizeObservedRevocation };

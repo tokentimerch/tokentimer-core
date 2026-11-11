@@ -513,10 +513,11 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       actorUserId: userId,
     });
     const expected = [
-      ["CERTOPS_ISSUER_CREATED", { issuerId: issuer.id, kind: "adcs" }],
+      ["CERTOPS_ISSUER_CREATED", { issuerId: issuer.id, issuerName: "Audit CA", kind: "adcs" }],
       [
         "CERTOPS_ISSUER_KEY_CONFIRMED",
-        { issuerId: issuer.id, version: 1, caKeySha256: A },
+        { issuerId: issuer.id, issuerName: "Audit CA", version: 1, caKeySha256: A,
+          caConfig: "ca.example.test\\Audit CA", template: "WebServer" },
       ],
       [
         "CERTOPS_ENROLLMENT_CREATED",
@@ -1736,7 +1737,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     const safe = await job(ws, await source(ws, B), "pending", "noop");
     const agentRow = (await db.query("INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash,status) VALUES($1,$2,'1.0.0','1.0.0',$3,$4,'active') RETURNING id", [ws,`review-${randomUUID()}`,`ttagent_${randomUUID().replace(/-/g, "").slice(0,16)}`,A])).rows[0];
     const signed = [];
-    const { claimJobs } = require("../../apps/api/services/certops/agentDispatch");
+    const { claimJobs } = require("./helpers/authenticated-agent-dispatch");
     const claimed = await claimJobs({ dbPool: db, agent: { id: agentRow.id, workspaceId: ws },
       body: { supportedActions: ["deploy", "noop"], maxJobs: 2 },
       deps: { enforceAgentSequence: async () => {},
@@ -1943,7 +1944,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       { fingerprintSha256: A, commonName: "app.example", notAfter: "2026-10-20" },
       { workspaceId: ws, source: "agent_issuance", sourceRef: ref,
         reuseCertificateId: mc.id, tokenId: tid, status: "discovered", observedAt: new Date() }, 0);
-    const refresh = require("../../apps/api/services/certops/agentDispatch")._test.refreshRenewedCertificateEvidence;
+    const refresh = require("./helpers/authenticated-agent-dispatch")._test.refreshRenewedCertificateEvidence;
     for (const [fingerprint, expiry] of [[B, "2027-01-12"], [C, "2027-04-12"]]) {
       const renewed = await job(ws, mc, "claimed");
       renewed.claim_id = randomUUID();
@@ -2126,7 +2127,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       { fingerprintSha256: B, commonName: "app.example", serialNumber: "renewed-leaf", notAfter: "2027-01-12" },
       { workspaceId: ws, source: mc.source, sourceRef: mc.source_ref,
         tokenId: tid, status: "active", observedAt: new Date() }, 0);
-    const refresh = require("../../apps/api/services/certops/agentDispatch")._test.refreshRenewedCertificateEvidence;
+    const refresh = require("./helpers/authenticated-agent-dispatch")._test.refreshRenewedCertificateEvidence;
     assert.equal(await refresh({ client: db, workspaceId: ws, job: renewed }), null,
       "a result for the old management association stays fenced");
     assert.equal(
@@ -2209,7 +2210,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       const client = await db.connect();
       try {
         await client.query("BEGIN");
-        const result = await require("../../apps/api/services/certops/agentDispatch")._test.refreshRenewedCertificateEvidence({
+        const result = await require("./helpers/authenticated-agent-dispatch")._test.refreshRenewedCertificateEvidence({
           client, workspaceId: ws, job: renewed,
         });
         assert.equal(result?.refreshed, true);
@@ -2897,7 +2898,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
   for (const jobStatus of ["claimed", "running"]) {
     for (const operation of ["renew", "deploy", "reload"]) {
       it(`records reconciliation for a ${jobStatus} ${operation} job completed after revocation`, async () => {
-        const { ingestResult } = require("../../apps/api/services/certops/agentDispatch");
+        const { ingestResult } = require("./helpers/authenticated-agent-dispatch");
         const ws = await workspace(),
           tid = await token(ws),
           mc = await source(ws, A, { status: "active", tokenId: tid }),
@@ -2961,7 +2962,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     }
   }
   it("records reconciliation when completion holds the job lock during revocation", async () => {
-    const { ingestResult } = require("../../apps/api/services/certops/agentDispatch");
+    const { ingestResult } = require("./helpers/authenticated-agent-dispatch");
     const { consumeNonce } = require("../../apps/api/services/certops/jobSigning");
     const ws = await workspace(), mc = await source(ws, A, { status: "active" }),
       identityA = await identity(ws, A), mutation = await job(ws, mc, "running", "deploy");
@@ -3030,7 +3031,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     }
   });
   it("records revocation without deadlocking a completion that already owns the token", async () => {
-    const { ingestResult } = require("../../apps/api/services/certops/agentDispatch");
+    const { ingestResult } = require("./helpers/authenticated-agent-dispatch");
     const { consumeNonce } = require("../../apps/api/services/certops/jobSigning");
     const ws=await workspace(),tid=await token(ws),mc=await source(ws,A,{status:"active",tokenId:tid}),
       identityA=await identity(ws,A),mutation=await job(ws,mc,"running","deploy");
@@ -3372,7 +3373,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     const {
       reconcileProvisionedCertificate,
       refreshRenewedCertificateEvidence,
-    } = require("../../apps/api/services/certops/agentDispatch")._test;
+    } = require("./helpers/authenticated-agent-dispatch")._test;
     const ws = await workspace(),
       provisional = await source(ws, null, {
         status: "provisioning",

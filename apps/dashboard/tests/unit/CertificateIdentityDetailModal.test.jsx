@@ -20,6 +20,7 @@ const {
   detailsModalMock,
   stopMock,
   readdMock,
+  windowsMock,
 } = vi.hoisted(() => ({
   getCertificateMock: vi.fn(),
   getIdentityMock: vi.fn(),
@@ -31,6 +32,7 @@ const {
   detailsModalMock: vi.fn(),
   stopMock: vi.fn(),
   readdMock: vi.fn(),
+  windowsMock: vi.fn(),
 }));
 
 vi.mock('../../src/components/certops/certopsApi.js', () => ({
@@ -40,6 +42,8 @@ vi.mock('../../src/components/certops/certopsApi.js', () => ({
   listCertOpsRenewalProfiles: listProfilesMock,
   readdManagingSource: readdMock,
   stopManagingSource: stopMock,
+  getWindowsRenewal: windowsMock,
+  setWindowsIisConsumer: vi.fn(),
 }));
 
 vi.mock('../../src/utils/apiClient', () => ({
@@ -60,8 +64,14 @@ vi.mock('../../src/components/certops/CertificateDetailsModal.jsx', () => ({
   },
 }));
 
+vi.mock('../../src/components/certops/IisReassociation.jsx', () => ({
+  default: ({ sourceId }) => <div>Reassociate {sourceId}</div>,
+}));
+
 beforeEach(() => {
   getCertificateMock.mockReset();
+  windowsMock.mockReset();
+  windowsMock.mockResolvedValue({ groups: [] });
   getIdentityMock.mockReset();
   getManagedMock.mockReset();
   getManagedMock.mockResolvedValue([]);
@@ -75,6 +85,202 @@ beforeEach(() => {
   listProfilesMock.mockResolvedValue([]);
   getAlertSettingsMock.mockResolvedValue({ contact_groups: [] });
   getContactsMock.mockResolvedValue({ data: { items: [] } });
+});
+
+it('labels the current Windows store and hides a stopped registration until requested', async () => {
+  const identity = {
+    identityId: 'identity-1',
+    commonName: 'example.test',
+    locations: [
+      {
+        id: 'location',
+        source: 'agent_windows',
+        targetHostname: 'gpo-pilot',
+        locationKind: 'windows_store',
+        deploymentReference: 'winstore://LocalMachine/My',
+        presenceState: 'confirmed_present',
+      },
+    ],
+    sources: [
+      {
+        managedCertificateId: 'store-v2',
+        periodId: 'current',
+        source: 'agent_windows',
+        sourceRef: `agent/host-sha256-${'a'.repeat(64)}/windows_store_v2/LocalMachine/My/sha256-${'b'.repeat(64)}`,
+        targetHostname: 'gpo-pilot',
+        currentIdentityId: 'identity-1',
+        startedAt: '2026-11-01',
+      },
+      {
+        managedCertificateId: 'old',
+        periodId: 'stopped',
+        source: 'agent_windows',
+        sourceRef: 'agent/host/windows_store/LocalMachine/My/example.test',
+        currentIdentityId: 'identity-1',
+        startedAt: '2026-10-01',
+        periodEndedAt: '2026-10-02',
+        endedReason: 'stopped_by_operator',
+      },
+      {
+        managedCertificateId: 'iis',
+        periodId: 'binding',
+        source: 'agent_windows',
+        sourceRef: 'agent/host/iis_binding/Site:444',
+        currentIdentityId: 'identity-1',
+        startedAt: '2026-11-01',
+      },
+    ],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='workspace-1'
+        certificate={identity}
+        isOpen
+        onClose={vi.fn()}
+        canManage
+      />
+    </ChakraProvider>
+  );
+  const table = await screen.findByRole('table', {
+    name: 'Certificate management',
+  });
+  expect(
+    within(screen.getByRole('table', { name: 'Observed locations' })).getByText(
+      'gpo-pilot'
+    )
+  ).toBeInTheDocument();
+  const storeRow = within(table)
+    .getByText('Windows store copy · LocalMachine/My')
+    .closest('tr');
+  expect(within(storeRow).getByText('gpo-pilot')).toBeInTheDocument();
+  const iisRow = within(table)
+    .getByText('IIS binding · Site:444')
+    .closest('tr');
+  expect(within(iisRow).getByText('host')).toBeInTheDocument();
+  expect(within(table).queryByText('Stopped')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Show ended periods' }));
+  expect(within(table).queryByText('Stopped')).not.toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole('checkbox', { name: 'Show stopped registrations' })
+  );
+  expect(within(table).getByText('Stopped')).toBeInTheDocument();
+  expect(
+    within(table).getByRole('button', { name: 'Start managing again' })
+  ).toBeInTheDocument();
+});
+
+it('keeps reassociation visible when an IIS binding hides the legacy store selector', async () => {
+  const identity = {
+    identityId: 'identity-1',
+    fingerprintSha256: 'a'.repeat(64),
+    commonName: 'example.test',
+    locations: [],
+    sources: [
+      {
+        managedCertificateId: 'legacy',
+        periodId: 'old',
+        source: 'agent_windows',
+        sourceRef: 'agent/host/windows_store/LocalMachine/My/example.test',
+        currentIdentityId: 'identity-1',
+        renewalProfileId: 'profile',
+      },
+      {
+        managedCertificateId: 'binding-444',
+        periodId: 'new',
+        source: 'agent_windows',
+        sourceRef: 'agent/host/iis_binding/Site:444',
+        currentIdentityId: 'identity-1',
+      },
+    ],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  getCertificateMock.mockImplementation(async (_, id) => ({
+    id,
+    fingerprintSha256: 'a'.repeat(64),
+  }));
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='workspace-1'
+        certificate={identity}
+        isOpen
+        onClose={vi.fn()}
+        canManage
+      />
+    </ChakraProvider>
+  );
+  expect(await screen.findByText('Reassociate legacy')).toBeInTheDocument();
+});
+
+it('shows registration details and flags an existing dependent IIS profile', async () => {
+  const identity = {
+    identityId: 'identity-1',
+    fingerprintSha256: 'a'.repeat(64),
+    commonName: 'example.test',
+    sources: [
+      {
+        managedCertificateId: 'store',
+        periodId: 'store-period',
+        source: 'agent_windows',
+        sourceRef: 'agent/host/windows_store/LocalMachine/My/example.test',
+        currentIdentityId: 'identity-1',
+      },
+      {
+        managedCertificateId: 'iis',
+        periodId: 'iis-period',
+        source: 'agent_windows',
+        sourceRef: 'agent/host/iis_binding/Site:443',
+        currentIdentityId: 'identity-1',
+        renewalProfileId: 'profile',
+      },
+    ],
+    locations: [],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  windowsMock.mockResolvedValue({
+    groups: [
+      {
+        periodId: 'store-period',
+        managedCertificateId: 'store',
+        host: 'host',
+        store: 'LocalMachine\\My',
+        bindings: [
+          {
+            targetId: 'target',
+            managedCertificateId: 'iis',
+            site: 'Site',
+            port: 443,
+            deployment: 'conflict',
+            relationship: 'observed',
+          },
+        ],
+      },
+    ],
+  });
+  getCertificateMock.mockImplementation(async (_, id) => ({
+    id,
+    fingerprintSha256: 'a'.repeat(64),
+  }));
+  listProfilesMock.mockResolvedValue([{ id: 'profile', name: 'IIS profile' }]);
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='workspace-1'
+        certificate={identity}
+        isOpen
+        onClose={vi.fn()}
+        canManage
+      />
+    </ChakraProvider>
+  );
+  expect(await screen.findByText('Renewal target')).toBeInTheDocument();
+  expect(screen.getByText('IIS profile')).toBeInTheDocument();
+  expect(
+    screen.queryByText('Choose a Store renewal profile')
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText('IIS bindings')).not.toBeInTheDocument();
 });
 
 it('shows one linked token together with all certificate sources and locations', async () => {
@@ -239,6 +445,7 @@ it('shows one linked token together with all certificate sources and locations',
       titleOverride: 'shared.example.test',
       certOps: expect.objectContaining({
         certificate: expect.objectContaining({
+          id: 'cert-1',
           fingerprintSha256: 'a'.repeat(64),
           notBefore: '2026-10-02T00:00:00Z',
           keyMode: 'external-unknown',
@@ -821,6 +1028,7 @@ it('preselects the only current registration and lets the operator pick an ended
     })
   ).not.toBeInTheDocument();
   expect(within(select).getByRole('option', { name: /Current/ })).toBeVisible();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Show ended periods' }));
   expect(within(select).getByRole('option', { name: /Ended/ })).toBeVisible();
   expect(
     screen.queryByText(/Select a registration to see its jobs/)

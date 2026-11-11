@@ -38,6 +38,7 @@ export const CERTOPS_JOB_OPERATIONS = [
   'revoke-trust',
   'continue-enrollment',
   'adcs-preflight',
+  'adcs-installation-proof',
 ];
 
 export const CERTOPS_JOB_CREATED_SINCE = [
@@ -216,10 +217,12 @@ export async function createJob(
     idempotencyKey,
     requiresApproval,
     assignedAgentId,
+    changeTicketReference,
     agentId,
     owner,
     mode,
-  } = {}
+  } = {},
+  { signal } = {}
 ) {
   const body = { operation };
   if (mode !== undefined) body.mode = mode;
@@ -229,10 +232,14 @@ export async function createJob(
   if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
   if (requiresApproval !== undefined) body.requiresApproval = requiresApproval;
   if (assignedAgentId !== undefined) body.assignedAgentId = assignedAgentId;
+  if (changeTicketReference !== undefined)
+    body.changeTicketReference = changeTicketReference;
   if (agentId !== undefined) body.agentId = agentId;
   if (owner !== undefined) body.owner = owner;
 
-  const res = await apiClient.post(`${workspaceBase(workspaceId)}/jobs`, body);
+  const res = await apiClient.post(`${workspaceBase(workspaceId)}/jobs`, body, {
+    signal,
+  });
   return res.data;
 }
 

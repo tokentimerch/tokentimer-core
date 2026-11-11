@@ -97,6 +97,7 @@ export function VerifyStep({ ctx }) {
             clusterId: certopsSaved.clusterId,
             agentId: certopsSaved.chosenAgentId,
             issuerId: certopsSaved.chosenIssuerId,
+            storeIssueJobId: certopsSaved.storeIssueJobId,
             distributionId: certopsSaved.materialSetup
               ? certopsSaved.materialSetup.groupId
               : certopsSaved.chosenDistributionId || certopsSaved.groupId,

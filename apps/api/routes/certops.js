@@ -237,6 +237,7 @@ const {
   CERTOPS_APPROVAL_APPROVER_REQUIRED,
   CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
   CERTOPS_APPROVAL_REQUEST_STALE,
+  CERTOPS_APPROVAL_STORE_ENROLLMENT_UNAVAILABLE,
   CERTOPS_APPROVAL_REASON_INVALID,
   CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
   approveJob,
@@ -298,10 +299,10 @@ function redactIdentityLocationsForViewers(req, items) {
   }
   return items.map((item) => ({ ...item,
     keyReference: undefined,
-    sources: item.sources.map((source) => ({ ...source, sourceRef: undefined })),
-    restartableSources: (item.restartableSources || []).map((source) => ({ ...source, sourceRef: undefined })),
+    sources: item.sources.map((source) => ({ ...source, sourceRef: undefined, targetHostname: undefined })),
+    restartableSources: (item.restartableSources || []).map((source) => ({ ...source, sourceRef: undefined, targetHostname: undefined })),
     locations: item.locations.map((location) => ({ ...location,
-      sourceRef: undefined, deploymentReference: undefined })),
+      sourceRef: undefined, deploymentReference: undefined, targetHostname: undefined })),
   }));
 }
 
@@ -435,6 +436,7 @@ async function attachAgentContactGroupIds(client, workspaceId, agents) {
 }
 
 function handleCertOpsError(res, err) {
+  if (err?.code === "CERTOPS_WINDOWS_CONSENT_REFUSED") return res.status(409).json({ error:err.message,code:err.code });
   if (err?.statusCode && /^CERTOPS_(MATERIAL|DISTRIBUTION|PUBLICATION)_/.test(err.code || "")) {
     return res.status(err.statusCode).json({ error: err.code, code: err.code });
   }
@@ -699,6 +701,10 @@ function handleCertOpsError(res, err) {
       error: "Certificate job is not awaiting approval",
       code: CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
     });
+  }
+
+  if (err?.code === CERTOPS_APPROVAL_STORE_ENROLLMENT_UNAVAILABLE) {
+    return res.status(409).json({ error: err.message, code: err.code });
   }
 
   if (
@@ -1082,9 +1088,14 @@ function createManualCertificateJobHandler({
       // allowed to create that job, since its installation-row state
       // machine must advance in the same transaction as the job insert.
       // Everything else (workspace lock, kill switch, audit row) is shared.
+      // An edition middleware may install a server-side creator on the request
+      // to add transactional admission. It is never read from the request body
+      // and applies only to issue, preserving the existing route's guards.
       const jobCreator =
         req.body?.operation === "issue"
-          ? createCertificateIssuanceJob
+          ? (typeof req.certopsIssueJobCreator === "function"
+              ? req.certopsIssueJobCreator
+              : createCertificateIssuanceJob)
           : req.body?.operation === "renew"
             ? manualRenewalJobCreator({ certificateId: req.body?.subjectId })
             : isTrustAnchorOperation(req.body?.operation)
@@ -1110,6 +1121,14 @@ function createManualCertificateJobHandler({
         .status(201)
         .json({ job: redactClaimIdForNonAdmins(req, jobDetail(job)) });
     } catch (err) {
+      if (
+        req.body?.operation === "issue" &&
+        typeof req.certopsIssueJobCreator === "function" &&
+        typeof req.certopsIssueAdmissionErrorHandler === "function"
+      ) {
+        const handled = req.certopsIssueAdmissionErrorHandler(err, res);
+        if (handled) return handled;
+      }
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
 
@@ -1589,6 +1608,18 @@ function evidenceItem(item) {
     createdByUserId: item.createdByUserId,
     createdByApiTokenId: item.createdByApiTokenId,
     createdAt: item.createdAt,
+  };
+}
+
+function observationHistoryItem(item, includeTopology) {
+  const metadata = item.metadata || {};
+  const allowed = ["fingerprintSha256", "observedRevocationVerdict", "observedRevocationState", "observedRevocationCheckedAt", "observedRevocationValidUntil"];
+  if (includeTopology) allowed.push("observedRevocationDetail", "agentId", "source", "targetHost", "locationSlot", "filePath");
+  return {
+    id: item.id,
+    observedAt: item.observedAt,
+    createdAt: item.createdAt,
+    metadata: Object.fromEntries(allowed.filter((key) => metadata[key] != null).map((key) => [key, metadata[key]])),
   };
 }
 
@@ -2620,6 +2651,13 @@ router.post(
   // blocks only new work; reads and existing machine event/evidence ingestion
   // remain available while a workspace is paused.
   requireWorkspaceCertOpsActive,
+  (req, res, next) => {
+    // An edition may attach admission middleware to the request before this
+    // router. Run it only after the shared security and workspace gates.
+    if (req.body?.operation !== "issue" ||
+        typeof req.certopsIssueAdmissionGuard !== "function") return next();
+    return Promise.resolve(req.certopsIssueAdmissionGuard(req, res, next)).catch(next);
+  },
   createManualCertificateJobHandler(),
 );
 
@@ -3599,6 +3637,26 @@ router.get(
   },
 );
 
+router.get(
+  "/api/v1/workspaces/:id/certops/certificate-identities/:identityId/windows-renewal",
+  getApiLimiter(), requireCertOpsEnabled, requireCertOpsWriteRole, async (req,res) => {
+    try {
+      if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(req.params.identityId)) return res.status(400).json({ error:"Invalid certificate identity" });
+      return res.json(await require("../services/certops/windowsIisConsent").listWindowsRenewal({ workspaceId:req.workspace.id,identityId:req.params.identityId }));
+    } catch (_err) { return res.status(500).json({ error:"Failed to load Windows renewal",code:"INTERNAL_ERROR" }); }
+  });
+
+router.put(
+  "/api/v1/workspaces/:id/certops/management-periods/:periodId/iis-consumers/:targetId",
+  getApiLimiter(), rejectKeyMaterial, requireCertOpsEnabled, requireCertOpsWriteRole, async (req,res) => {
+    try {
+      if (!req.body || Object.keys(req.body).some(key => key !== "enabled")) return res.status(400).json({ error:"Invalid IIS update setting" });
+      return res.json(await require("../services/certops/windowsIisConsent").setWindowsIisConsumer({ workspaceId:req.workspace.id,
+        periodId:req.params.periodId,targetId:req.params.targetId,enabled:req.body.enabled,actorUserId:req.user?.id }));
+    } catch (err) { return err.code === "CERTOPS_WINDOWS_CONSENT_REFUSED" ? res.status(409).json({ error:err.message,code:err.code }) :
+      res.status(500).json({ error:"Failed to update IIS consent",code:"INTERNAL_ERROR" }); }
+  });
+
 router.post(
   "/api/v1/workspaces/:id/certops/certificate-identities/:identityId/retire",
   getApiLimiter(), rejectKeyMaterial, requireCertOpsEnabled, requireCertOpsWriteRole,
@@ -3637,6 +3695,42 @@ router.post(
 
 // One request for "end the current period and attach this profile", so the
 // wizard never leaves a certificate unmanaged between two calls.
+router.get(
+  "/api/v1/workspaces/:id/certops/sources/:managedCertificateId/reassociate-windows-store/candidates",
+  getApiLimiter(), requireCertOpsEnabled, requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      const items = await require("../services/certops/windowsStoreReassociation").listIisReassociationCandidates({
+        workspaceId: req.workspace.id, legacyId: req.params.managedCertificateId,
+      });
+      return res.json({ items });
+    } catch (err) {
+      if (err?.code === "CERTOPS_WINDOWS_REASSOCIATION_REFUSED") return res.status(400).json({ error: err.message, code: err.code });
+      return handleCertOpsError(res, err) || res.status(500).json({ error: "Failed to find IIS targets", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+router.post(
+  "/api/v1/workspaces/:id/certops/sources/:managedCertificateId/reassociate-windows-store",
+  getApiLimiter(), rejectKeyMaterial, requireCertOpsEnabled, requireCertOpsWriteRole,
+  async (req, res) => {
+    const allowed = new Set(["currentId", "legacyPeriodId", "currentPeriodId", "agentId", "expectedFingerprintSha256", "expectedDnsName"]);
+    if (!req.body || Object.keys(req.body).some((key) => !allowed.has(key))) {
+      return res.status(400).json({ error: "Invalid reassociation request" });
+    }
+    try {
+      const result = await require("../services/certops/windowsStoreReassociation").reassociateWindowsStore({
+        workspaceId: req.workspace.id, legacyId: req.params.managedCertificateId,
+        ...req.body, actorUserId: req.user?.id,
+      });
+      return res.status(201).json(result);
+    } catch (err) {
+      if (err?.code === "CERTOPS_WINDOWS_REASSOCIATION_REFUSED") return res.status(409).json({ error: err.message, code: err.code });
+      return handleCertOpsError(res, err) || res.status(500).json({ error: "Failed to reassociate Windows Store renewal", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
 router.post(
   "/api/v1/workspaces/:id/certops/sources/:managedCertificateId/replace-management",
   getApiLimiter(), rejectKeyMaterial, requireCertOpsEnabled, requireCertOpsWriteRole,
@@ -3956,6 +4050,41 @@ router.patch(
         error: "Failed to update renewal profile",
         code: "INTERNAL_ERROR",
       });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/certificates/:certId/observations",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
+      return res.status(404).json({ error: "Certificate not found", code: "CERTOPS_CERTIFICATE_NOT_FOUND" });
+    }
+    try {
+      const certificate = await getManagedCertificate({ workspaceId: req.workspace.id, certId: req.params.certId });
+      if (!certificate) return res.status(404).json({ error: "Certificate not found", code: "CERTOPS_CERTIFICATE_NOT_FOUND" });
+      if (req.query.fingerprint && String(req.query.fingerprint).toLowerCase() !== String(certificate.fingerprintSha256 || "").toLowerCase()) {
+        return res.status(409).json({ error: "Certificate changed. Reload its details.", code: "CERTOPS_CERTIFICATE_CHANGED" });
+      }
+      const result = await listCertificateEvidence({
+        workspaceId: req.workspace.id,
+        subjectType: "managed_certificate",
+        subjectId: req.params.certId,
+        observationsOnly: true,
+        currentCertificateFingerprintOnly: true,
+        expectedFingerprint: certificate.fingerprintSha256,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      const includeTopology = req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager");
+      return res.json({ items: result.items.map((item) => observationHistoryItem(item, includeTopology)), pagination: result.pagination });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+      logger.error("CertOps certificate observations list failed", { code: err.code || null, workspaceId: req.workspace?.id });
+      return res.status(500).json({ error: "Failed to list certificate observations", code: "INTERNAL_ERROR" });
     }
   },
 );

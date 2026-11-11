@@ -22,11 +22,12 @@ type request struct {
 	AllowedOrigins      []string `json:"allowedOrigins"`
 }
 type response struct {
-	Verdict     string     `json:"verdict"`
-	ChainStatus string     `json:"chainStatus"`
-	CheckedAt   time.Time  `json:"checkedAt"`
-	ValidUntil  *time.Time `json:"validUntil,omitempty"`
-	Detail      string     `json:"detail,omitempty"`
+	Verdict                        string     `json:"verdict"`
+	ChainStatus                    string     `json:"chainStatus"`
+	CheckedAt                      time.Time  `json:"checkedAt"`
+	ValidUntil                     *time.Time `json:"validUntil,omitempty"`
+	Detail                         string     `json:"detail,omitempty"`
+	RevokedIssuerFingerprintSha256 string     `json:"revokedIssuerFingerprintSha256,omitempty"`
 }
 
 func parseCertificate(input string) (*x509.Certificate, error) {
@@ -110,6 +111,7 @@ func run(r io.Reader, w io.Writer, now time.Time) error {
 	result := revocation.CheckChain(context.Background(), chains[0], req.AllowedOrigins, roots, now)
 	out.Verdict = result.Verdict
 	out.Detail = result.Detail
+	out.RevokedIssuerFingerprintSha256 = result.RevokedIssuerFingerprintSha256
 	if !result.ValidUntil.IsZero() {
 		out.ValidUntil = &result.ValidUntil
 	}

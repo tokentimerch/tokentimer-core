@@ -6,8 +6,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -126,6 +128,14 @@ func TestNetworkCRLAndOCSP(t *testing.T) {
 			if got.Verdict != want {
 				t.Fatalf("got %+v, want %s", got, want)
 			}
+			if want == "issuer_revoked" {
+				fp := sha256.Sum256(inter.Raw)
+				if got.RevokedIssuerFingerprintSha256 != hex.EncodeToString(fp[:]) {
+					t.Fatalf("wrong revoked issuer: %+v", got)
+				}
+			} else if got.RevokedIssuerFingerprintSha256 != "" {
+				t.Fatalf("unexpected issuer fingerprint: %+v", got)
+			}
 		}
 		runHelper := func(cmd *exec.Cmd) {
 			encode := func(cert *x509.Certificate) string {
@@ -141,10 +151,17 @@ func TestNetworkCRLAndOCSP(t *testing.T) {
 				t.Fatalf("helper execution: %v", e)
 			}
 			var decoded struct {
-				Verdict string `json:"verdict"`
+				Verdict                        string `json:"verdict"`
+				RevokedIssuerFingerprintSha256 string `json:"revokedIssuerFingerprintSha256"`
 			}
 			if e := json.Unmarshal(out, &decoded); e != nil || decoded.Verdict != want {
 				t.Fatalf("helper result %q: %v (want %s)", out, e, want)
+			}
+			if want == "issuer_revoked" {
+				fp := sha256.Sum256(inter.Raw)
+				if decoded.RevokedIssuerFingerprintSha256 != hex.EncodeToString(fp[:]) {
+					t.Fatalf("helper returned wrong issuer fingerprint: %s", out)
+				}
 			}
 		}
 		if helper := os.Getenv("CERTOPS_REVOCATION_TEST_HELPER"); helper != "" {

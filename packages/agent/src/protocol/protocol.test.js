@@ -1565,3 +1565,17 @@ test("heartbeat: command profile removal and replacement remain explicit", async
   await assert.rejects(client.heartbeat({ agentVersion: "0.1.0", declaredCommandProfileNames: ["unsafe command"] }));
   assert.equal(calls.length, 3);
 });
+
+test("IIS consumer authorization uses the credential and sequence and fails closed", async () => {
+  const calls = stubFetch([{ status: 200, json: { allowed: true } }, { status: 200, json: { allowed: false } }]);
+  const client = createProtocolClient({ serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0", getCredential: () => CREDENTIAL });
+  const args = { jobId: "job-1", claimId: "claim-1", consumerId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", authorizationRevision: 3 };
+  assert.equal(await client.authorizeIisConsumer(args), true);
+  assert.equal(await client.authorizeIisConsumer(args), false);
+  assert.equal(calls[0].url, `https://example.test${ROUTES.LEASE}/job-1/iis-consent`);
+  assert.equal(calls[0].init.headers.authorization, `Bearer ${CREDENTIAL}`);
+  assert.equal(calls[0].parsedBody.sequence, 1);
+  assert.equal(calls[1].parsedBody.sequence, 2);
+  assert.equal(calls[0].parsedBody.authorizationRevision, 3);
+  await assert.rejects(client.authorizeIisConsumer({ ...args, authorizationRevision: 0 }));
+});

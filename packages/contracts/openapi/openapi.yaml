@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.19.1
+  version: 0.19.2-rc.1
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -6961,6 +6961,105 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/workspaces/{id}/certops/certificate-identities/{identityId}/windows-renewal:
+    get:
+      tags: [CertOps]
+      operationId: getCertOpsWindowsRenewal
+      summary: List Windows renewal ownership and IIS consumers for a certificate identity
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: identityId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Windows renewal ownership and consumer state }
+        "400": { description: Invalid identity }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/workspaces/{id}/certops/management-periods/{periodId}/iis-consumers/{targetId}:
+    put:
+      tags: [CertOps]
+      operationId: updateCertOpsIisConsumer
+      summary: Enable or disable automatic updates for an IIS consumer
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - { in: path, name: periodId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: targetId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200": { description: Updated IIS consumer }
+        "400": { description: Invalid update }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Consumer update refused }
+  /api/v1/workspaces/{id}/certops/sources/{managedCertificateId}/reassociate-windows-store/candidates:
+    get:
+      tags: [CertOps]
+      operationId: listCertOpsWindowsStoreReassociationCandidates
+      summary: List eligible IIS targets for a Windows store renewal profile
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - { in: path, name: managedCertificateId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Candidate IIS targets }
+        "400": { description: Reassociation refused }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/workspaces/{id}/certops/sources/{managedCertificateId}/reassociate-windows-store:
+    post:
+      tags: [CertOps]
+      operationId: reassociateCertOpsWindowsStore
+      summary: Move a Windows store renewal profile to a verified IIS target
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - { in: path, name: managedCertificateId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [currentId, legacyPeriodId, currentPeriodId, agentId, expectedFingerprintSha256, expectedDnsName]
+              properties:
+                currentId: { type: string, format: uuid }
+                legacyPeriodId: { type: string, format: uuid }
+                currentPeriodId: { type: string, format: uuid }
+                agentId: { type: string, format: uuid }
+                expectedFingerprintSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                expectedDnsName: { type: string, minLength: 1 }
+      responses:
+        "201": { description: Reassociation completed }
+        "400": { description: Invalid request }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Reassociation refused }
+  /api/v1/workspaces/{id}/certops/certificates/{certId}/observations:
+    get:
+      tags: [CertOps]
+      operationId: listCertOpsCertificateObservations
+      summary: List observation history for the current certificate fingerprint
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - { in: path, name: certId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: fingerprint, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0 } }
+      responses:
+        "200": { description: Paginated certificate observations }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Certificate fingerprint changed }
   /api/v1/workspaces/{id}/certops/certificate-identities/{identityId}:
     get:
       tags: [CertOps]
@@ -6977,7 +7076,8 @@ paths:
         source and sourceRef; these candidates do not create history or resume
         automation. An explicit re-add with selected renewal settings starts a
         new period. Retired identities cannot be re-added. Viewer responses redact
-        deployment and source references, including restartableSources.sourceRef.
+        deployment and source references and targetHostname, including
+        restartableSources.sourceRef.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -9023,6 +9123,129 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/recover-installation-proof:
+    post:
+      tags: [CertOps]
+      operationId: recoverCertOpsAdcsInstallationProof
+      summary: Inspect an uncertain AD CS installation
+      description: >-
+        Requires a human session and certops.issuer.manage. The original job must
+        have an unknown outcome and the same agent must have recorded the expected
+        certificate identity under its original live claim. This action only queues
+        an inspection of the Windows certificate store; it never contacts the CA,
+        creates a key, or installs a certificate. A qualified original agent is
+        required to queue inspection. Workspace pause blocks this action. CSRF is required.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+        - in: path
+          name: enrollmentId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [orphanedJobId, reason]
+              properties:
+                orphanedJobId: { type: string, format: uuid }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "201":
+          description: A new inspection job was queued. created describes the intent, not the job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsAdcsProofRecovery" }
+        "200":
+          description: No expected identity, an intent awaiting an eligible agent, or an existing queued inspection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsAdcsProofRecovery" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/acme-store-enrollments/by-job/{jobId}:
+    get:
+      tags: [CertOps]
+      operationId: getCertOpsAcmeStoreEnrollmentByJob
+      summary: Inspect ACME store recovery availability
+      description: Requires a human session and certops.issuer.manage. Returns only an enrollment whose original or current job matches the requested job in this workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: jobId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Enrollment and current recovery eligibility.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [enrollmentId, state, outcomeUncertain, recoveryAvailable]
+                properties:
+                  enrollmentId: { type: string, format: uuid }
+                  state: { type: string, enum: [keygen_intent, prepared, submitting, issued, installing, installed, uncertain] }
+                  outcomeUncertain: { type: boolean }
+                  recoveryAvailable: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { description: Rate limit exceeded }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/acme-store-enrollments/{enrollmentId}/recover:
+    post:
+      tags: [CertOps]
+      operationId: recoverCertOpsAcmeStoreEnrollment
+      summary: Continue an uncertain ACME store enrollment
+      description: >-
+        Requires a human session, certops.issuer.manage, an explicit acknowledgement
+        and the exact uncertain job. The continuation stays on the original active
+        agent and recovers the existing order; it cannot create a replacement order
+        when the outcome is unknown. Workspace pause blocks this action. CSRF is required.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+        - in: path
+          name: enrollmentId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [orphanedJobId, acknowledgeUnknownEffect, reason]
+              properties:
+                orphanedJobId: { type: string, format: uuid }
+                acknowledgeUnknownEffect: { type: boolean, enum: [true] }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "201":
+          description: A new audited continuation was created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsRecoveryJob" }
+        "200":
+          description: The existing continuation was returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsRecoveryJob" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/recover:
     post:
       tags: [CertOps]
@@ -9133,7 +9356,7 @@ paths:
           name: operation
           schema:
             type: string
-            enum: [issue, renew, deploy, deploy-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+            enum: [issue, renew, deploy, deploy-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight, adcs-installation-proof]
         - in: query
           name: source
           schema:
@@ -14277,6 +14500,8 @@ components:
             revision: { type: integer, minimum: 1, maximum: 9007199254740991, description: Agent scan ordering revision. }
             validUntil: { type: string, format: date-time, nullable: true }
             detail: { type: string, nullable: true, maxLength: 256 }
+            revokedIssuerFingerprintSha256: { type: string, pattern: '^[a-f0-9]{64}$', description: Exact revoked intermediate certificate, when supplied by a qualified agent. }
+            derivedFromIssuerChain: { type: boolean, description: This CA status was derived from an observed certificate chain. }
             lastVerified:
               type: object
               additionalProperties: false
@@ -14288,6 +14513,16 @@ components:
                 validUntil: { type: string, format: date-time }
                 detail: { type: string, nullable: true, maxLength: 256 }
                 revision: { type: integer, minimum: 1, maximum: 9007199254740991 }
+                revokedIssuerFingerprintSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        securityStatus:
+          type: object
+          additionalProperties: false
+          description: Security state derived from revocation evidence, independent of management lifecycle and certificate expiry.
+          required: [state, source, freshness]
+          properties:
+            state: { type: string, enum: [unknown, revoked, issuer_revoked, last_known_revoked, last_known_issuer_revoked, chain_untrusted, revocation_good] }
+            source: { type: string, nullable: true, enum: [lifecycle, observation] }
+            freshness: { type: string, enum: [asserted, unchecked, fresh, stale, unavailable, unknown] }
         schemaVersion:
           type: integer
           enum: [1]
@@ -14462,6 +14697,7 @@ components:
             - not_agent_deployable
             - no_profile
             - certificate_retired
+            - windows_store_reassociation
             - assigned_agent_retired
             - assigned_agent_ineligible
             - adcs_enroll_capability_unavailable
@@ -15029,6 +15265,41 @@ components:
             - type: number
             - type: integer
             - type: boolean
+    CertOpsRecoveryJob:
+      type: object
+      additionalProperties: false
+      required: [jobId, created]
+      properties:
+        jobId: { type: string, format: uuid }
+        created: { type: boolean }
+    CertOpsAdcsProofRecovery:
+      type: object
+      additionalProperties: false
+      required: [state, created]
+      properties:
+        state:
+          type: string
+          enum: [expected_identity_unavailable, transport_unavailable, queued]
+        created:
+          type: boolean
+          description: Whether the recovery intent was created in this request.
+        intentId: { type: string, format: uuid }
+        job:
+          type: object
+          additionalProperties: true
+          required: [id, workspaceId, operation, status, source, assignedAgentId, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            workspaceId: { type: string, format: uuid }
+            operation: { type: string, enum: [adcs-installation-proof] }
+            status: { type: string }
+            source: { type: string, enum: [api] }
+            assignedAgentId: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+      description: >-
+        expected_identity_unavailable has no intentId or job; transport_unavailable
+        has an intentId and no job; queued has both intentId and job.
     CertOpsJob:
       type: object
       additionalProperties: false
@@ -15050,7 +15321,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight, adcs-installation-proof]
         status:
           type: string
           enum:
@@ -15490,7 +15761,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight, adcs-installation-proof]
         status:
           type: string
           enum:
@@ -18215,7 +18486,7 @@ components:
                   maxItems: 16
                   items:
                     type: string
-                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store]
+                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, adcs-installation-proof, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store]
     CertOpsAgentClaimResponse:
       type: object
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.

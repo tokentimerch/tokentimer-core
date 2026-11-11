@@ -48,7 +48,9 @@ function checkObservedCertificate({ helperPath = resolveHelperPath(), certificat
         const result = JSON.parse(output);
         if (!VERDICTS.has(result.verdict) || !CHAIN_STATES.has(result.chainStatus) || !Number.isFinite(Date.parse(result.checkedAt))) return finish(unknown());
         if (result.verdict !== "unknown" && (!Number.isFinite(Date.parse(result.validUntil)) || Date.parse(result.validUntil) <= Date.parse(result.checkedAt) || result.chainStatus !== "valid")) return finish(unknown());
-        return finish({ verdict: result.verdict, chainStatus: result.chainStatus, checkedAt: result.checkedAt, validUntil: result.validUntil || null, detail: typeof result.detail === "string" ? result.detail.slice(0, 256) : null });
+        const issuerFingerprint = result.revokedIssuerFingerprintSha256;
+        if (issuerFingerprint !== undefined && (result.verdict !== "issuer_revoked" || typeof issuerFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(issuerFingerprint) || ![...intermediates, ...systemIntermediates].some((value) => new X509Certificate(value).fingerprint256.replace(/:/g, "").toLowerCase() === issuerFingerprint))) return finish(unknown());
+        return finish({ verdict: result.verdict, chainStatus: result.chainStatus, checkedAt: result.checkedAt, validUntil: result.validUntil || null, detail: typeof result.detail === "string" ? result.detail.slice(0, 256) : null, ...(issuerFingerprint ? { revokedIssuerFingerprintSha256: issuerFingerprint } : {}) });
       } catch (_) { return finish(unknown()); }
     });
     child.stdin.end(input);

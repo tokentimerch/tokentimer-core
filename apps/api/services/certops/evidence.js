@@ -520,6 +520,23 @@ async function listCertificateEvidence(options) {
     conditions.push(`subject_id = $${params.length}`);
   }
 
+  if (options.observationsOnly === true) {
+    conditions.push("job_id IS NULL", "evidence_type = 'certificate.observed'");
+  }
+  // Subject association alone can include historical mis-associations. Only
+  // display observations for the current public certificate fingerprint.
+  if (options.currentCertificateFingerprintOnly === true) {
+    conditions.push(`EXISTS (SELECT 1 FROM managed_certificates mc
+      WHERE mc.workspace_id = certificate_evidence.workspace_id
+        AND mc.id::text = certificate_evidence.subject_id
+        AND mc.fingerprint_sha256 IS NOT NULL
+        AND lower(mc.fingerprint_sha256) = lower(certificate_evidence.metadata->>'fingerprintSha256'))`);
+  }
+  if (options.expectedFingerprint) {
+    params.push(options.expectedFingerprint);
+    conditions.push(`lower(metadata->>'fingerprintSha256') = lower($${params.length})`);
+  }
+
   params.push(limit, offset);
   const result = await db.query(
     `SELECT ${SAFE_EVIDENCE_SELECT_FIELDS}
@@ -537,6 +554,7 @@ async function listCertificateEvidence(options) {
 }
 
 module.exports = {
+  OBSERVATION_HISTORY_QUERY_VERSION: 2,
   CERTOPS_EVIDENCE_INVALID,
   CERTOPS_EVIDENCE_NOT_FOUND,
   CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE,

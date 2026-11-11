@@ -11,7 +11,7 @@ import {
   reportedCertificates,
   scopeAgents,
 } from './certopsMatrix.js';
-import { scopeAdcs } from './adcsModel.js';
+import { scopeAdcs, scopeStoreIssuance } from './adcsModel.js';
 import { scopeDistribution } from './distributionModel.js';
 
 export const CHECK_STATUS = { PASS: 'pass', FAIL: 'fail', WARN: 'warn' };
@@ -105,6 +105,7 @@ export function evaluateVerification({
   clusterId,
   agentId,
   issuerId,
+  storeIssueJobId,
   distributionId,
 }) {
   const checks = [];
@@ -291,22 +292,29 @@ export function evaluateVerification({
           (adcs?.profiles || 0) > 0;
         // The server sees the issuer, the profile and whether a CA-signed
         // certificate reached the install step.
-        const installed = (adcs?.installedEnrollments || 0) > 0;
+        const storeIssue = scopeStoreIssuance(adcs, { storeIssueJobId, chosenAgentId: agentId, chosenIssuerId: issuerId });
+        const installed = storeIssueJobId ? storeIssue?.installed === true : (adcs?.installedIisEnrollments || 0) > 0;
         checks.push(
           installed
             ? check(
                 'adcs',
                 CHECK_STATUS.PASS,
                 'A certificate from your CA is installed',
-                'An enrollment finished and the certificate is bound to the HTTPS listener.'
+                storeIssueJobId
+                  ? 'The certificate and key were verified in the Windows machine store. Service activation is separate.'
+                  : 'The selected IIS enrollment finished. Check the service and endpoint separately.'
               )
             : check(
                 'adcs',
                 CHECK_STATUS.WARN,
-                ready
+                storeIssueJobId
+                  ? 'Windows store installation is not verified yet'
+                  : ready
                   ? 'Issuer and profile exist, enrollment is not verified'
                   : 'The AD CS issuer or profile is missing',
-                'Attach the profile to a certificate and confirm the first enrollment in Certificate Management.'
+                storeIssueJobId
+                  ? 'Follow the issuance job until the agent verifies the certificate and key in the Windows store.'
+                  : 'Attach the profile to a certificate and confirm the first enrollment in Certificate Management.'
               )
         );
       }

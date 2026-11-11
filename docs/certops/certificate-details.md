@@ -10,9 +10,10 @@ The inventory search matches public properties across all management sources:
 certificate and identity IDs, names, SANs, issuers, serial numbers, algorithms,
 validity dates, key modes, source types and references, and token/profile IDs.
 Source filters include observed locations as well as management provenance.
-The default **All (except retired)** view excludes revoked and decommissioned certificates. Select
-**Revoked** or **Decommissioned** to view them; fresh presence evidence adds
-**Still observed** to their lifecycle label. They never count as active.
+The default **All (except retired)** view excludes certificates manually retired
+as revoked or decommissioned. An observed revocation remains visible there and
+also appears under **Revoked**; select **Decommissioned** for that retirement
+state. Fresh presence evidence on a retired certificate adds **Still observed**.
 **Show unmanaged** includes identities without an open management period and
 remains available while its count loads or cannot be retrieved.
 Key references and deployment paths are searchable only for roles allowed to
@@ -78,14 +79,26 @@ periods, deleted registrations, and previous certificate associations. Their
 history is preserved even when hidden. A registration that has rotated to a
 different fingerprint cannot restart the old certificate from this view.
 
+For confirmed Windows dependencies, configure renewal once on **LocalMachine\My**.
+Expand **IIS deployment settings** and explicitly enable **Update after renewal**
+for each binding; discovery alone grants no update permission. Dependent bindings
+inherit renewal settings and cannot start an independent renewal once Store
+ownership is established. Existing IIS profiles require explicit consolidation.
+Removed or changed bindings are left alone; an offline agent means unknown
+presence. Replacing management requires enabling IIS updates again. These controls
+require a qualified agent build; disabled controls explain what is missing.
+
 ## Lifecycle is separate
 
-Marking revoked or decommissioned applies to the certificate fingerprint and
-does not close management periods or release their quota. Recording revocation
-in CertOps does not contact the CA. Fresh evidence of TLS or bound service use
-blocks decommissioning. Stored copies and uncertain visibility require a
-reason and acknowledgment. Rediscovery preserves lifecycle and can display
-**Revoked · Still observed** or **Decommissioned · Still observed**.
+An agent can report a certificate or its issuing CA as revoked. That security
+observation does not retire the certificate from management; replace it and
+investigate affected locations. A stale or unavailable check can show the last
+verified revocation. An updated agent identifies a revoked intermediate by its
+certificate fingerprint, so the CA and affected certificates show distinct
+statuses. Root trust anchors are not revocation-checked. Separately,
+**Mark revoked** or **Decommission** retires the selected fingerprint in
+TokenTimer, closes its current management periods and can cancel queued jobs;
+it does not contact the CA. Rediscovery preserves the recorded retirement.
 
 ## Renewal identities and the linked token
 

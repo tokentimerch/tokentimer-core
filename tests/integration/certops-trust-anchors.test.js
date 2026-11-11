@@ -1101,6 +1101,35 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
 
   // --- Dispatch-time revalidation (decision 20i) ----------------------------
 
+  it("prevents distributing an observed revoked CA at admission and dispatch", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const outcome = await createTrustJob(distributeOptions({ anchor, agent, idempotencyKey: `observed-revoked-${crypto.randomUUID()}` }));
+    const activeOutcome = await createTrustJob(distributeOptions({ anchor, agent, owner:'active-owner', idempotencyKey: `observed-revoked-active-${crypto.randomUUID()}` }));
+    const claimId=crypto.randomUUID();
+    await pool.query("UPDATE certificate_jobs SET status='running',claimed_by_agent_id=$2,claim_id=$3,lease_expires_at=NOW()+INTERVAL '5 minutes' WHERE id=$1",[activeOutcome.job.id,agent.id,claimId]);
+    const target = (await pool.query(`INSERT INTO certificate_targets(workspace_id,name,target_type,source,hostname)
+      VALUES($1,'revocation test','host','integration','test.example') RETURNING id`,[workspaceId])).rows[0];
+    const status={verdict:'revoked',chainStatus:'valid',checkedAt:new Date(Date.now()-60000).toISOString(),validUntil:new Date(Date.now()+3600000).toISOString()};
+    try {
+    await pool.query(`INSERT INTO certificate_instances(workspace_id,target_id,source,source_ref,observed_fingerprint_sha256,
+      location_kind,presence_state,evidence_kind,captured_at,scan_interval_seconds,public_metadata)
+      VALUES($1,$2,'agent_filesystem',$3,$4,'filesystem','confirmed_present','stored_copy',NOW(),3600,$5::jsonb)`,
+    [workspaceId,target.id,crypto.randomUUID(),anchor.fingerprintSha256,JSON.stringify({observedRevocation:status})]);
+    const { renewJobLease } = require('../../apps/api/services/certops/agentDispatch');
+    await expectServiceError(renewJobLease({ dbPool:pool,agent,jobId:activeOutcome.job.id,claimId,
+      deps:{assertCurrentAgentCredential:async()=>{},enforceAgentSequence:async()=>{},extendJobNonceExpiry:async()=>({expiresAt:new Date()})} }), 'CERTOPS_AGENT_CERTIFICATE_REVOKED');
+    const jobRow=await getJobRow(outcome.job.id);
+    const revalidation=await withTx((client)=>revalidateTrustJobForDispatch({client,job:jobRow}));
+    expect(revalidation.allow).to.equal(false);
+    expect(revalidation.reason).to.equal('trust_anchor_observed_revoked');
+    await expectServiceError(createTrustJob(distributeOptions({ anchor, agent, idempotencyKey:`observed-revoked-new-${crypto.randomUUID()}` })), CERTOPS_TRUST_ANCHOR_NOT_ACTIVE);
+    } finally {
+      await pool.query('DELETE FROM certificate_instances WHERE workspace_id=$1 AND target_id=$2',[workspaceId,target.id]);
+      await pool.query('DELETE FROM certificate_targets WHERE workspace_id=$1 AND id=$2',[workspaceId,target.id]);
+    }
+  });
+
   it("unwinds a pending_install when the anchor is retired between approval and dispatch", async () => {
     const anchor = await createFreshAnchor();
     const agent = await createAgent();

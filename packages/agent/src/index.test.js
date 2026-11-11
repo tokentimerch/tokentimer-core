@@ -17,6 +17,7 @@ const { EventEmitter } = require("node:events");
 
 const {
   handleClaimedJob,
+  completedJobLeaseLossOutcome,
   UNVERIFIED_JOB_ID_PLACEHOLDER,
   buildExecutionContext,
   buildJobPolicyDescriptor,
@@ -55,6 +56,25 @@ const {
   AGENT_TRUST_STORE_PREREQUISITES,
   AGENT_CANDIDATE_CAPABILITIES,
 } = require("./index.js");
+
+it("preserves recovery after a completed AD CS or ACME store job loses its lease", () => {
+  const abort = { status: "blocked", errorMessage: "lease lost" };
+  for (const issuerKind of ["adcs", "acme"]) {
+    for (const action of ["renew", "continue-enrollment"]) {
+      const outcome = completedJobLeaseLossOutcome({ issuerKind, action, target: { type: "windows-cert-store" } }, { status: "succeeded" }, abort);
+      assert.equal(outcome.status, "orphaned_unknown_effect");
+      assert.match(outcome.errorMessage, /needsOperatorReconciliation=true/);
+      const { FIXTURES } = require("../../contracts/certops/agent-protocol-parity-fixtures.cjs");
+      const message = structuredClone(FIXTURES.find(f => f.id === "result-orphaned_unknown_effect-valid").message);
+      Object.assign(message.body, outcome);
+      const validation = require("./protocol/schemaValidation").validateAgentProtocolMessage(message);
+      assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+    }
+  }
+  assert.strictEqual(completedJobLeaseLossOutcome({ action: "adcs-installation-proof", target: { type: "windows-cert-store" } }, { status: "succeeded" }, abort), abort);
+  assert.strictEqual(completedJobLeaseLossOutcome({ action: "renew", target: { type: "windows-cert-store" } }, { status: "dry_run_complete" }, abort), abort);
+  assert.strictEqual(completedJobLeaseLossOutcome({ action: "renew", target: { type: "windows-iis" } }, { status: "succeeded" }, abort), abort);
+});
 const {
   markSideEffectReached,
   recordWindowsCngContainer,
@@ -188,6 +208,48 @@ function claimedJob(overrides = {}) {
     ...overrides,
   };
 }
+
+describe("store-only qualification boundary", () => {
+  it("selects the Windows AD CS executor for the future store target without enabling it", () => {
+    const { isAdcsWindowsTarget } = require("./index");
+    assert.equal(isAdcsWindowsTarget({ keyMode: "os-store-managed", target: { type: "windows-cert-store" } }), true);
+    assert.equal(isAdcsWindowsTarget({ keyMode: "os-store-managed", target: { type: "windows-iis" } }), true);
+    assert.equal(isAdcsWindowsTarget({ keyMode: "agent-local", target: { type: "windows-cert-store" } }), false);
+    assert.equal(isAdcsWindowsTarget({ keyMode: "os-store-managed", target: { type: "file" } }), false);
+  });
+  it("requires the issuer-specific embedded Windows qualification", () => {
+    const { isStoreOnlyQualified } = require("./index");
+    const job = { issuerKind: "adcs" };
+    const present = items => items;
+    const absent = () => [];
+    assert.equal(isStoreOnlyQualified(job, { windows: true, filter: absent }), false);
+    assert.equal(isStoreOnlyQualified(job, { windows: true, filter: present }), true);
+    assert.equal(isStoreOnlyQualified(job, { windows: false, filter: present }), false);
+    assert.equal(isStoreOnlyQualified({ issuerKind: "acme" }, { windows: true, filter: absent }), false);
+    assert.equal(isStoreOnlyQualified({ issuerKind: "acme" }, { windows: true, filter: present }), true);
+  });
+  it("does not advertise a proof-only action in the current unqualified build", () => {
+    const { resolveClaimSupportedActions, AGENT_DECLARED_CAPABILITIES } = require("./index");
+    assert.equal(AGENT_DECLARED_CAPABILITIES.includes("adcs-store-proof-only-v1"), false);
+    assert.equal(resolveClaimSupportedActions({ enabled: true }).includes("adcs-installation-proof"), false);
+  });
+  it("blocks store-only execution before invoking an issuer or store mutation", async () => {
+    for (const issuerKind of ["adcs", "acme"]) {
+      const result = await executeJob({
+        job: {
+          action: "renew",
+          issuerKind,
+          target: { type: "windows-cert-store", reference: "app.example.com", store: "My" },
+        },
+        jobId: "store-only-test",
+        executionContext: { execution: {} },
+        client: {},
+      });
+      assert.equal(result.status, "blocked");
+      assert.match(result.errorMessage, /not qualified/);
+    }
+  });
+});
 
 describe("buildJobPolicyDescriptor", () => {
   it("maps validated metadata policy dimensions and target reference", () => {
@@ -4237,7 +4299,7 @@ describe("renew chain deployment", () => {
     assert.match(
       outcome.errorMessage,
       process.platform === "win32"
-        ? /AD CS renew requires keyMode os-store-managed and a windows-iis target/
+        ? /AD CS renew requires keyMode os-store-managed and a Windows certificate target/
         : /has not qualified adcs-enroll-v1/,
     );
     assert.equal(acmeExecFileImpl.calls.length, 0);
@@ -5456,6 +5518,103 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
     assert.equal(persisted.lifecycleState, "removed");
   });
 
+  const retentionBoundaries = ["binding lookup", "key inventory", "handshake", "delstore", "delkey"];
+  for (const stopPoint of [...retentionBoundaries, "in-flight delstore"]) {
+    it(`preserves retention state when stopping after ${stopPoint} and resumes safely`, async () => {
+      const inFlight = stopPoint === "in-flight delstore";
+      const boundary = inFlight ? "delstore" : stopPoint;
+      workDir = makeTempConfigDir();
+      const replacement = new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).fingerprint.replace(/:/g, "").toUpperCase();
+      const row = seedRow(workDir, { replacementThumbprint: replacement });
+      const readIssued = () => require("./windows-cert-store").readIssuedContainerRecord({ stateDir: workDir, containerName: CONTAINER_NAME });
+      recordIssuedContainer({ stateDir: workDir, containerName: CONTAINER_NAME, jobId: "job-old" });
+      const issued = readIssued();
+      const stopped = new AbortController();
+      const steps = [];
+      let removeCalls = 0;
+      let certificatePresent = true;
+      let keyPresent = true;
+      let shouldInterrupt = true;
+      let childExited = false;
+      const execFallback = makeSweepExecStub();
+      const connectFallback = makeHandshakeStub();
+      const stopAt = (step) => {
+        steps.push(step);
+        if (shouldInterrupt && step === boundary) stopped.abort();
+      };
+      const options = {
+        stateDir: workDir, retentionHours: 24,
+        execFileImpl(file, args, options, callback) {
+          if (isHttpSysBindingQuery(file, args)) {
+            process.nextTick(() => {
+              callback(null, httpSysBindingsJson([{ ipPort: "0.0.0.0:443", thumbprint: replacement }]), "");
+              stopAt("binding lookup");
+            });
+            return;
+          }
+          if (args[0] === "--key-survivors") {
+            execFallback(file, args, options, (...result) => {
+              callback(...result);
+              stopAt("key inventory");
+            });
+            return;
+          }
+          if (args[0] === "-delstore") {
+            assert.deepEqual(args, ["-delstore", "My", OLD_THUMBPRINT]);
+            if (inFlight && shouldInterrupt) {
+              const child = new EventEmitter();
+              child.kill = () => setImmediate(() => {
+                assert.throws(() => acquireStoreLock(workDir, "My"), { code: "STORE_LOCKED" });
+                childExited = true;
+                child.emit("exit");
+              });
+              queueMicrotask(() => stopAt("delstore"));
+              return child;
+            }
+            execFallback(file, args, options, (...result) => {
+              certificatePresent = false;
+              callback(...result);
+              stopAt("delstore");
+            });
+            return;
+          }
+          assert.deepEqual(args, ["-csp", "Microsoft Software Key Storage Provider", "-delkey", CONTAINER_NAME]);
+          process.nextTick(() => {
+            if (keyPresent) {
+              keyPresent = false;
+              removeCalls++;
+              callback(null, "", "");
+            } else {
+              callback(Object.assign(new Error("key absent"), { code: 1 }), "", "0x80090016 (NTE_BAD_KEYSET)");
+            }
+            stopAt("delkey");
+          });
+        },
+        connectImpl(options) {
+          const socket = connectFallback(options);
+          socket.once("secureConnect", () => stopAt("handshake"));
+          return socket;
+        },
+      };
+      const first = await runTestSweep({ ...options, signal: stopped.signal });
+      assert.deepEqual(steps, retentionBoundaries.slice(0, retentionBoundaries.indexOf(boundary) + 1));
+      assert.deepEqual(first.removed, []);
+      assert.deepEqual(first.deferred, []);
+      assert.deepEqual(readLedgerRow(ledgerDirFor(workDir), OLD_THUMBPRINT), row);
+      assert.deepEqual(readIssued(), issued);
+      assert.equal(certificatePresent, inFlight || !["delstore", "delkey"].includes(boundary));
+      assert.equal(removeCalls, boundary === "delkey" ? 1 : 0);
+      if (inFlight) assert.equal(childExited, true);
+      shouldInterrupt = false;
+      const retried = await runTestSweep(options);
+      assert.deepEqual(retried.removed, [OLD_THUMBPRINT]);
+      assert.equal(readLedgerRow(ledgerDirFor(workDir), OLD_THUMBPRINT).lifecycleState, "removed");
+      assert.equal(readIssued(), null);
+      assert.equal(certificatePresent, false);
+      assert.equal(removeCalls, 1);
+    });
+  }
+
   it("holds the actual store mutex while gathering native facts and deleting an eligible predecessor", async () => {
     workDir = makeTempConfigDir();
     const currentThumbprint = new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).fingerprint.replace(/:/g, "").toUpperCase();
@@ -6461,6 +6620,19 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
     );
     assert.ok(persisted?.row, "the result's receipt id must resolve to a persisted receipt on every platform");
     assert.equal(persisted.row.state, "installed");
+  });
+
+  it("does not install trust when the last mandatory lease check is refused or unavailable", async () => {
+    if (!AGENT_TRUST_STORE_PREREQUISITES.candidate) return;
+    for (const renewLease of [async () => ({ok:false,status:409,code:'CERTOPS_AGENT_CERTIFICATE_REVOKED'}), async () => { throw new Error('offline'); }]) {
+      let mutations=0;
+      const outcome=await executeTrustJob({job:distributeTrustJob(),jobId:'job-trust-1',action:'distribute-trust',jobMode:'real',
+        policyEngine:trustPolicyEngine(AGENT_TRUST_STORE_PREREQUISITES.family),client:createRecordingClient(),log:silentLog,
+        executionContext:makeExecutionContext(),trustStoreSeams:fakeSeamsForCurrentFamily(),
+        leaseOpts:{leaseClient:{renewLease},jobId:'job-trust-1',claimId:'claim-1',log:silentLog},onBeforeMutation:()=>{mutations++;}});
+      assert.equal(outcome.status,'blocked');
+      assert.equal(mutations,0);
+    }
   });
 
   it("executeJob dispatches distribute-trust/revoke-trust actions to executeTrustJob (not the renew/deploy/reload 'unsupported action' branch)", async () => {

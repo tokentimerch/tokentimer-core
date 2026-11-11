@@ -276,7 +276,10 @@ const PROFILE_SELECT = `
            SELECT COUNT(*)::int
              FROM managed_certificates mc
             WHERE mc.workspace_id = cp.workspace_id
-              AND mc.profile_id = cp.id
+              AND EXISTS (SELECT 1 FROM certops_management_periods p
+                WHERE p.workspace_id = mc.workspace_id
+                  AND p.managed_certificate_id = mc.id
+                  AND p.renewal_profile_id = cp.id AND p.ended_at IS NULL)
          ) AS certificate_count,
          (
            SELECT COALESCE(jsonb_agg(jsonb_build_object(
@@ -288,7 +291,10 @@ const PROFILE_SELECT = `
                       COALESCE(NULLIF(TRIM(mc.common_name), ''), mc.id::text) AS common_name
                  FROM managed_certificates mc
                 WHERE mc.workspace_id = cp.workspace_id
-                  AND mc.profile_id = cp.id
+                  AND EXISTS (SELECT 1 FROM certops_management_periods p
+                    WHERE p.workspace_id = mc.workspace_id
+                      AND p.managed_certificate_id = mc.id
+                      AND p.renewal_profile_id = cp.id AND p.ended_at IS NULL)
                 ORDER BY 2
                 LIMIT 8
              ) named
@@ -530,7 +536,10 @@ async function updateRenewalProfile({
     transactionStarted = true;
 
     const existing = await client.query(
-      `SELECT id, name, status, renew_before_days, description, public_metadata, issuer_id
+      `SELECT id, name, status, renew_before_days, description, public_metadata, issuer_id,
+              (SELECT name FROM certificate_issuers i
+                WHERE i.workspace_id = certificate_profiles.workspace_id
+                  AND i.id = certificate_profiles.issuer_id) AS issuer_name
          FROM certificate_profiles
         WHERE workspace_id = $1 AND id = $2::uuid
         FOR UPDATE`,
@@ -585,9 +594,11 @@ async function updateRenewalProfile({
     }
 
     let nextIssuerId = row.issuer_id || null;
+    let nextIssuerName = row.issuer_name || null;
     if (issuerId !== undefined) {
       if (issuerId === null) {
         nextIssuerId = null;
+        nextIssuerName = null;
       } else if (
         typeof issuerId !== "string" ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(issuerId)
@@ -595,7 +606,7 @@ async function updateRenewalProfile({
         throw profileError("issuerId must be a uuid or null");
       } else {
         const found = await client.query(
-          `SELECT id FROM certificate_issuers WHERE workspace_id = $1 AND id = $2::uuid`,
+          `SELECT id, name FROM certificate_issuers WHERE workspace_id = $1 AND id = $2::uuid`,
           [workspaceId, issuerId],
         );
         if (found.rows.length === 0) {
@@ -605,6 +616,7 @@ async function updateRenewalProfile({
           );
         }
         nextIssuerId = issuerId;
+        nextIssuerName = found.rows[0].name || null;
       }
       if (nextIssuerId !== (row.issuer_id || null)) {
         changes.issuerId = { from: row.issuer_id || null, to: nextIssuerId };
@@ -694,6 +706,9 @@ async function updateRenewalProfile({
       metadata: {
         profileId: String(profileId),
         profileName: row.name,
+        issuerId: nextIssuerId,
+        issuerName: nextIssuerName,
+        previousIssuerName: changes.issuerId ? row.issuer_name || null : undefined,
         changes,
       },
     });
@@ -735,25 +750,29 @@ function normalizeAdcsProfileInput(body) {
   const target = body?.target;
   const binding = target?.binding;
   const reference = adcsHost(target?.reference, "certificate name");
-  if (!target || target.type !== "windows-iis") {
-    throw profileError("target must be a windows-iis binding");
+  if (!target || !["windows-iis", "windows-cert-store"].includes(target.type)) {
+    throw profileError("target must be a Windows certificate destination");
   }
   if (typeof target.store !== "string" || !ADCS_STORE_PATTERN.test(target.store.trim())) {
     throw profileError("store must name a Windows certificate store, usually My");
   }
-  if (
+  if (target.type === "windows-cert-store" &&
+      (target.store !== "My" || Object.keys(target).some(key => !["type", "reference", "store"].includes(key)))) {
+    throw profileError("store-only destination must use LocalMachine\\My without binding fields");
+  }
+  if (target.type === "windows-iis" && (
     !binding ||
     typeof binding.site !== "string" ||
     !ADCS_SITE_PATTERN.test(binding.site.trim())
-  ) {
+  )) {
     throw profileError("IIS site name is invalid");
   }
-  const port = Number(binding.port);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  const port = target.type === "windows-iis" ? Number(binding.port) : null;
+  if (target.type === "windows-iis" && (!Number.isInteger(port) || port < 1 || port > 65535)) {
     throw profileError("IIS port must be an integer from 1 to 65535");
   }
   const sniHost =
-    binding.sniHost == null || binding.sniHost === ""
+    binding?.sniHost == null || binding.sniHost === ""
       ? null
       : adcsHost(binding.sniHost, "SNI hostname");
   const extraNames = Array.isArray(body?.dnsNames) ? body.dnsNames : [];
@@ -781,14 +800,14 @@ function normalizeAdcsProfileInput(body) {
     renewBeforeDays: normalizeRenewBeforeDays(body?.renewBeforeDays ?? null),
     renewalProfile: {
       target: {
-        type: "windows-iis",
+        type: target.type,
         reference,
         store: target.store.trim(),
-        binding: {
+        ...(target.type === "windows-iis" ? { binding: {
           site: binding.site.trim(),
           port,
           ...(sniHost ? { sniHost } : {}),
-        },
+        } } : {}),
       },
       sanPolicy: { sans: dnsNames },
       keyAlgorithm,

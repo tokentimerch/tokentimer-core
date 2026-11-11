@@ -31,6 +31,13 @@ test("same fingerprint is checked once and revocation stays separate from locati
   for (const { item } of entries) assert.equal(item.metadata.find((m) => m.name === "observedRevocationVerdict").value, "revoked");
 });
 
+test("includes the exact revoked intermediate fingerprint in observation metadata", async () => {
+  const entries = [{ item: { fingerprintSha256: "a".repeat(64), metadata: [] } }];
+  const fingerprint = "b".repeat(64);
+  await enrichObservedItems(entries, async () => ({ verdict: "issuer_revoked", chainStatus: "valid", checkedAt: "2026-01-01T00:00:00Z", validUntil: "2026-01-01T01:00:00Z", revokedIssuerFingerprintSha256: fingerprint }), { now: () => Date.parse("2026-01-01T00:30:00Z") });
+  assert.equal(entries[0].item.metadata.find((m) => m.name === "observedRevokedIssuerFingerprintSha256").value, fingerprint);
+});
+
 test("scan checker preserves the origin of local trust material", async () => {
   let actual;
   const material = { roots: ["explicit-root"], intermediates: ["explicit-intermediate"], systemRoots: ["system-root"], systemIntermediates: ["system-intermediate"] };

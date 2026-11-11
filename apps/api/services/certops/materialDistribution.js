@@ -8,6 +8,7 @@ const { canonicalizeJobPayload } = require("../../../../packages/contracts/certo
 const { assertNoPrivateKeyMaterial, containsGenericSecretMaterial } = require("../../utils/secretMaterial");
 const { parsePublicCertificateMaterial } = require("./parser");
 const { linkReconciledCertificateToken } = require("./inventory");
+const { isObservedCertificateCompromised } = require("./certificateSecurity");
 const { providerOf, validProviderVersion, versionOf } = require("../../../../packages/contracts/certops/material-provider.cjs");
 const PUBLIC_FAILURE_CODES=new Set(["material_auth_denied","material_auth_unavailable","material_version_unavailable",
   "material_publication_uncertain","material_cas_conflict","material_store_unavailable","material_store_config_invalid",
@@ -86,7 +87,7 @@ async function resolveDistributionJobDefaults({ client, workspaceId, operation, 
       AND group_id=$2 AND id=$3 AND publishing_job_id=$4 AND state IN ('allocated','staged','published','orphaned_unknown_effect')`,
     [workspaceId,group.id,intent.materialVersionId,jobId])).rowCount) fail("CERTOPS_PUBLICATION_INTENT_MISMATCH");
   } else {
-    await assertDeployableVersion(client, workspaceId, intent.groupId, intent.materialVersionId);
+    await assertDeployableVersion(client, workspaceId, intent.groupId, intent.materialVersionId, { verificationOnly: intent.verificationOnly === true });
     const binding = (await client.query(`SELECT d.*,r.generation,r.material_version_id,r.approval_job_id,v.provider_version,v.provider_version_ref,v.fingerprint_sha256,
       r.verification_only,s.desired_generation,b.state AS binding_state,b.authorization_revision AS current_revision,r.state AS rollout_state
       FROM certops_consumer_deployments d JOIN certops_distribution_rollouts r ON r.workspace_id=d.workspace_id AND r.id=d.rollout_id
@@ -199,7 +200,7 @@ async function buildRolloutIntent({ client, workspaceId, groupId, materialVersio
   const workspace = (await client.query("SELECT certops_manual_rollout_revision FROM workspaces WHERE id=$1 FOR SHARE", [workspaceId])).rows[0];
   if (!workspace) fail("CERTOPS_WORKSPACE_NOT_FOUND", 404);
   const group = await lockGroup(client, workspaceId, groupId);
-  await assertDeployableVersion(client, workspaceId, groupId, materialVersionId);
+  await assertDeployableVersion(client, workspaceId, groupId, materialVersionId, { verificationOnly: verificationOnly === true });
   const version = (await client.query(`SELECT * FROM certops_material_versions
     WHERE workspace_id=$1 AND group_id=$2 AND id=$3 AND state='published'`, [workspaceId, groupId, materialVersionId])).rows[0];
   if (!version || new Date(version.valid_to).getTime() <= Date.now()) fail("CERTOPS_ROLLOUT_VERSION_INVALID");
@@ -219,13 +220,17 @@ async function buildRolloutIntent({ client, workspaceId, groupId, materialVersio
   return { group, bindings, intent };
 }
 
-async function assertDeployableVersion(client, workspaceId, groupId, materialVersionId) {
-  const version = await client.query(`SELECT v.id FROM certops_material_versions v
+async function assertDeployableVersion(client, workspaceId, groupId, materialVersionId, { verificationOnly = false } = {}) {
+  const version = await client.query(`SELECT v.id, i.fingerprint_sha256 FROM certops_material_versions v
     JOIN certops_certificate_identities i ON i.workspace_id=v.workspace_id AND i.id=v.certificate_identity_id
     WHERE v.workspace_id=$1 AND v.group_id=$2 AND v.id=$3 AND v.state='published'
       AND v.valid_to>clock_timestamp() AND i.lifecycle_status='active' FOR SHARE OF i`,
   [workspaceId,groupId,materialVersionId]);
   if (!version.rowCount) fail("CERTOPS_ROLLOUT_VERSION_INVALID");
+  if (verificationOnly) return;
+  // Use the selected version's immutable fingerprint, not the management
+  // source's current certificate: a replacement may already be published.
+  if (await isObservedCertificateCompromised(client, workspaceId, version.rows[0].fingerprint_sha256)) fail("CERTOPS_ROLLOUT_VERSION_INVALID");
 }
 
 async function createRolloutSnapshot({ client, workspaceId, groupId, materialVersionId, approvalJobId, approvedIntentHash, maxParallel = 1, verificationOnly = false, approvalRequired = true }) {

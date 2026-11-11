@@ -38,6 +38,17 @@ test("unsupported platforms have no helper and a missing binary reports unknown"
   assert.equal((await checkObservedCertificate({ helperPath: path.join(__dirname, "missing-helper"), certificatePem: pem, fingerprintSha256: fp, roots: [pem] })).verdict, "unknown");
 });
 
+test("accepts only a revoked issuer fingerprint from supplied intermediate certificates", async () => {
+  const checkedAt = "2026-01-01T00:00:00Z", validUntil = "2026-01-01T01:00:00Z";
+  const issuer = fs.readFileSync(path.join(__dirname, "../verify/fixtures/intermediate.crt.pem"), "utf8");
+  const issuerFp = new X509Certificate(issuer).fingerprint256.replace(/:/g, "").toLowerCase();
+  const args = { certificatePem: pem, fingerprintSha256: fp, roots: [pem], intermediates: [issuer] };
+  const result = { verdict: "issuer_revoked", chainStatus: "valid", checkedAt, validUntil, revokedIssuerFingerprintSha256: issuerFp };
+  assert.equal((await checkObservedCertificate({ ...args, spawnImpl: fakeHelper(result) })).revokedIssuerFingerprintSha256, issuerFp);
+  assert.equal((await checkObservedCertificate({ ...args, spawnImpl: fakeHelper({ ...result, revokedIssuerFingerprintSha256: "a".repeat(64) }) })).verdict, "unknown");
+  assert.equal((await checkObservedCertificate({ ...args, spawnImpl: fakeHelper({ ...result, verdict: "good" }) })).verdict, "unknown");
+});
+
 test("separates operating-system trust and fails closed when an older helper rejects the protocol", async () => {
   const args = { certificatePem: pem, fingerprintSha256: fp, roots: [], systemRoots: [pem], systemIntermediates: [pem] };
   const spawnImpl = () => spawn(process.execPath, ["-e", `let s=''; process.stdin.on('data',x=>s+=x); process.stdin.on('end',()=>{const v=JSON.parse(s);if(v.roots.length!==0||v.systemRoots.length!==1||v.systemIntermediates.length!==1)process.exit(2);console.log(JSON.stringify({verdict:'good',chainStatus:'valid',checkedAt:'2026-01-01T00:00:00Z',validUntil:'2026-01-01T01:00:00Z'}));});`], { stdio: ["pipe", "pipe", "ignore"] });

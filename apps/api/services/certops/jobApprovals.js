@@ -64,6 +64,7 @@ const CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN =
 // because the second decision may bind a different payload hash.
 const CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL =
   "CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL";
+const CERTOPS_APPROVAL_STORE_ENROLLMENT_UNAVAILABLE = "CERTOPS_APPROVAL_STORE_ENROLLMENT_UNAVAILABLE";
 // 400-shaped input errors.
 const CERTOPS_APPROVAL_APPROVER_REQUIRED =
   "CERTOPS_APPROVAL_APPROVER_REQUIRED";
@@ -205,7 +206,60 @@ function buildCanonicalExecutionIntent(job) {
       requiredCommandProfile: job.requiredCommandProfile ?? null,
     } } : {}),
     payload,
+    ...(job.adcsApprovalBinding ? { adcsEnrollment: job.adcsApprovalBinding } : {}),
   };
+}
+
+// Read the authority being approved from persisted rows, not from payload
+// fields. The enrollment row is locked for the approval transaction; claim
+// recomputes the same binding while its own enrollment lock is held.
+async function loadStoreApprovalBinding(db, job) {
+  if (job.payload?.target?.type !== "windows-cert-store") return null;
+  if (!job.enrollmentId && job.id && job.assignedAgentId && job.subjectType === "managed_certificate") {
+    const sql = `SELECT e.id,e.agent_id,e.certificate_id,e.request_bytes,e.request_sha256 FROM certops_acme_store_enrollments e
+      WHERE e.workspace_id=$1::uuid AND e.current_job_id=$2::uuid AND e.agent_id=$3::uuid AND e.certificate_id::text=$4`;
+    const params = [job.workspaceId, job.id, job.assignedAgentId, job.subjectId];
+    const result = await db.query(`${sql} FOR SHARE OF e SKIP LOCKED`, params);
+    const row = result.rows[0];
+    if (!row) return (await db.query(sql, params)).rows[0] ? undefined : null;
+    const bytes = Buffer.from(row.request_bytes), digest = crypto.createHash("sha256").update(bytes).digest("hex");
+    if (digest !== row.request_sha256) return null;
+    let snapshot;
+    try { snapshot = JSON.parse(bytes.toString("utf8")); } catch { return null; }
+    const target = job.payload.target;
+    if (snapshot.workspaceId !== job.workspaceId || snapshot.certificateId !== String(row.certificate_id) ||
+        snapshot.agentId !== String(row.agent_id) || snapshot.target?.type !== "windows-cert-store" ||
+        snapshot.target?.reference !== target.reference || snapshot.target?.store !== "My" || target.store !== "My") return null;
+    return { kind: "acme", enrollmentId: String(row.id), agentId: String(row.agent_id), snapshotSha256: digest };
+  }
+  if (!job.enrollmentId || !job.assignedAgentId || job.subjectType !== "managed_certificate") return null;
+  const bindingQuery = `SELECT e.id,e.agent_id,e.issuer_id,e.certificate_id,e.snapshot_bytes,e.snapshot_sha256,e.deploy_target,e.state
+       FROM certificate_enrollments e
+       JOIN certificate_issuers i ON i.workspace_id=e.workspace_id AND i.id=e.issuer_id AND i.kind='adcs'
+       JOIN managed_certificates mc ON mc.workspace_id=e.workspace_id AND mc.id=e.certificate_id
+      WHERE e.workspace_id=$1 AND e.id=$2::uuid AND e.agent_id=$3::uuid
+        AND e.certificate_id::text=$4 AND mc.deployed_agent_id=e.agent_id
+        AND e.deploy_target=$5::jsonb`;
+  const params = [job.workspaceId, job.enrollmentId, job.assignedAgentId, job.subjectId, JSON.stringify(job.payload.target)];
+  const result = await db.query(`${bindingQuery} FOR SHARE OF e SKIP LOCKED`, params);
+  const row = result.rows[0];
+  if (!row) {
+    // A concurrent cancellation or result may own the enrollment before it
+    // touches the job. Do not wait in the inverse order, or invalidate a
+    // valid approval merely because its row is temporarily locked.
+    const visible = await db.query(bindingQuery, params);
+    return visible.rows[0] ? undefined : null;
+  }
+  const bytes = Buffer.from(row.snapshot_bytes);
+  const digest = crypto.createHash("sha256").update(bytes).digest("hex");
+  if (digest !== row.snapshot_sha256) return null;
+  let snapshot;
+  try { snapshot = JSON.parse(bytes.toString("utf8")); } catch { return null; }
+  const target = row.deploy_target;
+  const destination = crypto.createHash("sha256").update(JSON.stringify({ type: "windows-cert-store", reference: target.reference, store: "My" })).digest("hex");
+  if (target.type !== "windows-cert-store" || target.store !== "My" || snapshot.destinationType !== target.type ||
+      snapshot.destinationSha256 !== destination || String(snapshot.issuerId) !== String(row.issuer_id)) return null;
+  return { enrollmentId: String(row.id), agentId: String(row.agent_id), issuerId: String(row.issuer_id), snapshotSha256: digest };
 }
 
 function computeCanonicalIntentHash(job) {
@@ -288,10 +342,10 @@ function assertNonRequester(job, approverUserId) {
   }
 }
 
-async function loadJobForApproval(db, workspaceId, jobId) {
+async function loadJobForApproval(db, workspaceId, jobId, { lock = false } = {}) {
   const result = await db.query(
     `SELECT id, workspace_id, operation, status, mode, payload,
-            subject_type, subject_id, assigned_agent_id, required_target_selector,
+            subject_type, subject_id, enrollment_id, assigned_agent_id, required_target_selector,
             required_dns_provider, required_command_profile,
             requested_by_user_id, requested_by_api_token_id, requested_by_connection_id,
             approved_by_user_id, approved_at, approved_payload_hash,
@@ -299,14 +353,16 @@ async function loadJobForApproval(db, workspaceId, jobId) {
        FROM certificate_jobs
       WHERE workspace_id = $1
         AND id = $2
-      LIMIT 1`,
+      LIMIT 1 ${lock ? "FOR UPDATE" : ""}`,
     [workspaceId, jobId],
   );
   const row = result.rows[0];
   if (!row) {
     throw serviceError("Certificate job not found", CERTOPS_JOB_NOT_FOUND);
   }
-  return jobFromRow(row);
+  const job = jobFromRow(row);
+  job.enrollmentId = row.enrollment_id || null;
+  return job;
 }
 
 async function insertApprovalDecision(db, {
@@ -355,9 +411,11 @@ async function requestApprovalState(options) {
   const jobId = normalizeRequiredId(options.jobId);
 
   const job = await loadJobForApproval(db, workspaceId, jobId);
+  if (job.payload?.target?.type === "windows-cert-store") job.adcsApprovalBinding = await loadStoreApprovalBinding(db, job);
   const currentPayloadHash = computeJobPayloadApprovalHash(job.payload);
   const currentCanonicalIntentHash = computeCanonicalIntentHash(job);
   const approvalValid =
+    (job.payload?.target?.type !== "windows-cert-store" || Boolean(job.adcsApprovalBinding && job.approvedCanonicalIntentHash)) &&
     job.approvedPayloadHash !== null &&
     job.approvedPayloadHash === currentPayloadHash &&
     (!job.approvedCanonicalIntentHash ||
@@ -416,7 +474,7 @@ async function approveJob(options) {
   const logAppender = options.logAppender || appendCertificateJobLog;
 
   return withDecisionTransaction(options, async (db) => {
-  const job = await loadJobForApproval(db, workspaceId, jobId);
+  const job = await loadJobForApproval(db, workspaceId, jobId, { lock: true });
   if (job.status !== "pending_approval") {
     throw serviceError(
       "Certificate job is not awaiting approval",
@@ -435,10 +493,15 @@ async function approveJob(options) {
     }
 
 
+  if (job.payload?.target?.type === "windows-cert-store") {
+    job.adcsApprovalBinding = await loadStoreApprovalBinding(db, job);
+    if (!job.adcsApprovalBinding) throw serviceError("Machine-store enrollment binding is unavailable or invalid", CERTOPS_APPROVAL_STORE_ENROLLMENT_UNAVAILABLE);
+  }
+
   // H6: approval binds against a fully resolved renewal profile snapshot in
   // the job payload, not a mutable certificate_profiles row reference.
   if (job.operation === "renew") {
-    validateRenewalProfileOnPayload(job.payload, "renew", { required: true });
+    validateRenewalProfileOnPayload(job.payload, "renew", { required: true, adcsStoreEnrollment: Boolean(job.adcsApprovalBinding) });
   }
 
   const payloadHash = computeJobPayloadApprovalHash(job.payload);
@@ -692,6 +755,7 @@ async function invalidateApprovalForClaim({
 module.exports = {
   CERTOPS_APPROVAL_APPROVER_REQUIRED,
   CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
+  CERTOPS_APPROVAL_STORE_ENROLLMENT_UNAVAILABLE,
   CERTOPS_APPROVAL_REASON_INVALID,
   CERTOPS_APPROVAL_REQUEST_STALE,
   CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
@@ -700,6 +764,7 @@ module.exports = {
   buildCanonicalExecutionIntent,
   computeCanonicalIntentHash,
   computeJobPayloadApprovalHash,
+  loadStoreApprovalBinding,
   invalidateApprovalForClaim,
   rejectJob,
   requestApprovalState,

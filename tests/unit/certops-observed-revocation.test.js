@@ -25,6 +25,14 @@ test("authenticated observations preserve a typed and dated revocation result", 
   assert.equal(value.validUntil, "2026-01-01T01:00:00.000Z");
 });
 
+test("preserves only a well-formed revoked issuer fingerprint on an issuer verdict", () => {
+  const metadata = { ...valid, observedRevocationVerdict: "issuer_revoked", observedRevokedIssuerFingerprintSha256: "a".repeat(64) };
+  assert.equal(normalizeObservedRevocation(metadata, serverAt).revokedIssuerFingerprintSha256, "a".repeat(64));
+  assert.equal(normalizeObservedRevocation({ ...metadata, observedRevokedIssuerFingerprintSha256: "wrong" }, serverAt).verdict, "invalid_observation");
+  assert.equal(normalizeObservedRevocation({ ...metadata, observedRevocationVerdict: "good" }, serverAt).verdict, "invalid_observation");
+  assert.equal(normalizeObservedRevocation({ ...valid, observedRevocationVerdict: "issuer_revoked" }, serverAt).verdict, "issuer_revoked");
+});
+
 test("malformed or untrusted facts cannot claim a healthy result", () => {
   assert.equal(normalizeObservedRevocation({}, serverAt), null);
   for (const change of [

@@ -114,3 +114,14 @@ test("unknown and conflicting history remains rejected before SQL", () => {
     ]),
   );
 });
+
+test("the two existing feature histories upgrade and replay without changing applied identities", () => {
+  for (const missing of [[113, 114, 115], [112]]) {
+    const recorded = migrations.filter((row) => !missing.includes(row.version))
+      .map(({ version, name }) => ({ version, name }));
+    const plan = composeMigrations(migrations, recorded);
+    for (const row of recorded) assert.equal(plan.find((item) => item.version === row.version)?.name, row.name);
+    for (const version of [109, 110, 112, 113, 114, 115]) assert.ok(plan.some((row) => row.version === version));
+    assert.deepEqual(composeMigrations(migrations, plan), plan);
+  }
+});

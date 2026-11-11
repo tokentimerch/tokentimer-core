@@ -55,7 +55,7 @@ Wait-OwnedSignal $GoPath 30
 $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $Installer).Path,[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count){throw 'Candidate installer parse failed'}
-foreach($name in @('Copy-PackageTree','Activate-StagedPackage')){
+foreach($name in @('Test-PackageCopyExclusion','Copy-PackageTree','Activate-StagedPackage')){
  $definition=@($ast.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true))
  if($definition.Count -ne 1){throw 'Missing unique production activation function'}
  Invoke-Expression $definition[0].Extent.Text

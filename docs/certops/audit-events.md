@@ -5,9 +5,9 @@ are stored in metadata because the audit `target_id` column is an integer.
 Human actions identify their actor; agent log rejection has a machine actor.
 These metadata fields are available in the Audit feed and CSV/JSON export.
 
-- `CERTOPS_ISSUER_CREATED`: `{ issuerId, kind }` records issuer creation.
-- `CERTOPS_ISSUER_PREFLIGHT_DISPATCHED`: `{ issuerId, jobId, agentId }` records a CA preflight request.
-- `CERTOPS_ISSUER_KEY_CONFIRMED`: `{ issuerId, version, caKeySha256 }` records confirmation of a CA public-key pin.
+- `CERTOPS_ISSUER_CREATED`: `{ issuerId, issuerName, kind }` records issuer creation.
+- `CERTOPS_ISSUER_PREFLIGHT_DISPATCHED`: `{ issuerId, issuerName, caConfig, template, jobId, agentId }` records a CA preflight request. Older events may contain only IDs.
+- `CERTOPS_ISSUER_KEY_CONFIRMED`: `{ issuerId, issuerName, version, caKeySha256, caConfig, template }` records confirmation of a CA public-key pin.
 - `CERTOPS_ENROLLMENT_CREATED`: `{ enrollmentId, issuerId, jobId }` records a new enrollment request.
 - `CERTOPS_ENROLLMENT_RECONCILE_PROPOSED`: `{ enrollmentId, requestId }` records an operator-provided CA request ID for reconciliation.
 - `CERTOPS_ENROLLMENT_CANCELLED`: `{ enrollmentId }` records cancellation of an enrollment.
@@ -54,7 +54,7 @@ included in the audit metadata.
 - **CERTOPS_TRUST_REFERENCE_RELEASED** metadata: `{ trustAnchorId, anchorName, fingerprintSha256, agentId, store, host, owner, transitionGeneration }`.
 - **CERTOPS_RENEWAL_PROFILE_DERIVED** metadata: `{ profileId, profileName, created, managedCertificateId, renewBeforeDays, acmeKind, commandRef, caEndpoint, certPath, targetType, windowsStore, windowsBindingSite, windowsBindingPort, windowsBindingSniHost, dnsProvider, dnsZone, keyAlgorithm, keySize }`.
 - **CERTOPS_RENEWAL_PROFILE_DERIVATION_DECLINED** metadata: `{ managedCertificateId, commonName, jobId, operation, agentId, derivationReason, reconciliationReason, detail, targetType }`.
-- **CERTOPS_RENEWAL_PROFILE_UPDATED** metadata: `{ profileId, profileName, changes }`.
+- **CERTOPS_RENEWAL_PROFILE_UPDATED** metadata: `{ profileId, profileName, issuerId, issuerName, previousIssuerName, changes }`.
 - **CERTOPS_RENEWAL_PROFILE_DETACHED** metadata: `{ managedCertificateId, commonName, profileId, profileName, invalidatedIntents }`.
 - **CERTOPS_JOB_APPROVAL_GRANTED** metadata: `{ jobId, status, payloadHash, canonicalIntentHash, reason }` (`reason` present only when the approver supplied one).
 - **CERTOPS_JOB_APPROVAL_REJECTED** metadata: `{ jobId, status, reason }` (`reason` present only when the approver supplied one).

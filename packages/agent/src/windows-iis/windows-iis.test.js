@@ -882,6 +882,60 @@ describe("bindCertificate", () => {
 // ---------------------------------------------------------------------------
 
 describe("deployIisBinding", () => {
+  it("rejects a malformed expected predecessor before querying or changing IIS", async () => {
+    const execFileImpl = makeExecStub(() => null);
+    await assert.rejects(deployIisBinding({ binding: VALID_BINDING, certificatePem: FIXTURE_CERT_PEM,
+      expectedExistingThumbprint: "invalid", execFileImpl }), /thumbprint/);
+    assert.equal(execFileImpl.calls.length, 0);
+  });
+
+  it("does not recreate a missing binding when a predecessor is required", async () => {
+    const execFileImpl = makeExecStub(() => ({ error: null, stdout: "" }));
+    const result = await deployIisBinding({ binding: VALID_BINDING, certificatePem: FIXTURE_CERT_PEM,
+      expectedExistingThumbprint: OTHER_THUMBPRINT, execFileImpl });
+    assert.equal(result.code, "EXPECTED_BINDING_MISSING");
+    assert.equal(execFileImpl.calls.length, 1);
+  });
+
+  it("does not replace a binding changed to another certificate", async () => {
+    const execFileImpl = makeExecStub(() => boundAtValidBinding(OTHER_THUMBPRINT));
+    const result = await deployIisBinding({ binding: VALID_BINDING, certificatePem: FIXTURE_CERT_PEM,
+      expectedExistingThumbprint: "BB".repeat(20), execFileImpl });
+    assert.equal(result.code, "EXPECTED_BINDING_CHANGED");
+    assert.equal(execFileImpl.calls.length, 1);
+  });
+
+  it("updates a binding still using its expected predecessor", async () => {
+    const execFileImpl = makeExecStub((key) => key === "query" ? boundAtValidBinding(OTHER_THUMBPRINT) : null);
+    const result = await deployIisBinding({ binding: VALID_BINDING, certificatePem: FIXTURE_CERT_PEM,
+      expectedExistingThumbprint: OTHER_THUMBPRINT.toLowerCase(), execFileImpl,
+      connectImpl: makeConnectStub({ peerDer: fixtureX509.raw }) });
+    assert.equal(result.ok, true);
+    assert.equal(result.boundThumbprint, FIXTURE_THUMBPRINT);
+  });
+
+  it("does not mutate a binding changed during capability probing", async () => {
+    let queries = 0;
+    const execFileImpl = makeExecStub((key) => {
+      if (key === "query") return boundAtValidBinding(++queries === 1 ? OTHER_THUMBPRINT : "BB".repeat(20));
+      return null;
+    });
+    const result = await deployIisBinding({ binding: VALID_BINDING, certificatePem: FIXTURE_CERT_PEM,
+      expectedExistingThumbprint: OTHER_THUMBPRINT, execFileImpl });
+    assert.equal(result.code, "EXPECTED_BINDING_CHANGED");
+    assert.equal(execFileImpl.calls.some((call) => ["add", "delete"].includes(call.args[1])), false);
+  });
+
+  it("verifies an already updated binding on retry", async () => {
+    const execFileImpl = makeExecStub(() => boundAtValidBinding(FIXTURE_THUMBPRINT));
+    const result = await deployIisBinding({ binding: VALID_BINDING, certificatePem: FIXTURE_CERT_PEM,
+      expectedExistingThumbprint: OTHER_THUMBPRINT, execFileImpl,
+      connectImpl: makeConnectStub({ peerDer: fixtureX509.raw }) });
+    assert.equal(result.ok, true);
+    assert.equal(result.skippedMutation, true);
+    assert.equal(execFileImpl.calls.length, 1);
+  });
+
   it("binds and verifies successfully, reporting outgoing/bound thumbprints", async () => {
     const execFileImpl = makeExecStub((key) => {
       if (key === "query") return boundAtValidBinding(OTHER_THUMBPRINT);

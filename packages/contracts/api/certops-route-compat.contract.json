@@ -64,6 +64,26 @@
   "guarantees": {
     "stableRoutes": [
       {
+        "path": "/api/v1/workspaces/{id}/certops/certificate-identities/{identityId}/windows-renewal",
+        "method": "GET"
+      },
+      {
+        "path": "/api/v1/workspaces/{id}/certops/management-periods/{periodId}/iis-consumers/{targetId}",
+        "method": "PUT"
+      },
+      {
+        "path": "/api/v1/workspaces/{id}/certops/sources/{managedCertificateId}/reassociate-windows-store/candidates",
+        "method": "GET"
+      },
+      {
+        "path": "/api/v1/workspaces/{id}/certops/sources/{managedCertificateId}/reassociate-windows-store",
+        "method": "POST"
+      },
+      {
+        "path": "/api/v1/workspaces/{id}/certops/certificates/{certId}/observations",
+        "method": "GET"
+      },
+      {
         "path": "/api/v1/workspaces/{id}/certops/certificates",
         "method": "GET"
       },

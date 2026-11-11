@@ -429,6 +429,13 @@ function assertNoCustodyKeys(value) {
 }
 
 describe("CertOps jobs service", () => {
+  it("refuses a store renewal without a persisted enrollment and owning agent", async () => {
+    const client = createMemoryClient();
+    await assert.rejects(() => createCertificateJob({ client, workspaceId: WORKSPACE_A, operation: "renew",
+      subjectType: "managed_certificate", subjectId: "cert-1", assignedAgentId: WORKSPACE_B,
+      payload: { certificateId: "cert-1", keyMode: "os-store-managed", target: { type: "windows-cert-store", reference: "a.example.com", store: "My" } } }),
+      (error) => error.code === CERTOPS_JOB_INVALID);
+  });
   it("creates a job with safe public payload", async () => {
     const client = createMemoryClient();
     const job = await createCertificateJob({
@@ -1910,6 +1917,8 @@ describe("CertOps jobs service", () => {
       { issuerKind: "adcs" },
       { issuerKind: "acme" },
       { issuerKind: null },
+      { acmeStoreEnrollment: null },
+      { acmeStoreEnrollment: { enrollmentId: "5f0c2a8e-3b1d-4c6e-9a7f-1e2d3c4b5a69" } },
       {
         enrollment: {
           enrollmentId: "5f0c2a8e-3b1d-4c6e-9a7f-1e2d3c4b5a69",
@@ -1920,7 +1929,7 @@ describe("CertOps jobs service", () => {
       },
     ];
 
-    for (const operation of ["issue", "renew", "deploy", "noop"]) {
+    for (const operation of ["issue", "renew", "deploy", "reload", "revoke", "noop"]) {
       for (const extra of smuggled) {
         await assert.rejects(
           () =>
@@ -1963,6 +1972,17 @@ describe("CertOps jobs service", () => {
       payload: { target: "example.com", issuer: "CN=Corp Issuing CA 01" },
     });
     assert.equal(withIssuerName.payload.issuer, "CN=Corp Issuing CA 01");
+  });
+
+  it("requires an explicit internal transaction for an ACME store binding", async () => {
+    const client = createMemoryClient();
+    let called = false;
+    await assert.rejects(() => createCertificateJob({ client, workspaceId: WORKSPACE_A,
+      operation: "issue", source: "api", subjectType: "managed_certificate", subjectId: "11111111-1111-4111-8111-111111111111",
+      assignedAgentId: "22222222-2222-4222-8222-222222222222",
+      payload: { target: { type: "windows-cert-store", reference: "app.example.com", store: "My" } },
+      createAcmeStoreBinding: async () => { called = true; } }), /internal transaction/);
+    assert.equal(called, false);
   });
 
   it("rejects execution fields on operations that never execute them", async () => {
