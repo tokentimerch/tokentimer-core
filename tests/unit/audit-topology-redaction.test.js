@@ -46,6 +46,11 @@ function issuedRow(overrides = {}) {
 }
 
 describe("audit topology redaction", () => {
+  it("hides the reassociation agent from viewers but retains it for managers", () => {
+    const row = { action: "CERTOPS_WINDOWS_STORE_REASSOCIATED", metadata: { agentId: "agent-1", currentId: "certificate-1" } };
+    assert.deepEqual(redactAuditTopologyForRole(row, "viewer").metadata, { currentId: "certificate-1", topologyRedacted: true });
+    assert.deepEqual(redactAuditTopologyForRole(row, "workspace_manager"), row);
+  });
   it("strips every field named for the row's action from a viewer's response", () => {
     const redacted = redactAuditTopologyForRole(derivedRow(), "viewer");
 
