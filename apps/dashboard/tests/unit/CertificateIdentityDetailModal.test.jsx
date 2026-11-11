@@ -21,6 +21,8 @@ const {
   stopMock,
   readdMock,
   windowsMock,
+  toggleWindowsMock,
+  replaceMock,
 } = vi.hoisted(() => ({
   getCertificateMock: vi.fn(),
   getIdentityMock: vi.fn(),
@@ -33,6 +35,8 @@ const {
   stopMock: vi.fn(),
   readdMock: vi.fn(),
   windowsMock: vi.fn(),
+  toggleWindowsMock: vi.fn(),
+  replaceMock: vi.fn(),
 }));
 
 vi.mock('../../src/components/certops/certopsApi.js', () => ({
@@ -43,7 +47,8 @@ vi.mock('../../src/components/certops/certopsApi.js', () => ({
   readdManagingSource: readdMock,
   stopManagingSource: stopMock,
   getWindowsRenewal: windowsMock,
-  setWindowsIisConsumer: vi.fn(),
+  setWindowsIisConsumer: toggleWindowsMock,
+  replaceManagingSource: replaceMock,
 }));
 
 vi.mock('../../src/utils/apiClient', () => ({
@@ -72,6 +77,8 @@ beforeEach(() => {
   getCertificateMock.mockReset();
   windowsMock.mockReset();
   windowsMock.mockResolvedValue({ groups: [] });
+  toggleWindowsMock.mockReset().mockResolvedValue({});
+  replaceMock.mockReset().mockResolvedValue({});
   getIdentityMock.mockReset();
   getManagedMock.mockReset();
   getManagedMock.mockResolvedValue([]);
@@ -85,6 +92,137 @@ beforeEach(() => {
   listProfilesMock.mockResolvedValue([]);
   getAlertSettingsMock.mockResolvedValue({ contact_groups: [] });
   getContactsMock.mockResolvedValue({ data: { items: [] } });
+});
+
+it('updates IIS consent from the identity modal and reloads the server state', async () => {
+  const identity = {
+    identityId: 'identity-1',
+    commonName: 'example.test',
+    sources: [],
+    locations: [],
+  };
+  const group = {
+    periodId: 'period',
+    managedCertificateId: 'store',
+    host: 'server',
+    store: 'LocalMachine\\My',
+    bindings: [
+      {
+        targetId: 'target',
+        site: 'Site',
+        port: 443,
+        canEnable: true,
+        automaticUpdate: false,
+      },
+    ],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  windowsMock.mockResolvedValueOnce({ groups: [group] }).mockResolvedValue({
+    groups: [
+      {
+        ...group,
+        bindings: [{ ...group.bindings[0], automaticUpdate: true }],
+      },
+    ],
+  });
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='ws'
+        certificate={identity}
+        isOpen
+        canManage
+      />
+    </ChakraProvider>
+  );
+  const checkbox = await screen.findByRole('checkbox', {
+    name: /Automatically update Site:443/,
+  });
+  expect(checkbox).not.toBeChecked();
+  fireEvent.click(checkbox);
+  await waitFor(() =>
+    expect(toggleWindowsMock).toHaveBeenCalledWith(
+      'ws',
+      'period',
+      'target',
+      true
+    )
+  );
+  await waitFor(() => expect(checkbox).toBeChecked());
+});
+
+it('does not request Windows renewal details for a reader', async () => {
+  const identity = {
+    identityId: 'identity-1',
+    commonName: 'example.test',
+    sources: [],
+    locations: [],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='ws'
+        certificate={identity}
+        isOpen
+        canManage={false}
+      />
+    </ChakraProvider>
+  );
+  await waitFor(() => expect(getIdentityMock).toHaveBeenCalled());
+  expect(windowsMock).not.toHaveBeenCalled();
+});
+
+it('replaces Store renewal settings using the current management period', async () => {
+  const identity = {
+    identityId: 'identity-1',
+    commonName: 'example.test',
+    sources: [],
+    locations: [],
+  };
+  const group = {
+    periodId: 'period',
+    managedCertificateId: 'store',
+    host: 'server',
+    store: 'LocalMachine\\My',
+    bindings: [],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  windowsMock.mockResolvedValue({ groups: [group] });
+  listProfilesMock.mockResolvedValue([
+    {
+      id: 'profile',
+      name: 'Store profile',
+      renewalProfile: { target: { type: 'windows-cert-store', store: 'My' } },
+    },
+  ]);
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='ws'
+        certificate={identity}
+        isOpen
+        canManage
+      />
+    </ChakraProvider>
+  );
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Renewal settings' })
+  );
+  fireEvent.change(
+    screen.getByRole('combobox', { name: 'Windows Store renewal profile' }),
+    { target: { value: 'profile' } }
+  );
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Save renewal settings' })
+  );
+  await waitFor(() =>
+    expect(replaceMock).toHaveBeenCalledWith('ws', 'store', {
+      periodId: 'period',
+      renewalProfileId: 'profile',
+      automationEnabled: true,
+    })
+  );
 });
 
 it('labels the current Windows store and hides a stopped registration until requested', async () => {
@@ -280,7 +418,11 @@ it('shows registration details and flags an existing dependent IIS profile', asy
   expect(
     screen.queryByText('Choose a Store renewal profile')
   ).not.toBeInTheDocument();
-  expect(screen.queryByText('IIS bindings')).not.toBeInTheDocument();
+  expect(screen.getByText('IIS bindings')).toBeInTheDocument();
+  expect(screen.getByText(/Existing IIS renewal profile/)).toBeInTheDocument();
+  expect(
+    screen.getByRole('checkbox', { name: /Automatically update Site:443/ })
+  ).toBeDisabled();
 });
 
 it('shows one linked token together with all certificate sources and locations', async () => {

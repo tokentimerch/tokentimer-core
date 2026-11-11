@@ -33,13 +33,16 @@ import DashboardDetailsSection from '../DashboardDetailsSection.jsx';
 import CopyableId from '../CopyableId.jsx';
 import CertificateDetailsModal from './CertificateDetailsModal.jsx';
 import IisReassociation from './IisReassociation.jsx';
+import WindowsCertificateUsage from './WindowsCertificateUsage.jsx';
 import {
   getCertificate,
   getCertificateIdentity,
   getManagedCertificatesForToken,
+  getWindowsRenewal,
   listCertOpsRenewalProfiles,
   readdManagingSource,
   replaceManagingSource,
+  setWindowsIisConsumer,
   stopManagingSource,
 } from './certopsApi';
 import {
@@ -176,6 +179,8 @@ export default function CertificateIdentityDetailModal({
   const [contactGroups, setContactGroups] = useState([]);
   const [workspaceContacts, setWorkspaceContacts] = useState([]);
   const [profiles, setProfiles] = useState([]);
+  const [windowsGroups, setWindowsGroups] = useState([]);
+  const [windowsError, setWindowsError] = useState('');
   const [profileIds, setProfileIds] = useState({});
   const [showHistory, setShowHistory] = useState(false);
   const [showStopped, setShowStopped] = useState(false);
@@ -242,7 +247,18 @@ export default function CertificateIdentityDetailModal({
     setShowStopped(false);
     setShowLocationHistory(false);
     setProfileIds({});
+    setWindowsGroups([]);
+    setWindowsError('');
     if (certificate.identityId) {
+      if (canManage)
+        getWindowsRenewal(workspaceId, certificate.identityId)
+          .then(value => {
+            if (active) setWindowsGroups(value.groups || []);
+          })
+          .catch(() => {
+            if (active)
+              setWindowsError('Windows renewal settings could not be loaded.');
+          });
       getCertificateIdentity(workspaceId, certificate.identityId)
         .then(value => {
           if (active) setDetail(value);
@@ -450,7 +466,56 @@ export default function CertificateIdentityDetailModal({
     setDetail(
       await getCertificateIdentity(workspaceId, certificate.identityId)
     );
+    if (canManage) {
+      try {
+        const value = await getWindowsRenewal(
+          workspaceId,
+          certificate.identityId
+        );
+        setWindowsGroups(value.groups || []);
+        setWindowsError('');
+      } catch {
+        setWindowsError('Windows renewal settings could not be loaded.');
+      }
+    }
     onChanged?.();
+  };
+
+  const updateWindowsConsumer = async (group, binding, enabled) => {
+    setBusy(true);
+    setError('');
+    try {
+      await setWindowsIisConsumer(
+        workspaceId,
+        group.periodId,
+        binding.targetId,
+        enabled
+      );
+      await refresh();
+    } catch (err) {
+      setError(err?.response?.data?.error || err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateWindowsProfile = async (group, renewalProfileId) => {
+    setBusy(true);
+    setError('');
+    try {
+      await replaceManagingSource(workspaceId, group.managedCertificateId, {
+        periodId: group.periodId,
+        renewalProfileId,
+        automationEnabled: true,
+      });
+      await refresh();
+      return true;
+    } catch (err) {
+      setError(err?.response?.data?.error || err.message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
   };
 
   const stop = async periodId => {
@@ -842,6 +907,22 @@ export default function CertificateIdentityDetailModal({
         mb={0}
       >
         <SectionContent>
+          {windowsError ? (
+            <Alert status='warning' mb={3}>
+              <AlertIcon />
+              <AlertDescription>{windowsError}</AlertDescription>
+            </Alert>
+          ) : null}
+          <WindowsCertificateUsage
+            groups={windowsGroups}
+            certificateName={displayToken.name}
+            workspaceId={workspaceId}
+            profiles={profiles}
+            canManage={canManage}
+            busy={busy}
+            onToggle={updateWindowsConsumer}
+            onProfile={updateWindowsProfile}
+          />
           {canManage
             ? sourceOptions
                 .filter(
@@ -864,7 +945,7 @@ export default function CertificateIdentityDetailModal({
                   />
                 ))
             : null}
-          {hasStoreAndIis ? (
+          {hasStoreAndIis && !windowsGroups.some(group => group.profileId) ? (
             <Box
               mb={3}
               p={3}
