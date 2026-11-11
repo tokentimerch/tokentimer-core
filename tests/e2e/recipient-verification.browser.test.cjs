@@ -286,14 +286,20 @@ describe(`recipient verification in Chromium: ${mode}`, { skip: !enabled, timeou
     if (enforced) assert.equal((await response.json()).code, "RECIPIENT_NOT_VERIFIED");
   });
 
-  it("retains contacts on a refresh failure and recovers with the Retry contacts control", async () => {
+  it("recovers from a contacts load failure with the Retry contacts control", async () => {
+    assert.equal(await page.getByRole("button", { name: "Refresh contacts", exact: true }).count(), 0);
+    const controls = enforced ? await confirmation() : null;
     // Block the real SQL query, rather than replacing a browser API response.
     const blocker = await pool.connect();
     await blocker.query("BEGIN");
     await blocker.query("LOCK TABLE workspace_contacts IN ACCESS EXCLUSIVE MODE");
     try {
       const failed = page.waitForResponse((response) => response.url().endsWith(contactsPath()) && response.request().method() === "GET");
-      await page.getByRole("button", { name: "Refresh contacts", exact: true }).click();
+      if (enforced) {
+        await controls.getByRole("button", { name: "Refresh confirmation status", exact: true }).click();
+      } else {
+        await page.reload();
+      }
       await until(async () => {
         const blocked = await pool.query("SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FROM workspace_contacts%' AND pid <> pg_backend_pid()");
         if (!blocked.rows.length) return false;
@@ -302,8 +308,12 @@ describe(`recipient verification in Chromium: ${mode}`, { skip: !enabled, timeou
       });
       assert.equal((await failed).status(), 500);
       await screenshot("contacts-error-response");
+      if (enforced) {
+        await controls.getByText("Could not refresh confirmation status. Try again.", { exact: true }).waitFor();
+        await closeConfirmation();
+        assert.equal(await row().isVisible(), true);
+      }
       await page.getByText("Contacts and confirmation status could not be loaded.", { exact: true }).waitFor();
-      assert.equal(await row().isVisible(), true);
       await screenshot("contacts-load-error");
       await page.getByRole("button", { name: "Retry contacts", exact: true }).click();
       await until(async () => await page.locator("#contacts button[disabled]").count() > 0);

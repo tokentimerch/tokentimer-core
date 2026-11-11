@@ -3381,15 +3381,6 @@ export default function AlertPreferences({
                 muted={bodySecondary}
                 action={
                   <HStack>
-                    <Button
-                      size='sm'
-                      variant='outline'
-                      onClick={refreshContacts}
-                      isLoading={refreshingContacts}
-                      isDisabled={!workspaceId || loading}
-                    >
-                      Refresh contacts
-                    </Button>
                     {!isViewer ? (
                       <DashboardActionButton
                         size='sm'
@@ -4809,6 +4800,22 @@ export default function AlertPreferences({
                   ))}
                 </Select>
               </FormControl>
+              {verificationControlsVisible(recipientVerificationMode) && (
+                <Button
+                  size='sm'
+                  variant='outline'
+                  alignSelf='flex-start'
+                  onClick={refreshContacts}
+                  isLoading={refreshingContacts}
+                >
+                  Refresh confirmation status
+                </Button>
+              )}
+              {contactsLoadError && (
+                <Text role='alert' fontSize='sm'>
+                  Could not refresh confirmation status. Try again.
+                </Text>
+              )}
               {confirmationContact ? (
                 <SettingsNestedSurface p={4}>
                   <Text fontWeight='semibold'>
