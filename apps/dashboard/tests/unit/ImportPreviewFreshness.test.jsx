@@ -1,0 +1,278 @@
+import React from 'react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
+import { ChakraProvider } from '@chakra-ui/react';
+import { MemoryRouter } from 'react-router';
+import ImportVaultForm from '../../src/components/imports/ImportVaultForm.jsx';
+import ImportAWSForm from '../../src/components/imports/ImportAWSForm.jsx';
+import ImportAzureForm from '../../src/components/imports/ImportAzureForm.jsx';
+import ImportGCPForm from '../../src/components/imports/ImportGCPForm.jsx';
+
+const mocks = vi.hoisted(() => ({
+  vaultScan: vi.fn(),
+  awsScan: vi.fn(),
+  azureScan: vi.fn(),
+  gcpScan: vi.fn(),
+  listMounts: vi.fn(),
+  detectRegions: vi.fn(),
+  checkDuplicates: vi.fn(),
+  import: vi.fn(),
+}));
+vi.mock('../../src/utils/apiClient', async () => ({
+  ...(await vi.importActual('../../src/utils/apiClient')),
+  vaultAPI: {
+    scan: mocks.vaultScan,
+    import: mocks.import,
+    listMounts: mocks.listMounts,
+  },
+  awsAPI: { scan: mocks.awsScan, detectRegions: mocks.detectRegions },
+  azureAPI: { scan: mocks.azureScan },
+  gcpAPI: { scan: mocks.gcpScan },
+  integrationAPI: {
+    checkDuplicates: mocks.checkDuplicates,
+    import: mocks.import,
+  },
+}));
+vi.mock('../../src/components/IntegrationImportTable', () => ({
+  default: ({ items, onToggleRow }) => (
+    <button onClick={() => onToggleRow(0)}>select-first-{items.length}</button>
+  ),
+}));
+vi.mock('../../src/components/BulkIntegrationAssignment', () => ({
+  default: () => null,
+}));
+vi.mock('../../src/utils/logger', () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
+}));
+const preview = {
+  items: [
+    {
+      name: 'Scoped credential',
+      location: 'kv/app',
+      type: 'other',
+      category: 'general',
+    },
+  ],
+  summary: [],
+  scan_id: 'fresh-scan',
+  filterSummary: { matchedCount: 1, excludedCount: 2 },
+};
+const providers = [
+  ['Vault', ImportVaultForm, mocks.vaultScan, 'https://vault.your-org.com'],
+  ['AWS', ImportAWSForm, mocks.awsScan, 'AKIAIOSFODNN7EXAMPLE'],
+  [
+    'Azure',
+    ImportAzureForm,
+    mocks.azureScan,
+    'https://my-vault.vault.azure.net',
+  ],
+  ['GCP', ImportGCPForm, mocks.gcpScan, 'my-project-123'],
+];
+function renderForm(Form, props = {}) {
+  const ref = React.createRef();
+  const onError = vi.fn();
+  const onSelectionChange = vi.fn();
+  render(
+    <ChakraProvider>
+      <MemoryRouter>
+        <Form
+          ref={ref}
+          workspaceId='ws-1'
+          onError={onError}
+          onSelectionChange={onSelectionChange}
+          autoSyncTokenPlaceholder='scan-token'
+          contactGroups={[]}
+          updateQuotaFromResponse={() => true}
+          {...props}
+        />
+      </MemoryRouter>
+    </ChakraProvider>
+  );
+  return { ref, onError, onSelectionChange };
+}
+async function connect(provider, placeholder) {
+  fireEvent.change(screen.getByPlaceholderText(placeholder), {
+    target: { value: provider === 'AWS' ? 'key' : 'https://example.test' },
+  });
+  fireEvent.change(screen.getByPlaceholderText('scan-token'), {
+    target: { value: 'secret' },
+  });
+  if (provider === 'AWS') {
+    fireEvent.click(screen.getByRole('button', { name: 'Detect Regions' }));
+    await screen.findByRole('button', { name: /Scan us-east-1/ });
+  }
+}
+const scanButton = provider =>
+  screen.getByRole('button', {
+    name: provider === 'AWS' ? /Scan us-east-1/ : 'Scan',
+  });
+beforeEach(() => {
+  vi.resetAllMocks();
+  localStorage.clear();
+  mocks.checkDuplicates.mockResolvedValue({
+    duplicate_count: 0,
+    duplicates: [],
+  });
+  mocks.detectRegions.mockResolvedValue({
+    regionsWithSecrets: ['us-east-1'],
+    regionsWithCertificates: [],
+    iam: { keysCount: 0 },
+  });
+  for (const [, , scan] of providers) scan.mockResolvedValue(preview);
+});
+
+describe('Import preview freshness', () => {
+  it.each(providers)(
+    '%s clears selections and provenance on a raw rule edit and permits a rescan',
+    async (provider, Form, scan, placeholder) => {
+      const { ref, onSelectionChange } = renderForm(Form);
+      await connect(provider, placeholder);
+      fireEvent.click(scanButton(provider));
+      await screen.findByText('1 matched');
+      fireEvent.click(screen.getByRole('button', { name: 'select-first-1' }));
+      await waitFor(() => expect(ref.current.getSelectedCount()).toBe(1));
+      fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+      expect(ref.current.getSelectedCount()).toBe(0);
+      expect(onSelectionChange).toHaveBeenLastCalledWith(0);
+      expect(
+        screen.queryByRole('status', { name: 'Filter results' })
+      ).toBeNull();
+      expect(
+        screen.getByRole('checkbox', { name: /Remove previously imported/ })
+      ).toBeDisabled();
+      await act(() => ref.current.importSelected());
+      expect(mocks.import).not.toHaveBeenCalled();
+      fireEvent.click(scanButton(provider));
+      await screen.findByText('1 matched');
+      fireEvent.click(screen.getByRole('button', { name: 'select-first-1' }));
+      await waitFor(() => expect(ref.current.getSelectedCount()).toBe(1));
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: /Remove previously imported/ })
+      );
+      await act(() => ref.current.importSelected());
+      expect(mocks.import).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scanId: 'fresh-scan',
+          cleanup: {
+            enabled: true,
+            provider: provider.toLowerCase(),
+            scanId: 'fresh-scan',
+          },
+        })
+      );
+      expect(scan).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it.each(providers)(
+    '%s ignores a response after its rules change',
+    async (provider, Form, scan, placeholder) => {
+      let finish;
+      scan.mockReturnValue(
+        new Promise(resolve => {
+          finish = resolve;
+        })
+      );
+      const { ref } = renderForm(Form);
+      await connect(provider, placeholder);
+      fireEvent.click(scanButton(provider));
+      fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+      await act(async () => {
+        finish(preview);
+      });
+      expect(screen.queryByText('1 matched')).toBeNull();
+      expect(ref.current.getSelectedCount()).toBe(0);
+      await act(() => ref.current.importSelected());
+      expect(mocks.import).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(providers)(
+    '%s ignores duplicate checks that finish after a credential edit',
+    async (provider, Form, _scan, placeholder) => {
+      let finish;
+      mocks.checkDuplicates.mockReturnValue(
+        new Promise(resolve => {
+          finish = resolve;
+        })
+      );
+      const { ref } = renderForm(Form);
+      await connect(provider, placeholder);
+      fireEvent.click(scanButton(provider));
+      await screen.findByText('1 matched');
+      fireEvent.change(screen.getByPlaceholderText('scan-token'), {
+        target: { value: 'changed' },
+      });
+      await act(async () => {
+        finish({ duplicate_count: 0, duplicates: [] });
+      });
+      expect(screen.queryByText('1 matched')).toBeNull();
+      expect(ref.current.getSelectedCount()).toBe(0);
+      expect(
+        screen.getByRole('checkbox', { name: /Remove previously imported/ })
+      ).toBeDisabled();
+    }
+  );
+});
+
+describe('Restored Vault mount restrictions', () => {
+  it.each([
+    [
+      ['saved/', 'removed/'],
+      [
+        { path: 'saved/', type: 'kv' },
+        { path: 'other/', type: 'pki' },
+      ],
+      ['saved/'],
+    ],
+    [['saved/'], [{ path: 'other/', type: 'kv' }], []],
+    [['saved/'], [], []],
+    [[], [{ path: 'other/', type: 'kv' }], []],
+    [null, [{ path: 'other/', type: 'kv' }], null],
+  ])(
+    'keeps saved %j restricted after loading %j',
+    async (saved, live, expected) => {
+      mocks.listMounts.mockResolvedValue(live);
+      const { ref, onError } = renderForm(ImportVaultForm, {
+        initialScanParams: {
+          address: 'https://vault.example.test',
+          mounts: saved,
+        },
+      });
+      fireEvent.change(screen.getByPlaceholderText('scan-token'), {
+        target: { value: 'secret' },
+      });
+      fireEvent.click(
+        screen.getByRole('button', { name: /Advanced: Secrets engines/ })
+      );
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Load engines' })
+      );
+      await waitFor(() => expect(mocks.listMounts).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(ref.current.getCredentials().scanParams.mounts).toEqual(expected)
+      );
+      if (expected?.length === 0) {
+        fireEvent.click(scanButton('Vault'));
+        expect(mocks.vaultScan).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenLastCalledWith(
+          'Select at least one secrets engine to scan.'
+        );
+        const reload = await screen.findByRole('button', {
+          name: live.length ? 'Refresh' : 'Load engines',
+        });
+        await waitFor(() => expect(reload).toBeEnabled());
+        fireEvent.click(reload);
+        await waitFor(() => expect(mocks.listMounts).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(reload).toBeEnabled());
+        expect(ref.current.getCredentials().scanParams.mounts).toEqual([]);
+      }
+    }
+  );
+});

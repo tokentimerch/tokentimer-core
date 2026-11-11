@@ -189,17 +189,16 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
   const [filterRules, setFilterRules] = React.useState([]);
   const [filterSummary, setFilterSummary] = React.useState(null);
-  React.useEffect(() => {
-    setFilterSummary(null);
-  }, [filterRules]);
+  const [previewReady, setPreviewReady] = React.useState(false);
   // Backend-authoritative scan record cleanup is driven from. Set after
   // any completed scan that returned a scan_id, including All Regions
   // (one persist covering IAM plus every region that actually ran).
   const [lastScanId, setLastScanId] = React.useState(null);
 
   React.useEffect(() => {
-    onSelectionChange && onSelectionChange(selectedRowsAws.size);
-  }, [selectedRowsAws.size, onSelectionChange]);
+    onSelectionChange &&
+      onSelectionChange(previewReady ? selectedRowsAws.size : 0);
+  }, [selectedRowsAws.size, previewReady, onSelectionChange]);
 
   React.useEffect(() => {
     if (!initialAutoSyncScanParams) return;
@@ -307,6 +306,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
           maxItems: 2000,
           include: { secrets: true, iam: true, certificates: true },
         });
+        if (!isScanCurrent(scanTicket)) return;
         const allItems = Array.isArray(res?.items) ? res.items : [];
         setAwsItems(allItems);
         setAwsSummary(aggregateAwsSummary(res?.summary));
@@ -314,6 +314,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         setLastScanId(res?.scan_id || null);
 
         const dups = await checkDuplicatesForItems(allItems, workspaceId);
+        if (!isScanCurrent(scanTicket)) return;
         setAwsDuplicates(dups);
 
         if (updateQuotaFromResponse && !updateQuotaFromResponse(res)) {
@@ -334,6 +335,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
             certificates: !isGlobalScan,
           },
         });
+        if (!isScanCurrent(scanTicket)) return;
         const items = Array.isArray(res?.items) ? res.items : [];
         setAwsItems(items);
         setAwsSummary(Array.isArray(res?.summary) ? res.summary : []);
@@ -345,14 +347,18 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         setLastScanId(res?.scan_id || null);
 
         const dups = await checkDuplicatesForItems(items, workspaceId);
+        if (!isScanCurrent(scanTicket)) return;
         setAwsDuplicates(dups);
 
         if (updateQuotaFromResponse && !updateQuotaFromResponse(res)) {
           if (refreshIntegrationQuota) await refreshIntegrationQuota();
         }
       }
+      if (!isScanCurrent(scanTicket)) return;
+      setPreviewReady(true);
       completeScanVerification(scanTicket);
     } catch (e) {
+      if (!isScanCurrent(scanTicket)) return;
       setAwsItems([]);
       setAwsSummary([]);
       setFilterSummary(null);
@@ -366,7 +372,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         if (refreshIntegrationQuota) await refreshIntegrationQuota();
       }
     } finally {
-      setIsScanning(false);
+      if (isScanCurrent(scanTicket)) setIsScanning(false);
     }
   };
 
@@ -379,6 +385,10 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   };
 
   const importAwsSelected = async () => {
+    if (!previewReady || isScanning) {
+      onError?.('Run a scan with the current settings before importing.');
+      return;
+    }
     try {
       const selected = awsItems
         .filter((_, i) => selectedRowsAws.has(i))
@@ -424,23 +434,33 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
       awsDetectedRegions,
       filterRules,
     });
-  const { beginScanVerification, completeScanVerification } =
+  const { beginScanVerification, completeScanVerification, isScanCurrent } =
     useScanVerification({
       identity: {
         workspaceId,
         scanContext,
         payload: getCredentials(),
         rawRegion: awsRegion,
-        cleanupObsolete,
+        filterRules,
       },
       provider: 'aws',
       onScanSuccess,
-      onScanInvalidated,
+      onScanInvalidated: () => {
+        setPreviewReady(false);
+        setIsScanning(false);
+        setAwsItems([]);
+        setAwsSummary([]);
+        setFilterSummary(null);
+        setSelectedRowsAws(new Set());
+        setAwsDuplicates(new Set());
+        setLastScanId(null);
+        onScanInvalidated?.();
+      },
     });
 
   React.useImperativeHandle(ref, () => ({
     importSelected: importAwsSelected,
-    getSelectedCount: () => selectedRowsAws.size,
+    getSelectedCount: () => (previewReady ? selectedRowsAws.size : 0),
     getCredentials,
   }));
 

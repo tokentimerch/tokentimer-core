@@ -132,9 +132,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
   const [filterRules, setFilterRules] = React.useState([]);
   const [filterSummary, setFilterSummary] = React.useState(null);
-  React.useEffect(() => {
-    setFilterSummary(null);
-  }, [filterRules]);
+  const [previewReady, setPreviewReady] = React.useState(false);
   React.useEffect(() => {
     if (!initialScanParams) return;
     const sp = initialScanParams;
@@ -147,8 +145,9 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   const [lastScanId, setLastScanId] = React.useState(null);
 
   React.useEffect(() => {
-    onSelectionChange && onSelectionChange(selectedRowsGcp.size);
-  }, [selectedRowsGcp.size, onSelectionChange]);
+    onSelectionChange &&
+      onSelectionChange(previewReady ? selectedRowsGcp.size : 0);
+  }, [selectedRowsGcp.size, previewReady, onSelectionChange]);
 
   const doGcpScan = async () => {
     const scanTicket = beginScanVerification();
@@ -183,6 +182,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
         filterRules: sanitizeFilterRules(filterRules),
         maxItems: 2000,
       });
+      if (!isScanCurrent(scanTicket)) return;
       const items = Array.isArray(res?.items) ? res.items : [];
       setGcpItems(items);
       setGcpSummary(Array.isArray(res?.summary) ? res.summary : []);
@@ -194,9 +194,12 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
       }
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
+      if (!isScanCurrent(scanTicket)) return;
       setGcpDuplicates(dups);
+      setPreviewReady(true);
       completeScanVerification(scanTicket);
     } catch (e) {
+      if (!isScanCurrent(scanTicket)) return;
       setGcpItems([]);
       setGcpSummary([]);
       setFilterSummary(null);
@@ -210,7 +213,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
         if (refreshIntegrationQuota) await refreshIntegrationQuota();
       }
     } finally {
-      setIsScanning(false);
+      if (isScanCurrent(scanTicket)) setIsScanning(false);
     }
   };
 
@@ -223,6 +226,10 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   };
 
   const importGcpSelected = async () => {
+    if (!previewReady || isScanning) {
+      onError?.('Run a scan with the current settings before importing.');
+      return;
+    }
     try {
       const selected = gcpItems
         .filter((_, i) => selectedRowsGcp.has(i))
@@ -268,22 +275,32 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
       filterRules: sanitizeFilterRules(filterRules),
     },
   });
-  const { beginScanVerification, completeScanVerification } =
+  const { beginScanVerification, completeScanVerification, isScanCurrent } =
     useScanVerification({
       identity: {
         workspaceId,
         scanContext,
         payload: getCredentials(),
-        cleanupObsolete,
+        filterRules,
       },
       provider: 'gcp',
       onScanSuccess,
-      onScanInvalidated,
+      onScanInvalidated: () => {
+        setPreviewReady(false);
+        setIsScanning(false);
+        setGcpItems([]);
+        setGcpSummary([]);
+        setFilterSummary(null);
+        setSelectedRowsGcp(new Set());
+        setGcpDuplicates(new Set());
+        setLastScanId(null);
+        onScanInvalidated?.();
+      },
     });
 
   React.useImperativeHandle(ref, () => ({
     importSelected: importGcpSelected,
-    getSelectedCount: () => selectedRowsGcp.size,
+    getSelectedCount: () => (previewReady ? selectedRowsGcp.size : 0),
     getCredentials,
   }));
 

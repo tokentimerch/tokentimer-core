@@ -204,6 +204,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
 
   const [filterRules, setFilterRules] = React.useState([]);
   const [filterSummary, setFilterSummary] = React.useState(null);
+  const [previewReady, setPreviewReady] = React.useState(false);
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
   // The backend-authoritative scan record cleanup is driven from.
   const [lastScanId, setLastScanId] = React.useState(null);
@@ -241,8 +242,9 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   }, [initialScanParams]);
 
   React.useEffect(() => {
-    onSelectionChange && onSelectionChange(selectedRowsVault.size);
-  }, [selectedRowsVault.size, onSelectionChange]);
+    onSelectionChange &&
+      onSelectionChange(previewReady ? selectedRowsVault.size : 0);
+  }, [selectedRowsVault.size, previewReady, onSelectionChange]);
 
   const vaultAuthPayload = () => {
     const namespace = vaultNamespace.trim();
@@ -287,8 +289,11 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       });
       const scannable = mounts.filter(m => m.type === 'kv' || m.type === 'pki');
       setAvailableMounts(scannable);
-      setSelectedMountPaths(
-        new Set(restoredMounts ?? scannable.map(m => m.path))
+      const availablePaths = new Set(scannable.map(m => m.path));
+      setSelectedMountPaths(previous =>
+        restoredMounts !== null || availableMounts.length > 0
+          ? new Set([...previous].filter(path => availablePaths.has(path)))
+          : availablePaths
       );
     } catch (e) {
       setAvailableMounts([]);
@@ -319,9 +324,16 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   // Only send an explicit mount list when the picker was used and the user
   // narrowed it down; otherwise every mount is scanned (unchanged default).
   const mountsFilterForScan = () => {
-    if (availableMounts.length === 0) return restoredMounts;
+    if (restoredMounts !== null) return Array.from(selectedMountPaths);
+    if (availableMounts.length === 0) return null;
     if (selectedMountPaths.size >= availableMounts.length) return null;
     return Array.from(selectedMountPaths);
+  };
+  const validateSelection = () => {
+    const mounts = mountsFilterForScan();
+    return Array.isArray(mounts) && mounts.length === 0
+      ? 'Select at least one secrets engine to scan.'
+      : null;
   };
 
   const doVaultScan = async () => {
@@ -336,8 +348,9 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       onError && onError(authError);
       return;
     }
-    if (availableMounts.length > 0 && selectedMountPaths.size === 0) {
-      onError && onError('Select at least one secrets engine to scan.');
+    const selectionError = validateSelection();
+    if (selectionError) {
+      onError && onError(selectionError);
       return;
     }
     if (selectedCategories.size === 0) {
@@ -362,6 +375,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         categories: Array.from(selectedCategories),
         filterRules: sanitizeFilterRules(filterRules),
       });
+      if (!isScanCurrent(scanTicket)) return;
       const items = Array.isArray(res?.items) ? res.items : [];
       setVaultItems(items);
       setSummary(Array.isArray(res?.summary) ? res.summary : []);
@@ -373,10 +387,14 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       }
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
+      if (!isScanCurrent(scanTicket)) return;
       setVaultDuplicates(dups);
+      setPreviewReady(true);
       completeScanVerification(scanTicket);
     } catch (e) {
+      if (!isScanCurrent(scanTicket)) return;
       setVaultItems([]);
+      setFilterSummary(null);
       setSummary([]);
       setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
@@ -388,7 +406,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         if (refreshIntegrationQuota) await refreshIntegrationQuota();
       }
     } finally {
-      setIsScanning(false);
+      if (isScanCurrent(scanTicket)) setIsScanning(false);
     }
   };
 
@@ -410,6 +428,10 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   };
 
   const importVaultSelected = async () => {
+    if (!previewReady || isScanning) {
+      onError?.('Run a scan with the current settings before importing.');
+      return;
+    }
     try {
       const selected = vaultItems
         .filter((_, i) => selectedRowsVault.has(i))
@@ -462,23 +484,34 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       filterRules: sanitizeFilterRules(filterRules),
     },
   });
-  const { beginScanVerification, completeScanVerification } =
+  const { beginScanVerification, completeScanVerification, isScanCurrent } =
     useScanVerification({
       identity: {
         workspaceId,
         scanContext,
         payload: getCredentials(),
-        cleanupObsolete,
+        filterRules,
       },
       provider: 'vault',
       onScanSuccess,
-      onScanInvalidated,
+      onScanInvalidated: () => {
+        setPreviewReady(false);
+        setIsScanning(false);
+        setVaultItems([]);
+        setSummary([]);
+        setFilterSummary(null);
+        setSelectedRowsVault(new Set());
+        setVaultDuplicates(new Set());
+        setLastScanId(null);
+        onScanInvalidated?.();
+      },
     });
 
   React.useImperativeHandle(ref, () => ({
     importSelected: importVaultSelected,
-    getSelectedCount: () => selectedRowsVault.size,
+    getSelectedCount: () => (previewReady ? selectedRowsVault.size : 0),
     getCredentials,
+    validateSelection,
   }));
 
   return (

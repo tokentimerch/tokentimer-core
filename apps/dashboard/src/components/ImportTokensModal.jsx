@@ -1787,6 +1787,13 @@ function ImportTokensModalContent({
 
   const handleSaveAutoSyncChanges = async () => {
     if (!workspaceId || !autoSyncConfig?.id) return;
+    if (source === 'vault') {
+      const selectionError = vaultFormRef.current?.validateSelection?.();
+      if (selectionError) {
+        showWarning(selectionError);
+        return;
+      }
+    }
     if (source === 'azure') {
       const replacementError = azureFormRef.current?.validateReplacement?.();
       if (replacementError) {
