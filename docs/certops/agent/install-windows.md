@@ -12,7 +12,7 @@ Enable CertOps and provision the signing and registration encryption keys. In th
 
 ## Install
 
-Download the matching agent release and verify its checksum before running the installer. Extract the `.tgz` with `tar -xzf <archive>` into a new protected directory, such as one under Program Files. Set the owner of the extracted tree to the Administrators group and allow only Administrators and SYSTEM to modify it. Use the protected directory for installation and elevated dry runs. From that directory:
+Download the matching agent release and verify its checksum before running the installer. Recent Windows versions include `tar.exe`; check with `Get-Command tar.exe` and use another trusted extractor if it is missing. Extract the `.tgz` with `tar -xzf <archive>` into a new protected directory, such as one under Program Files. Set the owner of the extracted tree to the Administrators group and allow only Administrators and SYSTEM to modify it. Use the protected directory for installation and elevated dry runs. From that directory:
 
 ```powershell
 $workspaceId = Read-Host 'Workspace ID'
