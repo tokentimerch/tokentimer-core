@@ -92,6 +92,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     ({ pool: workerPool } = await import("../../apps/worker/src/db.js"));
     runs = await import("../../apps/worker/src/shared/autoSyncRuns.js");
     assert.equal((await pool.query("SELECT 1 FROM migrations WHERE version = 61")).rowCount, 1);
+    assert.equal((await pool.query("SELECT 1 FROM migrations WHERE version = 111")).rowCount, 1);
     userId = (await pool.query(`INSERT INTO users(email, display_name, email_verified, password_hash)
       VALUES ($1, 'Fencing test', TRUE, 'test-only-hash') RETURNING id`, [`issue71-${crypto.randomUUID()}@example.test`])).rows[0].id;
     app = express();
@@ -104,6 +105,10 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     app.use(require("../../apps/api/routes/admin"));
     process.env.WORKER_API_KEY = "issue71-test-worker";
     app.use(require("../../apps/api/routes/integrations"));
+    require("../../apps/api/services/autoSyncMetrics").registerAutoSyncMetrics(
+      require("../../apps/api/node_modules/prom-client").register,
+    );
+    app.use(require("../../apps/api/routes/health"));
   });
   beforeEach(async () => {
     await pool.query('UPDATE users SET is_admin=FALSE WHERE id=$1',[userId]);
@@ -136,6 +141,53 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     const { registerAutoSyncMetrics } = require("../../apps/api/services/autoSyncMetrics");
     const registry = new Registry(); registerAutoSyncMetrics(registry);
     return (await registry.getSingleMetric(name).get()).values;
+  }
+  async function ownerScan(run, entries, { manual = false } = {}) {
+    const result = await persistScan({
+      workspaceId, provider: "gitlab", createdBy: userId,
+      identityContext: { host: source.source_instance, ownerKey: source.source_owner_key },
+      items: entries.map(([id, owner, kind = "gitlab-pat"]) => ({
+        sourceKind: kind, sourceObjectId: id,
+        dimensions: { project: "platform/backend", ...(owner === undefined ? {} : { owner_username: owner }) },
+      })),
+      subScopes: [{ sourceKind: "gitlab-pat", complete: true }],
+      request: manual ? null : {
+        isWorkerCall: true, integrationScanStartedAt: new Date(),
+        body: { auto_sync_run: runs.runContext(run.config) },
+      },
+    });
+    if (!manual) run.context.scanId = result.scanId;
+    return result.scanId;
+  }
+  async function ownerImport(run, id, extra = {}, kind = "gitlab-pat") {
+    const { bindImportItemsToScan } = require("../../apps/api/services/scanBinding");
+    const binding = await bindImportItemsToScan({
+      scanId: run.context.scanId, workspaceId, provider: "gitlab",
+      pairs: [{ sourceKind: kind, sourceObjectId: id, owner_username: "client-spoof" }],
+    });
+    const authoritative = binding.resolveForItem(0);
+    assert.ok(authoritative, "Owner imports must bind to a persisted scan item");
+    return provenance.upsertImportedToken({
+      context: run.context, workspaceId, userId, manual: false, assignMembership() {},
+      payload: {
+        name: `Owner credential ${id}`, location: `owner-location-${id}`,
+        type: "api_key", category: "key_secret", expiration: "2028-01-01",
+        source_dimensions: { owner_username: "client-spoof" },
+        ...extra, ...authoritative,
+      },
+    });
+  }
+  async function ownerRows(config) {
+    return (await pool.query(
+      `SELECT dimension_key, owner_username, items_created_total, last_created_at
+       FROM auto_sync_creation_stats WHERE config_id=$1 ORDER BY dimension_key`,
+      [config.id],
+    )).rows;
+  }
+  async function ownerSettings(config, enabled = true, labels = ["kind", "owner_username"]) {
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "owner_username";
+    await pool.query("UPDATE auto_sync_configs SET metrics_settings=$2 WHERE id=$1",
+      [config.id, { enabled, inherit_system: false, labels }]);
   }
   async function kindTotal() {
     return BigInt((await pool.query("SELECT items_created_total FROM auto_sync_kind_stats WHERE provider='gitlab' AND kind='gitlab-project-token'"))?.rows[0]?.items_created_total || 0);
@@ -398,6 +450,263 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     delete process.env.AUTO_SYNC_METRICS_MONITORING_GROUP;
     assert.equal((await metric('auto_sync_items_created_detailed_total'))[0].labels.monitoring_group,'critical');
     await finish(run);
+  });
+
+  it("persists authoritative opted-in PAT owners but never copies them into inventory", async () => {
+    const config = await configuration(); await ownerSettings(config);
+    const run = await start(config);
+    const scanId = await ownerScan(run, [["pat", "actual-owner"], ["project", "spoof", "gitlab-project-token"]]);
+    const recorded = (await pool.query(
+      "SELECT source_kind, source_dimensions FROM integration_scan_items WHERE scan_id=$1 ORDER BY source_kind",
+      [scanId],
+    )).rows;
+    assert.equal(recorded.find(row => row.source_kind === "gitlab-pat").source_dimensions.owner_username, "actual-owner");
+    assert.equal(Object.hasOwn(recorded.find(row => row.source_kind === "gitlab-project-token").source_dimensions, "owner_username"), false);
+    const { token } = await ownerImport(run, "pat", {
+      source_dimensions: { owner_username: "import-spoof" },
+    });
+    assert.equal((await ownerRows(config))[0].owner_username, "actual-owner");
+    const stored = (await pool.query("SELECT source_dimensions FROM tokens WHERE id=$1", [token.id])).rows[0];
+    assert.equal(Object.hasOwn(stored.source_dimensions, "owner_username"), false);
+    assert.equal(stored.source_dimensions.project, "platform/backend");
+    await ownerImport(run, "project", {}, "gitlab-project-token");
+    assert.ok((await ownerRows(config)).some(row => row.owner_username === ""));
+    const { bindImportItemsToScan } = require("../../apps/api/services/scanBinding");
+    const absent = await bindImportItemsToScan({
+      scanId, workspaceId, provider: "gitlab",
+      pairs: [{ sourceKind: "gitlab-pat", sourceObjectId: "not-scanned", owner_username: "spoof" }],
+    });
+    assert.equal(absent.resolveForItem(0), null);
+  });
+
+  it("HTTP imports ignore owner spoofing and scrape only server-recorded PAT owners", async () => {
+    const config = await configuration(); await ownerSettings(config);
+    const run = await start(config);
+    await ownerScan(run, [
+      ["pat", "actual-owner"], ["unknown", undefined],
+      ["project", "forged-project-owner", "gitlab-project-token"],
+    ]);
+    const response = await request(app)
+      .post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
+      .set("Authorization", "Bearer issue71-test-worker")
+      .send({
+        scan_id: run.context.scanId, auto_sync_run: runs.runContext(run.config),
+        items: ["pat", "unknown", "project"].map(id => ({
+          name: `HTTP credential ${id}`, location: `gitlab.example/${id}`,
+          source: "gitlab", sourceKind: id === "project" ? "gitlab-project-token" : "gitlab-pat",
+          sourceObjectId: id, type: "api_key", expiresAt: "2028-01-01",
+          owner_username: "import-spoof", dimensions: { owner_username: "import-spoof" },
+          source_dimensions: { owner_username: "import-spoof" },
+        })),
+      });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.error_count, 0, JSON.stringify(response.body));
+    assert.equal(response.body.created_count, 3);
+    for (const name of ["auto_sync_items_created_detailed_total", "auto_sync_last_creation_timestamp_seconds"]) {
+      const samples = await metric(name);
+      assert.deepEqual(samples.map(sample => sample.labels.owner_username).sort(), ["", "", "actual-owner"]);
+      assert.ok(samples.every(sample => sample.value > 0));
+    }
+    const inventory = (await pool.query(
+      "SELECT source_dimensions FROM tokens WHERE workspace_id=$1", [workspaceId],
+    )).rows;
+    assert.ok(inventory.every(row => !Object.hasOwn(row.source_dimensions, "owner_username")));
+  });
+
+  it("emits valid HTTP scrape text with escaped owners, stable counts and immediate policy changes", async () => {
+    const config = await configuration(); await ownerSettings(config);
+    const run = await start(config);
+    const owner = 'owner"\\\n界';
+    await ownerScan(run, [
+      ["pat", owner], ["unknown", undefined],
+      ["project", "not-a-PAT-owner", "gitlab-project-token"],
+    ]);
+    await ownerImport(run, "pat"); await ownerImport(run, "unknown");
+    await ownerImport(run, "project", {}, "gitlab-project-token");
+    const countName = "auto_sync_items_created_detailed_total";
+    const timeName = "auto_sync_last_creation_timestamp_seconds";
+    const samples = (text, name) => text.split("\n").filter(line => line.startsWith(`${name}{`));
+    const autoSyncText = text => text.split("\n").filter(line => line.startsWith("auto_sync_")).join("\n");
+    const escape = value => value.replaceAll("\\", "\\\\").replaceAll("\n", "\\n").replaceAll('"', '\\"');
+    const scrape = async () => {
+      const response = await request(app).get("/metrics");
+      assert.equal(response.status, 200, response.text);
+      assert.match(response.headers["content-type"], /^text\/plain;.*version=0\.0\.4/);
+      assert.match(response.text, new RegExp(`^# TYPE ${countName} counter$`, "m"));
+      assert.match(response.text, new RegExp(`^# TYPE ${timeName} gauge$`, "m"));
+      const aggregates = response.text.split("\n").filter(line =>
+        line.startsWith("auto_sync_") && !line.startsWith(`${countName}{`) &&
+        !line.startsWith(`${timeName}{`));
+      assert.ok(aggregates.length > 0);
+      assert.ok(aggregates.every(line => !line.includes("owner_username")));
+      assert.ok(!response.text.includes("not-a-PAT-owner"));
+      return response.text;
+    };
+    const first = await scrape();
+    for (const name of [countName, timeName]) {
+      const lines = samples(first, name);
+      assert.equal(lines.length, 3);
+      assert.equal(lines.filter(line => line.includes(`owner_username="${escape(owner)}"`)).length, 1);
+      assert.equal(lines.filter(line => line.includes('owner_username=""')).length, 2);
+      assert.ok(lines.every(line => line.includes(`configuration_id="${config.id}"`)));
+    }
+    assert.ok(samples(first, countName).every(line => line.endsWith(" 1")));
+    const timestamps = samples(first, timeName).map(line => Number(line.slice(line.lastIndexOf(" ") + 1)));
+    assert.ok(timestamps.every(value => value > Date.now() / 1000 - 60 && value <= Date.now() / 1000));
+    assert.equal(autoSyncText(await scrape()), autoSyncText(first), "Repeated scrapes do not increment persisted counters");
+    if (process.env.AUTO_SYNC_PROMTOOL_IMAGE) {
+      const result = require("node:child_process").spawnSync("docker", [
+        "run", "--rm", "-i", "--network", "none", "--entrypoint", "/bin/promtool",
+        process.env.AUTO_SYNC_PROMTOOL_IMAGE, "check", "metrics",
+      ], { input: first, encoding: "utf8", timeout: 60000 });
+      assert.equal(result.status, 0, `${result.error || ""}\n${result.stdout}\n${result.stderr}`);
+    }
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "none";
+    const hidden = await scrape();
+    for (const name of [countName, timeName]) {
+      const lines = samples(hidden, name);
+      assert.equal(lines.length, 2);
+      assert.ok(lines.every(line => line.includes('owner_username=""')));
+      assert.ok(!lines.some(line => line.includes(escape(owner))));
+    }
+    assert.ok(samples(hidden, countName).find(line => line.includes('kind="gitlab-pat"')).endsWith(" 2"));
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "owner_username";
+    assert.equal(autoSyncText(await scrape()), autoSyncText(first), "Re-enabling owner restores historical creation-time samples");
+    await ownerSettings(config, false);
+    const disabled = await scrape();
+    assert.deepEqual(samples(disabled, countName), []);
+    assert.deepEqual(samples(disabled, timeName), []);
+    await ownerSettings(config);
+    assert.equal(autoSyncText(await scrape()), autoSyncText(first));
+    await finish(run);
+    await pool.query("DELETE FROM auto_sync_configs WHERE id=$1", [config.id]);
+    const deleted = await scrape();
+    assert.deepEqual(samples(deleted, countName), []);
+    assert.deepEqual(samples(deleted, timeName), []);
+    assert.equal((await pool.query(
+      "SELECT 1 FROM auto_sync_creation_stats WHERE config_id=$1", [config.id],
+    )).rowCount, 0);
+  });
+
+  it("strips owner from manual, disabled, unselected and deployment-disallowed scan persistence", async () => {
+    const config = await configuration(); await ownerSettings(config);
+    const run = await start(config);
+    for (const mode of ["manual", "disabled", "unselected", "deployment", "system"]) {
+      await ownerSettings(config, mode !== "disabled", mode === "unselected" ? ["kind"] : ["owner_username"]);
+      if (mode === "deployment") process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "none";
+      await pool.query("UPDATE system_settings SET auto_sync_metrics=$1 WHERE id=1", [
+        mode === "system" ? { override_metrics: true, enabled: false, labels: ["owner_username"] } : {},
+      ]);
+      const scanId = await ownerScan(run, [[mode, "must-not-persist"]], { manual: mode === "manual" });
+      const dimensions = (await pool.query(
+        "SELECT source_dimensions FROM integration_scan_items WHERE scan_id=$1", [scanId],
+      )).rows[0].source_dimensions;
+      assert.equal(Object.hasOwn(dimensions, "owner_username"), false, mode);
+      if (mode !== "manual") await ownerImport(run, mode);
+    }
+    assert.ok((await ownerRows(config)).every(row => row.owner_username === ""));
+  });
+
+  it("retains owner counter and first-scrape timestamps across toggles, renames and overlapping configurations", async () => {
+    const first = await configuration("Same name"); await ownerSettings(first);
+    const run = await start(first);
+    await ownerScan(run, [["a", "alice"], ["b", "bob"], ["unknown", undefined]]);
+    for (const id of ["a", "b", "unknown"]) await ownerImport(run, id);
+    const initial = await createdTotal();
+    const originalRows = await ownerRows(first);
+    const countName = "auto_sync_items_created_detailed_total";
+    const timeName = "auto_sync_last_creation_timestamp_seconds";
+    const firstCounts = await metric(countName), firstTimes = await metric(timeName);
+    assert.deepEqual(firstCounts.map(sample => sample.labels.owner_username).sort(), ["", "alice", "bob"]);
+    assert.ok(firstCounts.every(sample => sample.value === 1));
+    assert.ok(firstTimes.every(sample => sample.value > Date.now() / 1000 - 60));
+    await ownerSettings(first, true, ["kind"]);
+    const hidden = await metric(countName);
+    assert.equal(hidden.length, 1); assert.equal(hidden[0].value, 3);
+    assert.equal(hidden[0].labels.owner_username, "");
+    assert.equal((await metric(timeName))[0].value, Math.max(...firstTimes.map(sample => sample.value)));
+    await ownerSettings(first, false);
+    assert.deepEqual(await metric(countName), []); assert.deepEqual(await metric(timeName), []);
+    await ownerSettings(first);
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "none";
+    assert.ok((await metric(countName)).every(sample => sample.labels.owner_username === ""));
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "owner_username";
+    assert.deepEqual(await metric(countName), firstCounts);
+    assert.deepEqual(await metric(timeName), firstTimes);
+    await pool.query("UPDATE auto_sync_configs SET connection_key='Renamed connection' WHERE id=$1", [first.id]);
+    await ownerScan(run, [["a", "renamed-owner"]]);
+    await ownerImport(run, "a", { name: "Renamed asset" });
+    assert.deepEqual(await ownerRows(first), originalRows, "Rediscovery and renaming do not mint creation events");
+    const inventory = (await pool.query(
+      "SELECT source_dimensions FROM tokens WHERE workspace_id=$1", [workspaceId],
+    )).rows;
+    assert.ok(inventory.every(row => !Object.hasOwn(row.source_dimensions, "owner_username")));
+    assert.equal(await createdTotal(), initial);
+    await finish(run);
+    const second = await configuration("Same name"); await ownerSettings(second);
+    const secondRun = await start(second);
+    await ownerScan(secondRun, [["a", "renamed-owner"], ["new", "alice"]]);
+    await ownerImport(secondRun, "a"); await ownerImport(secondRun, "new");
+    const values = await metric(countName);
+    assert.equal(values.filter(sample => sample.labels.configuration_id === first.id).reduce((n, sample) => n + sample.value, 0), 3);
+    assert.equal(values.filter(sample => sample.labels.configuration_id === second.id).reduce((n, sample) => n + sample.value, 0), 1);
+    assert.equal(await createdTotal(), initial + 1n);
+  });
+
+  it("rolls back owner statistics and inventory when the owner detail write fails", async () => {
+    const config = await configuration(); await ownerSettings(config);
+    const run = await start(config); await ownerScan(run, [["rollback", "alice"]]);
+    const initial = await createdTotal();
+    const name = `reject_owner_${crypto.randomUUID().replaceAll("-", "")}`;
+    await pool.query(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'synthetic owner detail failure'; END $$`);
+    await pool.query(`CREATE TRIGGER ${name} BEFORE INSERT ON auto_sync_creation_stats
+      FOR EACH ROW WHEN (NEW.owner_username <> '') EXECUTE FUNCTION ${name}()`);
+    try {
+      await assert.rejects(ownerImport(run, "rollback"), /synthetic owner detail failure/);
+    } finally {
+      await pool.query(`DROP TRIGGER ${name} ON auto_sync_creation_stats`);
+      await pool.query(`DROP FUNCTION ${name}()`);
+    }
+    assert.deepEqual(await ownerRows(config), []);
+    assert.equal(await createdTotal(), initial);
+    assert.equal((await pool.query("SELECT 1 FROM tokens WHERE workspace_id=$1", [workspaceId])).rowCount, 0);
+  });
+
+  it("upgrades real legacy rows without changing hashes, totals or timestamps and continues the same aggregate", async () => {
+    const config = await configuration();
+    const dimensions = { kind: "gitlab-pat", asset_name: "", project: "", group: "" };
+    const key = crypto.createHash("sha256").update(JSON.stringify(dimensions)).digest("hex");
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      // A transaction-local pre-upgrade table exercises DDL without altering shared fixtures.
+      await client.query(`CREATE TEMP TABLE auto_sync_creation_stats
+        (LIKE public.auto_sync_creation_stats INCLUDING ALL) ON COMMIT DROP`);
+      await client.query("ALTER TABLE pg_temp.auto_sync_creation_stats DROP COLUMN owner_username");
+      await client.query(`INSERT INTO pg_temp.auto_sync_creation_stats
+        (config_id,kind,asset_name,project,group_name,dimension_key,items_created_total,last_created_at)
+        VALUES ($1,'gitlab-pat','','','',$2,7,'2026-01-02T03:04:05Z')`, [config.id, key]);
+      const before = (await client.query("SELECT * FROM pg_temp.auto_sync_creation_stats")).rows[0];
+      const sql = require("node:fs").readFileSync(require("node:path").join(
+        __dirname, "../../apps/api/migrations/111-auto-sync-owner-username.sql"), "utf8");
+      await client.query(sql);
+      const upgraded = (await client.query("SELECT * FROM pg_temp.auto_sync_creation_stats")).rows[0];
+      assert.equal(upgraded.owner_username, "");
+      const { owner_username: _owner, ...unchanged } = upgraded;
+      assert.deepEqual(unchanged, before);
+      await require("../../apps/api/services/autoSyncMetricLabels").recordCreationMetrics(
+        client, { provider: "gitlab", configId: config.id },
+        { source_provider: "gitlab", source_kind: "gitlab-pat", source_dimensions: {} },
+        { enabled: true, labels: ["kind"] },
+      );
+      const continued = (await client.query("SELECT * FROM pg_temp.auto_sync_creation_stats")).rows;
+      assert.equal(continued.length, 1); assert.equal(continued[0].dimension_key, key);
+      assert.equal(continued[0].items_created_total, "8"); assert.equal(continued[0].owner_username, "");
+      assert.ok(continued[0].last_created_at > before.last_created_at);
+    } finally {
+      await client.query("ROLLBACK"); client.release();
+    }
   });
 
   it("reports environment label ownership through the integration policy without locking unrelated fields",async()=>{

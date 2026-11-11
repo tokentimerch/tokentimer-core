@@ -34,8 +34,15 @@ export const METRIC_LABEL_CHOICES = [
   ['asset_name', 'Token / asset name'],
   ['project', 'Project / repository'],
   ['group', 'Source group'],
+  ['owner_username', 'GitLab PAT owner username'],
 ];
-const EXTRA = ['asset_name', 'project', 'group'];
+export const HIGH_CARDINALITY_METRIC_LABELS = [
+  'asset_name',
+  'project',
+  'group',
+  'owner_username',
+];
+const EXTRA = HIGH_CARDINALITY_METRIC_LABELS;
 export default function AutoSyncMetricSettings({
   value = DEFAULT_METRIC_SETTINGS,
   onChange,
@@ -237,8 +244,10 @@ export default function AutoSyncMetricSettings({
               </Text>
             </Alert>
             <Text fontSize='xs' color={muted}>
-              Asset names and project/group details cover future creations only.
-              Previous samples remain until Prometheus retention expires.
+              Asset metadata covers future inventory creations only, not expiry.
+              GitLab PAT owner usernames are best effort, not the importing
+              user. Existing inventory is not enriched retroactively. Previous
+              samples remain until Prometheus retention expires.
             </Text>
           </VStack>
         </AccordionPanel>

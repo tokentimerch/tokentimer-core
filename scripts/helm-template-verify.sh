@@ -732,4 +732,26 @@ for hops in 0 1 2; do
   assert_contains "${proxy_value}" "TRUST_PROXY_HOPS: \"${hops}\"" "explicit proxy trust hops ${hops} preserved"
 done
 
+echo "==> verify explicit owner label permission and selection"
+owner_defaults="$(helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --show-only templates/configmap.yaml)"
+assert_contains "${owner_defaults}" 'AUTO_SYNC_METRICS_EXTRA_LABELS: ""' "owner label permission defaults empty"
+assert_contains "${owner_defaults}" 'AUTO_SYNC_METRICS_LABELS: ""' "owner label selection defaults empty"
+owner_custom="$(helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set monitoring.metrics.autoSyncEnabled=true \
+  --set 'monitoring.metrics.extraLabels={owner_username}' \
+  --set 'monitoring.metrics.autoSyncLabels={kind,owner_username}' \
+  --show-only templates/configmap.yaml)"
+assert_contains "${owner_custom}" 'AUTO_SYNC_METRICS_EXTRA_LABELS: "owner_username"' "explicit owner label permission"
+assert_contains "${owner_custom}" 'AUTO_SYNC_METRICS_LABELS: "kind,owner_username"' "explicit owner label selection"
+for setting in extraLabels autoSyncLabels; do
+  for invalid in '{unknown}' '{owner_username,owner_username}' '{none,owner_username}'; do
+    if helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com \
+      --set monitoring.metrics.autoSyncEnabled=true \
+      --set "monitoring.metrics.${setting}=${invalid}" >/dev/null 2>&1; then
+      fail "accepted invalid ${setting}=${invalid}"
+    fi
+  done
+done
+
 echo "helm-template-verify: ok -> ${OUT}"
