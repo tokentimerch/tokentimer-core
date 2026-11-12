@@ -17,9 +17,9 @@ Total skips found: 187
 | `packages/agent/scripts/host/windows-host.test.js` | 91 | Windows real-host discovery and service-host qualification | dynamic (this.skip() / t.skip()) | `platform` |
 | `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 14 | actual installer filesystem branches preserve literal brackets and wildcard siblings | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/install-agent-sh.test.js` | 36 | install-agent.sh polkit grants on re-run | describe(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/installer-smoke.test.js` | 370 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `packages/agent/scripts/pack-release.test.js` | 207 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `packages/agent/scripts/pack-release.test.js` | 216 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/scripts/installer-smoke.test.js` | 373 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `packages/agent/scripts/pack-release.test.js` | 208 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `packages/agent/scripts/pack-release.test.js` | 217 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `platform` |
 | `packages/agent/scripts/windows-upgrade-recovery.test.js` | 130 | restores the original application after a process dies between renames | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/windows-upgrade-recovery.test.js` | 132 | restores the original application and service after activation | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/windows-upgrade-recovery.test.js` | 135 | recovery refuses any quarantined launcher intent and enumeration errors | test(..., { skip }) option-object | `platform` |

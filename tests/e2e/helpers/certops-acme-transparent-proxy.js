@@ -170,6 +170,17 @@ function createOrderObserver({ authority, upstreamDirectory }) {
     },
   };
 }
+// Expose only fixed response categories, never CA-provided detail or identifiers.
+function pebbleProblemCategory(status, parsed) {
+  if (!Number.isInteger(status) || status < 400 || status > 599 || !parsed || typeof parsed !== "object") return null;
+  const known = new Map([
+    ["urn:ietf:params:acme:error:badNonce", "badNonce"],
+    ["urn:ietf:params:acme:error:dns", "dns"],
+    ["urn:ietf:params:acme:error:unauthorized", "unauthorized"],
+    ["urn:ietf:params:acme:error:rateLimited", "rateLimited"],
+  ]);
+  return known.get(parsed.type) || null;
+}
 function publicCounters() {
   return {
     received: 0,
@@ -177,6 +188,12 @@ function publicCounters() {
     refused: 0,
     acceptedAccounts: 0,
     acceptedOrders: 0,
+    controlledBadNonceResponses: 0,
+    badNonceResponses: 0,
+    dnsProblemResponses: 0,
+    unauthorizedResponses: 0,
+    rateLimitedResponses: 0,
+    invalidAuthorizations: 0,
     validAuthorizations: 0,
     readyOrders: 0,
     forwardedFinalizations: 0,
@@ -218,6 +235,7 @@ async function startOwnedAcmeProxy({
     orderObserver,
     lastRefusedFinalize = null,
     failure = null,
+    badNonceArmed = false,
     closed = false,
     failed = false;
   const server = https.createServer(
@@ -249,6 +267,30 @@ async function startOwnedAcmeProxy({
     const body = await readBounded(request);
     counters.received++;
     perStage[selected.stage].received++;
+    if (badNonceArmed && selected.stage === "new-order") {
+      badNonceArmed = false;
+      // Retrieve a fresh nonce from the same pinned local CA; never record it.
+      const nonce = await new Promise((resolve, reject) => {
+        const upstream = https.request(new URL(selected.upstreamOrigin), {
+          path: "/nonce-plz", method: "HEAD", headers: { host: selected.host },
+          ca: upstreamCaPem, rejectUnauthorized: true, timeout: 15000, agent: false,
+        }, reply => {
+          reply.resume();
+          if (reply.statusCode !== 200 && reply.statusCode !== 204) return reject(new Error("Owned nonce retrieval failed"));
+          resolve(reply.headers["replay-nonce"]);
+        });
+        upstreamRequests.add(upstream);
+        upstream.once("close", () => upstreamRequests.delete(upstream));
+        upstream.once("error", reject);
+        upstream.once("timeout", () => upstream.destroy(new Error("Owned nonce retrieval timed out")));
+        upstream.end();
+      });
+      assert.ok(typeof nonce === "string" && /^[A-Za-z0-9_-]{1,256}$/.test(nonce));
+      counters.controlledBadNonceResponses++;
+      response.writeHead(400, { "content-type": "application/problem+json", "replay-nonce": nonce })
+        .end(JSON.stringify({ type: "urn:ietf:params:acme:error:badNonce", detail: "JWS has an invalid anti-replay nonce" }));
+      return;
+    }
     if (
       failure &&
       (failure === selected.stage ||
@@ -327,6 +369,12 @@ async function startOwnedAcmeProxy({
               } catch {
                 /* Certificate responses need not be JSON. */
               }
+              const problem = pebbleProblemCategory(status, parsed);
+              if (problem === "badNonce") counters.badNonceResponses++;
+              if (problem === "dns") counters.dnsProblemResponses++;
+              if (problem === "unauthorized") counters.unauthorizedResponses++;
+              if (problem === "rateLimited") counters.rateLimitedResponses++;
+              if (selected.stage === "authorization" && status === 200 && parsed?.status === "invalid") counters.invalidAuthorizations++;
               if (selected.stage === "account" && [200, 201].includes(status))
                 counters.acceptedAccounts++;
               if (selected.stage === "new-order" && status === 201)
@@ -407,6 +455,12 @@ async function startOwnedAcmeProxy({
   });
   return {
     directory: `https://${authority}/dir`,
+    armBadNonceOnce() {
+      assert.equal(closed, false);
+      assert.equal(failure, null);
+      assert.equal(badNonceArmed, false);
+      badNonceArmed = true;
+    },
     setFailure(value) {
       assert.ok(
         [
@@ -477,5 +531,6 @@ module.exports = {
   readBounded,
   identifiersDigest,
   createOrderObserver,
+  pebbleProblemCategory,
   startOwnedAcmeProxy,
 };

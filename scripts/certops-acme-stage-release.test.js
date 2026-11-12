@@ -108,3 +108,17 @@ test("reporter reads only bounded client-bound sidecars and fingerprints the ful
     fs.rmSync(root, { recursive: true });
   }
 });
+
+
+test("native ACME release evidence refuses a missing or skipped controlled badNonce retry", () => {
+  for (const scope of report.SCOPES) {
+    const slot = require("./certops-qualification-manifest").slots.find(s => s.suite === scope);
+    assert.ok(slot.requiredTests.includes(helper.NONCE_SCENARIO), `${scope} must require controlled nonce recovery`);
+  }
+  for (const change of ["missing", "skipped"]) {
+    const value = fixture.artifact();
+    if (change === "missing") value.events = value.events.filter(e => e.name !== helper.NONCE_SCENARIO);
+    else value.events.find(e => e.name === helper.NONCE_SCENARIO).skip = true;
+    assert.ok(errors(value).length, `${change} retry event must not qualify`);
+  }
+});

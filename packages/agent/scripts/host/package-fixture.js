@@ -36,7 +36,7 @@ async function qualifyPackage({ powershell, run, workDir, gate }) {
   assertNoPrivateKeyMaterial(artifact.tarballPath);
   const extracted = path.join(artifactDir, "extracted");
   fs.mkdirSync(extracted);
-  run("tar.exe", ["-xzf", artifact.tarballPath, "-C", extracted]);
+  run("tar.exe", ["-xzf", `../${path.basename(artifact.tarballPath)}`], { cwd: extracted });
   const root = path.join(extracted, "package");
   const expected = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json")));
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"))).version, expected.version);

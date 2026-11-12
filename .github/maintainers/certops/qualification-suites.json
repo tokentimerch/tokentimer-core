@@ -132,6 +132,11 @@
       "kind": "host",
       "suite": "browser-certificate-surfaces",
       "source": "scripts/certops-browser.js",
+      "requiredSources": [
+        "apps/dashboard/src/components/certops/RenewalProfilesPanel.jsx",
+        "apps/api/routes/certops.js",
+        "apps/api/services/certops/renewalProfileAdmin.js"
+      ],
       "environmentGroup": "job-decisions-api-environment"
     },
     {
@@ -298,6 +303,7 @@
         "real ACME: manual and default scheduler renewals reuse the same local key",
         "real-acme-new-order-transport-refusal",
         "real-acme-finalize-transport-refusal",
+        "real-acme-controlled-badnonce-retry",
         "real ACME: production worker default minute cron renews twice",
         "real-acme-public-bulk-two-native-renewals",
         "real-acme-public-native-renewal-setup",
@@ -834,7 +840,8 @@
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
-        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence"
+        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence",
+        "real-acme-controlled-badnonce-retry"
       ],
       "requiredSourceGroup": "real-agent-acmesh-filesystem",
       "environmentGroup": "alpine-real-acme-certbot-environment"
@@ -3784,7 +3791,7 @@
         "real-agent-acmesh-eab-filesystem"
       ],
       "implementation": "tests/e2e/acme-real-journey.js; tests/e2e/certops-agent-e2e.test.js; scripts/certops-real-acme.js",
-      "remainingCoverage": "Mandatory source stops only its owned real agent while two production scheduler sweeps contend for one naturally due renewal generation, asserting exactly one job before resuming. A separate actual production worker source additionally uses unmodified default minute cron for two genuine naturally due native CA renewals, with retained pidfd stop/wait/drain. Native execution remains pending; additional overdue-window and cross-process timing permutations are not implied."
+      "remainingCoverage": "Mandatory source stops only its owned real agent while two production scheduler sweeps contend for one renewal generation due under an explicit profile lead, asserting exactly one job before resuming. A separate actual production worker source additionally uses unmodified default minute cron for two native CA renewals due under that explicit lead, with retained pidfd stop/wait/drain. Native execution remains pending; additional overdue-window and cross-process timing permutations are not implied."
     },
     {
       "id": "renewal.profile-disabled",
@@ -3795,7 +3802,7 @@
         "core-disposable-api-postgres-openssl"
       ],
       "implementation": "tests/e2e/certops-profile-permissions-e2e.test.js; tests/e2e/certops-profiles-api-e2e.test.js; tests/e2e/certops-renewal-toggle-e2e.test.js; tests/e2e/helpers/certops-acme-disabled-profile.js",
-      "remainingCoverage": "Seven focused actual public API/PostgreSQL and production SQL-NOW scheduler cases cover disabled automatic pickup, manual/bulk admission, batch exclusion and re-enable contention. Mandatory Ubuntu certbot source additionally reopens an actual owned native certificate, disables its profile publicly, proves exclusion from the production default-clock due selector, and completes a genuine signed manual renewal with a new CA leaf/key and independently trusted TLS while the profile remains disabled. Public re-enable restores selector eligibility; the original serving sibling and execution policy remain unchanged. Native execution is pending. This narrow native composition does not claim a scheduler sweep, background worker, or archived-profile lifecycle."
+      "remainingCoverage": "Seven focused actual public API/PostgreSQL and production SQL-NOW scheduler cases cover disabled automatic pickup, manual/bulk admission, batch exclusion and re-enable contention. Mandatory Ubuntu certbot source additionally reopens an actual owned native certificate, disables its profile publicly, uses an explicit 30-day profile lead and proves exclusion from the production default-clock due selector, and completes a genuine signed manual renewal with a new CA leaf/key and independently trusted TLS while the profile remains disabled. Public re-enable restores selector eligibility; the original serving sibling and execution policy remain unchanged. Native execution is pending. This narrow native composition does not claim a scheduler sweep, background worker, or archived-profile lifecycle."
     },
     {
       "id": "renewal.profile-edit",
@@ -4449,7 +4456,7 @@
         "real-agent-alpine-acmesh"
       ],
       "implementation": "scripts/certops-alpine-bootstrap.sh; tests/e2e/acme-real-journey.js; .github/workflows/certops-alpine-acme-qualification.yml",
-      "implementationNotes": "Implemented strict Alpine foreground source runs both real ACME clients through issuance, independently trusted TLS and two naturally due renewals. Native lane execution remains pending. OpenRC/systemd supervision, other musl versions and EAB are separate outcomes and are not credited from this foreground process."
+      "implementationNotes": "Implemented strict Alpine foreground source runs both real ACME clients through issuance, independently trusted TLS and two renewals due under an explicit profile lead. Native lane execution remains pending. OpenRC/systemd supervision, other musl versions and EAB are separate outcomes and are not credited from this foreground process."
     },
     {
       "id": "deploy.missing-dependency",
@@ -4775,7 +4782,7 @@
         "disposable-browser-real-api"
       ],
       "implementation": "tests/e2e/acme-real-journey.js",
-      "remainingCoverage": "Mandatory native source now uses public Core REST issuance, production derived profile and actual SQL-NOW scheduler selection through two naturally due renewals, distinct trusted served leaves and key rotation; separate real browser/API suite has focused execution evidence. Full CA/agent native lane and composed end-to-end release workflow have not executed, and remaining certificate UI journeys are not implied by supporting browser navigation/profile checks."
+      "remainingCoverage": "Mandatory native source now uses public Core REST issuance, production derived profile and actual SQL-NOW scheduler selection through two renewals due under an explicit profile lead, distinct trusted served leaves and key rotation; separate real browser/API suite has focused execution evidence. Full CA/agent native lane and composed end-to-end release workflow have not executed, and remaining certificate UI journeys are not implied by supporting browser navigation/profile checks."
     },
     {
       "id": "governance.cloud-journey",
@@ -5137,6 +5144,7 @@
   ],
   "sourceGroups": {
     "windows-host": [
+      "packages/agent/scripts/host/nested-test-env.js",
       "packages/agent/scripts/host/discovery-http-sys-fixture.js",
       "packages/agent/scripts/host/cng-export-fixture.js",
       "packages/agent/scripts/host/iis-shared-port-fixture.js",
@@ -5941,6 +5949,7 @@
     ],
     "shared-acme-real-journey-4": [
       "tests/e2e/acme-real-journey.js",
+      "tests/e2e/helpers/certops-api-fixture.js",
       "scripts/certops-real-acme.js",
       "tests/e2e/helpers/certops-acme-lease-loss.js",
       "tests/e2e/helpers/certops-acme-command-barrier.js",
@@ -6047,6 +6056,9 @@
       "pnpm-lock.yaml"
     ],
     "shared-certops-adcs-preflight-cohorts-6": [
+      "apps/api/services/certops/renewalProfileAdmin.js",
+      "apps/api/services/certops/renewalThreshold.js",
+      "tests/e2e/helpers/certops-adcs-adaptive-lead.js",
       "tests/e2e/helpers/certops-adcs-preflight-cohorts.js",
       "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
       "tests/e2e/helpers/certops-adcs-recovery.js",
@@ -8935,6 +8947,7 @@
       "real ACME: manual and default scheduler renewals reuse the same local key",
       "real-acme-new-order-transport-refusal",
       "real-acme-finalize-transport-refusal",
+      "real-acme-controlled-badnonce-retry",
       "real ACME: production worker default minute cron renews twice"
     ]
   }

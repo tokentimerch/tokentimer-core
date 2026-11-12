@@ -3,7 +3,7 @@
  *
  * In Ubuntu 24.04/certbot/noEAB after result-outbox restart, reopen the second exact
  * bulk certificate's own management period with its real stored profile. Production
- * SQL-NOW/default-threshold/terminal-status selector must include it, then exclude it
+ * SQL-NOW selector with an explicitly selected 30-day profile lead must include it, then exclude it
  * after public autoRenewEnabled:false. Real public manual renewal must still get current
  * signed claim, actual CA leaf/new serial+SPKI, matching protected key, trusted TLS and
  * claim-bound evidence while stored profile stays disabled. Public re-enable must make
@@ -30,6 +30,7 @@ const bulk = require("./certops-acme-bulk-renewal"),
   scheduler = require("../../../apps/api/services/certops/renewalScheduler");
 const SCOPE = "native-manual-renewal-under-disabled-automatic-profile";
 const SCENARIO = "real-acme-disabled-profile-native-manual-renewal";
+const MILESTONES = Object.freeze(["disabled-source-verified", "disabled-lead-saved", "disabled-initial-due", "disabled-profile-off", "disabled-excluded", "disabled-manual-admitted", "disabled-manual-succeeded", "disabled-material-verified", "disabled-reenabled-due", "disabled-proof-verified"]);
 const FIELD = "nativeAcmeDisabledProfile",
   SIDECAR = "qualification-results/acme-disabled-profile-proof.json";
 const FLAGS = Object.freeze([
@@ -120,6 +121,14 @@ function verifyAgainstBulk(p, previous) {
   );
   return true;
 }
+function assertOwnedLeadEdit(before, after) {
+  const { OPERATOR_OWNED_METADATA_KEY } = require("../../../apps/api/services/certops/renewalProfileDerivation");
+  assert.deepEqual(after, {
+    ...before,
+    renew_before_days: 30,
+    public_metadata: { ...before.public_metadata, [OPERATOR_OWNED_METADATA_KEY]: true },
+  }, "Lead edit must preserve the execution policy and record operator ownership");
+}
 function assertCleanupSafe(root) {
   assert.ok(
     !active.has(path.resolve(root)) && !fs.existsSync(path.join(root, GUARD)),
@@ -127,6 +136,7 @@ function assertCleanupSafe(root) {
   );
 }
 async function qualify(c) {
+  const mark = name => { try { c.onMilestone?.(name); } catch { /* Diagnostics must not replace the native result. */ } };
   assert.equal(process.platform, "linux");
   assert.equal(c.acmeKind, "certbot");
   bulk.verifyProof(c.bulkProof);
@@ -177,7 +187,7 @@ async function qualify(c) {
         [c.workspaceId, subject],
       )
     ).rows[0];
-  const original = await profile();
+  let original = await profile();
   const primaryProfile = await profile(c.certificateId);
   assert.ok(primaryProfile && primaryProfile.id !== original.id);
   assert.match(original.id, UUID);
@@ -189,6 +199,7 @@ async function qualify(c) {
   const primaryCert = reader(c.certPath),
     primaryKey = reader(c.keyPath),
     primaryFp = await c.servedFingerprint();
+  mark("disabled-source-verified");
   const guard = path.join(root, GUARD),
     bytes = Buffer.from(crypto.randomBytes(32).toString("hex"));
   let complete = false,
@@ -236,6 +247,15 @@ async function qualify(c) {
   const tlsOptions = c.primaryTlsOptions();
   assert.ok(tlsOptions.ca, "Explicit owned CA trust required");
   try {
+    // A fresh short-lived leaf is intentionally not due under adaptive defaults.
+    // Set a real operator override before asserting the due selector's behavior.
+    const beforeLead = original;
+    const lead = await c.publicSession.request(`${prefix}/profiles/${original.id}`, "PATCH", { renewBeforeDays: 30 });
+    assert.equal(lead.status, 200);
+    assert.equal(lead.body.renewBeforeDays, 30);
+    original = await profile();
+    assertOwnedLeadEdit(beforeLead, original);
+    mark("disabled-lead-saved");
     server = tls.createServer(
       {
         cert: before.cert,
@@ -317,6 +337,7 @@ async function qualify(c) {
     const periodId = readd.body.periodId;
     assert.match(periodId, UUID);
     assert.ok((await due()).has(certificateId));
+    mark("disabled-initial-due");
     const toggle = async (enabled) => {
       const changed = await c.publicSession.request(
         `${prefix}/profiles/${original.id}`,
@@ -328,7 +349,9 @@ async function qualify(c) {
       await samePolicy(enabled ? "active" : "disabled");
     };
     await toggle(false);
+    mark("disabled-profile-off");
     assert.equal((await due()).has(certificateId), false);
+    mark("disabled-excluded");
     const submitted = await c.publicSession.request(`${prefix}/jobs`, "POST", {
       operation: "renew",
       subjectType: "managed_certificate",
@@ -339,6 +362,7 @@ async function qualify(c) {
     assert.equal(submitted.status, 201);
     const jobId = submitted.body.job.id;
     assert.match(jobId, UUID);
+    mark("disabled-manual-admitted");
     const job = await c.waitUntil(async () => {
       const row = (
         await query(
@@ -353,6 +377,7 @@ async function qualify(c) {
         : null;
     });
     assert.equal(job.status, "succeeded");
+    mark("disabled-manual-succeeded");
     assert.equal(job.agent_id, c.agentId);
     assert.equal(job.operation, "renew");
     assert.equal(job.source, "api");
@@ -374,7 +399,7 @@ async function qualify(c) {
     assert.ok(
       isDeepStrictEqual(
         job.payload.renewalProfile,
-        original.public_metadata.renewalProfile,
+        require("./certops-acme-key-reuse").expectedProfileSnapshot(original),
       ),
       "Actual signed snapshot changed execution policy",
     );
@@ -399,9 +424,11 @@ async function qualify(c) {
       ),
     );
     await samePolicy("disabled");
+    mark("disabled-material-verified");
     assert.equal((await due()).has(certificateId), false);
     await toggle(true);
     assert.ok((await due()).has(certificateId));
+    mark("disabled-reenabled-due");
     const stopped = await c.publicSession.request(
       `${prefix}/management-periods/${periodId}/stop`,
       "POST",
@@ -444,6 +471,7 @@ async function qualify(c) {
       ...Object.fromEntries(FLAGS.map((x) => [x, true])),
     };
     verifyAgainstBulk(proof, c.bulkProof);
+    mark("disabled-proof-verified");
     return proof;
   } finally {
     await resource.close();
@@ -452,6 +480,7 @@ async function qualify(c) {
 module.exports = {
   SCOPE,
   SCENARIO,
+  MILESTONES,
   FIELD,
   SIDECAR,
   FLAGS,
@@ -459,5 +488,6 @@ module.exports = {
   verifyProof,
   verifyAgainstBulk,
   assertCleanupSafe,
+  assertOwnedLeadEdit,
   qualify,
 };

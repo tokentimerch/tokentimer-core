@@ -40,13 +40,14 @@ test("disabled automatic renewal preserves manual admission and SQL batch fairne
   await gate.preflight();ready=true;
   assert.equal((await fixture.pool.query("SELECT count(*)::int AS n FROM certops_management_periods WHERE workspace_id<>$1 AND ended_at IS NULL AND automation_enabled=TRUE",[fixture.workspaceId])).rows[0].n,0,"Foreign automation refuses global sweep");
   assert.equal((await fixture.request(`${prefix}/settings`,"PUT",{certOpsRequireApprovalAlways:true,reason:"Owned renewal toggle fixture"})).status,200);
+  // The explicit profile lead makes fresh two-day certificates due for toggle testing.
   for(let index=0;index<2;index++){
    const host=`toggle-${index}.example.test`;
    assert.equal(spawnSync("openssl",["req","-x509","-newkey","rsa:2048","-nodes","-keyout",`${index}.key`,"-out",`${index}.crt`,"-days","2","-subj",`/CN=${host}`,"-addext",`subjectAltName=DNS:${host}`],{cwd:directory,stdio:"ignore",timeout:20000}).status,0);
    const imported=await fixture.request(`${prefix}/certificates`,"POST",{certificatePem:fs.readFileSync(path.join(directory,`${index}.crt`),"utf8")});assert.equal(imported.status,201);items.push(imported.body.items[0]);
    const target={type:"domain",reference:host,certPath:path.join(directory,`${index}-deployed.crt`)},profile={schemaVersion:1,profileId:null,profileName:`Toggle ${index}`,sanPolicy:{mode:"exact",sans:[host],allowWildcards:false},keyAlgorithm:"rsa",keySize:2048,keyRotationPolicy:{rotateOnRenew:true},preferredChain:null,ca:{endpoint:"https://renew-toggle.invalid/directory",accountRef:null,eabRef:null},acme:{kind:"certbot",commandRef:"owned.toggle"},dns:{provider:"cloudflare",zone:"example.test"},deploymentTargets:[target],target,verification:{host,port:443,requireMatch:true}};
    policies.push(profile);
-   const profileId=(await fixture.pool.query("INSERT INTO certificate_profiles(workspace_id,name,key_mode,public_metadata,created_by) VALUES($1,$2,'agent-local',$3,$4) RETURNING id",[fixture.workspaceId,`Toggle ${index}`,JSON.stringify({renewalProfile:profile}),fixture.userId])).rows[0].id;profiles.push(profileId);
+   const profileId=(await fixture.pool.query("INSERT INTO certificate_profiles(workspace_id,name,key_mode,public_metadata,created_by,renew_before_days) VALUES($1,$2,'agent-local',$3,$4,30) RETURNING id",[fixture.workspaceId,`Toggle ${index}`,JSON.stringify({renewalProfile:profile}),fixture.userId])).rows[0].id;profiles.push(profileId);
    await fixture.pool.query("UPDATE managed_certificates SET key_mode='agent-local',profile_id=$3 WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,items[index].id,profileId]);
    const period=(await fixture.pool.query("SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",[fixture.workspaceId,items[index].id])).rows[0];assert.ok(period);
    assert.equal((await fixture.request(`${prefix}/sources/${items[index].id}/replace-management`,"POST",{periodId:period.id,renewalProfileId:profileId,automationEnabled:true})).status,201);

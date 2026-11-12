@@ -307,7 +307,7 @@ async function listPersonalAccessTokens({
   }
 }
 
-async function listUsers({ baseUrl, token, maxItems = 500 }) {
+async function listUsers({ baseUrl, token, maxItems = 500, onError }) {
   const users = [];
   let page = 1;
   const perPage = Math.min(100, maxItems);
@@ -333,6 +333,7 @@ async function listUsers({ baseUrl, token, maxItems = 500 }) {
       if (data.length < perPage) break;
       page++;
     } catch (e) {
+      onError?.(e);
       if (e.status === 404 || e.status === 403) break;
       throw e;
     }
@@ -874,11 +875,26 @@ async function scanGitLab({
           try {
             // Build user cache (fetch all users once)
             const userCache = new Map();
-            const users = await listUsers({
-              baseUrl: normalizedUrl,
-              token,
-              maxItems: 10000, // Cache up to 10000 users
-            });
+            let ownerLookupsStopped = false;
+            const stopOwnerLookups = (error) => {
+              if ([401, 403, 405, 429, 501].includes(error.status)) {
+                ownerLookupsStopped = true;
+              }
+            };
+            let users = [];
+            try {
+              users = await listUsers({
+                baseUrl: normalizedUrl,
+                token,
+                maxItems: 10000, // Cache up to 10000 users
+                onError: (error) => {
+                  stopOwnerLookups(error);
+                  if (error.status === 404) ownerLookupsStopped = true;
+                },
+              });
+            } catch (_error) {
+              // Owner enrichment must not prevent PAT inventory enumeration.
+            }
 
             for (const user of users) {
               userCache.set(user.id, {
@@ -888,6 +904,38 @@ async function scanGitLab({
             }
 
             logger.info(`Built user cache with ${userCache.size} users`);
+
+            let ownerLookups = 0;
+            let ownerLookupBudgetMs = 10000;
+            const resolveOwner = async (userId) => {
+              if (!Number.isInteger(userId) || userId <= 0) return null;
+              if (userCache.has(userId)) return userCache.get(userId);
+              if (ownerLookupsStopped || ownerLookups >= 20 || ownerLookupBudgetMs <= 0) return null;
+
+              ownerLookups++;
+              userCache.set(userId, null);
+              const lookupStarted = Date.now();
+              try {
+                // Inactive users and users beyond the bulk cap still own PATs.
+                const user = await gitlabRequest({
+                  baseUrl: normalizedUrl,
+                  token,
+                  path: `/api/v4/users/${userId}`,
+                  timeout: Math.min(5000, ownerLookupBudgetMs),
+                });
+                if (user?.id === userId && typeof user.username === "string") {
+                  userCache.set(userId, {
+                    username: user.username,
+                    is_admin: user.is_admin === true,
+                  });
+                }
+              } catch (error) {
+                stopOwnerLookups(error);
+              } finally {
+                ownerLookupBudgetMs -= Math.max(1, Date.now() - lookupStarted);
+              }
+              return userCache.get(userId);
+            };
 
             // Now fetch all PATs with pagination
             let page = 1;
@@ -964,7 +1012,7 @@ async function scanGitLab({
                 }
 
                 // Lookup user from cache
-                const user = pat.user_id ? userCache.get(pat.user_id) : null;
+                const user = await resolveOwner(pat.user_id);
                 const username = user?.username || null;
                 const isUserAdmin = user?.is_admin || false;
 
@@ -999,6 +1047,7 @@ async function scanGitLab({
                   created_at: pat.created_at || null,
                   last_used_at: pat.last_used_at || null,
                   // Include actual owner information
+                  owner_username: username,
                   gitlab_owner: username,
                   gitlab_owner_is_admin: isUserAdmin,
                 });
@@ -1087,6 +1136,11 @@ async function scanGitLab({
                 scopes: pat.scopes || [],
                 created_at: pat.created_at || null,
                 last_used_at: pat.last_used_at || null,
+                owner_username:
+                  pat.user_id === currentUser.id &&
+                  typeof currentUser.username === "string"
+                    ? currentUser.username || null
+                    : null,
               });
               patsFound++;
             }

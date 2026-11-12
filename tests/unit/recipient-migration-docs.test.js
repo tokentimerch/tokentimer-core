@@ -16,8 +16,11 @@ test("recipient rollout guidance uses the actual canonical migration identities"
     version("recipient_channel_verification"),
     version("weekly_digest_recipient_claim_token"),
   ];
+  const numbering = readFileSync(join(__dirname, "../../docs/migrations/open-pr-numbering.md"), "utf8");
+  for (const name of ["recipient_channel_verification", "weekly_digest_recipient_claim_token", "recipient_member_verification"]) {
+    assert.match(numbering, new RegExp(`\\| ${version(name)} \\| ${name} \\|`));
+  }
   for (const [file, pattern] of [
-    ["docs/recipient-verification.md", /Canonical main uses migration (\d+) for recipient verification and (\d+) for weekly-digest claim tracking/],
     ["CHANGELOG.md", /canonical main uses (\d+) for recipient verification and (\d+) for digest claims/],
   ]) {
     const match = readFileSync(join(__dirname, "../..", file), "utf8").match(pattern);

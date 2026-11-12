@@ -38,7 +38,18 @@ const mcpAppendNames = [
   "certops_issuance_identity_transfer",
 ];
 
+function assertUnambiguousRotationHistory(recorded = [], registry = []) {
+  const canonical = new Map(registry.map(({ version, name }) => [version, name]));
+  const earlierPreview = recorded.some((row) => row.version >= 70 && row.version < 109 &&
+    canonical.has(row.version) && canonical.get(row.version) !== row.name);
+  if (!earlierPreview && recorded.some((row) => [109, 110].includes(row.version) &&
+      ["agent_credential_rotations", "agent_credential_rotation_ack"].includes(row.name))) {
+    throw new Error("Unsupported ambiguous agent credential rotation preview history");
+  }
+}
+
 function composeMigrations(migrations, recorded = []) {
+  assertUnambiguousRotationHistory(recorded, migrations);
   for (const [offset, name] of canonical.entries()) {
     const matches = migrations.filter((entry) => entry.name === name);
     if (matches.length !== 1 || matches[0].version !== 70 + offset)
@@ -236,6 +247,8 @@ function composeMigrations(migrations, recorded = []) {
       );
   }
   const dependencies = {
+    agent_credential_rotation_ack: ["agent_credential_rotations"],
+    recipient_member_verification: ["recipient_channel_verification"],
     certops_issuance_identity_transfer: ["certops_issuance_job_identity"],
     certops_issuance_job_identity: ["operator_issuance"],
     operator_issuance: ["operator_action_requests"],
@@ -248,6 +261,7 @@ function composeMigrations(migrations, recorded = []) {
     auto_sync_run_metrics: ["auto_sync_provider_stats"],
     auto_sync_metric_labels: ["auto_sync_run_metrics"],
     auto_sync_system_metrics: ["auto_sync_metric_labels"],
+    auto_sync_owner_username: ["auto_sync_metric_labels"],
     certops_distribution_lifecycle: ["certops_installed_file_distribution"],
     certops_distribution_incident_delivery: ["certops_distribution_lifecycle"],
     certops_material_cleanup: ["certops_distribution_lifecycle"],
@@ -324,4 +338,4 @@ function composeMigrations(migrations, recorded = []) {
     )
     .sort((a, b) => a.version - b.version);
 }
-module.exports = { composeMigrations };
+module.exports = { composeMigrations, assertUnambiguousRotationHistory };

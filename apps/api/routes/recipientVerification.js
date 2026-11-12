@@ -73,6 +73,9 @@ router.post(
         channel,
         actorUserId: req.user.id,
       });
+      if (invitation.alreadyVerified) {
+        return res.status(200).json({ status: "verified", channel, delivery_basis: "verified_member" });
+      }
       if (invitation.withholdDelivery || !invitation.token) {
         await audit(req, "RECIPIENT_VERIFICATION_RESUBSCRIBE_REQUIRED", {
           contact_id: req.params.contactId,

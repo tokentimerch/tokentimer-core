@@ -26,6 +26,8 @@ test("published admin metric request validation matches the route's real setting
   const validate = new Ajv({ strict: false }).compile(endpoint.put.requestBody.content["application/json"].schema);
   const valid = { enabled: true, labels: ["configuration_name", "kind"], override_metrics: false };
   for (const value of [valid, { ...valid, monitoring_group: "Production" },
+    { ...valid, labels: ["owner_username"] },
+    { ...valid, labels: ["configuration_name", "monitoring_group", "kind", "asset_name", "project", "group", "owner_username"] },
     { ...valid, enabled: "true" }, { ...valid, labels: ["unknown"] },
     { ...valid, labels: ["kind", "kind"] }, { ...valid, labels: "kind" },
     { ...valid, override_metrics: "false" }, { ...valid, unknown: true },
@@ -34,4 +36,16 @@ test("published admin metric request validation matches the route's real setting
     const accepted = typeof value.enabled === "boolean" && Array.isArray(value.labels) && !systemMetricSettingsError(value);
     assert.equal(validate(value), accepted, JSON.stringify(value));
   }
+});
+test("connection settings and deployment policy publish the owner label", () => {
+  const schemas = spec.components.schemas;
+  const settings = schemas.AutoSyncMetricSettings;
+  const validate = new Ajv({ strict: false }).compile(settings);
+  assert.equal(validate({ enabled: true, labels: ["owner_username"] }), true);
+  assert.equal(validate({ labels: ["owner_username", "owner_username"] }), false);
+  assert.equal(validate({ labels: ["unknown"] }), false);
+  assert.ok(schemas.AutoSyncMetricPolicy.properties.labels.items.enum.includes("owner_username"));
+  assert.ok(schemas.AutoSyncMetricPolicy.properties.extra_labels.items.enum.includes("owner_username"));
+  const policy = spec.paths["/api/v1/workspaces/{id}/auto-sync"].get.responses["200"].content["application/json"].schema.properties.metric_label_policy;
+  assert.ok(policy.properties.extra_labels.items.enum.includes("owner_username"));
 });

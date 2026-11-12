@@ -41,6 +41,7 @@ async function applySchema() {
     path.join(__dirname, "../../packages/recipient-verification/migration.sql"),
     "utf8",
   ));
+  await require("../helpers/recipient-member-schema.cjs")(pool);
 }
 
 test.before(async () => {

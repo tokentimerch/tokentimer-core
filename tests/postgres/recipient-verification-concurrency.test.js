@@ -41,6 +41,7 @@ async function applySchema() {
   `);
   await pool.query(MIGRATION);
   await pool.query(MIGRATION);
+  await require("../helpers/recipient-member-schema.cjs")(pool);
 }
 
 async function resetRows() {

@@ -4938,13 +4938,23 @@ const migrations = [
   },
   {
     version: 109,
-    name: "agent_credential_rotations",
-    sql: fs.readFileSync(require("path").join(__dirname, "109-agent-credential-rotations.sql"), "utf8"),
+    name: "certops_period_creator_delete",
+    sql: fs.readFileSync(require("path").join(__dirname, "109-certops-period-creator-delete.sql"), "utf8"),
   },
   {
     version: 110,
+    name: "recipient_member_verification",
+    sql: fs.readFileSync(require("path").join(__dirname, "../../../packages/recipient-verification/member-verification-migration.sql"), "utf8"),
+  },
+  {
+    version: 112,
+    name: "agent_credential_rotations",
+    sql: fs.readFileSync(require("path").join(__dirname, "112-agent-credential-rotations.sql"), "utf8"),
+  },
+  {
+    version: 113,
     name: "agent_credential_rotation_ack",
-    sql: fs.readFileSync(require("path").join(__dirname, "110-agent-rotation-ack.sql"), "utf8"),
+    sql: fs.readFileSync(require("path").join(__dirname, "113-agent-rotation-ack.sql"), "utf8"),
   },
 ];
 
@@ -4956,7 +4966,13 @@ migrations.push({
   sql: fs.readFileSync(require("path").join(__dirname, "083-certops-material-providers.sql"), "utf8"),
 });
 
-const { composeMigrations } = require("./compose-migrations");
+migrations.push({
+  version: 111,
+  name: "auto_sync_owner_username",
+  sql: fs.readFileSync(require("path").join(__dirname, "111-auto-sync-owner-username.sql"), "utf8"),
+});
+
+const { composeMigrations, assertUnambiguousRotationHistory } = require("./compose-migrations");
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored
 // the CertOps numbering. Those installations already have v45 in the ledger,
@@ -5288,6 +5304,7 @@ const canonicalMigrations = migrations.slice();
 require("./migration-reservations.cjs").validateMigrationReservations(canonicalMigrations);
 
 function resolveMigrationPlan(recorded) {
+  assertUnambiguousRotationHistory(recorded, canonicalMigrations);
   // The Enterprise adapter and upgrade tests may supply an already composed
   // executor list. Preserve that trusted composition and validate its ledger.
   const composed = migrations.length !== canonicalMigrations.length ||

@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "repo": "tokentimer-core",
   "contractsPackage": "@tokentimer/contracts",
-  "version": "0.19.1",
+  "version": "0.19.2-rc.1",
   "namespaces": [
     {
       "name": "queue",
@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "aabc87d0be24fb2919d28c509cbe48c069f48006714cc43b054a6aea0e156a6e"
+          "sha256": "0f0dc598b48599f411c2f5168d108b8b4eb72cc4b6318df31aba1fa5aa13e671"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "aabc87d0be24fb2919d28c509cbe48c069f48006714cc43b054a6aea0e156a6e"
+          "sha256": "0f0dc598b48599f411c2f5168d108b8b4eb72cc4b6318df31aba1fa5aa13e671"
         },
         {
           "id": "auth-route-compat-contract",
@@ -495,14 +495,14 @@
           "path": "packages/contracts/mcp/mcp-contact-tools.schema.json",
           "status": "existing",
           "description": "Input and output contracts for reviewed workspace contact creation.",
-          "sha256": "7d5a8d321d941dfd7ff909a8036d8b16ff6a23ea7e1a268c04282a94908024d5"
+          "sha256": "01e999e6ab192207def3f8137ee29110b6875012ce19d620c1c043022a979e18"
         },
         {
           "id": "mcp-contact-creates",
           "kind": "module",
           "path": "apps/api/services/operator/contactCreates.js",
           "status": "existing",
-          "sha256": "6680e15bb3cc04795f28e049daa3e3b6833caccf65f45e83c73f9f5e134904ad"
+          "sha256": "4b6bced043ff773f7527dde7807a1e2ffdbf31fd4439f75a927829e2c7727fb6"
         },
         {
           "id": "mcp-contact-validation",
@@ -621,7 +621,7 @@
           "kind": "module",
           "path": "apps/api/routes/operatorInventory.js",
           "status": "existing",
-          "sha256": "3c8e4d4aab496f96216e120ee47529fa38bd7e175d9dc97be8db5636887dc428"
+          "sha256": "8f83b2b586bad897997014ed108a7154db48499fe2e83265e3b9ead0bcdd61e3"
         },
         {
           "id": "mcp-inventory-migration",
@@ -635,7 +635,7 @@
           "kind": "test",
           "path": "tests/postgres/operator-inventory.test.js",
           "status": "existing",
-          "sha256": "e3ce33001a0fbc548564b1700fd36ccfc0228fe331f90ce8bb4b42efc5cc4d76"
+          "sha256": "6a78daf2a2407018633453c291f9c4ed8310c1ec7b8de1b89773ec07896f69f2"
         },
         {
           "id": "mcp-connection-lifetimes-migration",

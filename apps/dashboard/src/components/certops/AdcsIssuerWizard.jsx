@@ -486,13 +486,22 @@ export default function AdcsIssuerWizard({
             ) : null}
             {step === 2 ? (
               <Stack spacing={3}>
+                <Text fontSize='sm'>
+                  Verify the certificate details with your CA administrator
+                  before choosing the certificate to trust.
+                </Text>
                 {groups.map((group, index) => (
-                  <HStack
+                  <Stack
                     key={group.keySha256}
+                    direction={{ base: 'column', md: 'row' }}
                     justify='space-between'
                     align='flex-start'
+                    spacing={3}
+                    p={4}
+                    borderWidth='1px'
+                    borderRadius='md'
                   >
-                    <Stack spacing={0}>
+                    <Stack spacing={1} minW={0} flex='1'>
                       <Text fontSize='sm' fontWeight='semibold'>
                         {groups.length === 1
                           ? 'CA certificate'
@@ -500,7 +509,7 @@ export default function AdcsIssuerWizard({
                             ? 'Newest CA certificate'
                             : 'Earlier CA certificate'}
                       </Text>
-                      <Text fontSize='xs'>
+                      <Text fontSize='xs' overflowWrap='anywhere'>
                         {group.thumbprintSha1 || group.keySha256.slice(0, 16)}
                         {group.certificates[0]
                           ? ` · ${formatDate(group.certificates[0].notBefore)} to ${formatDate(group.certificates[0].notAfter)}`
@@ -510,40 +519,49 @@ export default function AdcsIssuerWizard({
                     <Button
                       {...modal.primaryButtonProps}
                       size='sm'
+                      flexShrink={0}
                       isLoading={busy}
                       isDisabled={paused}
                       onClick={() => handleConfirm(group.keySha256)}
                     >
                       Use this certificate
                     </Button>
-                  </HStack>
+                  </Stack>
                 ))}
               </Stack>
             ) : null}
             {step === 3 ? (
-              <Text fontSize='sm'>
+              <Stack spacing={3}>
+                <Alert status='success' borderRadius='md'>
+                  <AlertIcon />
+                  <AlertDescription fontSize='sm' fontWeight='semibold'>
+                    Issuer saved and CA certificate pinned.
+                  </AlertDescription>
+                </Alert>
                 {setupGuide ? (
-                  <>
-                    Issuer saved and CA certificate pinned. Close this dialog to
-                    return to the setup guide. Continue with the renewal profile
-                    step there and attach the profile to your certificate. A new
-                    CA check must pass after pinning before enrollment can
-                    proceed.
-                  </>
+                  <Text fontSize='sm'>
+                    Close this dialog to return to the setup guide. Continue
+                    with the renewal profile step and attach the profile to your
+                    certificate. A new CA check must pass after pinning before
+                    enrollment can proceed.
+                  </Text>
                 ) : (
-                  <>
-                    Issuer saved. Renewal profiles is the shared list, above.
-                    Choose New AD CS profile there. The last step attaches the
-                    profile to a certificate already in inventory and turns
-                    automation on. The sweep enrolls when that certificate is
-                    inside the profile lead time and an agent that declares the
-                    DNS name has passed a CA check taken after you pinned the
-                    certificate and is online. The check you just ran came
-                    before the pin, so on the issuer choose Check again once
-                    more.
-                  </>
+                  <Stack spacing={2} fontSize='sm'>
+                    <Text fontWeight='semibold'>Next steps</Text>
+                    <Text>
+                      Choose Check again on the issuer to run a fresh CA check
+                      after pinning the certificate.
+                    </Text>
+                    <Text>
+                      In Renewal profiles, choose New AD CS profile and attach
+                      it to a certificate already in inventory. Enrollment runs
+                      when the certificate reaches the profile lead time and an
+                      online agent that declares its DNS name has passed the
+                      post-pin CA check.
+                    </Text>
+                  </Stack>
                 )}
-              </Text>
+              </Stack>
             ) : null}
           </Stack>
         </ModalBody>

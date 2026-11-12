@@ -134,3 +134,39 @@ test("coverage workflow is manual dispatch only", () => {
   assert.match(source, /if: always\(\)\s+uses: actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
   assert.match(source, /retention-days: 7\s+if-no-files-found: error/);
 });
+
+test("derived ACME snapshot binds the database profile identity without dropping execution policy",()=>{
+  const {deriveRenewalProfileFromIssuedCertificate}=require("../apps/api/services/certops/renewalProfileDerivation");
+  const {buildRenewalJobPayload}=require("../apps/api/services/certops/renewalProfile");
+  const issue={target:{type:"domain",reference:"leaf.example.test"},sans:["leaf.example.test"],caEndpoint:"https://127.0.0.1:14000/dir",commandRef:"qualification-certbot",acmeKind:"certbot",dnsProvider:"pebble-challtestsrv",dnsZone:"example.test",certPath:"/tmp/owned/fullchain.pem"};
+  const stored=deriveRenewalProfileFromIssuedCertificate({payload:issue,certificate:{commonName:"leaf.example.test",subjectAltNames:["leaf.example.test"]}});
+  const profile={id:"33333333-3333-4333-8333-333333333333",name:"Derived profile (owned certificate)",public_metadata:{renewalProfile:stored}};
+  const certificate={id:"22222222-2222-4222-8222-222222222222",workspace_id:"11111111-1111-4111-8111-111111111111",not_after:"2030-01-01T00:00:00.000Z",profile_id:profile.id,profile_name:profile.name,profile_public_metadata:profile.public_metadata};
+  const {applyRenewalProfilePatch}=require("../apps/api/services/certops/renewalProfileAdmin");
+  const fullPatch=structuredClone(stored);fullPatch.keyRotationPolicy.rotateOnRenew=false;
+  assert.throws(()=>applyRenewalProfilePatch(stored,fullPatch),error=>error.code==="CERTOPS_PROFILE_FIELD_IMMUTABLE");
+  assert.deepEqual(applyRenewalProfilePatch(stored,{keyRotationPolicy:{rotateOnRenew:false}}),fullPatch);
+  const actual=buildRenewalJobPayload({certificate}).renewalProfile;
+  assert.notDeepEqual(actual,stored,"raw stored metadata omits the linked row identity");
+  assert.deepEqual(actual,journey.expectedProfileSnapshot(profile));
+  assert.notEqual(stored.profileId,profile.id,"comparison must not mutate stored metadata");
+  assert.notDeepEqual({...actual,acme:{...actual.acme,commandRef:"changed"}},journey.expectedProfileSnapshot(profile));
+  assert.throws(()=>journey.expectedProfileSnapshot({...profile,public_metadata:{renewalProfile:{...stored,sanPolicy:{...stored.sanPolicy,mode:"inherit"}}}}));
+});
+
+
+test("key reuse failure categories expose no persisted error content", () => {
+  assert.deepEqual(journey.reuseFailureLabels({status: "blocked", error_message: "acme step failed: private credential"}, "manual"), ["reuse-manual-job-blocked", "reuse-manual-error-acme", "reuse-manual-exit-unavailable"]);
+  const labels = journey.reuseFailureLabels({status: "private-status", error_message: "secret-output"}, "scheduler");
+  assert.deepEqual(labels, ["reuse-scheduler-job-other", "reuse-scheduler-error-other", "reuse-scheduler-exit-unavailable"]);
+  assert.ok(labels.every(label => !/private|secret/.test(label)));
+  assert.throws(() => journey.reuseFailureLabels({}, "untrusted-phase"));
+});
+
+
+test("key reuse ACME exit categories are fixed and reject untrusted detail", () => {
+  assert.ok(journey.reuseFailureLabels({status:"failed",error_message:"acme step failed with exit code 1: private stderr"},"manual").includes("reuse-manual-exit-1"));
+  assert.ok(journey.reuseFailureLabels({status:"failed",error_message:"acme step failed with exit code 9: secret"},"manual").includes("reuse-manual-exit-other"));
+  assert.ok(journey.reuseFailureLabels({status:"failed",error_message:"acme step failed with exit code null: secret"},"scheduler").includes("reuse-scheduler-exit-null"));
+  assert.ok(journey.reuseFailureLabels({status:"failed",error_message:"acme step failed with exit code secret"},"manual").every(label=>!label.includes("secret")));
+});

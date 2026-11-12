@@ -8,6 +8,18 @@ const vm = require("node:vm");
 
 const source = fs.readFileSync(path.resolve(__dirname, "../../apps/dashboard/src/pages/AlertPreferences.jsx"), "utf8");
 
+test("contacts header has no refresh button while confirmation and retry refresh remain available", async () => {
+  assert.doesNotMatch(source, />\s*Refresh contacts\s*</);
+  const modal = source.slice(source.indexOf("isOpen={isConfirmationOpen}"), source.indexOf("isOpen={isEditContactOpen}"));
+  assert.match(modal, /verificationControlsVisible\(recipientVerificationMode\)\s*&&\s*\(\s*<Button[\s\S]*?onClick=\{refreshContacts\}[\s\S]*?Refresh confirmation status/);
+  assert.match(modal, /contactsLoadError[\s\S]*?Could not refresh confirmation status/);
+  assert.match(source, /onClick=\{refreshContacts\}[\s\S]*?Retry contacts/);
+  const statusSource = fs.readFileSync(path.resolve(__dirname, "../../apps/dashboard/src/pages/contactVerificationStatus.js"), "utf8");
+  const ui = await import(`data:text/javascript;base64,${Buffer.from(statusSource).toString("base64")}`);
+  for (const mode of ["enforce", "shadow"]) assert.equal(ui.verificationControlsVisible(mode), true);
+  for (const mode of ["off", null, undefined]) assert.equal(ui.verificationControlsVisible(mode), false);
+});
+
 // Evaluate the actual page handlers with API, toast and clipboard boundaries
 // recorded. This catches false success messages when the server withheld delivery.
 function handler(channel, data, { viewer = false, pageSource = source, clipboardFailure = false, clipboardAvailable = true } = {}) {
@@ -65,6 +77,19 @@ test("email sent acknowledgement still reports an actual invitation", async () =
   assert.equal(calls.success.length, 1);
   assert.deepEqual(calls.errors, []);
   assert.equal(calls.refreshes, 1);
+});
+
+test("verified member acknowledgement reports no email instead of an invitation", async () => {
+  const { run, calls } = handler("email", {
+    status: "verified", channel: "email", delivery_basis: "verified_member",
+  });
+  await run({ id: "contact-b" });
+  assert.deepEqual(calls.success, ["This workspace member is already verified. No email was sent."]);
+  assert.deepEqual(calls.errors, []);
+  assert.deepEqual(calls.posts, ["/api/v1/workspaces/workspace-a/contacts/contact-b/verifications/email"]);
+  assert.deepEqual(calls.clipboard, []);
+  assert.equal(calls.refreshes, 1);
+  assert.equal(calls.busy.at(-1), "");
 });
 
 test("pending WhatsApp invitation still copies the returned confirmation link", async () => {

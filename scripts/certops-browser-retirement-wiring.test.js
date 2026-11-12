@@ -14,6 +14,7 @@ function validateWiring(value) {
   const step = job.steps.find(item => item.name === "Retired certificate visibility and factual observed details");
   assert.ok(step); assert.equal(step.if, undefined); assert.notEqual(step["continue-on-error"], true);
   assert.equal(step.env.CERTOPS_BROWSER_RETIREMENT_REPORT, "qualification-results/browser-retirement.json");
+  assert.equal(step.env.CERTOPS_BROWSER_RETIREMENT_DOCKER, "1");
   assert.match(step.run, /^node scripts\/certops-browser-retirement\.js\r?\nnode scripts\/certops-qualification-report\.js qualification-results\/browser-retirement\.json\s*$/);
   const upload = job.steps.find(item => item.uses?.startsWith("actions/upload-artifact@"));
   assert.equal(upload.if, "always()"); assert.equal(upload.with["if-no-files-found"], "error");
