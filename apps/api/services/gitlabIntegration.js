@@ -21,6 +21,7 @@ async function gitlabRequest({
   path,
   params = {},
   timeout = 120000, // Default 120s for regular requests (after initial connection)
+  includeResponse = false,
 }) {
   const url = joinIntegrationApiUrl(
     baseUrl,
@@ -44,7 +45,7 @@ async function gitlabRequest({
 
   try {
     const response = await axios(config);
-    return response.data;
+    return includeResponse ? response : response.data;
   } catch (error) {
     if (error.response) {
       const status = error.response.status;
@@ -281,30 +282,74 @@ async function listGroups({ baseUrl, token, maxItems = 2000 }) {
   return { groups: groups.slice(0, maxItems), truncated };
 }
 
-async function listPersonalAccessTokens({
+async function* listPersonalAccessTokens({
   baseUrl,
   token,
   userId = null,
   state,
 }) {
-  try {
-    const path = userId
-      ? `/api/v4/users/${userId}/personal_access_tokens`
-      : "/api/v4/personal_access_tokens";
-    const params = {};
-    if (state) params.state = state;
-    const data = await gitlabRequest({
+  const path = userId
+    ? `/api/v4/users/${userId}/personal_access_tokens`
+    : "/api/v4/personal_access_tokens";
+  const seen = new Set();
+  const perPage = 100;
+  let expectedLastPage = 0;
+  let expectedTotal;
+  for (let page = 1; page <= 100; page++) {
+    const { data, headers = {} } = await gitlabRequest({
       baseUrl,
       token,
-      method: "GET",
       path,
-      params,
+      params: { page, per_page: perPage, ...(state ? { state } : {}) },
+      includeResponse: true,
     });
-    return Array.isArray(data) ? data : [];
-  } catch (e) {
-    if (e.status === 404 || e.status === 403) return [];
-    throw e;
+    if (!Array.isArray(data)) {
+      throw new Error("GitLab PAT listing returned an invalid page");
+    }
+    const fresh = data.filter((pat) => {
+      if (pat?.id == null || seen.has(String(pat.id))) return false;
+      seen.add(String(pat.id));
+      return true;
+    });
+    if (fresh.length) yield fresh;
+
+    const reportedPage = headers["x-page"];
+    const reportedSize = headers["x-per-page"];
+    const nextPage = headers["x-next-page"];
+    const totalPages = headers["x-total-pages"];
+    const total = headers["x-total"];
+    const linkHasNext = /;\s*rel="?next"?/i.test(headers.link || "");
+    if (
+      fresh.length !== data.length ||
+      data.length > perPage ||
+      (reportedPage != null && Number(reportedPage) !== page) ||
+      (reportedSize != null && Number(reportedSize) !== perPage) ||
+      (nextPage != null && nextPage !== "" && Number(nextPage) !== page + 1) ||
+      (totalPages != null && !/^\d+$/.test(String(totalPages))) ||
+      (total != null && (!/^\d+$/.test(String(total)) ||
+        (expectedTotal != null && Number(total) !== expectedTotal))) ||
+      (!data.length && (
+        (nextPage != null && nextPage !== "") ||
+        linkHasNext ||
+        page <= expectedLastPage ||
+        (totalPages != null && Number(totalPages) >= page) ||
+        (expectedTotal != null && seen.size !== expectedTotal)
+      ))
+    ) {
+      throw new Error("GitLab PAT pagination did not advance reliably");
+    }
+    if (total != null) expectedTotal = Number(total);
+    if (totalPages != null) expectedLastPage = Math.max(expectedLastPage, Number(totalPages));
+    if ((nextPage != null && nextPage !== "") || linkHasNext) {
+      expectedLastPage = Math.max(expectedLastPage, page + 1);
+    }
+    if (!data.length && expectedTotal != null && seen.size !== expectedTotal) {
+      throw new Error("GitLab PAT listing did not match its reported total");
+    }
+    // A short page or missing continuation header alone cannot prove exhaustion.
+    if (!data.length) return;
   }
+  throw new Error("GitLab PAT pagination safety limit reached");
 }
 
 async function listUsers({ baseUrl, token, maxItems = 500, onError }) {
@@ -334,8 +379,8 @@ async function listUsers({ baseUrl, token, maxItems = 500, onError }) {
       page++;
     } catch (e) {
       onError?.(e);
-      if (e.status === 404 || e.status === 403) break;
-      throw e;
+      // Keep proven owners when a later enrichment page is unavailable.
+      break;
     }
   }
 
@@ -845,6 +890,7 @@ async function scanGitLab({
         let skippedBotUserPATs = 0; // Track bot user PATs that are duplicates of group/project tokens
         let adminScanFailed = false; // Admin PAT pagination raised mid-scan (not just 404/403 at start)
         let patsTruncated = false; // maxItems cap hit before pagination was exhausted
+        let ownScanError;
 
         // Build a set of bot user IDs from group and project tokens to avoid duplicates
         // Group/project access tokens create bot users whose PATs would be counted separately
@@ -1091,58 +1137,64 @@ async function scanGitLab({
             (currentUsername && isServiceAccount(currentUsername));
 
           if (shouldScanOwnPATs) {
-            const pats = await listPersonalAccessTokens({
-              baseUrl: normalizedUrl,
-              token,
-              userId: null,
-              state: filters.includeRevoked ? undefined : "active",
-            });
-            for (const pat of pats) {
-              if (items.length >= maxItems) break;
+            try {
+              ownPatPages: for await (const pats of listPersonalAccessTokens({
+                baseUrl: normalizedUrl,
+                token,
+                userId: null,
+                state: filters.includeRevoked ? undefined : "active",
+              })) {
+                for (const pat of pats) {
+                  if (items.length >= maxItems) {
+                    patsTruncated = true;
+                    break ownPatPages;
+                  }
 
-              // Skip revoked/inactive PATs unless includeRevoked filter is enabled
-              if (
-                !filters.includeRevoked &&
-                (pat.revoked === true || pat.active === false)
-              ) {
-                skippedRevoked++;
-                continue;
+                  if (
+                    !filters.includeRevoked &&
+                    (pat.revoked === true || pat.active === false)
+                  ) {
+                    skippedRevoked++;
+                    continue;
+                  }
+
+                  const expiresAt = pat.expires_at
+                    ? tryParseDate(pat.expires_at)
+                    : null;
+
+                  if (
+                    expiresAt &&
+                    expiresAt < new Date() &&
+                    !filters.includeExpired
+                  ) {
+                    skippedExpired++;
+                    continue;
+                  }
+
+                  items.push({
+                    source: "gitlab-pat",
+                    sourceKind: "gitlab-pat",
+                    sourceObjectId: String(pat.id),
+                    name: pat.name || `Personal Access Token (${pat.id})`,
+                    category: "key_secret",
+                    type: "api_key",
+                    description: pat.description || null,
+                    expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                    location: `gitlab:personal_access_tokens/${pat.id}`,
+                    scopes: pat.scopes || [],
+                    created_at: pat.created_at || null,
+                    last_used_at: pat.last_used_at || null,
+                    owner_username:
+                      pat.user_id === currentUser.id &&
+                      typeof currentUser.username === "string"
+                        ? currentUser.username || null
+                        : null,
+                  });
+                  patsFound++;
+                }
               }
-
-              const expiresAt = pat.expires_at
-                ? tryParseDate(pat.expires_at)
-                : null;
-
-              // Skip expired tokens unless includeExpired filter is enabled
-              if (
-                expiresAt &&
-                expiresAt < new Date() &&
-                !filters.includeExpired
-              ) {
-                skippedExpired++;
-                continue;
-              }
-
-              items.push({
-                source: "gitlab-pat",
-                sourceKind: "gitlab-pat",
-                sourceObjectId: String(pat.id),
-                name: pat.name || `Personal Access Token (${pat.id})`,
-                category: "key_secret",
-                type: "api_key",
-                description: pat.description || null,
-                expiration: expiresAt ? formatDateYmd(expiresAt) : null,
-                location: `gitlab:personal_access_tokens/${pat.id}`,
-                scopes: pat.scopes || [],
-                created_at: pat.created_at || null,
-                last_used_at: pat.last_used_at || null,
-                owner_username:
-                  pat.user_id === currentUser.id &&
-                  typeof currentUser.username === "string"
-                    ? currentUser.username || null
-                    : null,
-              });
-              patsFound++;
+            } catch (error) {
+              ownScanError = error;
             }
           } else {
             logger.info(
@@ -1171,8 +1223,9 @@ async function scanGitLab({
             ? skippedUserPATs
             : undefined,
           skippedBotUserPATs,
-          truncated: isAdmin ? adminScanFailed || patsTruncated : false,
-          complete: isAdmin ? !adminScanFailed && !patsTruncated : true,
+          ...(ownScanError ? { error: ownScanError.message, status: ownScanError.status } : {}),
+          truncated: adminScanFailed || patsTruncated || Boolean(ownScanError),
+          complete: !adminScanFailed && !patsTruncated && !ownScanError,
         });
       } catch (e) {
         // On self-hosted instances with older versions, this endpoint may not exist
@@ -1605,6 +1658,7 @@ async function scanGitLab({
     const firstError = summary.find((s) => s.error);
     if (firstError) {
       const err = new Error(firstError.error);
+      if (firstError.status) err.status = firstError.status;
       throw err;
     }
   }

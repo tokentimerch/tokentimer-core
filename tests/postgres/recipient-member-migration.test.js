@@ -29,8 +29,7 @@ test("normal runner appends member verification to the released ledger and resta
   function migrate(beforeMember = false) {
     const source = `
       const m = require(${JSON.stringify(entry)});
-      m.migrations.splice(0, m.migrations.length, ...m.migrations.filter(row => row.version <= 110));
-      ${beforeMember ? "m.migrations.splice(m.migrations.findIndex(row => row.name === 'recipient_member_verification'),1);" : ""}
+      ${beforeMember ? "m.migrations.splice(m.migrations.findIndex(row => row.version === 110));" : ""}
       m.runMigrations().then(() => process.exit(0), e => { console.error(e); process.exit(1); });
     `;
     const result = spawnSync(process.execPath, ["-e", source], { env, encoding: "utf8", timeout: 45000, maxBuffer: 8 * 1024 * 1024 });
@@ -44,9 +43,11 @@ test("normal runner appends member verification to the released ledger and resta
     assert.equal(before.at(-1).name, "certops_period_creator_delete");
     migrate();
     const after = (await target.query("SELECT * FROM migrations ORDER BY version")).rows;
-    assert.deepEqual(after.slice(0, -1), before);
-    assert.equal(after.at(-1).name, "recipient_member_verification");
-    assert.equal(after.at(-1).version, 110);
+    assert.deepEqual(after.filter(row => row.version <= 109), before);
+    assert.equal(after.find(row => row.version === 110).name, "recipient_member_verification");
+    assert.equal(after.find(row => row.version === 111).name, "auto_sync_owner_username");
+    assert.equal(after.at(-1).name, "certops_retirement_dossiers");
+    assert.equal(after.at(-1).version, 112);
     assert.ok((await target.query("SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='recipient_verified_email'")).rowCount);
     assert.ok((await target.query("SELECT 1 FROM pg_trigger WHERE tgname='recipient_member_verification_preserve_revocation'")).rowCount);
     migrate();

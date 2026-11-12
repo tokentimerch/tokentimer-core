@@ -281,6 +281,91 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
     assert.ok(await inventory(token.id));
   });
 
+  describe("GitLab PAT scanner cleanup safety", () => {
+    const { scanGitLab } = require("../../apps/api/services/gitlabIntegration");
+    const { gitlabPatFixture, pat } = require("../helpers/gitlab-pat-fixture");
+
+    async function discoverAndImport(run, fixture, options = {}) {
+      // A successful sibling scope must not authorize cleanup of inaccessible PATs.
+      const result = await scanGitLab({ ...fixture.options,
+        include: { tokens: true, keys: true },
+        filters: { includePATs: true, includeSSHKeys: true }, ...options });
+      const persisted = await persistScan({
+        workspaceId, provider: "gitlab", createdBy: userId,
+        identityContext: { host: result.host, ownerKey: result.ownerKey },
+        items: result.items.map((item) => ({
+          sourceKind: item.sourceKind, sourceObjectId: item.sourceObjectId, dimensions: {},
+        })),
+        subScopes: result.summary.map((entry) => ({
+          sourceKind: entry.sourceKind, dimensions: {}, complete: entry.complete === true,
+          reason: entry.error ? "error" : entry.truncated ? "truncated" : null,
+        })),
+        request: { isWorkerCall: true, integrationScanStartedAt: new Date(),
+          body: { auto_sync_run: runs.runContext(run.config) } },
+      });
+      run.context.scanId = persisted.scanId;
+      const reply = await request(app)
+        .post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
+        .set("Authorization", "Bearer issue71-test-worker")
+        .send({
+          items: result.items, scan_id: persisted.scanId,
+          auto_sync_run: runs.runContext(run.config),
+          cleanup: { enabled: true, provider: "gitlab", scanId: persisted.scanId },
+        });
+      assert.equal(reply.status, 201, JSON.stringify(reply.body));
+      assert.equal(reply.body.error_count, 0, JSON.stringify(reply.body));
+      return { scan: result, imported: reply.body };
+    }
+
+    for (const mode of ["capped", "forbidden", "not-found", "later-page-failure", "rate-limited"]) {
+      it(`retains tracked PAT B after an actual ${mode} scan, then cleans up after complete enumeration`, async (t) => {
+        const fixture = await gitlabPatFixture(t);
+        fixture.pats = [pat(41), pat(42)];
+        const first = await start(await configuration());
+        const initial = await discoverAndImport(first, fixture);
+        assert.equal(initial.imported.created_count, 2, JSON.stringify(initial.imported));
+        const tracked = (await pool.query(
+          "SELECT id FROM tokens WHERE workspace_id=$1 AND source_object_id='42'", [workspaceId],
+        )).rows[0];
+        assert.ok(tracked);
+        assert.equal((await inventory(tracked.id)).auto_sync_managed, true);
+        await finish(first);
+
+        const next = await start(first.config);
+        if (mode === "forbidden" || mode === "not-found") {
+          fixture.respond = () => ({ status: mode === "forbidden" ? 403 : 404 });
+        } else if (mode === "later-page-failure" || mode === "rate-limited") {
+          fixture.respond = ({ page }) => page === 1
+            ? { data: [pat(41)] }
+            : { status: mode === "rate-limited" ? 429 : 503 };
+        }
+        const partial = await discoverAndImport(next, fixture, mode === "capped" ? { maxItems: 1 } : {});
+        assert.equal(partial.scan.summary[0].complete, false);
+        assert.equal(partial.imported.scan_complete, false, JSON.stringify(partial.imported));
+        assert.equal(partial.imported.deleted_count, 0);
+        assert.ok(await inventory(tracked.id), "PAT B survives actual scan/import reconciliation");
+        assert.equal((await pool.query(
+          "SELECT 1 FROM auto_sync_token_links WHERE token_id=$1 AND config_id=$2",
+          [tracked.id, next.config.id],
+        )).rowCount, 1, "Incomplete enumeration retains the association");
+        await finish(next);
+
+        fixture.respond = null;
+        fixture.pats = [pat(41)];
+        const complete = await start(first.config);
+        const final = await discoverAndImport(complete, fixture);
+        assert.equal(final.scan.summary[0].complete, true);
+        assert.equal(final.imported.scan_complete, true, JSON.stringify(final.imported));
+        assert.equal(final.imported.deleted_count, 1);
+        assert.equal(await inventory(tracked.id), undefined, "Complete scans still delete eligible absent PAT B");
+        assert.equal((await pool.query(
+          "SELECT 1 FROM tokens WHERE workspace_id=$1 AND source_object_id='41'", [workspaceId],
+        )).rowCount, 1);
+        await finish(complete);
+      });
+    }
+  });
+
   it("rejects unrelated scans and incomplete scan sets", async () => {
     const a = await start(await configuration("A")); const old = await scan(a);
     const b = await start(await configuration("B")); await scan(b);

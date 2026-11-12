@@ -568,6 +568,47 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     )).rows[0].metrics_settings, local);
   });
 
+  for (const mode of ["permission-only", "connection-without-permission", "default"]) {
+    it(`does not persist or scrape owners for ${mode}`, async () => {
+      const config = await configuration();
+      const connection = { enabled: true, inherit_system: false, labels: ["kind", "owner_username"] };
+      await pool.query("UPDATE auto_sync_configs SET metrics_settings=$2 WHERE id=$1", [config.id, connection]);
+      delete process.env.AUTO_SYNC_METRICS_EXTRA_LABELS;
+      await pool.query("UPDATE users SET is_admin=TRUE WHERE id=$1", [userId]);
+      const globalUrl = "/api/v1/admin/auto-sync/metrics";
+      if (mode === "permission-only") {
+        const saved = await request(app).put(globalUrl)
+          .send({ override_metrics: true, enabled: true, labels: ["kind"] });
+        assert.equal(saved.status, 200, JSON.stringify(saved.body));
+        process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "owner_username";
+        const policy = await request(app).get(globalUrl);
+        assert.deepEqual(policy.body.labels, ["kind"]);
+        assert.deepEqual((await pool.query("SELECT auto_sync_metrics FROM system_settings WHERE id=1"))
+          .rows[0].auto_sync_metrics.labels, ["kind"]);
+      } else if (mode === "default") {
+        await pool.query("UPDATE auto_sync_configs SET metrics_settings='{}' WHERE id=$1", [config.id]);
+      }
+      const run = await start(config);
+      const scanId = await ownerScan(run, [[mode, "must-not-persist"]]);
+      const dimensions = (await pool.query(
+        "SELECT source_dimensions FROM integration_scan_items WHERE scan_id=$1", [scanId],
+      )).rows[0].source_dimensions;
+      assert.equal(Object.hasOwn(dimensions, "owner_username"), false);
+      await ownerImport(run, mode);
+      assert.ok((await ownerRows(config)).every(row => row.owner_username === ""));
+      const scrape = await request(app).get("/metrics");
+      assert.equal(scrape.status, 200);
+      assert.ok(!scrape.text.includes("must-not-persist"));
+      if (mode !== "default") {
+        for (const name of ["auto_sync_items_created_detailed_total", "auto_sync_last_creation_timestamp_seconds"]) {
+          const samples = await metric(name);
+          assert.equal(samples.length, 1);
+          assert.equal(samples[0].labels.owner_username, "");
+        }
+      }
+    });
+  }
+
   it("emits valid HTTP scrape text with escaped owners, stable counts and immediate policy changes", async () => {
     const config = await configuration(); await ownerSettings(config);
     const run = await start(config);

@@ -205,6 +205,30 @@ for (const status of [401, 403, 404, 429, 503]) {
   });
 }
 
+for (const status of [429, 503]) {
+  for (const excludeUserPATs of [false, true]) {
+    test(`admin retains earlier owners and exclusions after user page ${status}, exclude users ${excludeUserPATs}`, async () => {
+      const fixture = scanner({
+        users: Array.from({ length: 100 }, (_, index) => ({
+          id: index + 1, username: `cached-${index + 1}`, is_admin: index === 1,
+        })),
+        pats: [pat(10, 1), pat(11, 2), pat(12, 101)],
+        respond: (pathname, config) => {
+          if (pathname === "/api/v4/users" && config.params.page === 2) throw httpError(status);
+        },
+        lookup: id => ({ id, username: "fallback-owner", is_admin: true }),
+      });
+      const result = await fixture.scan({ filters: { ...filters, excludeUserPATs } });
+      assert.deepEqual(result.items.map(item => item.owner_username),
+        [...(excludeUserPATs ? [] : ["cached-1"]), "cached-2", status === 503 ? "fallback-owner" : null]);
+      assert.equal(result.items.find(item => item.sourceObjectId === "11").gitlab_owner_is_admin, true);
+      assert.equal(result.summary[0].skippedUserPATs ?? 0, excludeUserPATs ? 1 : 0);
+      assert.equal(fixture.lookupCalls().length, status === 503 ? 1 : 0);
+      assertComplete(result);
+    });
+  }
+}
+
 test("admin caches transient lookup failures and rejects mismatched user responses", async () => {
   const fixture = scanner({
     pats: [pat(10, 2), pat(11, 2), pat(12, 3), pat(13, 4), pat(14, 4)],
@@ -397,7 +421,7 @@ test("non-admin PAT owners require an explicit current-user ID match", async () 
   assert.equal(
     fixture.calls.filter((call) => call.pathname.includes("personal_access_tokens"))
       .length,
-    1,
+    2,
   );
   assertComplete(result);
 });
@@ -411,7 +435,7 @@ test("non-admin missing username stays empty and an old PAT endpoint adds no inf
       if (pathname === "/api/v4/personal_access_tokens") throw httpError(404);
     },
   });
-  assert.deepEqual((await oldServer.scan()).items, []);
+  await assert.rejects(oldServer.scan(), { status: 404 });
   assert.equal(oldServer.lookupCalls().length, 0);
 });
 
