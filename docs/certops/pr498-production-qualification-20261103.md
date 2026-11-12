@@ -1,10 +1,14 @@
 # PR #498 production qualification — 2026-11-03
 
-All five extension capabilities remain **unqualified and disabled**. Two fresh,
+All five extension capabilities remain **unqualified and disabled**. As of
+12 November, their promotion is outside this implementation review; Azure
+infrastructure fencing is separate work. Original-job reconciliation, the
+operator journey and NAT qualification are covered by the current PR checks.
+The following is the historical 3 November qualification record. Two fresh,
 complete packaged-agent journeys passed against the current implementation,
 strengthening merge-review evidence. They do not establish native release
-qualification for the five disabled operations. No promotion, merge, edition
-adoption or deployment has occurred.
+qualification for the five disabled operations. It does not authorize promotion
+or deployment.
 
 Implementation candidate: `037a8d2cebcb37dac281ca3c3478fe0c94604d8b`.
 Trusted main at inspection: `ece47164344a6908a29820909c634e5b2d451b67`.

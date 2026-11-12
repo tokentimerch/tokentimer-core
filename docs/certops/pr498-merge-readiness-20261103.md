@@ -1,17 +1,20 @@
 # PR #498 scope freeze and merge review — 2026-11-03
 
-This is the current disposition for [PR #498](https://github.com/tokentimerch/tokentimer-core/pull/498).
-The [earlier completion record](pr498-completion-20261103.md) retains historical
-attempts and evidence. Its earlier combined release/qualification verdict does
-not mean that every optional connector must be implemented before this PR merges.
+Current scope, 12 November: finish the distribution lifecycle, original-job
+read-only reconciliation, operator journey and NAT qualification. Azure
+infrastructure fencing is separate work. All five extension gates stay closed;
+their native promotion campaigns are not prerequisites for this implementation
+review. The [PR](https://github.com/tokentimerch/tokentimer-core/pull/498) records
+current candidate checks. The dated evidence below and the
+[earlier completion record](pr498-completion-20261103.md) remain historical.
 
 The later [production qualification follow-up](pr498-production-qualification-20261103.md)
 records two fresh complete packaged-agent journeys at `037a8d2c`, one each for
 Vault and OpenBao: 15/15 strict phases and 41/41 product checks per journey,
 using byte-identical packages. This supplements the earlier composed evidence
 and preserves every failed attempt below. All five extension gates remain
-closed; normal independent review/protected merge and separate native artifact
-qualification are still outstanding.
+closed; normal independent review/protected merge remain required. Native
+artifact qualification belongs to later capability promotion.
 
 ## Frozen scope
 
@@ -47,13 +50,14 @@ source tests and UI settings cannot add a compiled capability.
 | IIS shared-material rebind integration | Yes; merged #460 retained | Native fixture cohorts on Server 2022/2025; source/contract regressions | **No**: `windows-material-iis-v1` omitted | Exact production artifact/native matrix is separate from baseline IIS support |
 | Independent Linux preparation and later activation | Yes | `distribution-staging.test.js`; agent staging/calendar/integrity tests | **No**: `material-consumer-staging-v1` omitted | Server/local opt-ins and independent qualification; Windows staging unavailable |
 | Verification-only and recurring jobs, drift/offline/stale incidents | Yes | Real PG lifecycle and monitoring tests | Yes, verification/alerts initially disabled | Fresh current-version consumer proof is required; source renewal cannot resolve an incident |
+| Original uncertain deployment reconciliation | Yes | Authenticated independent approval, signed agent inspection, exact protected journal and lost-acknowledgement replay | Yes for qualified deployment agents | Read-only; missing, replaced or superseded proof stays unresolved; original outcome and current consumer proof are preserved |
 | Durable notification/recovery delivery and PagerDuty | Yes; merged #496 integrated | Real PG PagerDuty lifecycle and seven migration histories; full CI | Yes with configured channels/consent | New live external-provider delivery is not inferred from fixture or queue tests |
 | Retention preview and protection of referenced/uncertain versions | Yes | Real PG cleanup, concurrency and retained-count tests; dashboard tests | Yes, report-only default | Eligibility is not deletion authority; at least two versions remain protected |
 | Independently approved exact-version cleanup, permanent fences, receipts/reconciliation | Yes for Vault and OpenBao | Real provider ACL denial/recovery, signed source executor, lost acknowledgement/API restart, exact duplicate and contradictory receipt tests | **No**: both `material-cleanup-*-kv2-v1` capabilities omitted | Soft deletion only; no destroy, purge, metadata/all-version or Azure cleanup |
 | OpenBao / Azure material providers | Yes; merged #460 | Real Vault/OpenBao compatibility and cleanup; historical Azure development campaign and current fixture CI | OpenBao **yes**; Azure **no** | `material-store-azure-key-vault-v1` omitted; historical Azure run is not final artifact qualification |
 | Management UI, approvals, policy, maintenance, job/incident details, preflight/recovery/retention | Yes | Dashboard distribution/workspace/approval regressions, build/typecheck, genuine browser fixture evidence | Yes for supported operations | Unsupported restart/refresh choices disabled; gated operations require qualified agents |
 | Stable IIS/HTTP.sys discovery and uncertainty | Yes | Agent discovery regressions and PG stable-consumer tests | Existing read-only discovery retained | Store presence is not consumption or served/trust proof; broader services remain backlog |
-| Migration composition through 97 | Yes | Real PG upgrade, historical-ledger preservation, concurrent runners and seven PagerDuty histories | Apply before matching API/workers | Never rewrite deployed identities or timestamps; retain a restorable backup |
+| Migration composition through 113 | Yes | Real PG upgrade, historical-ledger preservation, concurrent runners and reconciliation histories | Apply before matching API/workers | Never rewrite deployed identities or timestamps; retain a restorable backup |
 
 ## Findings and disposition
 
@@ -198,21 +202,12 @@ separate. The closed capability manifest is unchanged.
 
 ## Edition handoff
 
-The related Cloud PR #218 is open at `e6b5138be49d74901b299f09c04cc3e71f8af863`;
-Enterprise PR #193 is draft at `bc9bbe6142dec17060a02123f4a40463ee8cd144`.
-Both still compose Core preview `4a5dedcacf600db2406f756ca97f986cfba2cc1a`.
-Neither includes the complete current #498. These are coordination identifiers,
-not a claim that the editions have adopted this candidate.
-
-The Cloud release ancestry check correctly rejects the preview. Enterprise
-full CI run `41613282001` now passes after its retry; the old PR description's
-pending result is stale. Edition run links remain in their private PRs.
-No pin changes are authorized before a human-approved protected Core merge.
-After that merge, identify the accepted Core-main SHA, use each edition's normal
-pin/composition process, adopt migrations/contracts/API/workers/agents together,
-and run its canonical compatibility/CI skill. Preserve Cloud plan/billing/freeze/
-consent and Enterprise license/SSO/custody boundaries. No edition-only feature,
-production deployment or release is part of this finalization.
+Edition counterparts adopt the reviewed preview through their normal composition
+and compatibility checks, preserving Cloud plan, billing, freeze and consent
+controls and Enterprise licensing and SSO. Their PR descriptions record exact
+pins and results. Cloud's release ancestry gate requires accepted Core main;
+review readiness does not waive that release gate. No deployment or release is
+part of this finalization.
 
 ## Merge decision
 
@@ -228,7 +223,7 @@ requires relevant validation and trusted dispatch. Native promotion/release
 collection is separately governed; merging disabled optional implementation does
 not assert that the production artifact qualifies it. No policy is waived here.
 
-## Tracking and documentation
+## Historical tracking and documentation (3 November)
 
 Updated GitHub #248, #376, #366, #369, #354 and #504. Broad open issues stay open;
 #354 was already closed and keeps that state. Edition PR #218/#193 handoffs now
