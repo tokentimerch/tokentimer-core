@@ -128,8 +128,12 @@ function composeMigrations(migrations, recorded = []) {
         ]);
         // Keep the existing MCP preview append order when no later lifecycle
         // migration has been applied, but recognize either historical ordering.
-        const mainFirst = [...remaining.filter((name) => !lifecycle.has(name)), ...remaining.filter((name) => lifecycle.has(name))];
-        for (const tail of [mainFirst, remaining]) {
+        const independent = remaining.filter((name) => !lifecycle.has(name));
+        const companions = remaining.filter((name) => lifecycle.has(name));
+        const historicalOrders = Array.from({ length: independent.length + 1 }, (_entry, cut) =>
+          [...independent.slice(0, cut), ...companions, ...independent.slice(cut)],
+        );
+        for (const tail of [[...independent, ...companions], remaining, ...historicalOrders]) {
           const names = [...priorMcpNames, ...appliedAppend, ...tail];
           const versions = [...priorMcpVersions, ...names.slice(priorMcpNames.length).map((_name, index) => 97 + index)];
           if (rows.every((row, index) => row.name === names[index] && row.version === versions[index])) { priorOrder = names; break; }

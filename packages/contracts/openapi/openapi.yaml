@@ -4943,7 +4943,8 @@ paths:
                       - project
                       - group
                       - owner_username
-                  maxItems: 7      responses:
+                  maxItems: 7
+      responses:
         "200":
           description: Saved effective defaults
           content:
