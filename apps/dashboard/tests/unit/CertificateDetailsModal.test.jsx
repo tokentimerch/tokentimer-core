@@ -10,6 +10,7 @@ import { ChakraProvider } from '@chakra-ui/react';
 import { MemoryRouter } from 'react-router';
 
 import CertificateDetailsModal from '../../src/components/certops/CertificateDetailsModal.jsx';
+import apiClient from '../../src/utils/apiClient';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 vi.mock('../../src/components/PagerDutyIncidentActions.jsx', () => ({
@@ -137,6 +138,32 @@ function renderModal(overrides = {}) {
 describe('CertificateDetailsModal', () => {
   beforeEach(() => {
     updateTokenMock.mockReset();
+  });
+
+  it('shows observation history without current locations when history exists', async () => {
+    apiClient.get.mockImplementation(url =>
+      Promise.resolve({
+        data: {
+          items: url.endsWith('/observations')
+            ? [{ id: 'observation-1', metadata: {} }]
+            : [],
+        },
+      })
+    );
+    renderModal({
+      workspaceId: 'workspace-1',
+      certOps: { certificate, instances: [] },
+    });
+    expect(
+      await screen.findByRole('button', { name: 'Observation history' })
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('heading', { name: 'Observed locations' })
+    ).toBeTruthy();
+    apiClient.get.mockReset();
+    apiClient.get.mockResolvedValue({
+      data: { managed: false, configurations: [], items: [] },
+    });
   });
 
   it('associates each editable certificate field with its visible label', () => {

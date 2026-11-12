@@ -32,6 +32,7 @@ import { HardDrive, Info, MapPin, Server, Settings } from 'lucide-react';
 import DashboardDetailsSection from '../DashboardDetailsSection.jsx';
 import CopyableId from '../CopyableId.jsx';
 import CertificateDetailsModal from './CertificateDetailsModal.jsx';
+import CertificateObservationHistory from './CertificateObservationHistory.jsx';
 import IisReassociation from './IisReassociation.jsx';
 import WindowsCertificateUsage from './WindowsCertificateUsage.jsx';
 import {
@@ -794,6 +795,14 @@ export default function CertificateIdentityDetailModal({
       ) : null}
       <DashboardDetailsSection
         title='Observed locations'
+        headerAction={
+          <CertificateObservationHistory
+            workspaceId={workspaceId}
+            certificateId={managedCertificateId}
+            fingerprintSha256={detail.fingerprintSha256}
+            enabled={isOpen}
+          />
+        }
         description='Where this certificate has been seen, with the latest observation at each location and previous observations in history.'
         icon={MapPin}
         enclosed
