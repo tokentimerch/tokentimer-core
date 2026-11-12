@@ -1,8 +1,3 @@
-import {
-  CertificateLifecycleBadge,
-  ObservedRevocationBadge,
-  hasObservedRevocationContext,
-} from './certops/CertOpsBadge.jsx';
 import { useCallback } from 'react';
 import {
   formatContactGroupNames,
@@ -43,65 +38,12 @@ import { FiActivity, FiExternalLink } from 'react-icons/fi';
 import { AccessibleSpinner } from './Accessibility';
 import { DashboardState } from './DashboardPrimitives';
 import TruncatedText from './TruncatedText';
-import {
-  isRetiredCertificate,
-  isRetiredStatus,
-  certificateLifecycleDescriptor,
-  AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
-} from './certops/certopsFormat';
+import { AMBIGUOUS_CERTIFICATE_LINK_MESSAGE } from './certops/certopsFormat';
 import DeploymentBadge from './certops/DeploymentBadge.jsx';
 import useDistributionSummaries from './certops/useDistributionSummaries.js';
 import { domainValueToUrl } from '../utils/domains.jsx';
 import { formatDate } from '../utils/apiClient';
 import { formatExpirationDate } from '../utils/dateUtils';
-
-/**
- * Display metadata for retired (revoked/decommissioned) managed certificates.
- * Mirrors the StatusPill shape; light-mode styles live in LIGHT_STATUS_STYLES.
- */
-const RETIRED_STATUS_META = {
-  revoked: {
-    key: 'revoked',
-    label: 'Revoked',
-    color: '#f87171',
-    bg: 'rgba(239, 68, 68, 0.14)',
-  },
-  decommissioned: {
-    key: 'decommissioned',
-    label: 'Decommissioned',
-    color: '#94a3b8',
-    bg: 'rgba(148, 163, 184, 0.14)',
-  },
-};
-
-/**
- * Resolves the badge a row should show: a retired managed-certificate state
- * (revoked/decommissioned) wins over the expiry-derived status, so retired
- * certs read as retired rather than "expired/healthy".
- */
-function effectiveStatusMeta(token, getStatusMeta) {
-  if (isRetiredStatus(token.cert_lifecycle_status)) {
-    return RETIRED_STATUS_META[token.cert_lifecycle_status.toLowerCase()];
-  }
-  const managed = token.__managedCert;
-  if (token.__managedCertificatesRetired) {
-    return {
-      ...RETIRED_STATUS_META.decommissioned,
-      key: 'retired',
-      label: 'Retired',
-    };
-  }
-  if (managed && isRetiredCertificate(managed)) {
-    const retiredStatus = isRetiredStatus(managed.lifecycleStatus)
-      ? managed.lifecycleStatus
-      : managed.status;
-    return (
-      RETIRED_STATUS_META[String(retiredStatus || '').toLowerCase()] ||
-      RETIRED_STATUS_META.decommissioned
-    );
-  }
-  return getStatusMeta(token.expiresAt);
-}
 
 const CATEGORY_ICON_META = {
   cert: { icon: BadgeCheck, scheme: 'blue' },
@@ -421,18 +363,6 @@ const LIGHT_STATUS_STYLES = {
     dot: '#16a34a',
     border: '#bbf7d0',
   },
-  revoked: {
-    bg: '#fef2f2',
-    color: '#b91c1c',
-    dot: '#dc2626',
-    border: '#fecaca',
-  },
-  decommissioned: {
-    bg: '#f1f5f9',
-    color: '#475569',
-    dot: '#64748b',
-    border: '#cbd5e1',
-  },
 };
 
 function resolveStatusBadgeStyles(status, isLight) {
@@ -514,29 +444,11 @@ function MobileMetaItem({ label, value, children }) {
 
 function StatusBadge({ token, getStatusMeta }) {
   const { colorMode } = useColorMode();
-  const status = effectiveStatusMeta(token, getStatusMeta);
+  const status = getStatusMeta(token.expiresAt);
   const styles = resolveStatusBadgeStyles(status, colorMode === 'light');
-  const managed = token.__managedCert;
-  const lifecycle = certificateLifecycleDescriptor(managed);
-  // Skip the lifecycle badge when it says the same thing as the pill above
-  // it (e.g. both read "expired") instead of adding a distinct state like
-  // "provisioning" or "renewing".
-  const managedStatusIsRedundant =
-    lifecycle.status && String(lifecycle.status).toLowerCase() === status.key;
-
   return (
     <HStack spacing={2} flexWrap='wrap'>
       <StatusPill status={status} styles={styles} />
-      {lifecycle.status &&
-      !isRetiredStatus(lifecycle.status) &&
-      !managedStatusIsRedundant ? (
-        <Tooltip label='Managed certificate lifecycle status'>
-          <CertificateLifecycleBadge certificate={managed} />
-        </Tooltip>
-      ) : null}
-      {hasObservedRevocationContext(managed) ? (
-        <ObservedRevocationBadge result={managed.observedRevocation} />
-      ) : null}
       {token.monitor_health_status && (
         <Tooltip
           label={`${token.monitor_url || 'Endpoint'}: ${token.monitor_health_status}${
@@ -927,7 +839,7 @@ function AssetInventoryMobileCard({
   helpers,
 }) {
   const { colorMode } = useColorMode();
-  const status = effectiveStatusMeta(token, helpers.getStatusMeta);
+  const status = helpers.getStatusMeta(token.expiresAt);
   const statusStyles = resolveStatusBadgeStyles(status, colorMode === 'light');
   const cardTitleColor = useColorModeValue('gray.900', 'white');
   const cardBg = useColorModeValue('white', 'rgba(13, 19, 26, 0.96)');

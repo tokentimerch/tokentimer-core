@@ -503,6 +503,36 @@ describe('CertificateDetailsModal', () => {
     ).toBeInTheDocument();
   });
 
+  it('links a managed certificate ID to its workspace-scoped CertOps details', () => {
+    const linked = {
+      ...certificate,
+      id: '123e4567-e89b-42d3-a456-426614174000',
+    };
+    renderModal({
+      certOps: { certificate: linked },
+      workspaceId: 'workspace/a',
+    });
+    expect(
+      screen.getByRole('link', {
+        name: 'Open managed certificate',
+        hidden: true,
+      })
+    ).toHaveAttribute(
+      'href',
+      '/certops/certificates?certificateId=123e4567-e89b-42d3-a456-426614174000&workspace=workspace%2Fa'
+    );
+  });
+
+  it('does not offer a details link for an invalid managed certificate ID', () => {
+    renderModal();
+    expect(
+      screen.queryByRole('link', {
+        name: 'Open managed certificate',
+        hidden: true,
+      })
+    ).not.toBeInTheDocument();
+  });
+
   it('does not render diagnostics outside the Certificate operations section', () => {
     renderModal();
 
