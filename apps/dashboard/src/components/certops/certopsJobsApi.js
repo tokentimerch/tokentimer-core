@@ -31,6 +31,7 @@ export const CERTOPS_JOB_OPERATIONS = [
   'deploy',
   'deploy-from-store',
   'cleanup-from-store',
+  'reconcile-from-store',
   'reload',
   'revoke',
   'noop',

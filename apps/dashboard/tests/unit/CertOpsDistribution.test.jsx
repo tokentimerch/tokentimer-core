@@ -4,7 +4,7 @@ import {ChakraProvider} from '@chakra-ui/react';
 import {MemoryRouter,Outlet,Route,Routes} from 'react-router';
 import {DashboardThemeProvider} from '../../src/hooks/useDashboardTheme.js';
 import CertOpsDistribution from '../../src/pages/certops/CertOpsDistribution.jsx';
-const {api,manage,admin}=vi.hoisted(()=>({api:Object.fromEntries(['groups','management','preflight','retention','consumer','activation','policy','rollout','state','retry','cleanup','emergency'].map(key=>[key,vi.fn()])),manage:vi.fn(),admin:vi.fn()}));
+const {api,manage,admin}=vi.hoisted(()=>({api:Object.fromEntries(['groups','management','preflight','retention','consumer','activation','policy','rollout','state','retry','reconcile','cleanup','emergency'].map(key=>[key,vi.fn()])),manage:vi.fn(),admin:vi.fn()}));
 vi.mock('../../src/components/certops/distributionApi.js',()=>({distributionApi:api}));
 vi.mock('../../src/utils/WorkspaceContext.jsx',()=>({useWorkspace:()=>({workspaceId:'workspace'})}));
 vi.mock('../../src/components/certops/useCertOps.js',()=>({useCertOpsCanManage:manage,useCertOpsIsWorkspaceAdmin:admin}));
@@ -23,6 +23,40 @@ beforeEach(()=>{vi.clearAllMocks();manage.mockReturnValue(true);admin.mockReturn
   api.preflight.mockResolvedValue({consumers:[{bindingId:'binding',diagnostics:[{code:'CERTOPS_AGENT_OFFLINE'},{code:'CERTOPS_CUSTOMER_LOCAL_PREFLIGHT_REQUIRED'}]}]});
   api.retention.mockResolvedValue({versions:[{id:latest,provider_version:2,retainedReasons:['desired_consumer_version']}]});});
 describe('Distribution Management',()=>{
+  it('requests a reviewed read-only inspection of a rejected uncertain original job',async()=>{
+    data.consumers[0].latest_deployment={jobId:'original-job',jobStatus:'rejected',needsOperatorReconciliation:true};
+    api.reconcile.mockResolvedValue({job:{id:'inspection-job'}});
+    page();await openView('Destinations');
+    fireEvent.click(await screen.findByRole('button',{name:'Request read-only reconciliation'}));
+    expect(api.reconcile).not.toHaveBeenCalled();
+    expect(screen.getByText(/A different authorized operator must approve it/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Confirm'}));
+    await waitFor(()=>expect(api.reconcile).toHaveBeenCalledWith('workspace','original-job'));
+    expect(await screen.findByRole('link',{name:'Review the inspection in Jobs'})).toHaveAttribute('href',expect.stringContaining('inspection-job'));
+    expect(api.retry).not.toHaveBeenCalled();expect(api.rollout).not.toHaveBeenCalled();
+    expect(screen.queryByText('Review a retired destination')).not.toBeInTheDocument();
+  });
+  it('does not offer reconciliation without an uncertain terminal original job or write access',async()=>{
+    data.consumers[0].latest_deployment={jobId:'original-job',jobStatus:'completed',needsOperatorReconciliation:false};
+    page();await openView('Destinations');
+    expect(screen.queryByRole('button',{name:'Request read-only reconciliation'})).not.toBeInTheDocument();
+  });
+  it('keeps the reconciliation action unavailable to viewers and paused workspaces',async()=>{
+    data.consumers[0].latest_deployment={jobId:'original-job',jobStatus:'rejected',needsOperatorReconciliation:true};
+    manage.mockReturnValue(false);
+    const view=page();await openView('Destinations');
+    expect(screen.queryByRole('button',{name:'Request read-only reconciliation'})).not.toBeInTheDocument();
+    view.unmount();manage.mockReturnValue(true);page({paused:true});await openView('Destinations');
+    expect(screen.getByRole('button',{name:'Request read-only reconciliation'})).toBeDisabled();
+  });
+  it('shows an unavailable-proof error without claiming that reconciliation succeeded',async()=>{
+    data.consumers[0].latest_deployment={jobId:'original-job',jobStatus:'rejected',needsOperatorReconciliation:true};
+    api.reconcile.mockRejectedValue({response:{data:{error:'Original deployment proof is unavailable.',code:'CERTOPS_RECONCILIATION_UNAVAILABLE'}}});
+    page();await openView('Destinations');fireEvent.click(await screen.findByRole('button',{name:'Request read-only reconciliation'}));
+    fireEvent.click(screen.getByRole('button',{name:'Confirm'}));
+    expect(await screen.findByText(/Original deployment proof is unavailable/)).toBeInTheDocument();
+    expect(screen.queryByRole('link',{name:'Review the inspection in Jobs'})).not.toBeInTheDocument();
+  });
   it('labels bounded recent counts and includes paused rollouts without implying global totals',async()=>{
     data.rollouts=[{id:'r1',state:'paused',generation:1},{id:'r2',state:'completed',generation:2}];
     data.approvals=[{id:'a1',status:'pending_approval'},{id:'a2',status:'completed'}];
@@ -128,7 +162,7 @@ describe('Distribution Management',()=>{
       const summary=screen.getByText(title),disclosure=summary.closest('details');
       expect(disclosure).not.toHaveAttribute('open');fireEvent.click(summary);expect(disclosure).toHaveAttribute('open');
     }
-    expect(screen.getByText(/retry the original signed job/)).toBeVisible();
+    expect(screen.getByText(/request read-only reconciliation from its destination/)).toBeVisible();
     expect(screen.getByText(/production-qualified agent/)).toBeVisible();
   });
   it('identifies jobless incidents and preserves historical binding evidence',async()=>{

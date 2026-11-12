@@ -191,6 +191,7 @@ const JOB_OPERATIONS = Object.freeze([
   "deploy",
   "deploy-from-store",
   "cleanup-from-store",
+  "reconcile-from-store",
   "reload",
   "revoke",
   "noop",
@@ -889,6 +890,10 @@ function validateExecutionFields(payload, operation) {
       CERTOPS_JOB_EXECUTION_FIELD_INVALID,
     );
   }
+  if(payload.materialReconciliation || operation==="reconcile-from-store"){
+    if(operation!=="reconcile-from-store" || !payload.materialReconciliation || payload.publication || payload.materialDeployment || payload.materialCleanup || payload.distributionRollout || payload.keyMode!=="vault-managed" || ["certPath","keyPath","chainPath","deploymentTargets","reloadService","reloadCommandRefs","verifyHost","verifyPort"].some(field=>payload[field]!=null))throw executionFieldError("materialReconciliation");
+    require("./materialDistribution").validateDistributionContract("materialReconciliation",payload.materialReconciliation);
+  }
   if(payload.materialCleanup || operation==="cleanup-from-store"){
     if(operation!=="cleanup-from-store" || payload.publication || payload.materialDeployment || payload.distributionRollout ||
       payload.keyMode!=="vault-managed" || ["certPath","keyPath","chainPath","deploymentTargets","reloadService","reloadCommandRefs","verifyHost","verifyPort"].some(field=>payload[field]!=null))throw executionFieldError("materialCleanup");
@@ -906,7 +911,7 @@ function validateExecutionFields(payload, operation) {
     if (payload.keyMode !== "vault-managed" || ["certPath", "keyPath", "chainPath", "deploymentTargets", "reloadService", "reloadCommandRefs", "verifyHost", "verifyPort"].some((field) => payload[field] != null)) throw executionFieldError("publication");
   }
   const allowedForOperation =
-    ["deploy-from-store","cleanup-from-store"].includes(operation) ? new Set(["keyMode"]) : EXECUTION_FIELDS_BY_OPERATION[operation] || new Set();
+    ["deploy-from-store","cleanup-from-store","reconcile-from-store"].includes(operation) ? new Set(["keyMode"]) : EXECUTION_FIELDS_BY_OPERATION[operation] || new Set();
   for (const fieldName of EXECUTION_FIELD_NAMES) {
     if (!Object.prototype.hasOwnProperty.call(payload, fieldName)) continue;
     const value = payload[fieldName];
@@ -1142,6 +1147,7 @@ const SUBJECT_REQUIRED_OPERATIONS = new Set([
   "deploy",
   "deploy-from-store",
   "cleanup-from-store",
+  "reconcile-from-store",
   "reload",
   "revoke",
   "distribute-trust",
@@ -1914,7 +1920,7 @@ async function assertDeployFromStoreIdentityAllowsMutation({ db, workspaceId, su
 }
 
 async function createCertificateJob(options) {
-  if ((options.payload?.publication || options.payload?.materialDeployment || options.payload?.distributionRollout || options.payload?.distributionPolicyApproval) && !options.client) {
+  if ((options.payload?.publication || options.payload?.materialDeployment || options.payload?.materialReconciliation || options.payload?.distributionRollout || options.payload?.distributionPolicyApproval) && !options.client) {
     throw serviceError("Material distribution requires a transaction-owned client", "CERTOPS_PUBLICATION_TRANSACTION_REQUIRED");
   }
   const db = options.client || pool;
@@ -1925,6 +1931,7 @@ async function createCertificateJob(options) {
     CERTOPS_JOB_OPERATION_INVALID,
     "operation",
   );
+  if(operation==="reconcile-from-store" && options.allowMaterialReconciliation!==true) throw serviceError("Material reconciliation can only be requested through its dedicated service",CERTOPS_JOB_OPERATION_INVALID);
   // protocol_smoke is diagnostic-only and must never enter through the
   // general-purpose job-creation path: allowing it here would let a
   // protocol_smoke job pick up an approval gate, a per-CA cap check, a
@@ -1983,7 +1990,7 @@ async function createCertificateJob(options) {
   // services/certops/jobApprovals.approveJob. The flag only chooses the
   // default initial status; an explicit conflicting status is rejected so a
   // caller cannot both request a gate and bypass it.
-  const perJobRequiresApproval = options.requiresApproval === true || operation==="cleanup-from-store";
+  const perJobRequiresApproval = options.requiresApproval === true || operation==="cleanup-from-store" || operation==="reconcile-from-store";
   // Workspace-wide override (certops_require_approval_always) is read here,
   // not trusted from the caller alone: omitting workspaceRequiresApprovalAlways
   // must not bypass a policy that is on. Callers that already hold the

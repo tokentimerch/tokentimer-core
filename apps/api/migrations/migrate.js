@@ -4997,6 +4997,12 @@ migrations.push({
   sql: fs.readFileSync(require("path").join(__dirname, "111-auto-sync-owner-username.sql"), "utf8"),
 });
 
+migrations.push({
+  version: 113,
+  name: "certops_material_reconciliation",
+  sql: fs.readFileSync(require("path").join(__dirname, "113-certops-material-reconciliation.sql"), "utf8"),
+});
+
 const { composeMigrations } = require("./compose-migrations");
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored

@@ -4,6 +4,84 @@
   "title": "Public material distribution contracts",
   "description": "Customer-side store aliases and public receipts only. Bundle bytes, credential paths, endpoints and authentication secrets are forbidden.",
   "definitions": {
+    "materialReconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "originalJobId",
+        "assignedAgentId",
+        "workspaceAuthorizationRevision",
+        "intent"
+      ],
+      "properties": {
+        "originalJobId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "assignedAgentId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "workspaceAuthorizationRevision": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "intent": {
+          "$ref": "#/definitions/materialDeployment"
+        }
+      }
+    },
+    "reconciliationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "originalJobId",
+        "groupId",
+        "bindingId",
+        "materialVersionId",
+        "generation",
+        "fingerprintSha256",
+        "observedAt",
+        "proofKind"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "originalJobId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "generation": {
+          "$ref": "#/definitions/generation"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/fingerprint"
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "proofKind": {
+          "enum": [
+            "staged",
+            "deployed"
+          ]
+        }
+      }
+    },
     "uuid": {
       "type": "string",
       "format": "uuid"

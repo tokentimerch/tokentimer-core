@@ -4301,7 +4301,7 @@ function csrRoute(work) {
       if (err?.status && err?.code) {
         return res.status(err.status).json({ error: err.message, code: err.code });
       }
-      if (err?.statusCode && /^CERTOPS_(MATERIAL|DISTRIBUTION|BINDING|ROLLOUT|DEPLOYMENT|PUBLICATION|CONSUMER|LIFECYCLE|RETIREMENT)_/.test(err.code || "")) {
+      if (err?.statusCode && /^CERTOPS_(MATERIAL|DISTRIBUTION|BINDING|ROLLOUT|DEPLOYMENT|PUBLICATION|CONSUMER|LIFECYCLE|RETIREMENT|RECONCILIATION)_/.test(err.code || "")) {
         return res.status(err.statusCode).json({ error:err.code,code:err.code });
       }
       const handled = handleCertOpsError(res, err);
@@ -4423,20 +4423,9 @@ router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consume
 router.post("/api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retry", ...distributionWriteGuards,
   requireWorkspaceCertOpsActive,
   csrRoute((req) => distribution.retryDistributionJob({ workspaceId:req.workspace.id,jobId:req.params.jobId,actorUserId:req.user?.id })));
-router.post("/api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retirement-dossiers", ...distributionWriteGuards,
+router.post("/api/v1/workspaces/:id/certops/distribution-jobs/:jobId/reconciliation", ...distributionWriteGuards,
   requireWorkspaceCertOpsActive,
-  csrRoute(req=>require("../services/certops/materialRetirementDossier").request({workspaceId:req.workspace.id,jobId:req.params.jobId,actorUserId:req.user?.id,evidence:req.body?.evidence})));
-router.get("/api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retirement-dossiers", ...csrReadGuards,
-  csrRoute(async req=>{
-    const jobId=materialDistribution.normalizeDistributionId(req.params.jobId);
-    const result=await pool.query("SELECT id,status,created_at,reviewed_at FROM certops_material_retirement_dossiers WHERE workspace_id=$1 AND original_job_id=$2 ORDER BY created_at DESC,id DESC LIMIT 101",[req.workspace.id,jobId]);
-    return {items:result.rows.slice(0,100),hasMore:result.rows.length>100,scopeStatus:"unchecked",evidenceVerified:false,reconciliationCleared:false};
-  }));
-router.post("/api/v1/workspaces/:id/certops/retirement-dossiers/:dossierId/review", ...distributionWriteGuards,
-  requireWorkspaceCertOpsActive,
-  csrRoute(req=>require("../services/certops/materialRetirementDossier").review({workspaceId:req.workspace.id,dossierId:req.params.dossierId,actorUserId:req.user?.id,dossierHash:req.body?.dossierHash})));
-router.get("/api/v1/workspaces/:id/certops/retirement-dossiers/:dossierId", ...csrReadGuards,
-  csrRoute(req=>require("../services/certops/materialRetirementDossier").get({workspaceId:req.workspace.id,dossierId:req.params.dossierId})));
+  csrRoute(async req=>({job:await require("../services/certops/materialReconciliation").requestReconciliation({workspaceId:req.workspace.id,jobId:req.params.jobId,actorUserId:req.user?.id})})));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups", ...csrReadGuards,
   csrRoute((req) => require("../services/certops/distributionRead").listDistributionGroups({ client:pool,workspaceId:req.workspace.id,query:req.query })));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers", ...csrReadGuards,

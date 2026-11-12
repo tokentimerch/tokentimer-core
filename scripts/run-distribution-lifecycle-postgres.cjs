@@ -25,7 +25,7 @@ async function main(){let created=false;try{
   const env={...process.env,NODE_ENV:"test",CERTOPS_ENABLED:"true",DB_HOST:"127.0.0.1",DB_PORT:port,DB_NAME:database,DB_USER:"postgres",DB_PASSWORD:"synthetic-disposable-only",
     CERTOPS_SIGNING_ENCRYPTION_KEY:crypto.randomBytes(32).toString("hex"),CERTOPS_REGISTRATION_ENCRYPTION_KEY:crypto.randomBytes(32).toString("hex")};
   run(process.execPath,["apps/api/migrations/migrate.js"],env,"migration.log");
-  if(!process.argv.includes("--upgrade-only"))process.stdout.write(run(process.execPath,["--test","--test-force-exit","--test-concurrency=1","tests/postgres/distribution-lifecycle.test.js","tests/postgres/distribution-cleanup.test.js","tests/postgres/distribution-staging.test.js"],env,"tests.log"));
+  if(!process.argv.includes("--upgrade-only"))process.stdout.write(run(process.execPath,["--test","--test-force-exit","--test-concurrency=1","tests/postgres/distribution-lifecycle.test.js","tests/postgres/distribution-cleanup.test.js","tests/postgres/distribution-staging.test.js","tests/postgres/material-reconciliation.test.js"],env,"tests.log"));
   if(process.argv.includes("--lifecycle-only")){console.log(`Lifecycle evidence: ${output}`);return;}
   const upgradeDatabase=`pr329_distribution_upgrade_${nonce}_test`;run("docker",["exec",container,"createdb","-U","postgres",upgradeDatabase]);
   process.stdout.write(run(process.execPath,["--test","--test-force-exit","tests/postgres/distribution-migration-upgrade.test.js"],{...env,DB_NAME:upgradeDatabase},"upgrade-tests.log"));

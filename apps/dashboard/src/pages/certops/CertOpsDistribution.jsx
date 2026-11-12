@@ -60,7 +60,6 @@ import useDistributionRead, {
 } from '../../components/certops/useDistributionRead.js';
 import { verificationDeadline } from '../../components/certops/distributionFormat.js';
 import { distributionApi } from '../../components/certops/distributionApi.js';
-import RetirementDossier from '../../components/certops/RetirementDossier.jsx';
 import { diagnosticExplanation } from '../../components/certops/distributionDiagnostics.js';
 import { formatDateTime } from '../../components/certops/certopsFormat.js';
 
@@ -1609,6 +1608,54 @@ function Management({
                                         Retry original job
                                       </Button>
                                     ) : null}
+                                    {consumer.latest_deployment
+                                      ?.needsOperatorReconciliation &&
+                                    [
+                                      'failed',
+                                      'blocked',
+                                      'rejected',
+                                      'orphaned_unknown_effect',
+                                    ].includes(
+                                      consumer.latest_deployment?.jobStatus
+                                    ) ? (
+                                      <Button
+                                        size='xs'
+                                        isDisabled={disabled}
+                                        onClick={() =>
+                                          confirm(
+                                            'Request read-only reconciliation',
+                                            'Request a fresh inspection of the original deployment on its assigned agent. A different authorized operator must approve it. The inspection does not install material, reload services or treat newer deployment evidence as proof of the original operation.',
+                                            () =>
+                                              run(
+                                                () =>
+                                                  distributionApi.reconcile(
+                                                    workspaceId,
+                                                    consumer.latest_deployment
+                                                      .jobId
+                                                  ),
+                                                result => (
+                                                  <Text as='span'>
+                                                    Read-only reconciliation
+                                                    requested.{' '}
+                                                    <JobLink
+                                                      workspaceId={workspaceId}
+                                                      id={
+                                                        result.job?.id ||
+                                                        result.id
+                                                      }
+                                                    >
+                                                      Review the inspection in
+                                                      Jobs
+                                                    </JobLink>
+                                                  </Text>
+                                                )
+                                              )
+                                          )
+                                        }
+                                      >
+                                        Request read-only reconciliation
+                                      </Button>
+                                    ) : null}
                                   </>
                                 ) : null}
                               </Stack>
@@ -1946,17 +1993,15 @@ function Management({
                     Recovery guidance
                   </Text>
                   <Text mt={2} fontSize='sm' color={dashboard.text.secondary}>
-                    Inspect the affected job and public evidence; run preflight;
-                    reconcile locally without stealing a live lock; retry the
-                    original signed job; resume when authorized; obtain fresh
+                    Inspect the affected job and public evidence. For a rejected
+                    or exhausted uncertain deployment, request read-only
+                    reconciliation from its destination and have another
+                    operator review the inspection in Jobs. Only matching
+                    evidence for the original operation can resolve its
+                    uncertainty. Resume when authorized and obtain fresh
                     consumer verification.
                   </Text>
                 </Box>
-                <RetirementDossier
-                  key={workspaceId}
-                  workspaceId={workspaceId}
-                  canManage={canManage}
-                />
               </DashboardPanel>
               <DashboardPanel
                 id='distribution-discovery'

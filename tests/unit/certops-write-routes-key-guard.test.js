@@ -64,17 +64,16 @@ describe("CertOps write routes reject private key material", () => {
     }
   });
 
-  it("covers every distribution and retirement dossier write route", () => {
-    const distribution = routes.filter((route) => route.path.includes("/distribution-") || route.path.includes("/retirement-dossiers/"));
+  it("covers every distribution write route", () => {
+    const distribution = routes.filter((route) => route.path.includes("/distribution-"));
     const keys = distribution.map((route) => route.key).sort();
     assert.deepEqual(keys, [
       "post /api/v1/workspaces/:id/certops/distribution-groups/:groupId/cleanups",
       "post /api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId/emergency",
       "post /api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts",
       "post /api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts/:rolloutId/state",
-      "post /api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retirement-dossiers",
+      "post /api/v1/workspaces/:id/certops/distribution-jobs/:jobId/reconciliation",
       "post /api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retry",
-      "post /api/v1/workspaces/:id/certops/retirement-dossiers/:dossierId/review",
       "put /api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId",
       "put /api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId/activation-policy",
       "put /api/v1/workspaces/:id/certops/distribution-groups/:groupId/policy",

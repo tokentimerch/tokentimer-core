@@ -26,19 +26,18 @@ const groupPath =
   "/api/v1/workspaces/{id}/certops/distribution-groups/{groupId}";
 const timestamp = "2030-01-01T00:00:00Z";
 
-test("retirement dossier OpenAPI documents all routes and unverified evidence boundaries", () => {
-  const job = document.paths["/api/v1/workspaces/{id}/certops/distribution-jobs/{jobId}/retirement-dossiers"];
-  const detail = document.paths["/api/v1/workspaces/{id}/certops/retirement-dossiers/{dossierId}"];
-  const review = document.paths["/api/v1/workspaces/{id}/certops/retirement-dossiers/{dossierId}/review"];
-  assert.ok(job.get && job.post && detail.get && review.post);
-  assert.deepEqual(review.post.responses["200"].content["application/json"].schema.properties.reconciliationCleared.enum, [false]);
-  assert.deepEqual(detail.get.responses["200"].content["application/json"].schema.properties.evidenceVerified.enum, [false]);
-  const schema=document.components.schemas.MaterialRetirementEvidence;
-  const validate=new Ajv({strict:false}).compile(schema);
-  const evidence=Object.fromEntries(schema.required.map(key=>[key,`sha256:${"a".repeat(64)}`]));
-  assert.equal(validate(evidence),true);
-  assert.equal(validate({...evidence,writerInventory:[evidence.writerInventory]}),false);
-  assert.equal(validate({...evidence,extra:"unexpected"}),false);
+test("original-job reconciliation documents fresh review and immutable read-only scope", () => {
+  const route = document.paths["/api/v1/workspaces/{id}/certops/distribution-jobs/{jobId}/reconciliation"].post;
+  assert.match(route.description, /separately reviewed/);
+  assert.match(route.description, /without installing certificates or reloading/);
+  assert.match(route.description, /does not rewrite/);
+  assert.ok(route.responses["409"]);
+  assert.equal(route.responses["200"].content["application/json"].schema.properties.job.$ref, "#/components/schemas/CertOpsJob");
+  assert.equal(Object.keys(document.paths).some(path => path.includes("retirement-dossiers")), false);
+  assert.ok(document.components.schemas.CertOpsJob.properties.operation.enum.includes("reconcile-from-store"));
+  const receipt = document.components.schemas.MaterialDistribution_reconciliationReceipt;
+  assert.ok(receipt.required.includes("originalJobId"));
+  assert.ok(receipt.required.includes("observedAt"));
 });
 
 test("the complete served contract validates as OpenAPI 3.0 with resolved lifecycle schemas", async () => {

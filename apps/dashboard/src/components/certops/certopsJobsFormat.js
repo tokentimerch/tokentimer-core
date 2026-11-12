@@ -44,6 +44,7 @@ const JOB_OPERATION_LABELS = {
   'revoke-trust': 'Revoke trust',
   'continue-enrollment': 'Continue enrollment',
   'adcs-preflight': 'AD CS preflight',
+  'reconcile-from-store': 'Read-only deployment reconciliation',
 };
 
 const EVENT_TYPE_LABELS = {

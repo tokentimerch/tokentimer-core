@@ -337,6 +337,39 @@ for (const splitChain of [false, true]) {
   });
 }
 
+test("original-obligation reconciliation requires protected exact intent and fresh lease without destination writes", async t => {
+  const f = await fixture(t); filesOnly(f);
+  const originalJobId = crypto.randomUUID(), options = f.options();
+  options.job.jobId = originalJobId;
+  options.checkLease = async () => { if (fs.existsSync(f.target.certPath)) throw new Error("interrupted after readback"); };
+  assert.equal((await executePinnedDeployment(options)).status, "orphaned_unknown_effect");
+  const saved = readRecord(f.record), cert = fs.readFileSync(f.target.certPath), key = fs.readFileSync(f.target.keyPath);
+  assert.equal(saved.originalJobId, originalJobId);
+  const inspect = {...f.options(), originalJobId, reload: () => assert.fail("Reconciliation must not reload")};
+  await assert.rejects(reconcilePinnedDeployment({...inspect, originalJobId:crypto.randomUUID()}), {code:"material_reconciliation_evidence_mismatch"});
+  writeProtectedJson(f.record, {...saved, intent:undefined});
+  await assert.rejects(reconcilePinnedDeployment(inspect), {code:"material_reconciliation_evidence_missing"});
+  writeProtectedJson(f.record, {...saved, intent:{...saved.intent, preparationOnly:true}});
+  await assert.rejects(reconcilePinnedDeployment(inspect), {code:"material_reconciliation_evidence_mismatch"});
+  writeProtectedJson(f.record, {...saved, phase:"staged"});
+  await assert.rejects(reconcilePinnedDeployment(inspect), {code:"material_reconciliation_mismatch"});
+  writeProtectedJson(f.record, saved);
+  let renewals = 0;
+  await assert.rejects(reconcilePinnedDeployment({...inspect, checkLease:async()=>{if(++renewals===2)throw new Error("lease lost after inspection");}}), /lease lost/);
+  assert.equal(readRecord(f.record).uncertain, true);
+  // A legacy journal still contains the exact original frozen intent, including
+  // the phase, which maps to the server's unique rollout/binding obligation.
+  const legacy = {...saved}; delete legacy.originalJobId;
+  writeProtectedJson(f.record, legacy);
+  assert.equal((await reconcilePinnedDeployment(inspect)).reconciled, true);
+  assert.equal(readRecord(f.record).uncertain, false);
+  assert.equal((await reconcilePinnedDeployment(inspect)).reconciled, true);
+  assert.deepEqual(fs.readFileSync(f.target.certPath), cert);
+  assert.deepEqual(fs.readFileSync(f.target.keyPath), key);
+  fs.unlinkSync(f.record);
+  await assert.rejects(reconcilePinnedDeployment(inspect), {code:"material_reconciliation_evidence_missing"});
+});
+
 test("legacy file-only journals use the exact provider pin to recover public chain proof", async t => {
   const f = await fixture(t); filesOnly(f); fullChain(f);
   await f.deploy({ checkLease: async () => { if (fs.existsSync(f.target.certPath)) throw new Error("interrupted after readback"); } });

@@ -150,6 +150,36 @@ export function cleanupScopeAvailable(job) {
 
 function reviewScope(job) {
   const payload = job?.payload;
+  if (payload?.materialReconciliation) {
+    const scope = payload.materialReconciliation;
+    return {
+      Operation: 'Read-only reconciliation of an original deployment',
+      ...fields(scope, [
+        ['originalJobId', 'Original job'],
+        ['assignedAgentId', 'Assigned agent'],
+        ['workspaceAuthorizationRevision', 'Workspace authority revision'],
+      ]),
+      'Original deployment': fields(scope.intent, [
+        ['groupId', 'Distribution group'],
+        ['bindingId', 'Consumer binding'],
+        ['rolloutId', 'Original rollout'],
+        ['materialVersionId', 'Material version'],
+        ['provider', 'Provider'],
+        ['materialStoreRef', 'Customer store alias'],
+        ['providerVersion', 'Provider version'],
+        ['fingerprintSha256', 'Certificate SHA-256'],
+        ['generation', 'Generation'],
+        ['deploymentProfileRef', 'Local deployment profile'],
+        ['profileRevision', 'Local profile revision'],
+        ['authorizationRevision', 'Authorization revision'],
+        ['verificationPolicy', 'Verification policy'],
+        ['verificationOnly', 'Verification only'],
+        ['preparationOnly', 'Preparation only'],
+      ]),
+      'Execution boundary':
+        'Inspect the original deployment only. Do not install material, reload services or substitute newer deployment evidence.',
+    };
+  }
   if (payload?.materialCleanup) {
     const intent = payload.materialCleanup;
     return {

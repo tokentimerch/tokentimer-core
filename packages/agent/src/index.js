@@ -233,7 +233,7 @@ function buildJobPolicyDescriptor(job) {
  * @param {object} job signature-verified claimed job payload
  * @returns {object} policy jobDescriptor
  */
-const { publicationSession, executePinnedDeployment, resolveBindingPolicy, withMaterialLock } = require("./material-store/lifecycle");
+const { publicationSession, executePinnedDeployment, reconcilePinnedDeployment, resolveBindingPolicy, withMaterialLock } = require("./material-store/lifecycle");
 const { readProtectedFile, resolveStore } = require("./material-store");
 
 function buildSignedJobPolicyDescriptor(job) {
@@ -368,6 +368,7 @@ const EXECUTABLE_JOB_ACTIONS = Object.freeze([
   "continue-enrollment",
   "deploy",
   "deploy-from-store",
+  "reconcile-from-store",
   "cleanup-from-store",
   "reload",
   "distribute-trust",
@@ -2224,6 +2225,7 @@ async function handleSignedJob({
           publicationCertificatePem: outcome.publicationCertificatePem } : {}),
         ...(outcome.deploymentReceipt ? { deploymentReceipt: outcome.deploymentReceipt } : {}),
         ...(outcome.cleanupReceipt?{cleanupReceipt:outcome.cleanupReceipt}:{}),
+        ...(outcome.reconciliationReceipt?{reconciliationReceipt:outcome.reconciliationReceipt}:{}),
         // ADR-0014: awaiting_issuer (and other AD CS outcomes) carry enrollment
         // state; required by agent-protocol when status is awaiting_issuer.
         ...(outcome.enrollmentResult
@@ -2507,6 +2509,28 @@ async function executeJob({
       onBeforeMutation: markMutation,
       trustStoreSeams,
     });
+  }
+
+  if (action === "reconcile-from-store") {
+    if (execution.dryRun === true) return {status:"blocked",errorMessage:"material_local_dry_run_required"};
+    const scope=job.materialReconciliation;
+    if (!scope || !scope.originalJobId || !scope.intent || !claimId || jobMode!=="real")
+      return {status:"blocked",errorMessage:"material_reconciliation_scope_invalid"};
+    const {providerOf,providerCapability}=require("../vendor/contracts/material-provider.cjs");
+    const required=[providerCapability(providerOf(scope.intent)),"deploy-from-store-v1",
+      ...(process.platform==="win32"?["windows-material-iis-v1","windows-cert-store-v1","iis-binding-v1"]:[])];
+    if(scope.intent.activationPolicy?.independentStaging===true || scope.intent.preparationOnly===true)required.push("material-consumer-staging-v1");
+    if(required.some(capability=>!AGENT_DECLARED_CAPABILITIES.includes(capability)))return {status:"blocked",errorMessage:"material_capability_unqualified"};
+    if(!["linux","win32"].includes(process.platform))return {status:"blocked",errorMessage:"material_platform_unqualified"};
+    const checkLease=async()=>{const gate=await renewJobLeaseOrAbort({...leaseOpts,required:true});if(gate?.ok===false)throw Object.assign(new Error("material_lease_unavailable"),{code:"material_lease_unavailable"});};
+    try{
+      const observed=await reconcilePinnedDeployment({job:{...job,materialDeployment:scope.intent},bindings:executionContext.materialBindings,
+        stores:executionContext.materialStores,stateDir,policyEngine,checkLease,originalJobId:scope.originalJobId});
+      return {status:"succeeded",reconciliationReceipt:{schemaVersion:1,workspaceId:job.workspaceId,
+        originalJobId:scope.originalJobId,groupId:scope.intent.groupId,
+        bindingId:observed.bindingId,materialVersionId:scope.intent.materialVersionId,generation:observed.generation,
+        fingerprintSha256:observed.fingerprintSha256,proofKind:scope.intent.preparationOnly===true?"staged":"deployed",observedAt:new Date().toISOString()}};
+    }catch(error){return {status:"blocked",errorMessage:/^material_[a-z_]+$/.test(error.code||"")?error.code:"material_reconciliation_failed"};}
   }
 
   if (job.publication || action === "deploy-from-store" || action==="cleanup-from-store") {

@@ -1274,6 +1274,84 @@
           "type": "boolean"
         }
       }
+    },
+    "materialDistribution_materialReconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "originalJobId",
+        "assignedAgentId",
+        "workspaceAuthorizationRevision",
+        "intent"
+      ],
+      "properties": {
+        "originalJobId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "assignedAgentId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "workspaceAuthorizationRevision": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "intent": {
+          "$ref": "#/definitions/materialDistribution_materialDeployment"
+        }
+      }
+    },
+    "materialDistribution_reconciliationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "originalJobId",
+        "groupId",
+        "bindingId",
+        "materialVersionId",
+        "generation",
+        "fingerprintSha256",
+        "observedAt",
+        "proofKind"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "originalJobId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "generation": {
+          "$ref": "#/definitions/materialDistribution_generation"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "proofKind": {
+          "enum": [
+            "staged",
+            "deployed"
+          ]
+        }
+      }
     }
   },
   "allOf": [

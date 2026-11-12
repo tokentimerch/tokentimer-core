@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-12 against main 5e3ea6d5 and the certificate distribution scope.
+Last reviewed: 2026-11-12 against the certificate distribution and original-job recovery scope.
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
 without gating v1.0.0, and what v1.0.0 itself changes for compatibility. Public feature cards and voting
@@ -49,7 +49,8 @@ called stable while they are open.
   integrates that code with consumer management, exact-version independent
   approvals, reviewed automation, canary waves, maintenance calendars, supported
   activation, recurring verification/drift incidents, durable recovery/PagerDuty,
-  preflight and retention management. These #498 increments are implemented,
+  preflight and retention management, including independently reviewed read-only
+  reconciliation of the original deployment. These #498 increments are implemented,
   unreleased work, not missing future connectors. See the
   [completion and evidence matrix](docs/certops/pr498-merge-readiness-20261103.md).
   OpenBao distribution is supported. Azure storage, shared Windows/IIS material

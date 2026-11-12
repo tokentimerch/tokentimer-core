@@ -8,7 +8,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `prerequisite`: needs the fixture or privilege supplied by its owning CI job
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 156
+Total skips found: 157
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -168,3 +168,4 @@ Total skips found: 156
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 672 | keeps a same-request idempotent manual-job replay to one audit | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 774 | keeps machine event and evidence ingestion available for pre-existing work while paused | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 904 | serializes real PostgreSQL pause and manual-job races in both commit orders | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/postgres/material-reconciliation.test.js` | 694 | real login approval and Linux agent inspect installed legacy evidence through lost-ack recovery | test(..., { skip }) option-object | `platform` |

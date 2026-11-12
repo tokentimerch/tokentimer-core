@@ -298,7 +298,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
         // fence before key-bearing preparation; retries recover this same scope.
         const recordPreparation = !previous || previous.generation < intent.generation || previous.phase === "staged" || previous.phase === "preparing";
         if (recordPreparation)
-          writeProtectedJson(record, { generation:intent.generation,intentHash:hash,intent,phase:"preparing",uncertain:false });
+          writeProtectedJson(record, { generation:intent.generation,intentHash:hash,intent,originalJobId:job.jobId,phase:"preparing",uncertain:false });
         onBeforeMutation("material_consumer_staging");
         writeProtectedJson(metadataFile, { intentHash:hash,materialVersionId:intent.materialVersionId,generation:intent.generation });
         writeProtectedJson(stagedFile, bundle);
@@ -308,7 +308,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
           materialVersionId:intent.materialVersionId,generation:intent.generation,fetched:true,staged:true,installed:false,
           bound:false,servedVerified:false,trustValidated:false,...facts,observedAt:new Date(now()).toISOString()};
         if (recordPreparation)
-          writeProtectedJson(record, {generation:intent.generation,intentHash:hash,intent,phase:"staged",uncertain:false,receipt});
+          writeProtectedJson(record, {generation:intent.generation,intentHash:hash,intent,originalJobId:job.jobId,phase:"staged",uncertain:false,receipt});
         return {status:"succeeded",deploymentReceipt:receipt,errorMessage:null};
       }
     }
@@ -326,7 +326,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
           await checkLease();
           await connector.preflight(signal);
           if (intent.verificationOnly !== true) {
-            writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,uncertain:true,certificatePem:bundle.certificatePem});
+            writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,originalJobId:job.jobId,uncertain:true,certificatePem:bundle.certificatePem});
             prepared=true;
             onBeforeMutation("material_windows_import");
             // Native preflight and protected journal writes can be slow.
@@ -349,14 +349,14 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
           receipt.observedAt=new Date().toISOString();
           if(!receipt.servedVerified || binding.verificationPolicy==="trust"&&!receipt.trustValidated)throw failure("material_service_verification_failed");
           await checkLease();
-          writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,uncertain:false,receipt,certificatePem:bundle.certificatePem});
+          writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,originalJobId:job.jobId,uncertain:false,receipt,certificatePem:bundle.certificatePem});
           return {status:"succeeded",deploymentReceipt:receipt,errorMessage:null};
         } catch(error) {
           if(prepared && !mutated) {
             if(previous)writeProtectedJson(record,previous);
             else fs.rmSync(record,{force:true});
           }
-          if(intent.verificationOnly===true && !mutated)writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,uncertain:false,receipt,certificatePem:bundle.certificatePem});
+          if(intent.verificationOnly===true && !mutated)writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,originalJobId:job.jobId,uncertain:false,receipt,certificatePem:bundle.certificatePem});
           return {status:mutated?"orphaned_unknown_effect":"failed",deploymentReceipt:receipt,
             errorMessage:/^material_[a-z_]+$/.test(error.code||"")?error.code:"material_windows_deployment_failed"};
         }
@@ -376,7 +376,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
       } catch { /* Public failure code below; never return local file errors. */ }
       await checkLease();
       receipt.observedAt=new Date().toISOString();
-      writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,uncertain:false,receipt,certificatePem:bundle.certificatePem});
+      writeProtectedJson(record,{generation:intent.generation,intentHash:hash,intent,originalJobId:job.jobId,uncertain:false,receipt,certificatePem:bundle.certificatePem});
       const verified=binding.verificationPolicy === "installed" ? receipt.installed
         : receipt.servedVerified && (binding.verificationPolicy!=="trust" || receipt.trustValidated);
       return {status:verified?"succeeded":"failed",deploymentReceipt:receipt,errorMessage:verified?null:"material_drift_detected"};
@@ -401,7 +401,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
       observedAt: new Date().toISOString() };
     try {
       await checkLease();
-      writeProtectedJson(record, { generation: intent.generation, intentHash: hash, intent, uncertain: true, certificatePem: bundle.certificatePem });
+      writeProtectedJson(record, { generation: intent.generation, intentHash: hash, intent, originalJobId: job.jobId, uncertain: true, certificatePem: bundle.certificatePem });
       onBeforeMutation("material_filesystem_install");
       await activationAdmission();
       mutated = true;
@@ -434,7 +434,7 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
       }
       receipt.observedAt = new Date().toISOString();
       await checkLease();
-      writeProtectedJson(record, { generation: intent.generation, intentHash: hash, intent, uncertain: false, receipt, certificatePem: bundle.certificatePem });
+      writeProtectedJson(record, { generation: intent.generation, intentHash: hash, intent, originalJobId: job.jobId, uncertain: false, receipt, certificatePem: bundle.certificatePem });
       return { status: "succeeded", deploymentReceipt: receipt, errorMessage: null };
     } catch (error) {
       if (!mutated) {
@@ -452,13 +452,34 @@ async function executePinnedDeployment({ job, stores, bindings, stateDir, policy
 // current-state promotion. Prove the installed pair and, for service policies,
 // every configured TLS listener before clearing an uncertain local marker. The subsequent signed
 // retry still needs a live claim and the original approved generation.
-async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine,windowsConnector,platform = process.platform,stores,fixtureLoopbackHttp = false }) {
+async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine,windowsConnector,platform = process.platform,stores,fixtureLoopbackHttp = false,originalJobId,checkLease }) {
+  if (originalJobId && typeof checkLease !== "function") throw failure("material_lease_unavailable");
   const { intent,binding }=resolveBindingPolicy(job,bindings,policyEngine,{platform});
   return withMaterialLock(path.join(stateDir,"material-locks"),`binding:${intent.workspaceId}:${intent.bindingId}`,async()=>{
     const record=path.join(stateDir,"material-bindings",`${intent.bindingId}.json`);
-    const previous=JSON.parse(readProtectedFile(record,MAX_BINDING_JOURNAL_BYTES));
+    let previous;
+    try { previous=JSON.parse(readProtectedFile(record,MAX_BINDING_JOURNAL_BYTES)); }
+    catch { throw failure("material_reconciliation_evidence_missing"); }
+    if (originalJobId) {
+      // Legacy journals predate the job identifier, but retain the complete
+      // immutable intent for the unique rollout/binding phase. Hash-only or
+      // replaced evidence never authorizes settling the original obligation.
+      if (!previous.intent) throw failure("material_reconciliation_evidence_missing");
+      if ((previous.originalJobId && previous.originalJobId !== originalJobId) ||
+          canonicalizeJobPayload(previous.intent) !== canonicalizeJobPayload(intent))
+        throw failure("material_reconciliation_evidence_mismatch");
+    }
     const intentHash=deploymentIntentHash(intent);
     if(previous.generation!==intent.generation || previous.intentHash!==intentHash)throw failure("material_stale_generation");
+    if (typeof checkLease === "function") await checkLease();
+    async function complete(verified, updated) {
+      // A fresh live claim may update local recovery metadata after proving
+      // the original effect. No certificate, destination or service is changed.
+      if (typeof checkLease === "function") await checkLease();
+      writeProtectedJson(record,updated);
+      return verified;
+    }
+    if (intent.preparationOnly !== true && ["preparing", "staged"].includes(previous.phase)) throw failure("material_reconciliation_mismatch");
     if (intent.preparationOnly === true) {
       if (!["preparing","staged"].includes(previous.phase) || previous.uncertain) throw failure("material_reconciliation_mismatch");
       const directory=path.join(stateDir,"material-consumer-staging",intent.bindingId,String(intent.generation));
@@ -467,8 +488,8 @@ async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine,wi
       if(metadata.intentHash!==intentHash || !stores)throw failure("material_reconciliation_mismatch");
       const store=createMaterialStore(stores,intent,{fixtureLoopbackHttp});
       validateBundle(bundle,intent,store.scope);
-      writeProtectedJson(record,{...previous,phase:"staged",reconciledAt:new Date().toISOString()});
-      return {reconciled:true,staged:true,bindingId:intent.bindingId,generation:intent.generation,fingerprintSha256:intent.fingerprintSha256};
+      return complete({reconciled:true,staged:true,bindingId:intent.bindingId,generation:intent.generation,fingerprintSha256:intent.fingerprintSha256},
+        {...previous,phase:"staged",reconciledAt:new Date().toISOString()});
     }
     if(binding.target.type==="windows-iis") {
       const certificatePem=previous.certificatePem;
@@ -480,8 +501,8 @@ async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine,wi
       return connector.withLock(async signal=>{
         if(!await connector.verify({certificatePem,fingerprintSha256:intent.fingerprintSha256},signal))throw failure("material_reconciliation_mismatch");
         for(const probe of binding.probes){const proof=await probeListener(probe,intent.fingerprintSha256,binding.verificationPolicy);if(!proof.servedVerified||binding.verificationPolicy==="trust"&&!proof.trustValidated)throw failure("material_reconciliation_mismatch");}
-        writeProtectedJson(record,{...previous,uncertain:false,reconciledAt:new Date().toISOString()});
-        return {reconciled:true,bindingId:intent.bindingId,generation:intent.generation,fingerprintSha256:intent.fingerprintSha256};
+        return complete({reconciled:true,bindingId:intent.bindingId,generation:intent.generation,fingerprintSha256:intent.fingerprintSha256},
+          {...previous,uncertain:false,reconciledAt:new Date().toISOString()});
       });
     }
     // New journals retain public chain proof, never key bytes. For older
@@ -497,8 +518,8 @@ async function reconcilePinnedDeployment({ job,bindings,stateDir,policyEngine,wi
       if(!installedPairMatches(binding,policyEngine,intent.fingerprintSha256,expected))throw failure("material_reconciliation_mismatch");
     } catch { throw failure("material_reconciliation_mismatch"); }
     if(binding.verificationPolicy!=="installed")for(const p of binding.probes){const proof=await probeListener(p,intent.fingerprintSha256,binding.verificationPolicy);if(!proof.servedVerified || binding.verificationPolicy==="trust"&&!proof.trustValidated)throw failure("material_reconciliation_mismatch");}
-    writeProtectedJson(record,{...previous,certificatePem:expected.certificatePem,uncertain:false,reconciledAt:new Date().toISOString()});
-    return { reconciled:true,bindingId:intent.bindingId,generation:intent.generation,fingerprintSha256:intent.fingerprintSha256 };
+    return complete({reconciled:true,bindingId:intent.bindingId,generation:intent.generation,fingerprintSha256:intent.fingerprintSha256},
+      {...previous,certificatePem:expected.certificatePem,uncertain:false,reconciledAt:new Date().toISOString()});
   });
 }
 

@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "description": "Static skip ownership and candidate execution environments. Classification is a review aid, never execution evidence. No entry claims qualified execution.",
   "environments": {
+    "core-material-reconciliation": {
+      "capabilities": [
+        "linux",
+        "postgres",
+        "core-api",
+        "agent"
+      ],
+      "owner": "Original deployment reconciliation",
+      "workflow": ".github/workflows/ci.yml",
+      "status": "candidate-environment-not-qualified"
+    },
     "windows-material-iis": {
       "capabilities": [
         "windows-server",
@@ -1588,6 +1599,16 @@
       "name": "serializes real PostgreSQL pause and manual-job races in both commit orders",
       "environment": "core-postgres-integration",
       "workflowJob": "build_and_test"
+    },
+    {
+      "id": "22201f4e045161486b0e",
+      "file": "tests/postgres/material-reconciliation.test.js",
+      "line": 694,
+      "name": "real login approval and Linux agent inspect installed legacy evidence through lost-ack recovery",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "core-material-reconciliation",
+      "workflowJob": "vault_cleanup_regression"
     }
   ],
   "siteDefaults": {

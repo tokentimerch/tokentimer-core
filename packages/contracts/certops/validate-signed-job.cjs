@@ -68,6 +68,7 @@ const CERTIFICATE_ACTIONS = Object.freeze([
   "continue-enrollment",
   "deploy-from-store",
   "cleanup-from-store",
+  "reconcile-from-store",
 ]);
 const PROTOCOL_SMOKE_ACTION = "protocol_smoke";
 // Issuer-scoped, not certificate-scoped: preflight names a CA and template

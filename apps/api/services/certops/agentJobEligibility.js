@@ -149,6 +149,15 @@ function evaluateAgentJobEligibility({
     materialCapabilities.push(providerCapability(cleanupProvider),
       require("../../../../packages/contracts/certops/material-cleanup.cjs").cleanupCapability(cleanupProvider) || "material-cleanup-unsupported",EVIDENCE_CLAIM_BINDING_CAPABILITY);
   }
+  if(job.operation==="reconcile-from-store") {
+    const intent=job.payload?.materialReconciliation?.intent;
+    if(!intent)return result(false,"material_reconciliation_scope_missing");
+    if(!["linux","win32"].includes(agent.platform))return result(false,"material_capability_unavailable");
+    materialCapabilities.push(providerCapability(providerOf(intent)),"deploy-from-store-v1",EVIDENCE_CLAIM_BINDING_CAPABILITY,
+      ...(agent.platform==="win32"?["windows-material-iis-v1","windows-cert-store-v1","iis-binding-v1"]:[]));
+    if(intent.activationPolicy)materialCapabilities.push("maintenance-calendar-v1");
+    if(intent.activationPolicy?.independentStaging===true || intent.preparationOnly===true)materialCapabilities.push("material-consumer-staging-v1");
+  }
   if(job.payload?.materialDeployment?.activationPolicy)materialCapabilities.push("maintenance-calendar-v1");
   if(job.payload?.materialDeployment?.activationPolicy?.independentStaging === true || job.payload?.materialDeployment?.preparationOnly === true)
     materialCapabilities.push("material-consumer-staging-v1");

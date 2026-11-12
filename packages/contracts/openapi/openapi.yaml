@@ -11871,164 +11871,40 @@ paths:
           description: Stale intent, version, generation, period or approval
         '422':
           description: Invalid public intent
-  /api/v1/workspaces/{id}/certops/distribution-jobs/{jobId}/retirement-dossiers:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema: { type: string, format: uuid }
-      - name: jobId
-        in: path
-        required: true
-        schema: { type: string, format: uuid }
-    get:
-      tags: [CertOps]
-      summary: List advisory retirement dossiers for an uncertain job
-      description: Returns at most 100 newest dossiers. Scope freshness is unchecked; fetch an individual dossier to evaluate it.
-      responses:
-        '200':
-          description: Dossiers visible in the workspace
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items, hasMore, scopeStatus, evidenceVerified, reconciliationCleared]
-                properties:
-                  items:
-                    type: array
-                    maxItems: 100
-                    items:
-                      type: object
-                      required: [id, status, created_at, reviewed_at]
-                      properties:
-                        id: { type: string, format: uuid }
-                        status: { type: string, enum: [pending_review, reviewed_history_unknown] }
-                        created_at: { type: string, format: date-time }
-                        reviewed_at: { type: string, format: date-time, nullable: true }
-                  hasMore: { type: boolean }
-                  scopeStatus: { type: string, enum: [unchecked] }
-                  evidenceVerified: { type: boolean, enum: [false] }
-                  reconciliationCleared: { type: boolean, enum: [false] }
-        '403': { description: Workspace or role denied }
-        '422': { description: Invalid job identifier }
+  /api/v1/workspaces/{id}/certops/distribution-jobs/{jobId}/reconciliation:
     post:
       tags: [CertOps]
-      summary: Request an independent advisory retirement review
+      summary: Request read-only reconciliation of an uncertain original deployment
       description: >-
-        An active workspace manager supplies digests for externally held evidence.
-        This records neither verified physical fencing nor a historical outcome and does not clear reconciliation.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [evidence]
-              properties:
-                evidence: { $ref: '#/components/schemas/MaterialRetirementEvidence' }
+        Requires an active workspace and current CertOps manager authority. Creates a
+        separately reviewed job for the original agent and immutable deployment intent.
+        The agent inspects existing material without installing certificates or reloading
+        services. Missing, superseded or mismatched evidence leaves the original fence
+        intact. Successful proof may settle uncertainty metadata, but does not rewrite
+        the original execution outcome or promote newer consumer evidence.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
       responses:
         '200':
-          description: Advisory review requested
+          description: Existing or newly requested reconciliation job
           content:
             application/json:
               schema:
                 type: object
-                required: [id, scope, evidence, dossierHash, status, history, evidenceVerified]
+                required: [job]
                 properties:
-                  id: { type: string, format: uuid }
-                  scope: { $ref: '#/components/schemas/MaterialRetirementScope' }
-                  evidence: { $ref: '#/components/schemas/MaterialRetirementEvidence' }
-                  dossierHash: { type: string, pattern: '^[a-f0-9]{64}$' }
-                  status: { type: string, enum: [pending_review] }
-                  history: { type: string, enum: [unknown] }
-                  evidenceVerified: { type: boolean, enum: [false] }
+                  job: { $ref: '#/components/schemas/CertOpsJob' }
         '403': { description: Workspace or role denied }
-        '404': { description: Uncertain original job not found }
-        '409': { description: 'Stale job, scope or authority' }
-        '422': { description: Invalid evidence digests or job identifier }
-  /api/v1/workspaces/{id}/certops/retirement-dossiers/{dossierId}:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema: { type: string, format: uuid }
-      - name: dossierId
-        in: path
-        required: true
-        schema: { type: string, format: uuid }
-    get:
-      tags: [CertOps]
-      summary: Read an advisory retirement dossier and current scope status
-      description: A current scope does not verify the external evidence or physical fencing.
-      responses:
-        '200':
-          description: Advisory dossier with current or stale scope
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [id, original_job_id, scope, evidence, dossier_hash, status, requested_by, reviewed_by, created_at, reviewed_at, scopeStatus, history, evidenceVerified, reconciliationCleared]
-                properties:
-                  id: { type: string, format: uuid }
-                  original_job_id: { type: string, format: uuid }
-                  scope: { $ref: '#/components/schemas/MaterialRetirementScope' }
-                  evidence: { $ref: '#/components/schemas/MaterialRetirementEvidence' }
-                  dossier_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
-                  status: { type: string, enum: [pending_review, reviewed_history_unknown] }
-                  requested_by: { type: string, description: Requesting user ID }
-                  reviewed_by: { type: string, nullable: true, description: Reviewing user ID }
-                  created_at: { type: string, format: date-time }
-                  reviewed_at: { type: string, format: date-time, nullable: true }
-                  scopeStatus: { type: string, enum: [current, stale] }
-                  history: { type: string, enum: [unknown] }
-                  evidenceVerified: { type: boolean, enum: [false] }
-                  reconciliationCleared: { type: boolean, enum: [false] }
-        '403': { description: Workspace or role denied }
-        '404': { description: Dossier not found in workspace }
-        '422': { description: Invalid dossier identifier }
-  /api/v1/workspaces/{id}/certops/retirement-dossiers/{dossierId}/review:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema: { type: string, format: uuid }
-      - name: dossierId
-        in: path
-        required: true
-        schema: { type: string, format: uuid }
-    post:
-      tags: [CertOps]
-      summary: Record an independent advisory retirement review
-      description: >-
-        Requires a different active workspace manager and an unchanged dossier hash and scope.
-        The review does not verify evidence, prove historical success or clear reconciliation.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [dossierHash]
-              properties:
-                dossierHash: { type: string, pattern: '^[a-f0-9]{64}$' }
-      responses:
-        '200':
-          description: Advisory review recorded
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [id, status, history, evidenceVerified, reconciliationCleared]
-                properties:
-                  id: { type: string, format: uuid }
-                  status: { type: string, enum: [reviewed_history_unknown] }
-                  history: { type: string, enum: [unknown] }
-                  evidenceVerified: { type: boolean, enum: [false] }
-                  reconciliationCleared: { type: boolean, enum: [false] }
-        '403': { description: Workspace or role denied }
-        '404': { description: Dossier not found in workspace }
-        '409': { description: 'Self-review, replay, changed scope, hash or authority' }
-        '422': { description: Invalid dossier identifier }
+        '404': { description: Original deployment not found in this workspace }
+        '409': { description: Original intent or current authority is ineligible for reconciliation }
+        '422': { description: Invalid public intent }
   /api/v1/workspaces/{id}/contacts/{contactId}/verifications/{channel}:
     post:
       tags: [Alerts]
@@ -13008,35 +12884,8 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
-    MaterialRetirementEvidence:
-      type: object
-      description: SHA-256 digests of externally held records; TokenTimer does not validate their contents.
-      additionalProperties: false
-      required: [writerInventory, writerIsolation, destinationIsolation, replacementReadback]
-      properties:
-        writerInventory: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
-        writerIsolation: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
-        destinationIsolation: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
-        replacementReadback: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
-    MaterialRetirementScope:
-      type: object
-      description: Immutable snapshot of the original job and current desired binding at request time.
-      required: [originalJobId, assignedAgentId, groupId, bindingId, originalGeneration, currentGeneration, intentHash, bindingState, currentAgentId, bindingAuthorizationRevision, desiredGeneration, desiredMaterialVersionId, history, workspaceAuthorizationRevision]
-      properties:
-        originalJobId: { type: string, format: uuid }
-        assignedAgentId: { type: string, format: uuid, nullable: true }
-        groupId: { type: string, format: uuid }
-        bindingId: { type: string, format: uuid }
-        originalGeneration: { type: integer, minimum: 1 }
-        currentGeneration: { type: integer, minimum: 1 }
-        intentHash: { type: string, pattern: '^[a-f0-9]{64}$' }
-        bindingState: { type: string }
-        currentAgentId: { type: string, format: uuid, nullable: true }
-        bindingAuthorizationRevision: { type: string }
-        desiredGeneration: { type: integer, minimum: 0 }
-        desiredMaterialVersionId: { type: string, format: uuid, nullable: true }
-        history: { type: string, enum: [unknown] }
-        workspaceAuthorizationRevision: { type: string }
+    MaterialDistribution_materialReconciliation: {"type":"object","additionalProperties":false,"required":["originalJobId","assignedAgentId","workspaceAuthorizationRevision","intent"],"properties":{"originalJobId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"assignedAgentId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"workspaceAuthorizationRevision":{"type":"string","pattern":"^[0-9]{1,20}$"},"intent":{"$ref":"#/components/schemas/MaterialDistribution_materialDeployment"}}}
+    MaterialDistribution_reconciliationReceipt: {"type":"object","additionalProperties":false,"required":["schemaVersion","workspaceId","originalJobId","groupId","bindingId","materialVersionId","generation","fingerprintSha256","observedAt","proofKind"],"properties":{"schemaVersion":{"enum":[1]},"workspaceId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"originalJobId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"groupId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"bindingId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"materialVersionId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"generation":{"$ref":"#/components/schemas/MaterialDistribution_generation"},"fingerprintSha256":{"$ref":"#/components/schemas/MaterialDistribution_fingerprint"},"observedAt":{"type":"string","format":"date-time","maxLength":40},"proofKind":{"enum":["staged","deployed"]}}}
     OperatorTokenRecord:
       type: object
       additionalProperties: false
@@ -15431,6 +15280,7 @@ components:
             - deploy
             - deploy-from-store
             - cleanup-from-store
+            - reconcile-from-store
             - reload
             - revoke
             - noop
@@ -15891,7 +15741,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reconcile-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
         status:
           type: string
           enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled, dry_run_complete, orphaned_unknown_effect, awaiting_issuer]
@@ -18564,7 +18414,7 @@ components:
                   maxItems: 16
                   items:
                     type: string
-                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store, cleanup-from-store]
+                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store, cleanup-from-store, reconcile-from-store]
     CertOpsAgentClaimResponse:
       type: object
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.
@@ -18887,6 +18737,8 @@ components:
                   $ref: "#/components/schemas/MaterialDistribution_publicationReceipt"
                 deploymentReceipt:
                   $ref: "#/components/schemas/MaterialDistribution_deploymentReceipt"
+                reconciliationReceipt:
+                  $ref: "#/components/schemas/MaterialDistribution_reconciliationReceipt"
                 publicationCertificatePem:
                   type: string
                   maxLength: 262144

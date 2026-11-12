@@ -69,7 +69,8 @@
         "noop",
         "continue-enrollment",
         "deploy-from-store",
-        "cleanup-from-store"
+        "cleanup-from-store",
+        "reconcile-from-store"
       ],
       "description": "Public certificate lifecycle action requested by the control plane. continue-enrollment is a follow-up step (retrieve, deferred validation, install recovery, or freeing the key after cancellation) of an enrollment an earlier job started (ADR-0014 decision 2)."
     },
@@ -625,6 +626,9 @@
     },
     "materialCleanup": {
       "$ref": "#/definitions/materialDistribution_materialCleanup"
+    },
+    "materialReconciliation": {
+      "$ref": "#/definitions/materialDistribution_materialReconciliation"
     }
   },
   "allOf": [
@@ -919,6 +923,81 @@
         "not": {
           "required": [
             "materialCleanup"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "reconcile-from-store"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "materialReconciliation"
+        ],
+        "properties": {
+          "keyMode": {
+            "const": "vault-managed"
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "publication"
+              ]
+            },
+            {
+              "required": [
+                "materialDeployment"
+              ]
+            },
+            {
+              "required": [
+                "materialCleanup"
+              ]
+            },
+            {
+              "required": [
+                "certPath"
+              ]
+            },
+            {
+              "required": [
+                "keyPath"
+              ]
+            },
+            {
+              "required": [
+                "chainPath"
+              ]
+            },
+            {
+              "required": [
+                "reloadService"
+              ]
+            },
+            {
+              "required": [
+                "reloadCommandRefs"
+              ]
+            },
+            {
+              "required": [
+                "deploymentTargets"
+              ]
+            }
+          ]
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "materialReconciliation"
           ]
         }
       }
@@ -1782,6 +1861,84 @@
         },
         "reauthorize": {
           "type": "boolean"
+        }
+      }
+    },
+    "materialDistribution_materialReconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "originalJobId",
+        "assignedAgentId",
+        "workspaceAuthorizationRevision",
+        "intent"
+      ],
+      "properties": {
+        "originalJobId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "assignedAgentId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "workspaceAuthorizationRevision": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "intent": {
+          "$ref": "#/definitions/materialDistribution_materialDeployment"
+        }
+      }
+    },
+    "materialDistribution_reconciliationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "originalJobId",
+        "groupId",
+        "bindingId",
+        "materialVersionId",
+        "generation",
+        "fingerprintSha256",
+        "observedAt",
+        "proofKind"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "originalJobId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "generation": {
+          "$ref": "#/definitions/materialDistribution_generation"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "proofKind": {
+          "enum": [
+            "staged",
+            "deployed"
+          ]
         }
       }
     }

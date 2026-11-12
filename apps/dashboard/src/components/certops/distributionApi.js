@@ -83,27 +83,11 @@ export const distributionApi = {
         {}
       )
     ).data,
-  retirementDossiers: async (workspaceId, jobId) =>
-    (
-      await apiClient.get(
-        `${root(workspaceId)}/distribution-jobs/${jobId}/retirement-dossiers`
-      )
-    ).data,
-  requestRetirementDossier: async (workspaceId, jobId, evidence) =>
+  reconcile: async (workspaceId, jobId) =>
     (
       await apiClient.post(
-        `${root(workspaceId)}/distribution-jobs/${jobId}/retirement-dossiers`,
-        { evidence }
-      )
-    ).data,
-  retirementDossier: async (workspaceId, id) =>
-    (await apiClient.get(`${root(workspaceId)}/retirement-dossiers/${id}`))
-      .data,
-  reviewRetirementDossier: async (workspaceId, id, dossierHash) =>
-    (
-      await apiClient.post(
-        `${root(workspaceId)}/retirement-dossiers/${id}/review`,
-        { dossierHash }
+        `${root(workspaceId)}/distribution-jobs/${encodeURIComponent(jobId)}/reconciliation`,
+        {}
       )
     ).data,
 };

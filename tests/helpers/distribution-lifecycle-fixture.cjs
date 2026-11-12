@@ -3,7 +3,7 @@ const crypto=require("node:crypto");
 const {pool}=require("../../apps/api/db/database");
 const operations=require("../../apps/api/services/certops/distributionOperations");
 const {createCertificateIssuanceJob}=require("../../apps/api/services/certops/issuance");
-async function fixture({requireApproval=false,published=true,materialProvider="vault-kv2",providerVersion=materialProvider==="azure-key-vault"?"a".repeat(32):1}={}) {
+async function fixture({requireApproval=false,published=true,materialProvider="vault-kv2",fingerprint:providedFingerprint,providerVersion=materialProvider==="azure-key-vault"?"a".repeat(32):1}={}) {
   const workspaceId=crypto.randomUUID();
   async function user(){return (await pool.query(`INSERT INTO users(email,display_name,password_hash,auth_method)
     VALUES($1,'Lifecycle fixture','synthetic-test-only','local') RETURNING id`,[`${crypto.randomUUID()}@example.test`])).rows[0].id;}
@@ -24,7 +24,7 @@ async function fixture({requireApproval=false,published=true,materialProvider="v
       caEndpoint:"https://acme.example.test/directory",commandRef:"certbot",dnsProvider:"cloudflare",dnsZone:"example.test",keyAlgorithm:"rsa",keySize:2048,
       publicationDestination:{materialStoreRef:"customer",issuanceProfileRef:"shared",profileRevision:1,...(materialProvider!=="vault-kv2"?{type:materialProvider}:{})}}}));
   const {groupId,materialVersionId}=issued.job.payload.publication;
-  const fingerprint=crypto.randomBytes(32).toString("hex");
+  const fingerprint=providedFingerprint || crypto.randomBytes(32).toString("hex");
   const identity=(await pool.query(`INSERT INTO certops_certificate_identities(workspace_id,fingerprint_sha256) VALUES($1,$2) RETURNING id`,[workspaceId,fingerprint])).rows[0].id;
   // Public synthetic receipt metadata only; no service execution is claimed.
   if(published){await pool.query(`UPDATE certops_material_versions SET state='published',certificate_identity_id=$2,provider_version=$5,provider_version_ref=$6,

@@ -574,7 +574,7 @@ jobs:
           CERTOPS_ENABLED: "true"
         run: |
           node apps/api/migrations/migrate.js
-          node --test --test-force-exit --test-concurrency=1 tests/postgres/distribution-lifecycle.test.js tests/postgres/distribution-cleanup.test.js tests/postgres/distribution-staging.test.js
+          node --test --test-force-exit --test-concurrency=1 tests/postgres/distribution-lifecycle.test.js tests/postgres/distribution-cleanup.test.js tests/postgres/distribution-staging.test.js tests/postgres/material-reconciliation.test.js
       - name: Prove real Vault cleanup completion and receipt retry through HTTP
         run: node scripts/run-cleanup-completion-acceptance.cjs
       - name: Prove separate OpenBao cleanup identity and real provider completion
