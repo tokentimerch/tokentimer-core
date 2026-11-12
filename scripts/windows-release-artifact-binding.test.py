@@ -108,15 +108,26 @@ class CandidateBindingTests(unittest.TestCase):
             self.assertEqual(bad.stdout, "")
 
     def test_inventory_generator_and_independent_binding_agree(self):
-        archive = make_archive([("package/runtime/amd64/node.exe", b"node-fixture", tarfile.REGTYPE),
-                                ("package/bin/tokentimer-agent-host-amd64.exe", b"host-fixture", tarfile.REGTYPE)])
+        names = ["package/package.json", "package/LICENSE", "package/README.md",
+                 "package/bin/tokentimer-agent.js", "package/src/index.js",
+                 "package/scripts/install-agent.ps1", "package/src/acme/windows-command.ps1",
+                 "package/src/windows-material/connector.ps1", "package/runtime/LICENSE",
+                 "package/runtime/manifest.json", "package/runtime/amd64/node.exe"]
+        names += [f"package/bin/{family}-{arch}.exe" for arch in ("amd64", "arm64")
+                  for family in ("tokentimer-agent-host", "tokentimer-adcs-chain", "tokentimer-adcs-cmc")]
+        files = [(name, name.encode(), tarfile.REGTYPE) for name in names]
+        archive = make_archive(files)
+        packages = []
+        for index, (name, data, _) in enumerate(files):
+            if not name.endswith(".exe"):
+                continue
+            item = {"name": name.rsplit("/", 1)[-1], "SPDXID": f"SPDXRef-exe-{index}",
+                    "checksums": [{"algorithm": "SHA256", "checksumValue": sha(data)}]}
+            if name.endswith("/node.exe"):
+                item["licenseDeclared"] = "MIT"
+            packages.append(item)
         sbom = json.dumps({"spdxVersion": "SPDX-2.3", "SPDXID": "SPDXRef-DOCUMENT",
-                           "documentNamespace": "https://example.invalid/fixture", "packages": [
-                               {"name": "nodejs", "SPDXID": "SPDXRef-node", "licenseDeclared": "MIT",
-                                "checksums": [{"algorithm": "SHA256", "checksumValue": sha(b"node-fixture")}]},
-                               {"name": "tokentimer-agent-host", "SPDXID": "SPDXRef-host",
-                                "checksums": [{"algorithm": "SHA256", "checksumValue": sha(b"host-fixture")}]}
-                           ]}).encode()
+                           "documentNamespace": "https://example.invalid/fixture", "packages": packages}).encode()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             archive_file = root / self.params["archive_name"]

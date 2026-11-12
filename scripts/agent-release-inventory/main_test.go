@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -51,19 +52,90 @@ func archive(t *testing.T, entries ...fixture) []byte {
 	return b.Bytes()
 }
 
+func completePackage(arch string) []fixture {
+	names := []string{
+		"package/package.json", "package/LICENSE", "package/README.md",
+		"package/bin/tokentimer-agent.js", "package/src/index.js",
+		"package/scripts/install-agent.ps1", "package/src/acme/windows-command.ps1",
+		"package/src/windows-material/connector.ps1", "package/runtime/LICENSE",
+		"package/runtime/manifest.json", "package/runtime/" + arch + "/node.exe",
+		"package/bin/tokentimer-agent-host-amd64.exe", "package/bin/tokentimer-agent-host-arm64.exe",
+		"package/bin/tokentimer-adcs-chain-amd64.exe", "package/bin/tokentimer-adcs-chain-arm64.exe",
+		"package/bin/tokentimer-adcs-cmc-amd64.exe", "package/bin/tokentimer-adcs-cmc-arm64.exe",
+	}
+	entries := make([]fixture, 0, len(names))
+	for _, name := range names {
+		data := name
+		if strings.HasSuffix(name, "/node.exe") {
+			data = "node"
+		}
+		entries = append(entries, fixture{name: name, data: data})
+	}
+	return entries
+}
+
+func componentsForPackage(entries []fixture) string {
+	var components []string
+	for _, f := range entries {
+		if strings.HasPrefix(f.name, "package/bin/tokentimer-") && strings.HasSuffix(f.name, ".exe") {
+			components = append(components, fmt.Sprintf(`{"name":%q,"hashes":[{"alg":"SHA-256","content":"%s"}]}`, f.name, checksum([]byte(f.data))))
+		}
+	}
+	return strings.Join(components, ",")
+}
+
+func TestRequiredBundledFiles(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			entries := completePackage(arch)
+			bom := []byte(fmt.Sprintf(`{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[{"name":"node","licenses":[{"license":{"id":"MIT"}}],"hashes":[{"alg":"SHA-256","content":"%s"}]},%s]}`, checksum([]byte("node")), componentsForPackage(entries)))
+			buildArchive := func(entries []fixture) error {
+				_, err := build("tokentimer-agent-1.2.3-windows-"+arch+".tgz", archive(t, entries...), bom, "agent.cdx.json", "1.2.3", arch, strings.Repeat("a", 40))
+				return err
+			}
+			if err := buildArchive(entries); err != nil {
+				t.Fatal(err)
+			}
+			for i, entry := range entries {
+				t.Run(entry.name, func(t *testing.T) {
+					missing := append(append([]fixture{}, entries[:i]...), entries[i+1:]...)
+					if err := buildArchive(missing); err == nil || !strings.Contains(err.Error(), entry.name) {
+						t.Fatalf("missing file accepted: %v", err)
+					}
+					empty := append([]fixture{}, entries...)
+					empty[i].data = ""
+					if err := buildArchive(empty); err == nil || !strings.Contains(err.Error(), entry.name) {
+						t.Fatalf("empty file accepted: %v", err)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestInventoryBindsActualArchiveAndSBOM(t *testing.T) {
-	a := archive(t, fixture{name: "package/", kind: tar.TypeDir}, fixture{name: "package/b.js", data: "second"}, fixture{name: "package/a.js", data: "first"}, fixture{name: "package/runtime/amd64/node.exe", data: "node"}, fixture{name: "package/bin/host.exe", data: "host"})
-	b := []byte(fmt.Sprintf(`{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[{"name":"node","licenses":[{"license":{"id":"MIT"}}],"hashes":[{"alg":"SHA-256","content":"%s"}]},{"name":"host","hashes":[{"alg":"SHA-256","content":"%s"}]}]}`, checksum([]byte("node")), checksum([]byte("host"))))
+	entries := append(completePackage("amd64"), fixture{name: "package/b.js", data: "second"}, fixture{name: "package/a.js", data: "first"}, fixture{name: "package/bin/host.exe", data: "host"})
+	a := archive(t, entries...)
+	b := []byte(fmt.Sprintf(`{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[{"name":"node","licenses":[{"license":{"id":"MIT"}}],"hashes":[{"alg":"SHA-256","content":"%s"}]},{"name":"host","hashes":[{"alg":"SHA-256","content":"%s"}]},%s]}`, checksum([]byte("node")), checksum([]byte("host")), componentsForPackage(entries)))
 	commit := strings.Repeat("a", 40)
 	v, err := build("tokentimer-agent-1.2.3-windows-amd64.tgz", a, b, "agent.cdx.json", "1.2.3", "amd64", commit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Archive.SHA256 != checksum(a) || v.SBOM.SHA256 != checksum(b) || v.SourceCommit != commit || len(v.Files) != 4 {
+	if v.Archive.SHA256 != checksum(a) || v.SBOM.SHA256 != checksum(b) || v.SourceCommit != commit || len(v.Files) != len(entries) {
 		t.Fatal("artifact binding missing")
 	}
-	if v.Files[0].Path != "package/a.js" || v.Files[0].SHA256 != checksum([]byte("first")) || v.Files[0].Size != 5 {
+	found := false
+	for _, file := range v.Files {
+		if file.Path == "package/a.js" && file.SHA256 == checksum([]byte("first")) && file.Size == 5 {
+			found = true
+		}
+	}
+	if !found {
 		t.Fatal("file inventory incorrect")
+	}
+	if !sort.SliceIsSorted(v.Files, func(i, j int) bool { return v.Files[i].Path < v.Files[j].Path }) {
+		t.Fatal("file inventory not sorted")
 	}
 	encoded, err := json.Marshal(v)
 	if err != nil {
@@ -133,8 +205,9 @@ func TestTotalEntryLimitCountsDirectories(t *testing.T) {
 }
 
 func TestSPDXIncludesPackagedRuntime(t *testing.T) {
-	a := archive(t, fixture{name: "package/runtime/amd64/node.exe", data: "node"})
-	b := []byte(fmt.Sprintf(`{"spdxVersion":"SPDX-2.3","SPDXID":"SPDXRef-DOCUMENT","documentNamespace":"https://example.test/doc","packages":[{"name":"nodejs","SPDXID":"SPDXRef-node","licenseDeclared":"MIT","checksums":[{"algorithm":"SHA256","checksumValue":"%s"}]}]}`, checksum([]byte("node"))))
+	entries := completePackage("amd64")
+	a := archive(t, entries...)
+	b := []byte(fmt.Sprintf(`{"spdxVersion":"SPDX-2.3","SPDXID":"SPDXRef-DOCUMENT","documentNamespace":"https://example.test/doc","packages":[{"name":"nodejs","SPDXID":"SPDXRef-node","licenseDeclared":"MIT","checksums":[{"algorithm":"SHA256","checksumValue":"%s"}]}],"files":[%s]}`, checksum([]byte("node")), componentsForPackage(entries)))
 	if _, err := build("tokentimer-agent-1.2.3-windows-amd64.tgz", a, b, "sbom.spdx.json", "1.2.3", "amd64", strings.Repeat("a", 40)); err != nil {
 		t.Fatal(err)
 	}

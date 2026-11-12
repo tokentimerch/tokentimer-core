@@ -137,6 +137,33 @@ func verifySBOMCoverage(items []sbomItem, files []entry, arch string) error {
 	return nil
 }
 
+// Require the core files of both architecture packages before binding the SBOM.
+// This inventory is specific to bundled Windows archives, not generic tarballs.
+func verifyRequiredFiles(files []entry, arch string) error {
+	required := []string{
+		"package/package.json", "package/LICENSE", "package/README.md",
+		"package/bin/tokentimer-agent.js", "package/src/index.js",
+		"package/scripts/install-agent.ps1", "package/src/acme/windows-command.ps1",
+		"package/src/windows-material/connector.ps1", "package/runtime/LICENSE",
+		"package/runtime/manifest.json", "package/runtime/" + arch + "/node.exe",
+	}
+	for _, target := range []string{"amd64", "arm64"} {
+		for _, family := range []string{"tokentimer-agent-host", "tokentimer-adcs-chain", "tokentimer-adcs-cmc"} {
+			required = append(required, "package/bin/"+family+"-"+target+".exe")
+		}
+	}
+	present := make(map[string]int64, len(files))
+	for _, file := range files {
+		present[file.Path] = file.Size
+	}
+	for _, name := range required {
+		if present[name] <= 0 {
+			return fmt.Errorf("required package file missing or empty: %s", name)
+		}
+	}
+	return nil
+}
+
 func checksum(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
@@ -301,6 +328,9 @@ func build(archiveName string, compressed, sbom []byte, sbomName, version, arch,
 	}
 	files, err := listFiles(compressed)
 	if err != nil {
+		return inventory{}, err
+	}
+	if err := verifyRequiredFiles(files, arch); err != nil {
 		return inventory{}, err
 	}
 	items := append(append(sbomMetadata.Packages, sbomMetadata.Files...), sbomMetadata.Components...)
