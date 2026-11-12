@@ -79,10 +79,9 @@ function issuerEvidenceSql(result, fingerprint) {
 }
 
 function observedRevocationPrioritySql(result) {
-  // Ranking is only a conservative preselection; the full credibility check
-  // is applied to the selected result. Keep it compact to avoid expensive
-  // repeated expressions in the correlated inventory query.
-  const previousApplies = `(${result}->>'verdict' IS DISTINCT FROM 'good' OR ${result}->>'validUntil' <= to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))`;
+  // Ranking is a conservative preselection. Only a credible, fresh good
+  // result may supersede an earlier verified revocation.
+  const previousApplies = `NOT (${observedRevocationFreshGoodSql(result)})`;
   const credible = (r) => `(${r}->>'chainStatus' = 'valid' AND ${r}->>'checkedAt' <= to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AND ${r}->>'validUntil' > ${r}->>'checkedAt')`;
   return `CASE
     WHEN (${result}->>'verdict' = 'revoked' AND ${credible(result)}) OR

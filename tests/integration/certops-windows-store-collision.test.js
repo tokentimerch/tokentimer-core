@@ -158,6 +158,18 @@ describe("Windows store certificate collision on PostgreSQL", function () {
       const conflicting=await listCertificateIdentities({client:db,workspaceId});
       assert.equal(conflicting.items.find(item=>item.fingerprintSha256===original.observed_fingerprint_sha256).securityStatus.state,'unknown');
       assert.ok(!(await listCertificateIdentities({client:db,workspaceId,status:'revoked'})).items.some(item=>item.fingerprintSha256===original.observed_fingerprint_sha256));
+      for (const invalidGood of [
+        {chainStatus:'valid',checkedAt:new Date(Date.now()+120000).toISOString(),validUntil:expiry},
+        {chainStatus:'invalid',checkedAt:capturedAt,validUntil:expiry},
+        {chainStatus:'valid',checkedAt:capturedAt},
+        {chainStatus:'valid',checkedAt:capturedAt,validUntil:'not-a-date'},
+      ]) {
+        const result={verdict:'good',...invalidGood,lastVerified:{verdict:'revoked',chainStatus:'valid',checkedAt:capturedAt,validUntil:expiry}};
+        await db.query("UPDATE certificate_instances SET public_metadata=jsonb_set(public_metadata,'{observedRevocation}',$2::jsonb) WHERE id=$1", [original.id, JSON.stringify(result)]);
+        const revoked=await listCertificateIdentities({client:db,workspaceId,status:'revoked'});
+        assert.equal(revoked.items.find(item=>item.fingerprintSha256===original.observed_fingerprint_sha256)?.securityStatus.state,'last_known_revoked');
+        assert.ok(!(await listCertificateIdentities({client:db,workspaceId,status:'active'})).items.some(item=>item.fingerprintSha256===original.observed_fingerprint_sha256));
+      }
       const duplicate = (await db.query(`SELECT id FROM certificate_instances WHERE workspace_id=$1 AND observed_fingerprint_sha256=$2 AND id<>$3 LIMIT 1`, [workspaceId,original.observed_fingerprint_sha256,original.id])).rows[0];
       await db.query("UPDATE certificate_instances SET public_metadata=jsonb_build_object('observedRevocation',$2::jsonb) WHERE id=$1", [duplicate.id,JSON.stringify({verdict:'revoked',chainStatus:'valid',checkedAt:capturedAt,validUntil:expiry})]);
       const disputed=await listCertificateIdentities({client:db,workspaceId,status:'revoked'});
