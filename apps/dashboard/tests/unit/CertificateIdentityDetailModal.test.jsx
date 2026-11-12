@@ -1,5 +1,6 @@
 import { ChakraProvider } from '@chakra-ui/react';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -1276,3 +1277,287 @@ it.each(['active', 'revoked', 'decommissioned'])(
     }
   }
 );
+
+it('does not show a previous workspace after a delayed consent change', async () => {
+  const identityA = {
+    identityId: 'identity-a',
+    commonName: 'private-a.example',
+    sources: [],
+    locations: [],
+  };
+  const identityB = {
+    identityId: 'identity-b',
+    commonName: 'public-b.example',
+    sources: [],
+    locations: [],
+  };
+  const group = {
+    periodId: 'period',
+    managedCertificateId: 'store',
+    host: 'server',
+    store: 'LocalMachine\\My',
+    bindings: [
+      {
+        targetId: 'target',
+        site: 'Site',
+        port: 443,
+        canEnable: true,
+        automaticUpdate: false,
+      },
+    ],
+  };
+  let finish;
+  toggleWindowsMock.mockReturnValue(
+    new Promise(resolve => {
+      finish = resolve;
+    })
+  );
+  getIdentityMock.mockImplementation(async ws =>
+    ws === 'a' ? identityA : identityB
+  );
+  windowsMock.mockImplementation(async ws => ({
+    groups: ws === 'a' ? [group] : [],
+  }));
+  const view = render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='a'
+        certificate={identityA}
+        isOpen
+        canManage
+      />
+    </ChakraProvider>
+  );
+  fireEvent.click(
+    await screen.findByRole('checkbox', {
+      name: /Automatically update Site:443/,
+    })
+  );
+  view.rerender(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='b'
+        certificate={identityB}
+        isOpen
+        canManage={false}
+      />
+    </ChakraProvider>
+  );
+  await screen.findByText('public-b.example');
+  await act(async () => {
+    finish({});
+  });
+  expect(screen.queryByText('private-a.example')).not.toBeInTheDocument();
+});
+
+it('does not offer a v2 store copy as a separate renewal choice when IIS matches its host', async () => {
+  const identity = {
+    identityId: 'identity-1',
+    commonName: 'example.test',
+    locations: [],
+    sources: [
+      {
+        managedCertificateId: 'store-v2',
+        periodId: 'store-period',
+        source: 'agent_windows',
+        sourceRef: `agent/host-sha256-${'a'.repeat(64)}/windows_store_v2/LocalMachine/My/sha256-${'b'.repeat(64)}`,
+        targetHostname: 'server.example',
+        currentIdentityId: 'identity-1',
+        startedAt: '2026-11-01',
+      },
+      {
+        managedCertificateId: 'iis',
+        periodId: 'iis-period',
+        source: 'agent_windows',
+        sourceRef: 'agent/server.example/iis_binding/Site:443',
+        targetHostname: 'server.example',
+        currentIdentityId: 'identity-1',
+        startedAt: '2026-11-01',
+      },
+    ],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  getCertificateMock.mockResolvedValue(null);
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='ws'
+        certificate={identity}
+        isOpen
+        canManage
+      />
+    </ChakraProvider>
+  );
+  await screen.findByRole('table', { name: 'Certificate management' });
+  expect(
+    screen.queryByRole('option', { name: /Windows store copy/ })
+  ).not.toBeInTheDocument();
+});
+
+it('ignores a delayed consent rejection after access is reduced', async () => {
+  const identity = {
+    identityId: 'identity-a',
+    commonName: 'example.test',
+    sources: [],
+    locations: [],
+  };
+  const group = {
+    periodId: 'period',
+    managedCertificateId: 'store',
+    host: 'server',
+    store: 'LocalMachine\\My',
+    bindings: [
+      {
+        targetId: 'target',
+        site: 'Site',
+        port: 443,
+        canEnable: true,
+        automaticUpdate: false,
+      },
+    ],
+  };
+  let reject;
+  toggleWindowsMock.mockReturnValue(
+    new Promise((_, fail) => {
+      reject = fail;
+    })
+  );
+  getIdentityMock.mockResolvedValue(identity);
+  windowsMock.mockResolvedValue({ groups: [group] });
+  const view = render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='a'
+        certificate={identity}
+        isOpen
+        canManage
+      />
+    </ChakraProvider>
+  );
+  fireEvent.click(
+    await screen.findByRole('checkbox', {
+      name: /Automatically update Site:443/,
+    })
+  );
+  view.rerender(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='a'
+        certificate={identity}
+        isOpen
+        canManage={false}
+      />
+    </ChakraProvider>
+  );
+  await act(async () => {
+    reject(new Error('private failure'));
+  });
+  expect(screen.queryByText('private failure')).not.toBeInTheDocument();
+});
+
+it('keeps a v2 store renewal choice when its hostname is unavailable', async () => {
+  const identity = {
+    identityId: 'identity-1',
+    commonName: 'example.test',
+    locations: [],
+    sources: [
+      {
+        managedCertificateId: 'store-v2',
+        periodId: 'store-period',
+        source: 'agent_windows',
+        sourceRef: `agent/host-sha256-${'a'.repeat(64)}/windows_store_v2/LocalMachine/My/sha256-${'b'.repeat(64)}`,
+        currentIdentityId: 'identity-1',
+        startedAt: '2026-11-01',
+      },
+      {
+        managedCertificateId: 'iis',
+        periodId: 'iis-period',
+        source: 'agent_windows',
+        sourceRef: 'agent/server.example/iis_binding/Site:443',
+        targetHostname: 'server.example',
+        currentIdentityId: 'identity-1',
+        startedAt: '2026-11-01',
+      },
+    ],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='ws'
+        certificate={identity}
+        isOpen
+        canManage
+      />
+    </ChakraProvider>
+  );
+  await screen.findByRole('table', { name: 'Certificate management' });
+  expect(
+    screen.getByRole('option', { name: /Windows store copy/ })
+  ).toBeInTheDocument();
+});
+
+it('ignores a delayed consent result after the modal is closed', async () => {
+  const identity = {
+    identityId: 'identity-a',
+    commonName: 'example.test',
+    sources: [],
+    locations: [],
+  };
+  const group = {
+    periodId: 'period',
+    managedCertificateId: 'store',
+    host: 'server',
+    store: 'LocalMachine\\My',
+    bindings: [
+      {
+        targetId: 'target',
+        site: 'Site',
+        port: 443,
+        canEnable: true,
+        automaticUpdate: false,
+      },
+    ],
+  };
+  let finish;
+  toggleWindowsMock.mockReturnValue(
+    new Promise(resolve => {
+      finish = resolve;
+    })
+  );
+  getIdentityMock.mockResolvedValue(identity);
+  windowsMock.mockResolvedValue({ groups: [group] });
+  const onChanged = vi.fn();
+  const view = render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='a'
+        certificate={identity}
+        isOpen
+        canManage
+        onChanged={onChanged}
+      />
+    </ChakraProvider>
+  );
+  fireEvent.click(
+    await screen.findByRole('checkbox', {
+      name: /Automatically update Site:443/,
+    })
+  );
+  view.rerender(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='a'
+        certificate={identity}
+        isOpen={false}
+        canManage
+        onChanged={onChanged}
+      />
+    </ChakraProvider>
+  );
+  await act(async () => {
+    finish({});
+  });
+  expect(onChanged).not.toHaveBeenCalled();
+  expect(getIdentityMock).toHaveBeenCalledTimes(1);
+});

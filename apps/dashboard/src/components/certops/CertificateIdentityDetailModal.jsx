@@ -3,7 +3,7 @@ import CertOpsBadge, {
   ObservedRevocationBadge,
   hasObservedRevocationContext,
 } from './CertOpsBadge.jsx';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -141,9 +141,9 @@ function SourceCell({ item }) {
 
 function storeHasMatchingIis(source, sources, identityId) {
   if (source?.source !== 'agent_windows') return false;
-  const store = String(source.sourceRef || '').match(
-    /^[^/]+\/([^/]+)\/windows_store\//i
-  );
+  const store = /\/windows_store(?:_v2)?\//i.test(source.sourceRef || '')
+    ? sourceHostname(source)
+    : null;
   return Boolean(
     store &&
     sources.some(other => {
@@ -157,7 +157,9 @@ function storeHasMatchingIis(source, sources, identityId) {
       const binding = String(other.sourceRef || '').match(
         /^[^/]+\/([^/]+)\/iis_binding\//i
       );
-      return binding && binding[1].toLowerCase() === store[1].toLowerCase();
+      return (
+        binding && sourceHostname(other)?.toLowerCase() === store.toLowerCase()
+      );
     })
   );
 }
@@ -172,6 +174,16 @@ export default function CertificateIdentityDetailModal({
   onChanged,
   focusDeployments = false,
 }) {
+  const certificateKey = certificate?.identityId || certificate?.id || null;
+  const session = useRef({ isOpen, version: 0 });
+  useLayoutEffect(() => {
+    session.current = { isOpen, version: session.current.version + 1 };
+    return () => {
+      session.current.version += 1;
+    };
+  }, [workspaceId, certificateKey, isOpen, canManage]);
+  const isCurrent = version =>
+    session.current.isOpen && session.current.version === version;
   const [detail, setDetail] = useState(null);
   const [token, setToken] = useState(null);
   const [certificateFields, setCertificateFields] = useState(null);
@@ -238,6 +250,7 @@ export default function CertificateIdentityDetailModal({
   useEffect(() => {
     if (!isOpen || !workspaceId || !certificate) return undefined;
     let active = true;
+    setBusy(false);
     setDetail(certificate);
     setSelectedSourceId(certificate.selectedManagedCertificateId || '');
     setToken(null);
@@ -457,31 +470,38 @@ export default function CertificateIdentityDetailModal({
     sourceOptions.length,
   ]);
 
-  const refresh = async () => {
+  const refresh = async version => {
+    if (!isCurrent(version)) return;
     if (!certificate.identityId) {
       onChanged?.();
       onClose?.();
       return;
     }
-    setDetail(
-      await getCertificateIdentity(workspaceId, certificate.identityId)
+    const value = await getCertificateIdentity(
+      workspaceId,
+      certificate.identityId
     );
+    if (!isCurrent(version)) return;
+    setDetail(value);
     if (canManage) {
       try {
         const value = await getWindowsRenewal(
           workspaceId,
           certificate.identityId
         );
+        if (!isCurrent(version)) return;
         setWindowsGroups(value.groups || []);
         setWindowsError('');
       } catch {
-        setWindowsError('Windows renewal settings could not be loaded.');
+        if (isCurrent(version))
+          setWindowsError('Windows renewal settings could not be loaded.');
       }
     }
-    onChanged?.();
+    if (isCurrent(version)) onChanged?.();
   };
 
   const updateWindowsConsumer = async (group, binding, enabled) => {
+    const version = session.current.version;
     setBusy(true);
     setError('');
     try {
@@ -491,15 +511,17 @@ export default function CertificateIdentityDetailModal({
         binding.targetId,
         enabled
       );
-      await refresh();
+      await refresh(version);
     } catch (err) {
-      setError(err?.response?.data?.error || err.message);
+      if (isCurrent(version))
+        setError(err?.response?.data?.error || err.message);
     } finally {
-      setBusy(false);
+      if (isCurrent(version)) setBusy(false);
     }
   };
 
   const updateWindowsProfile = async (group, renewalProfileId) => {
+    const version = session.current.version;
     setBusy(true);
     setError('');
     try {
@@ -508,35 +530,40 @@ export default function CertificateIdentityDetailModal({
         renewalProfileId,
         automationEnabled: true,
       });
-      await refresh();
-      return true;
+      await refresh(version);
+      return isCurrent(version);
     } catch (err) {
-      setError(err?.response?.data?.error || err.message);
+      if (isCurrent(version))
+        setError(err?.response?.data?.error || err.message);
       return false;
     } finally {
-      setBusy(false);
+      if (isCurrent(version)) setBusy(false);
     }
   };
 
   const stop = async periodId => {
+    const version = session.current.version;
     setBusy(true);
     setError('');
     try {
       const result = await stopManagingSource(workspaceId, periodId);
+      if (!isCurrent(version)) return;
       if (result.runningJobs) {
         setError(
           `${result.runningJobs} operation(s) are already running and may still complete.`
         );
       }
-      await refresh();
+      await refresh(version);
     } catch (err) {
-      setError(err?.response?.data?.error || err.message);
+      if (isCurrent(version))
+        setError(err?.response?.data?.error || err.message);
     } finally {
-      setBusy(false);
+      if (isCurrent(version)) setBusy(false);
     }
   };
 
   const readd = async managedCertificateId => {
+    const version = session.current.version;
     setBusy(true);
     setError('');
     try {
@@ -559,11 +586,12 @@ export default function CertificateIdentityDetailModal({
         renewalProfileId: profileId || null,
         automationEnabled: Boolean(profileId),
       });
-      await refresh();
+      await refresh(version);
     } catch (err) {
-      setError(err?.response?.data?.error || err.message);
+      if (isCurrent(version))
+        setError(err?.response?.data?.error || err.message);
     } finally {
-      setBusy(false);
+      if (isCurrent(version)) setBusy(false);
     }
   };
 
@@ -628,22 +656,25 @@ export default function CertificateIdentityDetailModal({
       )
   );
   const correctDuplicateRenewal = async () => {
+    const version = session.current.version;
     setBusy(true);
     setError('');
     try {
       for (const source of duplicateStores) {
+        if (!isCurrent(version)) return;
         await replaceManagingSource(workspaceId, source.managedCertificateId, {
           periodId: source.periodId,
           renewalProfileId: null,
           automationEnabled: false,
         });
       }
-      await refresh();
+      await refresh(version);
     } catch (err) {
-      setError(err?.response?.data?.error || err.message);
-      await refresh();
+      if (isCurrent(version))
+        setError(err?.response?.data?.error || err.message);
+      await refresh(version);
     } finally {
-      setBusy(false);
+      if (isCurrent(version)) setBusy(false);
     }
   };
   // When a current registration exists, show stopped registrations in history.
