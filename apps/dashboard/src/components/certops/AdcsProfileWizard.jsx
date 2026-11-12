@@ -242,7 +242,9 @@ export default function AdcsProfileWizard({
   useLayoutEffect(() => {
     const currentSession = session.current;
     currentSession.version += 1;
-    return () => { currentSession.version += 1; };
+    return () => {
+      currentSession.version += 1;
+    };
   }, [workspaceId, isOpen]);
 
   useEffect(() => {
@@ -384,7 +386,8 @@ export default function AdcsProfileWizard({
       setMatchesLoading(true);
       setStep(3);
     } catch (err) {
-      if (session.current.version === version) setLocalError(errorText(err, 'Could not create the renewal profile.'));
+      if (session.current.version === version)
+        setLocalError(errorText(err, 'Could not create the renewal profile.'));
     } finally {
       if (session.current.version === version) setBusy(false);
     }
