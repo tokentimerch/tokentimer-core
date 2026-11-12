@@ -249,6 +249,7 @@ function composeMigrations(migrations, recorded = []) {
     auto_sync_run_metrics: ["auto_sync_provider_stats"],
     auto_sync_metric_labels: ["auto_sync_run_metrics"],
     auto_sync_system_metrics: ["auto_sync_metric_labels"],
+    auto_sync_owner_username: ["auto_sync_metric_labels"],
     certops_distribution_lifecycle: ["certops_installed_file_distribution"],
     certops_distribution_incident_delivery: ["certops_distribution_lifecycle"],
     certops_material_cleanup: ["certops_distribution_lifecycle"],

@@ -639,12 +639,13 @@ monitoring:
     # configuration_name: saved integration name; monitoring_group: your monitoring category.
     # kind: asset type; asset_name: imported token/key/secret name (never its value).
     # project: source project/repository name or path; group: source group name or path (when supplied).
+    # owner_username: best-effort GitLab PAT owner, not importer; new inventory creations only, not expiry.
     # Labels add series to both detailed metrics; combinations can greatly increase cardinality and expose metadata.
     autoSyncLabels: []
     # Optional global monitoring group; empty uses saved or connection settings.
     autoSyncMonitoringGroup: ""
-    # Extra labels: asset_name, project, group; none disables them.
-    # Empty uses saved UI choices (off by default); a list restricts the available asset labels.
+    # Extra labels: asset_name, project, group, owner_username; none disables them.
+    # Empty uses saved UI choices except owner_username, which requires explicit allowlisting and selection.
     # Selected labels appear on auto_sync_items_created_detailed_total and
     # auto_sync_last_creation_timestamp_seconds; aggregate counters stay unchanged.
     # Each distinct label combination creates a series in both metrics; combining labels can greatly increase cardinality and expose asset metadata.

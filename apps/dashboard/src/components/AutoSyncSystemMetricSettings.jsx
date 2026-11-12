@@ -21,8 +21,10 @@ import {
 import { InfoOutlineIcon } from '@chakra-ui/icons';
 import apiClient from '../utils/apiClient';
 import { DashboardActionButton } from './DashboardPrimitives';
-import { METRIC_LABEL_CHOICES } from './imports/AutoSyncMetricSettings.jsx';
-const EXTRA = ['asset_name', 'project', 'group'];
+import {
+  METRIC_LABEL_CHOICES,
+  HIGH_CARDINALITY_METRIC_LABELS as EXTRA,
+} from './imports/AutoSyncMetricSettings.jsx';
 export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
   const muted = useColorModeValue('gray.600', 'gray.400');
 

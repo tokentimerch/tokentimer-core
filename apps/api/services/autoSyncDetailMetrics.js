@@ -12,7 +12,7 @@ async function detailedSamples() {
   const { rows } = await pool.query(`SELECT c.id AS configuration_id, c.provider,
     c.connection_key AS configuration_name, c.metrics_settings,
     (SELECT auto_sync_metrics FROM system_settings WHERE id = 1) AS system_metric_policy,
-    s.kind, s.asset_name, s.project, s.group_name, s.items_created_total,
+    s.kind, s.asset_name, s.project, s.group_name, s.owner_username, s.items_created_total,
     EXTRACT(EPOCH FROM s.last_created_at) AS last_created
     FROM auto_sync_creation_stats s JOIN auto_sync_configs c ON c.id = s.config_id
     ORDER BY c.id, s.dimension_key`);
@@ -26,7 +26,9 @@ async function detailedSamples() {
       label_set: settings.labels.join(",") };
     for (const label of OPTIONAL_LABELS) labels[label] = settings.labels.includes(label)
       ? label === "monitoring_group" ? settings.monitoring_group
-        : label === "group" ? row.group_name : row[label]
+        : label === "group" ? row.group_name
+          : label === "owner_username" ? row.provider === "gitlab" && row.kind === "gitlab-pat" ? row.owner_username || "" : ""
+            : row[label]
       : "";
     const timestamp = Number(row.last_created);
     if (row.last_created === null || row.last_created === undefined || String(row.last_created).trim() === "" || !Number.isFinite(timestamp) || timestamp < 0)

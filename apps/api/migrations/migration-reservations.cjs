@@ -31,6 +31,7 @@ const reservations = Object.freeze({
   106: "operator_issuance",
   109: "certops_period_creator_delete",
   110: "recipient_member_verification",
+  111: "auto_sync_owner_username",
   112: "certops_observed_revocation",
   113: "store_issuance_explicit_renewal_consent",
   114: "certops_acme_store_enrollment_identity",
