@@ -61,6 +61,7 @@ test("upgrades a real main database with migrations through 110 and repeats safe
     assert.deepEqual(afterFirst.rows.map(({ version, name }) => [version, name]), [
       [109, "certops_period_creator_delete"],
       [110, "recipient_member_verification"],
+      [111, "auto_sync_owner_username"],
       [112, "certops_observed_revocation"],
       [113, "store_issuance_explicit_renewal_consent"],
       [114, "certops_acme_store_enrollment_identity"],
