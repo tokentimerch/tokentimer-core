@@ -2,6 +2,10 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const express = require("node:module").createRequire(require.resolve("../../apps/api/package.json"))("express");
+const request = require("supertest");
+const { pool } = require("../../apps/api/db/database");
+const workspaceRouter = require("../../apps/api/routes/workspaces.js");
 
 const {
   redactAuditTopologyForRole,
@@ -46,6 +50,27 @@ function issuedRow(overrides = {}) {
 }
 
 describe("audit topology redaction", () => {
+  for (const action of ["CERTOPS_ISSUER_PREFLIGHT_DISPATCHED", "CERTOPS_ISSUER_KEY_CONFIRMED"]) {
+    it(`redacts CA server in the member HTTP feed for ${action}`, async (t) => {
+      let role = "viewer";
+      const row = { action, metadata: { issuerId: "issuer-1", caConfig: "ca.internal.example\\Corp CA", template: "WebServer" } };
+      t.mock.method(pool, "query", async (sql) => sql.includes("workspace_memberships") ? { rows: [{ role }], rowCount: 1 } : { rows: [row] });
+      const app = express();
+      app.use((req, _res, next) => { req.user = { id: 1 }; req.isAuthenticated = () => true; next(); });
+      app.use(workspaceRouter);
+      const endpoint = "/api/v1/audit?workspace_id=11111111-1111-4111-8111-111111111111";
+      assert.deepEqual((await request(app).get(endpoint).expect(200)).body.items[0].metadata, { issuerId: "issuer-1", template: "WebServer", topologyRedacted: true });
+      role = "workspace_manager";
+      assert.deepEqual((await request(app).get(endpoint).expect(200)).body.items[0].metadata, row.metadata);
+    });
+  }
+  for (const action of ["CERTOPS_ISSUER_PREFLIGHT_DISPATCHED", "CERTOPS_ISSUER_KEY_CONFIRMED"]) {
+    it(`hides issuer CA topology from viewers for ${action}`, () => {
+      const row = { action, metadata: { issuerId: "issuer-1", issuerName: "CA", caConfig: "ca.internal.example\\Corp CA", template: "WebServer" } };
+      assert.deepEqual(redactAuditTopologyForRole(row, "viewer").metadata, { issuerId: "issuer-1", issuerName: "CA", template: "WebServer", topologyRedacted: true });
+      assert.deepEqual(redactAuditTopologyForRole(row, "workspace_manager"), row);
+    });
+  }
   it("hides the reassociation agent from viewers but retains it for managers", () => {
     const row = { action: "CERTOPS_WINDOWS_STORE_REASSOCIATED", metadata: { agentId: "agent-1", currentId: "certificate-1" } };
     assert.deepEqual(redactAuditTopologyForRole(row, "viewer").metadata, { currentId: "certificate-1", topologyRedacted: true });
