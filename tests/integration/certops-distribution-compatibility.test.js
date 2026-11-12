@@ -37,8 +37,8 @@ describe("Independent PR migration and preview compatibility",function(){
         })));
       }else execute(upgrade);
       const after=(await client.query("SELECT * FROM migrations ORDER BY version")).rows;
-      assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);assert.equal(after.length,109);
-      assert.equal(after.filter(row=>row.version===109 && row.name==="certops_retirement_dossiers").length,1);
+      assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);assert.equal(after.length,112);
+      assert.equal(after.filter(row=>row.name==="certops_retirement_dossiers").length,1);
       const canonicalTail=["pagerduty_resolution_reason","pagerduty_operator_actions","remove_pagerduty_rest_lookup","certops_consumer_staging","certops_review_authority_epochs","certops_manual_rollout_authority"];
       const previewTails={
         "lifecycle-81-85":["weekly_digest_recipient_claim_token","pagerduty_incident_lifecycle","pagerduty_resolution_reason","pagerduty_operator_actions","remove_pagerduty_rest_lookup","certops_manual_rollout_authority"],

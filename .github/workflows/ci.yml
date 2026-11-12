@@ -514,6 +514,7 @@ jobs:
             try {
               await client.query('CREATE DATABASE pr329_distribution_upgrade_ci_test');
               await client.query('CREATE DATABASE pr329_distribution_main_upgrade_ci_test');
+              await client.query('CREATE DATABASE pr498_retirement_preview_ci_test');
               await client.query('CREATE DATABASE pr329_review_distribution_ci_test');
               await client.query('CREATE DATABASE pr329_final_distribution_ci_test');
               await client.query('CREATE DATABASE wildcard_candidate_ci_test');
@@ -537,6 +538,11 @@ jobs:
           DB_NAME: pr329_distribution_main_upgrade_ci_test
           CERTOPS_ENABLED: "true"
         run: node --test --test-force-exit tests/postgres/distribution-main-migration-upgrade.test.js
+      - name: Upgrade applied retirement preview and replay
+        env:
+          DB_NAME: pr498_retirement_preview_ci_test
+          CERTOPS_ENABLED: "true"
+        run: node --test --test-force-exit tests/postgres/retirement-preview-migration-upgrade.test.js
       - name: Verify alert date serialization across host timezones
         run: node --test tests/postgres/alert-queue-timezones.test.js
       - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability
@@ -580,6 +586,14 @@ jobs:
           name: cleanup-completion-evidence
           path: qualification-results/cleanup-completion-*/
           if-no-files-found: error
+      - name: Verify member email reuse and migration
+        env:
+          RV_TEST_DB_HOST: ${{ env.DB_HOST }}
+          RV_TEST_DB_PORT: ${{ env.DB_PORT }}
+          RV_TEST_DB_NAME: recipient_delivery_worker_ci_test
+          RV_TEST_DB_USER: ${{ env.DB_USER }}
+          RV_TEST_DB_PASSWORD: ${{ env.DB_PASSWORD }}
+        run: node --test --test-force-exit --test-concurrency=1 tests/postgres/recipient-verified-member.test.js tests/postgres/recipient-member-migration.test.js
       - name: Verify bulk webhook retry preserves delivery history
         run: node --test --test-force-exit tests/postgres/bulk-webhook-requeue.test.js
       - name: Prove abandoned certificate-path reuse on isolated PostgreSQL
@@ -595,7 +609,7 @@ jobs:
           CERTOPS_ENABLED: "true"
         run: |
           node apps/api/migrations/migrate.js
-          node --test --test-force-exit tests/postgres/workspace-delete-certops.test.js tests/postgres/retired-identity-periods.test.js tests/postgres/distribution-claim-locking.test.js
+          node --test --test-force-exit tests/postgres/workspace-delete-certops.test.js tests/postgres/certops-period-creator-delete.test.js tests/postgres/retired-identity-periods.test.js tests/postgres/distribution-claim-locking.test.js
       - name: Replay all supported immutable migration histories
         run: pnpm exec mocha --no-config tests/integration/certops-distribution-upgrade.test.js tests/integration/certops-distribution-compatibility.test.js --timeout 120000 --exit
       - name: Verify material provider version pins and retained-version rollback

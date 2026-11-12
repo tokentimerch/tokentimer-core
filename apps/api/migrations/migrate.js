@@ -4968,6 +4968,16 @@ const migrations = [
   },
   {
     version: 109,
+    name: "certops_period_creator_delete",
+    sql: fs.readFileSync(require("path").join(__dirname, "109-certops-period-creator-delete.sql"), "utf8"),
+  },
+  {
+    version: 110,
+    name: "recipient_member_verification",
+    sql: fs.readFileSync(require("path").join(__dirname, "../../../packages/recipient-verification/member-verification-migration.sql"), "utf8"),
+  },
+  {
+    version: 112,
     name: "certops_retirement_dossiers",
     sql: fs.readFileSync(require("path").join(__dirname, "109-certops-retirement-dossiers.sql"), "utf8"),
   },
@@ -4979,6 +4989,12 @@ migrations.push({
   version: 83,
   name: "certops_material_providers",
   sql: fs.readFileSync(require("path").join(__dirname, "083-certops-material-providers.sql"), "utf8"),
+});
+
+migrations.push({
+  version: 111,
+  name: "auto_sync_owner_username",
+  sql: fs.readFileSync(require("path").join(__dirname, "111-auto-sync-owner-username.sql"), "utf8"),
 });
 
 const { composeMigrations } = require("./compose-migrations");

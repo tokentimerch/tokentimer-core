@@ -1,8 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-06 against main 2f508142 (v0.19.1) and PR #498’s scope. Other
-certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
-
+Last reviewed: 2026-11-12 against main 5e3ea6d5 and the certificate distribution scope.
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
 without gating v1.0.0, and what v1.0.0 itself changes for compatibility. Public feature cards and voting

@@ -37,3 +37,50 @@ test("second-renewal failure labels remain scoped and reject untrusted phase nam
  assert.ok(labels.every(value=>!value.includes("private")));
  assert.throws(()=>issuanceDiagnosticLabels({},null,{},{},"private-data"));
 });
+
+test("blocked second renewals fail promptly with only an allowlisted reason",()=>{
+ const {failedRenewalTerminalStatus}=require("../tests/e2e/acme-real-journey");
+ for(const status of ["failed","rejected","cancelled","blocked","orphaned_unknown_effect"])assert.equal(failedRenewalTerminalStatus(status),true);
+ for(const status of ["pending","claimed","running","succeeded",undefined,"private-status"])assert.equal(failedRenewalTerminalStatus(status),false);
+ const labels=issuanceDiagnosticLabels({status:"blocked",error_message:"lease renew aborted: claim ownership lost or lease conflict (HTTP 409) (private-data)"},{exitCode:null,signalCode:null},{},{},"second-renewal");
+ assert.ok(labels.includes("real-acme-diagnostic-second-renewal-block-lease-conflict"));
+ assert.ok(labels.every(value=>!value.includes("private")));
+ assert.ok(issuanceDiagnosticLabels({status:"blocked",error_message:"private-data"},null,{},{},"second-renewal").includes("real-acme-diagnostic-second-renewal-block-other"));
+});
+
+
+test("native agent cadence leaves discovery and loop-tick headroom",()=>{
+ const t=require("../tests/e2e/acme-real-journey").QUALIFICATION_AGENT_TIMING;
+ // Poll loops jitter by up to 20%; allow five seconds for scan and evidence processing.
+ assert.ok(2*t.discoveryIntervalMs*1.2+5000<=t.discoveryObservationTimeoutMs);
+ // Conservatively count an extra initial tick per loop in any one-minute window.
+ const idleTicks=[t.pollIntervalMs,t.heartbeatIntervalMs,t.discoveryIntervalMs].reduce((sum,ms)=>sum+Math.ceil(60000/(ms*0.8))+1,0);
+ assert.ok(idleTicks<=60,`idle loop ticks ${idleTicks} leave insufficient room for other traffic`);
+});
+
+
+test("manual-renewal failure diagnostics use fixed categories only",()=>{
+ const labels=issuanceDiagnosticLabels({status:"blocked",error_message:"acme step failed: private output"},{exitCode:null,signalCode:null},{}, {}, "manual-renewal");
+ assert.ok(labels.includes("real-acme-diagnostic-manual-renewal-status-blocked"));
+ assert.ok(labels.includes("real-acme-diagnostic-error-acme-step"));
+ assert.ok(labels.every(label=>!label.includes("private")));
+});
+
+
+test("key-reuse CA progress stays fixed and phase scoped",()=>{
+ const before={perStage:{"new-order":{forwarded:1},finalize:{forwarded:0}},acceptedOrders:2,rateLimitedResponses:0};
+ const after={perStage:{"new-order":{forwarded:2},finalize:{forwarded:1}},acceptedOrders:3,rateLimitedResponses:1};
+ const labels=issuanceDiagnosticLabels({status:"failed",error_message:"acme step failed: secret"},{exitCode:null,signalCode:null},before,after,"reuse-manual");
+ for(const label of ["real-acme-diagnostic-reuse-manual-status-failed","real-acme-diagnostic-proxy-new-order-forwarded","real-acme-diagnostic-proxy-finalize-forwarded","real-acme-diagnostic-ca-observed-order-accepted","real-acme-diagnostic-ca-observed-rate-limited"])assert.ok(labels.includes(label));
+ assert.ok(labels.every(label=>!label.includes("secret")));
+});
+
+
+test("worker-cycle CA progress emits only fixed categories",()=>{
+ const before={perStage:{"new-order":{forwarded:0},finalize:{forwarded:0}},acceptedOrders:0,dnsProblemResponses:0};
+ const after={perStage:{"new-order":{forwarded:1},finalize:{forwarded:0}},acceptedOrders:1,dnsProblemResponses:1};
+ const labels=issuanceDiagnosticLabels({status:"failed",error_message:"acme step failed: secret"},{exitCode:null,signalCode:null},before,after,"worker-2");
+ for(const label of ["real-acme-diagnostic-worker-2-status-failed","real-acme-diagnostic-error-acme-step","real-acme-diagnostic-proxy-new-order-forwarded","real-acme-diagnostic-ca-observed-dns-problem"])assert.ok(labels.includes(label));
+ assert.ok(labels.every(label=>!label.includes("secret")));
+ assert.throws(()=>issuanceDiagnosticLabels({},null,{}, {},"worker-secret"));
+});

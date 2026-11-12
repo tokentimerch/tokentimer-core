@@ -12,6 +12,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **Certificate distribution lifecycle (PR #498; unreleased).** Adds consumer administration, exact-version review and reviewed automation, canary/calendar controls, recurring verification, incident recovery, safe resumption after partial success, public preflight and retention management. Independent Linux preparation and exact-version Vault/OpenBao cleanup are implemented behind separate closed production capability gates; Azure and shared Windows/IIS material deployment retain their gates. Unsupported service connectors and restart/refresh methods remain backlog. **Operator action:** apply the composed migrations through 108 before matching API/workers; migration 97 requires fresh independent review of existing distribution authorizations. See the [scope and evidence matrix](docs/certops/pr498-merge-readiness-20261103.md) and [per-capability qualification status](docs/certops/pr498-production-qualification-20261103.md); no extension capability has been promoted.
+## [0.19.2-rc.1] - 2026-11-11
+
+### Added
+
+- **Verified workspace-member recipients.** Contacts matching a current member's exact verified email can receive workspace notifications without another confirmation. Membership removal or lost mailbox proof ends this eligibility; explicit refusals still apply. Self-hosted verification remains off by default; use `shadow` to observe eligibility before enabling `enforce`.
 ### Changed
 
 - **MCP contact creation.** When recipient verification is enforced, the response reports confirmation status for each email or WhatsApp destination. Creating a contact does not send an invitation.
@@ -23,6 +28,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Dashboard usability.** Review recipient confirmations in a dedicated dialog, with clearer setup guidance and recovery states throughout the dashboard.
 
 ### Fixed
+
+- **Certificate management history.** Deleting a former certificate manager now clears their attribution from closed management periods while retaining the history.
 
 - **Webhook proxy delivery.** HTTP and HTTPS webhook requests use the configured proxy correctly when `NODE_USE_ENV_PROXY=1`, without being sent through the proxy twice.
 

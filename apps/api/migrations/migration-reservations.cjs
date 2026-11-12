@@ -29,6 +29,9 @@ const reservations = Object.freeze({
   104: "operator_inventory",
   105: "operator_oauth_retention",
   106: "operator_issuance",
+  110: "recipient_member_verification",
+  111: "auto_sync_owner_username",
+  112: "certops_retirement_dossiers",
 });
 
 function validateMigrationReservations(migrations) {

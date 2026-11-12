@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.19.1
+  version: 0.19.2-rc.1
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -4808,7 +4808,7 @@ paths:
                         type: array
                         default: []
                         uniqueItems: true
-                        items: { type: string, enum: [asset_name, project, group] }
+                        items: { type: string, enum: [asset_name, project, group, owner_username] }
                   items:
                     type: array
                     items:
@@ -4935,9 +4935,15 @@ paths:
                   uniqueItems: true
                   items:
                     type: string
-                    enum: [configuration_name, monitoring_group, kind, asset_name, project, group]
-                  maxItems: 6
-      responses:
+                    enum:
+                      - configuration_name
+                      - monitoring_group
+                      - kind
+                      - asset_name
+                      - project
+                      - group
+                      - owner_username
+                  maxItems: 7      responses:
         "200":
           description: Saved effective defaults
           content:
@@ -14074,18 +14080,19 @@ components:
         enabled: { type: boolean, nullable: true }
         labels:
           type: array
-          items: { type: string, enum: [configuration_name, monitoring_group, kind, asset_name, project, group] }
+          items: { type: string, enum: [configuration_name, monitoring_group, kind, asset_name, project, group, owner_username] }
         locked: { type: boolean }
         source: { type: string, nullable: true, enum: [env, database, null] }
         extra_labels:
           type: array
-          items: { type: string, enum: [asset_name, project, group] }
+          description: Deployment-permitted high-cardinality labels. Owner usernames require explicit AUTO_SYNC_METRICS_EXTRA_LABELS opt-in.
+          items: { type: string, enum: [asset_name, project, group, owner_username] }
         extra_labels_locked: { type: boolean }
         labels_locked: { type: boolean, description: Complete label selection is controlled by AUTO_SYNC_METRICS_LABELS. }
     AutoSyncMetricSettings:
       type: object
       additionalProperties: false
-      description: Connection metric settings, overridden independently by active system metric or monitoring-group overrides. Configuration ID is always included; changing these settings does not restart a scan. Names and project/group labels can multiply time series and expose metadata to metrics readers. No credential values are exported. Environment settings take precedence over saved system defaults. Extra labels are off by default.
+      description: Connection metric settings, overridden independently by active system metric or monitoring-group overrides. Configuration ID is always included; changing these settings does not restart a scan. Names, project/group and owner_username labels can multiply time series and expose metadata to metrics readers. No credential values are exported. Environment settings take precedence over saved system defaults. Extra labels are off by default. owner_username is the best-effort GitLab PAT owner, not the importing user; it requires deployment permission and label selection, applies only to new inventory creations, does not enrich existing inventory retroactively and does not describe expiry.
       properties:
         inherit_system:
           type: boolean
@@ -14097,10 +14104,10 @@ components:
         labels:
           type: array
           uniqueItems: true
-          maxItems: 6
+          maxItems: 7
           items:
             type: string
-            enum: [configuration_name, monitoring_group, kind, asset_name, project, group]
+            enum: [configuration_name, monitoring_group, kind, asset_name, project, group, owner_username]
         monitoring_group:
           type: string
           maxLength: 64

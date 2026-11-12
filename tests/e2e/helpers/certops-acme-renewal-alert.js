@@ -24,6 +24,9 @@ const { pathToFileURL } = require("node:url");
 const { spawnSync } = require("node:child_process");
 const SCENARIO = "real-acme-native-renewal-failure-smtp";
 const SCOPE = "native-renewal-transport-refusal-production-outbox-and-smtp";
+const MILESTONES = Object.freeze([
+  "smtp-prerequisites-verified", "smtp-inbox-read", "smtp-guard-created", "smtp-contact-created", "smtp-settings-saved", "smtp-prior-proof-verified", "smtp-fault-armed", "smtp-job-admitted", "smtp-job-failed", "smtp-fault-verified", "smtp-outbox-pending", "smtp-outbox-drained", "smtp-alert-queued", "smtp-delivery-ready", "smtp-worker-error", "smtp-worker-signal", "smtp-worker-exit-0", "smtp-worker-exit-1", "smtp-worker-exit-2", "smtp-worker-exit-other", "smtp-delivery-sent", "smtp-receipt-verified", "smtp-replay-verified", "smtp-proof-verified",
+]);
 const SIDECAR = "qualification-results/acme-renewal-alert-proof.json";
 const FIELD = "nativeAcmeRenewalAlert";
 const active = new Set(), GUARD = ".native-renewal-alert-active";
@@ -161,6 +164,17 @@ function messageText(message) {
   };
   return walk(message.Content, 0) + walk(message.MIME, 0);
 }
+function decodeSubject(value) {
+  // RFC 2047 permits folded adjacent encoded words; their separating whitespace
+  // is not part of the subject. Nodemailer uses both UTF-8 Q and B encodings.
+  return String(value)
+    .replace(/(\?=)\s+(?==\?utf-8\?[bq]\?)/gi, "$1")
+    .replace(/=\?utf-8\?([bq])\?([^?]*)\?=/gi, (_word, encoding, encoded) => {
+      if (encoding.toLowerCase() === "b") return Buffer.from(encoded, "base64").toString("utf8");
+      const bytes = encoded.replace(/_/g, " ").replace(/=([0-9a-f]{2})/gi, (_match, hex) => String.fromCharCode(parseInt(hex, 16)));
+      return Buffer.from(bytes, "latin1").toString("utf8");
+    });
+}
 function matchingMessages(body, { recipient, previous, jobId }) {
   assert.ok(body && Array.isArray(body.items) && body.items.length <= 1000);
   assert.equal(body.start, 0);
@@ -176,18 +190,25 @@ function matchingMessages(body, { recipient, previous, jobId }) {
         return address.toLowerCase() === recipient.toLowerCase();
       }) &&
       (message.Content?.Headers?.Subject || []).some(subject => {
-        const decoded = String(subject).replace(/=\?utf-8\?B\?([^?]+)\?=/gi, (_all, b64) => Buffer.from(b64, "base64").toString("utf8"));
+        const decoded = decodeSubject(subject);
         return decoded.includes("Certificate renewal failed");
       }) && messageText(message).includes(jobId);
   });
 }
+function deliveryExitLabel(result) {
+  if (result?.error) return "smtp-worker-error";
+  if (result?.signal) return "smtp-worker-signal";
+  return [0, 1, 2].includes(result?.status) ? `smtp-worker-exit-${result.status}` : "smtp-worker-exit-other";
+}
 async function qualify(c) {
+  const mark = name => { try { c.onMilestone?.(name); } catch { /* Diagnostics cannot replace the native failure. */ } };
   assert.equal(process.platform, "linux");
   assert.equal(c.acmeKind, "certbot");
   assert.equal(process.env.CERTOPS_REAL_ACME_EAB || "none", "none");
   const mail = localEndpoint(process.env.CERTOPS_NATIVE_RENEWAL_MAILHOG_URL || "http://127.0.0.1:8025");
   const smtp = Number(process.env.CERTOPS_NATIVE_RENEWAL_SMTP_PORT || "1025");
   assert.ok(Number.isSafeInteger(smtp) && smtp >= 1025 && smtp <= 65535);
+  mark("smtp-prerequisites-verified");
   const readMail = async () => {
     const response = await fetch(new URL("/api/v2/messages?limit=1000&start=0", mail), { redirect: "error", signal: AbortSignal.timeout(10000) });
     assert.equal(response.status, 200);
@@ -211,11 +232,14 @@ async function qualify(c) {
     return result;
   };
   const previous = new Set((await readMail()).items.map(item => item.ID));
+  mark("smtp-inbox-read");
   const operation = registerOperation(c.workDir);
+  mark("smtp-guard-created");
   const recipient = `native-renewal-${crypto.randomUUID()}@example.test`;
   const api = `/api/v1/workspaces/${c.workspaceId}`;
   const contact = await c.publicSession.request(`${api}/contacts`, "POST", { first_name: "Owned native renewal", last_name: "SMTP receipt", details: { email: recipient } });
   assert.equal(contact.status, 201);
+  mark("smtp-contact-created");
   const configured = await c.publicSession.request(`${api}/alert-settings`, "PUT", {
     email_alerts_enabled: true, alert_thresholds: [7, 1, 0],
     delivery_window_start: "00:00", delivery_window_end: "23:59", delivery_window_tz: "UTC",
@@ -223,6 +247,7 @@ async function qualify(c) {
     default_contact_group_id: "owned-native-renewal",
   });
   assert.equal(configured.status, 200);
+  mark("smtp-settings-saved");
   const original = [c.certPath, c.keyPath].map(file => digest(fs.readFileSync(file)));
   const leaf = new crypto.X509Certificate(fs.readFileSync(c.certPath));
   const base = require("../../../scripts/certops-acme-bulk-report");
@@ -230,15 +255,18 @@ async function qualify(c) {
   assert.equal(previousProof.certificateId, c.certificateId);
   assert.equal(previousProof.fingerprints[1], digest(leaf.raw));
   assert.equal(await c.servedFingerprint(), leaf.fingerprint256);
+  mark("smtp-prior-proof-verified");
   const before = c.proxy.snapshot();
   let jobId, job;
   c.proxy.setFailure("new-order");
+  mark("smtp-fault-armed");
   try {
     const response = await c.publicSession.request(`${api}/certops/jobs`, "POST", { operation: "renew", subjectType: "managed_certificate", subjectId: c.certificateId, idempotencyKey: crypto.randomUUID() });
     assert.equal(response.status, 201);
     jobId = response.body.job.id;
     assert.match(jobId, UUID);
     c.ownedJobIds.push(jobId);
+    mark("smtp-job-admitted");
     await c.waitUntil(async () => {
       assert.equal(c.agent.exitCode, null);
       assert.equal(c.agent.signalCode, null);
@@ -247,6 +275,7 @@ async function qualify(c) {
       return job?.status === "failed";
     });
   } finally { c.proxy.setFailure(null); }
+  mark("smtp-job-failed");
   assert.equal(job.operation, "renew");
   assert.equal(job.mode, "real");
   assert.equal(job.subject_id, c.certificateId);
@@ -264,10 +293,13 @@ async function qualify(c) {
   assert.deepEqual([c.certPath, c.keyPath].map(file => digest(fs.readFileSync(file))), original);
   assert.equal(await c.servedFingerprint(), leaf.fingerprint256);
   await c.verifyDnsCleanup();
+  mark("smtp-fault-verified");
   const pending = (await c.pool.query("SELECT id FROM certops_outbox WHERE workspace_id=$1 AND event_type='renewal_alert_requested' AND payload->>'jobId'=$2", [c.workspaceId, jobId])).rows;
   assert.equal(pending.length, 1);
+  mark("smtp-outbox-pending");
   const { drainCertOpsOutbox } = await import(pathToFileURL(path.join(c.repoRoot, "apps/worker/src/certops-worker.js")).href);
   await drainCertOpsOutbox({ dbPool: c.pool, env: process.env });
+  mark("smtp-outbox-drained");
   const alertKey = `cert_renewal_failed:${jobId}`;
   const token = (await c.pool.query("SELECT token_id FROM managed_certificates WHERE workspace_id=$1 AND id=$2", [c.workspaceId, c.certificateId])).rows[0];
   assert.ok(Number.isSafeInteger(token?.token_id) && token.token_id > 0, "Actual native inventory must provide the alert token");
@@ -275,25 +307,30 @@ async function qualify(c) {
   const queued = await alerts();
   assert.equal(queued.length, 1);
   assert.equal(queued[0].token_id, token.token_id);
+  mark("smtp-alert-queued");
   const due = (await c.pool.query("SELECT aq.id::text,t.workspace_id FROM alert_queue aq JOIN tokens t ON t.id=aq.token_id WHERE aq.status IN ('pending','partial','failed') AND aq.due_date<=CURRENT_DATE AND (aq.next_attempt_at IS NULL OR aq.next_attempt_at<=NOW()) ORDER BY aq.id LIMIT 501")).rows;
   assert.equal(due.length, 1, "Delivery must not adopt unrelated pending fixture work");
   assert.equal(due[0].id, queued[0].id);
   assert.equal(due[0].workspace_id, c.workspaceId);
   assert.equal(independentReceipt({ nodeEnv: "test", deliveryStatus: "sent", messages: [] }), false);
+  mark("smtp-delivery-ready");
   const childEnv = productionDeliveryEnv(process.env, smtp);
   const delivered = spawnSync(process.execPath, ["src/delivery-worker.js"], {
     cwd: path.join(c.repoRoot, "apps/worker"), stdio: "ignore", windowsHide: true, timeout: 90000,
     env: childEnv,
   });
+  mark(deliveryExitLabel(delivered));
   assert.equal(delivered.error, undefined, "Production delivery worker must drain normally");
   assert.equal(delivered.signal, null);
   assert.equal(delivered.status, 0);
   assert.equal((await alerts())[0].status, "sent");
   assert.equal((await c.pool.query("SELECT count(*)::int count FROM alert_delivery_log WHERE alert_queue_id=$1 AND channel='email' AND status='success'", [queued[0].id])).rows[0].count, 1);
+  mark("smtp-delivery-sent");
   await c.waitUntil(async () => matchingMessages(await readMail(), { recipient, previous, jobId }).length === 1, 30000);
   const messages = matchingMessages(await readMail(), { recipient, previous, jobId });
   assert.equal(independentReceipt({ nodeEnv: "test", deliveryStatus: "sent", messages }), false, "Test-mode simulated delivery must not count as the SMTP receipt");
   assert.equal(independentReceipt({ nodeEnv: childEnv.NODE_ENV, deliveryStatus: "sent", messages }), true);
+  mark("smtp-receipt-verified");
   await drainCertOpsOutbox({ dbPool: c.pool, env: process.env });
   assert.equal((await alerts()).length, 1);
   const replayed = matchingMessages(await readMail(), { recipient, previous, jobId });
@@ -301,9 +338,11 @@ async function qualify(c) {
   assert.equal(independentReceipt({ nodeEnv: childEnv.NODE_ENV, deliveryStatus: "sent", messages: replayed }), true);
   assert.deepEqual([c.certPath, c.keyPath].map(file => digest(fs.readFileSync(file))), original);
   assert.equal(await c.servedFingerprint(), leaf.fingerprint256);
+  mark("smtp-replay-verified");
   const proof = { scope: SCOPE, jobId, claimId: job.claim_id, certificateId: c.certificateId, alertId: queued[0].id, faultRequestCount: refused, servingFingerprint: leaf.fingerprint256, ...Object.fromEntries(FLAGS.map(flag => [flag, true])) };
   verifyAgainstOutbox(proof, previousProof);
   operation.release();
+  mark("smtp-proof-verified");
   return proof;
 }
-module.exports = { SCENARIO, SCOPE, SIDECAR, FIELD, FLAGS, REQUIRED_SOURCES, verifyProof, verifyAgainstOutbox, productionDeliveryEnv, independentReceipt, localEndpoint, matchingMessages, qualify, registerOperation, assertCleanupSafe };
+module.exports = { SCENARIO, SCOPE, SIDECAR, FIELD, FLAGS, MILESTONES, deliveryExitLabel, REQUIRED_SOURCES, verifyProof, verifyAgainstOutbox, productionDeliveryEnv, independentReceipt, localEndpoint, matchingMessages, qualify, registerOperation, assertCleanupSafe };

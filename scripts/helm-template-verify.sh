@@ -749,5 +749,25 @@ assert_contains "${lifecycle_custom}" 'CERTOPS_SWEEP_DISTRIBUTION_MONITORING_ENA
 assert_contains "${lifecycle_custom}" 'CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_TIMEOUT_MS: "23456"' "custom scheduler timeout"
 assert_contains "${lifecycle_custom}" 'CERTOPS_SWEEP_DISTRIBUTION_MONITORING_TIMEOUT_MS: "34567"' "custom monitoring timeout"
 assert_contains "${lifecycle_custom}" 'TWILIO_WHATSAPP_ALERT_CONTENT_SID_DISTRIBUTION: "HX00000000000000000000000000000000"' "dedicated distribution template"
-
+echo "==> verify explicit owner label permission and selection"
+owner_defaults="$(helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --show-only templates/configmap.yaml)"
+assert_contains "${owner_defaults}" 'AUTO_SYNC_METRICS_EXTRA_LABELS: ""' "owner label permission defaults empty"
+assert_contains "${owner_defaults}" 'AUTO_SYNC_METRICS_LABELS: ""' "owner label selection defaults empty"
+owner_custom="$(helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set monitoring.metrics.autoSyncEnabled=true \
+  --set 'monitoring.metrics.extraLabels={owner_username}' \
+  --set 'monitoring.metrics.autoSyncLabels={kind,owner_username}' \
+  --show-only templates/configmap.yaml)"
+assert_contains "${owner_custom}" 'AUTO_SYNC_METRICS_EXTRA_LABELS: "owner_username"' "explicit owner label permission"
+assert_contains "${owner_custom}" 'AUTO_SYNC_METRICS_LABELS: "kind,owner_username"' "explicit owner label selection"
+for setting in extraLabels autoSyncLabels; do
+  for invalid in '{unknown}' '{owner_username,owner_username}' '{none,owner_username}'; do
+    if helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com \
+      --set monitoring.metrics.autoSyncEnabled=true \
+      --set "monitoring.metrics.${setting}=${invalid}" >/dev/null 2>&1; then
+      fail "accepted invalid ${setting}=${invalid}"
+    fi
+  done
+done
 echo "helm-template-verify: ok -> ${OUT}"

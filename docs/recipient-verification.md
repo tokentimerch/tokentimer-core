@@ -1,10 +1,12 @@
 # Recipient verification
 
-Workspace contacts can exist, and can belong to contact groups, before a destination is confirmed. Whether alerts, weekly digests, and workspace notification tests require that confirmation depends on the deployment. Cloud requires it. A standard self-hosted deployment does not, until an operator turns verification on. When verification is enforced, a weekly digest checks consent again after it claims the recipient and does not mark the digest sent when the check fails.
+Self-hosted delivery keeps verification off by default. In `enforce` mode, a contact matching a current workspace member's exact verified mailbox needs no second email confirmation; other email addresses and WhatsApp numbers require their own confirmation. Membership removal or lost mailbox proof ends inherited eligibility. Opt-outs, revocations and suppressions still take precedence. Use `shadow` to evaluate eligibility without blocking delivery during rollout. Run the standard migrations before starting matching API and workers.
 
-Account verification, password reset, billing, waitlist, workspace invitations, and operator incident email are not recipient-consent messages. They are not blocked by this policy.
+## Configuration
 
-## States
+- `RECIPIENT_VERIFICATION_MODE`: `off` bypasses verification, `shadow` logs eligibility while delivering, and `enforce` requires eligibility. Configure the same mode on the API and notification workers.
+- `RECIPIENT_FINGERPRINT_SECRET`: shared HMAC key for destination fingerprints and verification tokens; falls back to `PHONE_HASH_SALT`, then `SESSION_SECRET`.
+- `PUBLIC_BASE_URL`: public API origin for confirmation links and Twilio inbound signature validation; falls back to `API_URL`.
 
 Each channel is independent:
 
@@ -93,3 +95,4 @@ See [browser validation and reproduction](recipient-verification-validation.md) 
 - Apply the migration on a database before production enforcement. The migration is idempotent.
 - A database timeout or other verification infrastructure failure does not mark the alert `NO_VERIFIED_RECIPIENTS`. The delivery stays retryable, and the message is not sent until consent has been read. One successful recipient does not complete a channel while another eligible recipient is still failed.
 - A weekly digest renews its claim lease during the provider call. If that lease expires while a send is still in progress, the next worker records the delivery as uncertain and waits `WEEKLY_DIGEST_UNCERTAIN_RETRY_SECONDS` (default 900) before trying again. SMTP cannot promise that a crash after the provider accepts the message, and before that acceptance is stored, will never send a second copy. WhatsApp retries keep the same idempotency key. A recorded provider acceptance is finished without sending again.
+See [configuration variables and limits](CONFIGURATION.md#recipient-verification) for defaults.

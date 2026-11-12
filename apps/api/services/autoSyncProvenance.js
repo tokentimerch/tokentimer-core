@@ -200,9 +200,15 @@ async function upsertImportedToken({ context, payload, workspaceId, userId, manu
       existing = await Token.findUnattributedByNameLocation(payload.name, payload.location, workspaceId, { client });
     }
     assignMembership(payload, { isCreate: !existing });
+    // Keep metric-only metadata out of permanent inventory provenance.
+    const inventoryPayload = { ...payload };
+    if (payload.source_dimensions) {
+      const { owner_username: _owner, ...dimensions } = payload.source_dimensions;
+      inventoryPayload.source_dimensions = dimensions;
+    }
     const token = existing ? await Token.update(existing.id, {
-      ...payload, ...(manual ? { auto_sync_managed: false } : {}),
-    }, { client }) : await Token.create({ ...payload, userId, workspaceId,
+      ...inventoryPayload, ...(manual ? { auto_sync_managed: false } : {}),
+    }, { client }) : await Token.create({ ...inventoryPayload, userId, workspaceId,
       created_by: userId, imported_at: new Date() }, { client });
     if (context) await attachObservedToken(context, token.id, !existing, { client });
     if (context && !existing) {
