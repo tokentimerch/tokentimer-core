@@ -9119,7 +9119,7 @@ paths:
           name: operation
           schema:
             type: string
-            enum: [issue, renew, deploy, deploy-from-store, cleanup-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+            enum: [issue, renew, deploy, deploy-from-store, cleanup-from-store, reconcile-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
         - in: query
           name: source
           schema:
