@@ -463,7 +463,7 @@
               "uniqueItems": true,
               "oneOf": [
                 {
-                  "maxItems": 6,
+                  "maxItems": 7,
                   "items": {
                     "type": "string",
                     "enum": [
@@ -472,7 +472,8 @@
                       "kind",
                       "asset_name",
                       "project",
-                      "group"
+                      "group",
+                      "owner_username"
                     ]
                   }
                 },
@@ -489,13 +490,14 @@
               "uniqueItems": true,
               "oneOf": [
                 {
-                  "maxItems": 3,
+                  "maxItems": 4,
                   "items": {
                     "type": "string",
                     "enum": [
                       "asset_name",
                       "project",
-                      "group"
+                      "group",
+                      "owner_username"
                     ]
                   }
                 },

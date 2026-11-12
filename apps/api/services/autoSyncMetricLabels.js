@@ -2,7 +2,7 @@
 
 const { createHash } = require("node:crypto");
 
-const OPTIONAL_LABELS = ["configuration_name", "monitoring_group", "kind", "asset_name", "project", "group"];
+const OPTIONAL_LABELS = ["configuration_name", "monitoring_group", "kind", "asset_name", "project", "group", "owner_username"];
 const systemSettings = require("./systemSettings");
 systemSettings.registerJsonColumn("auto_sync_metrics", {
   envMap: { enabled: "AUTO_SYNC_METRICS_ENABLED", labels: "AUTO_SYNC_METRICS_LABELS", override_metrics: null,
@@ -10,7 +10,7 @@ systemSettings.registerJsonColumn("auto_sync_metrics", {
   validate: systemMetricSettingsError,
 });
 const DEFAULT_SYSTEM_LABELS = ["configuration_name", "monitoring_group", "kind"];
-const HIGH_CARDINALITY_LABELS = ["asset_name", "project", "group"];
+const HIGH_CARDINALITY_LABELS = ["asset_name", "project", "group", "owner_username"];
 function deploymentMetricLabels(env = process.env) {
   const raw = String(env.AUTO_SYNC_METRICS_LABELS || "").trim();
   if (!raw) return null;
@@ -119,15 +119,21 @@ function effectiveMetricSettings(value, env = process.env, storedPolicy) {
 function metadata(value) { return typeof value === "string" && value.length <= 512 ? value : ""; }
 function metricSourceDimensions(item) {
   return { project: metadata(item.project_path || item.project_name || item.repository || item.projectId),
-    group: metadata(item.group_path || item.group_name) };
+    group: metadata(item.group_path || item.group_name),
+    ...(item.sourceKind === "gitlab-pat" && metadata(item.owner_username)
+      ? { owner_username: metadata(item.owner_username) } : {}) };
 }
 function creationDimensions(payload, settings, env = process.env, policy) {
   const selected = effectiveMetricSettings(settings, env, policy);
   const exposes = label => selected.enabled && selected.labels.includes(label);
+  const owner = payload.source_provider === "gitlab" && payload.source_kind === "gitlab-pat" &&
+    exposes("owner_username") ? metadata(payload.source_dimensions?.owner_username) : "";
   return { kind: KNOWN_KINDS.has(payload.source_kind) ? payload.source_kind : "other",
     asset_name: exposes("asset_name") ? metadata(payload.name) : "",
     project: exposes("project") ? metadata(payload.source_dimensions?.project) : "",
-    group: exposes("group") ? metadata(payload.source_dimensions?.group) : "" };
+    group: exposes("group") ? metadata(payload.source_dimensions?.group) : "",
+    // Omit unknown owners to preserve the serialized key and hash of historical rows.
+    ...(owner ? { owner_username: owner } : {}) };
 }
 async function recordCreationMetrics(client, context, payload, settings, policy) {
   const dimensions = creationDimensions(payload, settings, process.env, policy);
@@ -135,11 +141,11 @@ async function recordCreationMetrics(client, context, payload, settings, policy)
     VALUES ($1, $2, 1) ON CONFLICT (provider, kind) DO UPDATE
     SET items_created_total = auto_sync_kind_stats.items_created_total + 1`, [context.provider, dimensions.kind]);
   await client.query(`INSERT INTO auto_sync_creation_stats
-    (config_id, kind, asset_name, project, group_name, dimension_key, items_created_total, last_created_at)
-    VALUES ($1, $2, $3, $4, $5, $6, 1, NOW())
+    (config_id, kind, asset_name, project, group_name, dimension_key, owner_username, items_created_total, last_created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 1, NOW())
     ON CONFLICT (config_id, dimension_key) DO UPDATE
     SET items_created_total = auto_sync_creation_stats.items_created_total + 1, last_created_at = NOW()`,
   [context.configId, dimensions.kind, dimensions.asset_name, dimensions.project, dimensions.group,
-    createHash("sha256").update(JSON.stringify(dimensions)).digest("hex")]);
+    createHash("sha256").update(JSON.stringify(dimensions)).digest("hex"), dimensions.owner_username || ""]);
 }
 module.exports = { deploymentMetricLabels, deploymentMetricLabelOptions, systemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, readSystemMetricPolicy, DEFAULT_SYSTEM_LABELS, permittedExtraLabels, HIGH_CARDINALITY_LABELS, effectiveMetricSettings, KNOWN_KINDS, OPTIONAL_LABELS, metricSettingsError, normalizeMetricSettings, metricSourceDimensions, creationDimensions, recordCreationMetrics };

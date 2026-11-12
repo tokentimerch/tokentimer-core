@@ -2537,7 +2537,9 @@ function ImportTokensModalContent({
         await refreshIntegrationQuota();
       }
     } finally {
-      setIsScanning(false);
+      if (isAzureADPreviewCurrent(previewTicket)) {
+        setIsScanning(false);
+      }
     }
   };
 

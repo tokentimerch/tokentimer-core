@@ -194,6 +194,8 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   // default behavior) until the user explicitly loads and narrows the list.
   const [availableMounts, setAvailableMounts] = React.useState([]);
   const [mountSelectionKnown, setMountSelectionKnown] = React.useState(false);
+  const [mountSelectionExplicit, setMountSelectionExplicit] =
+    React.useState(false);
   const [selectedMountPaths, setSelectedMountPaths] = React.useState(new Set());
   const [isLoadingMounts, setIsLoadingMounts] = React.useState(false);
   const [mountsError, setMountsError] = React.useState(null);
@@ -224,7 +226,6 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   // Shared bulk assignment state
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupIds, setBulkContactGroupIds] = React.useState([]);
-  const [restoredMounts, setRestoredMounts] = React.useState(null);
   React.useEffect(() => {
     if (!initialScanParams) return;
     const sp = initialScanParams;
@@ -237,7 +238,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     setSelectedCategories(
       new Set(sp.categories || VAULT_CATEGORY_OPTIONS.map(c => c.value))
     );
-    setRestoredMounts(Array.isArray(sp.mounts) ? sp.mounts : null);
+    setMountSelectionExplicit(Array.isArray(sp.mounts));
     setSelectedMountPaths(new Set(sp.mounts || []));
     setAvailableMounts([]);
     setMountSelectionKnown(false);
@@ -295,7 +296,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       setMountSelectionKnown(true);
       const availablePaths = new Set(scannable.map(m => m.path));
       setSelectedMountPaths(previous =>
-        restoredMounts !== null || mountSelectionKnown
+        mountSelectionExplicit
           ? new Set([...previous].filter(path => availablePaths.has(path)))
           : availablePaths
       );
@@ -307,6 +308,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   };
 
   const toggleMount = path => {
+    setMountSelectionExplicit(true);
     setSelectedMountPaths(prev => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
@@ -324,14 +326,12 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     });
   };
 
-  // Only send an explicit mount list when the picker was used and the user
-  // narrowed it down; otherwise every mount is scanned (unchanged default).
+  // Discovery must not turn an explicit restriction into unrestricted scope.
   const mountsFilterForScan = () => {
     if (mountsError) return [];
-    if (restoredMounts !== null) return Array.from(selectedMountPaths);
+    if (mountSelectionExplicit) return Array.from(selectedMountPaths);
     if (availableMounts.length === 0) return mountSelectionKnown ? [] : null;
-    if (selectedMountPaths.size >= availableMounts.length) return null;
-    return Array.from(selectedMountPaths);
+    return null;
   };
   const validateSelection = () => {
     const mounts = mountsFilterForScan();
@@ -432,6 +432,11 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   };
 
   const importVaultSelected = async () => {
+    const selectionError = validateSelection();
+    if (selectionError) {
+      onError?.(selectionError);
+      return;
+    }
     if (!previewReady || isScanning) {
       onError?.('Run a scan with the current settings before importing.');
       return;
@@ -830,6 +835,18 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
                       {availableMounts.length > 0 ? 'Refresh' : 'Load engines'}
                     </Button>
                   </HStack>
+                  <Checkbox
+                    size='sm'
+                    isChecked={!mountSelectionExplicit}
+                    onChange={e => {
+                      setMountSelectionExplicit(!e.target.checked);
+                      setSelectedMountPaths(
+                        new Set(availableMounts.map(m => m.path))
+                      );
+                    }}
+                  >
+                    Scan all secrets engines
+                  </Checkbox>
                   {mountsError ? (
                     <Text fontSize='xs' color='red.400' mb={1}>
                       {mountsError}

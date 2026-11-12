@@ -223,8 +223,18 @@ async function persistScan({ workspaceId, provider, identityContext, items, subS
     error.code = "AUTO_SYNC_RUN_REQUIRED";
     throw error;
   }
-  return withFencedImport(context, async (client) => {
+  return withFencedImport(context, async (client, config) => {
     const identity = resolveSourceIdentity(provider, identityContext);
+    const { effectiveMetricSettings } = require("./autoSyncMetricLabels");
+    const settings = context && provider === "gitlab"
+      ? effectiveMetricSettings(config.metrics_settings, process.env, config.system_metric_policy) : null;
+    const captureOwner = settings?.enabled && settings.labels.includes("owner_username");
+    const scanItems = (items || []).map(item => {
+      const { owner_username, ...dimensions } = item.dimensions || {};
+      return { ...item, dimensions: { ...dimensions,
+        ...(captureOwner && item.sourceKind === "gitlab-pat" && typeof owner_username === "string" &&
+          owner_username.length <= 512 && owner_username ? { owner_username } : {}) } };
+    });
     const scan = await createScan({ workspaceId, provider, instance: identity.instance,
       ownerKey: identity.ownerKey, createdBy, startedAt: request?.integrationScanStartedAt || new Date(), client });
     if (context) {
@@ -233,7 +243,7 @@ async function persistScan({ workspaceId, provider, identityContext, items, subS
         '{source_instances}', COALESCE(settings_snapshot->'source_instances', '[]'::jsonb) || $2::jsonb)
         WHERE run_id = $1`, [context.runId, JSON.stringify([{ instance: snapshotIdentity(identity.instance), owner_key: snapshotIdentity(identity.ownerKey) }])]);
     }
-    await recordScanItems(scan.id, items, { workspaceId, provider,
+    await recordScanItems(scan.id, scanItems, { workspaceId, provider,
       instance: identity.instance, ownerKey: identity.ownerKey, observedAt: scan.startedAt, client });
     await finalizeScan(scan.id, subScopes, { client });
     return { scanId: scan.id, startedAt: scan.startedAt, instance: identity.instance,

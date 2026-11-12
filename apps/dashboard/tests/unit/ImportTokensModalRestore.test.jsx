@@ -830,6 +830,65 @@ describe('Entra identity selection and saved filters', () => {
     }
   );
 
+  it.each(['resolve', 'reject'])(
+    'keeps the newer Entra scan loading when a discarded request settles by %s',
+    async outcome => {
+      let finishOld, failOld, finishCurrent;
+      azureADAPI.scan
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve, reject) => {
+              finishOld = resolve;
+              failOld = reject;
+            })
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              finishCurrent = resolve;
+            })
+        );
+      apiGetMock.mockResolvedValue({ data: {} });
+      render(renderModal({ provider: 'azure-ad' }));
+      fireEvent.change(
+        await screen.findByPlaceholderText(/Paste (?:access )?token/),
+        {
+          target: { value: 'graph-token' },
+        }
+      );
+      const scanElement = screen.getByRole('button', {
+        name: 'Scan',
+        exact: true,
+      });
+      const scan = () => scanElement;
+      fireEvent.click(scan());
+      fireEvent.change(
+        screen.getByRole('combobox', { name: 'Identity selection' }),
+        {
+          target: { value: 'only' },
+        }
+      );
+      fireEvent.click(scan());
+      expect(azureADAPI.scan).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        if (outcome === 'reject') failOld(new Error('Old scan failed'));
+        else finishOld(preview);
+      });
+      expect(scan()).toBeDisabled();
+      expect(
+        screen.getByRole('button', { name: 'Import selected' })
+      ).toBeDisabled();
+      expect(screen.queryByText('1 matched')).toBeNull();
+      fireEvent.click(scan());
+      expect(azureADAPI.scan).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        finishCurrent(preview);
+      });
+      await waitFor(() => expect(scan()).toBeEnabled());
+      expect(screen.getByText('1 matched')).toBeInTheDocument();
+    }
+  );
+
   it('ignores an Entra scan that completes after identity selection changes', async () => {
     let finish;
     apiGetMock.mockResolvedValue({ data: {} });

@@ -222,6 +222,85 @@ describe('Import preview freshness', () => {
 });
 
 describe('Restored Vault mount restrictions', () => {
+  it('retains explicit scope after a nonempty refresh shrink until all engines are deliberately chosen', async () => {
+    const prod = { path: 'prod/', type: 'kv', options: { version: '2' } };
+    const dev = { path: 'dev/', type: 'kv', options: { version: '2' } };
+    mocks.listMounts
+      .mockResolvedValueOnce([prod, dev])
+      .mockResolvedValueOnce([prod])
+      .mockResolvedValueOnce([prod, dev]);
+    const { ref } = renderForm(ImportVaultForm);
+    await connect('Vault', 'https://vault.your-org.com');
+    fireEvent.click(
+      screen.getByRole('button', { name: /Advanced: Secrets engines/ })
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Load engines' })
+    );
+    fireEvent.click(
+      await screen.findByRole('checkbox', { name: 'dev/ (kv v2)' })
+    );
+    expect(ref.current.getCredentials().scanParams.mounts).toEqual(['prod/']);
+    for (const count of [2, 3]) {
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+      await waitFor(() =>
+        expect(mocks.listMounts).toHaveBeenCalledTimes(count)
+      );
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+      );
+      expect(ref.current.getCredentials().scanParams.mounts).toEqual(['prod/']);
+    }
+    expect(
+      screen.getByRole('checkbox', { name: 'dev/ (kv v2)' })
+    ).not.toBeChecked();
+    fireEvent.click(scanButton('Vault'));
+    await screen.findByText('1 matched');
+    expect(mocks.vaultScan).toHaveBeenLastCalledWith(
+      expect.objectContaining({ mounts: ['prod/'] })
+    );
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Scan all secrets engines' })
+    );
+    expect(ref.current.getCredentials().scanParams.mounts).toBeNull();
+    expect(ref.current.getSelectedCount()).toBe(0);
+  });
+
+  it.each(['empty', 'error'])(
+    'revokes a default preview after %s discovery',
+    async outcome => {
+      const { ref } = renderForm(ImportVaultForm);
+      await connect('Vault', 'https://vault.your-org.com');
+      fireEvent.click(scanButton('Vault'));
+      await screen.findByText('1 matched');
+      fireEvent.click(screen.getByRole('button', { name: 'select-first-1' }));
+      await waitFor(() => expect(ref.current.getSelectedCount()).toBe(1));
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: /Remove previously imported/ })
+      );
+      if (outcome === 'error')
+        mocks.listMounts.mockRejectedValue(new Error('Discovery failed'));
+      else mocks.listMounts.mockResolvedValue([]);
+      fireEvent.click(
+        screen.getByRole('button', { name: /Advanced: Secrets engines/ })
+      );
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Load engines' })
+      );
+      await waitFor(() =>
+        expect(ref.current.getCredentials().scanParams.mounts).toEqual([])
+      );
+      expect(ref.current.getSelectedCount()).toBe(0);
+      expect(
+        screen.getByRole('checkbox', { name: /Remove previously imported/ })
+      ).toBeDisabled();
+      await act(() => ref.current.importSelected());
+      expect(mocks.import).not.toHaveBeenCalled();
+      fireEvent.click(scanButton('Vault'));
+      expect(mocks.vaultScan).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it.each([
     [
       ['saved/', 'removed/'],

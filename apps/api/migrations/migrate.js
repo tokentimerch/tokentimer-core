@@ -4956,6 +4956,12 @@ migrations.push({
   sql: fs.readFileSync(require("path").join(__dirname, "083-certops-material-providers.sql"), "utf8"),
 });
 
+migrations.push({
+  version: 111,
+  name: "auto_sync_owner_username",
+  sql: fs.readFileSync(require("path").join(__dirname, "111-auto-sync-owner-username.sql"), "utf8"),
+});
+
 const { composeMigrations } = require("./compose-migrations");
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored
