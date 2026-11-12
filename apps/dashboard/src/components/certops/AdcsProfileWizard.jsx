@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -238,33 +238,38 @@ export default function AdcsProfileWizard({
   const [lookupFailed, setLookupFailed] = useState(false);
   const [attached, setAttached] = useState(null);
   const [openConflict, setOpenConflict] = useState(null);
+  const session = useRef({ version: 0 });
+  useLayoutEffect(() => {
+    const currentSession = session.current;
+    currentSession.version += 1;
+    return () => { currentSession.version += 1; };
+  }, [workspaceId, isOpen]);
 
   useEffect(() => {
-    if (!isOpen) {
-      setStep(0);
-      setName('');
-      setIssuerId('');
-      setReference('');
-      setExtraNames('');
-      setSite('');
-      setPort('');
-      setSniHost('');
-      setStore('My');
-      setDestination('windows-iis');
-      setKeyAlgorithm('rsa');
-      setKeySize('2048');
-      setLeadTime('');
-      setBusy(false);
-      setLocalError('');
-      setCreated(null);
-      setTargets([]);
-      setSelectedId('');
-      setMatchesLoading(false);
-      setLookupFailed(false);
-      setAttached(null);
-      setOpenConflict(null);
-    }
-  }, [isOpen]);
+    setStep(0);
+    setName('');
+    setIssuerId('');
+    setReference('');
+    setExtraNames('');
+    setSite('');
+    setPort('');
+    setSniHost('');
+    setStore('My');
+    setDestination('windows-iis');
+    setKeyAlgorithm('rsa');
+    setKeySize('2048');
+    setLeadTime('');
+    setBusy(false);
+    setLocalError('');
+    setCreated(null);
+    setTargets([]);
+    setSelectedId('');
+    setMatchesLoading(false);
+    setLookupFailed(false);
+    setAttached(null);
+    setOpenConflict(null);
+    setAgents([]);
+  }, [isOpen, workspaceId]);
 
   useEffect(() => {
     if (!isOpen || !workspaceId) return undefined;
@@ -341,6 +346,7 @@ export default function AdcsProfileWizard({
   const dnsName = reference.trim();
 
   async function handleCreate() {
+    const { version } = session.current;
     setBusy(true);
     setLocalError('');
     const dnsNames = extraDnsNames(extraNames, reference.trim());
@@ -370,20 +376,23 @@ export default function AdcsProfileWizard({
         keySize: Number(keySize),
         renewBeforeDays: leadTime.trim() ? Number(leadTime) : null,
       });
+      if (session.current.version !== version) return;
       setCreated(profile);
       showSuccess('Renewal profile created.');
       if (onCreated) await onCreated();
+      if (session.current.version !== version) return;
       setMatchesLoading(true);
       setStep(3);
     } catch (err) {
-      setLocalError(errorText(err, 'Could not create the renewal profile.'));
+      if (session.current.version === version) setLocalError(errorText(err, 'Could not create the renewal profile.'));
     } finally {
-      setBusy(false);
+      if (session.current.version === version) setBusy(false);
     }
   }
 
   async function handleAttach(openPeriodId = null) {
     if (!selected || !created?.id) return;
+    const { version } = session.current;
     setBusy(true);
     setLocalError('');
     setOpenConflict(null);
@@ -395,9 +404,11 @@ export default function AdcsProfileWizard({
         renewalProfileId: created.id,
         automationEnabled: true,
       });
+      if (session.current.version !== version) return;
       setAttached(selected);
       showSuccess('Automatic renewal is on for this certificate.');
     } catch (err) {
+      if (session.current.version !== version) return;
       const data = err?.response?.data;
       const current = data?.currentPeriod?.periodId;
       if (
@@ -423,7 +434,7 @@ export default function AdcsProfileWizard({
         );
       }
     } finally {
-      setBusy(false);
+      if (session.current.version === version) setBusy(false);
     }
   }
 
