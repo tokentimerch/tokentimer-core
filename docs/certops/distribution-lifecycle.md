@@ -1,187 +1,35 @@
-# Certificate distribution lifecycle
+# Certificate distribution
 
-This implementation extends the merged distribution, provider, recipient-verification and PagerDuty features for #248. Use matching API, worker and agent versions, and follow the existing provider capability gates. OpenBao is available; Azure, shared Windows/IIS and material cleanup still require their separately qualified artifacts. This guide does not enable those production gates.
+Use Distribution to publish a certificate to a customer-controlled store, deploy its exact version to registered consumers and track whether each service uses it. Private keys and store credentials remain on customer systems.
 
-PR #498's feature scope is frozen to this implemented lifecycle. The [completion matrix](pr498-merge-readiness-20261103.md) separates supported behavior, gated implementation, wider acceptance and future connectors. SQL Server, Exchange, RDP/RDS, other Windows services, unsupported restart/refresh and Windows independent staging are follow-ups, not available operations in this PR.
+## Before you start
 
-## Operator journey
+Use matching API, worker and agent versions. Follow [Set up certificate distribution](vault-first-distribution.md) to register agents, configure local store and deployment profiles, and explicitly choose shared-key mode. Vault and OpenBao KV v2 support Linux distribution. Azure Key Vault material storage, shared Windows/IIS material deployment, independent Linux staging and exact-version Vault/OpenBao cleanup require separately qualified capabilities and remain disabled. Existing Windows certificate automation is unaffected.
 
-**Configure → Issue → Publish → Distribute → Verify → Monitor → Renew → Redistribute → Resolve incidents → Retain / reviewed customer-side cleanup**
+## Configure consumers and rollout
 
-1. Use the existing [first-distribution guide](vault-first-distribution.md) to opt into shared private keys explicitly, register agents and configure a customer-controlled store. Credentials, paths, approved command references and probes remain customer-local.
-2. Open **Certificate Management → Distribution**, or **Manage distribution** in a certificate's read-only **Deployments** section. Select its source and published immutable version.
-3. Add consumers using registered agents and local deployment-profile aliases. Set required/optional status, wave, verification assurance and freshness. Revision changes invalidate previous authorization. Reassignment is refused while the previous destination has live or uncertain work. An agent/profile alias remains reserved by its binding when disabled; edit that binding or choose a distinct local alias.
-4. Configure activation policy per consumer. Request a rollout, review the exact destination/version intent in Jobs where approval is required, and inspect each child's evidence. A request, approval, publication, file installation, live serving and trust are different outcomes.
-5. Enable recurring verification and distribution incidents deliberately. Both are disabled initially. Configure contact groups and thresholds. Existing workspace notification channels, delivery windows, recipient eligibility, quotas and retries apply.
-6. Investigate failures through the original job, run metadata preflight and customer-local preflight, reconcile uncertain local effects, retry the original signed intent and resume where allowed. Obtain fresh verification before treating the incident as resolved.
-7. Preview retention reasons. After independent native qualification and explicit local/runtime/group opt-in, administrators can request exact-version Vault/OpenBao soft-deletion approval. Each provider has a separate cleanup capability. Cleanup uses the existing signed-job/lease infrastructure and a permanent reference fence. It remains disabled for the currently unqualified cleanup capabilities. See the [retention and cleanup protocol](distribution-retention-cleanup.md).
+Open **Certificate Management → Distribution**, or select **Manage distribution** from a certificate's Deployments view. Add consumers using registered agents and customer-local deployment-profile aliases. Mark each consumer required or optional and configure its wave, activation method and verification policy. Disabling a binding does not release its agent/profile alias. A binding cannot be reassigned while its previous destination has live or uncertain work.
 
-## Independent Linux preparation
-
-Preparation is an optional phase between publication/preflight and activation.
-Enable **Stage material before the activation window** on the consumer policy and
-set `independentStaging: true` in its existing customer-local material binding.
-The registered Linux agent must have the separately qualified
-`material-consumer-staging-v1` capability. It is absent from the shipped
-qualification manifest; a runtime setting cannot enable it in that artifact.
-
-The frozen rollout creates one preparation job and later a separate activation
-job for the same immutable version, generation and authorization revision.
-Preparation may fetch into protected customer-local staging outside a maintenance
-window, but never touches destination files or services. Its receipt has
-`staged: true` and false installed/served/trust flags. The API preserves this
-receipt without advancing current consumer proof. Activation requires its own
-live claim, unchanged requester/reviewer authority, local policy, an intact staged
-bundle and an open window, rechecked immediately before mutation. Later canary
-waves still require qualifying consumer verification.
-
-Restart/retry uses the protected local journal and exact generation. Missing or
-changed staged bytes fail closed. Cancelled or superseded jobs cannot activate
-their staged bytes; retained protected files are not evidence of service use.
-Keep local journals during recovery. Windows independent preparation, SQL Server
-connectors, controlled restarts and no-restart refresh remain unavailable here;
-they require separate typed local contracts and native qualification.
-
-## Event flow and custody
-
-```mermaid
-flowchart TD
-  A[Issuer agent publishes exact material in customer store] --> B[Receipt transaction: immutable version + policy revision + outbox]
-  B --> C[Durable CertOps outbox worker]
-  C --> D{Distribution policy}
-  D -->|Manual| E[Operator selects a published version]
-  D -->|Approval request| F[Pending Jobs approval for exact version and consumers]
-  D -->|Reviewed automatic| G[Revalidate bounded policy scope and expiry]
-  E --> H[Frozen rollout snapshot and generation]
-  F --> H
-  G --> H
-  H --> I[Canary waves and bounded signed child jobs]
-  I --> J[Customer agent fetches exact version, installs and activates under local policy/calendar]
-  J --> K[Claim-bound public installation/served/trust receipts]
-  K --> L[Desired versus observed consumer matrix]
-  L --> M[Recurring signed verification-only jobs]
-  L --> N[Incidents, notification bell and existing durable delivery queue]
-  M --> L
-```
-
-The control plane has no material-store network client. It stores aliases, immutable public identities, version references, scope hashes, approval/audit records, scheduling state and public evidence. Private keys and store credentials never enter lifecycle policies, jobs, API responses, outbox records or notifications. Customer-local preflight can read an exact bundle into agent memory; it returns diagnostic codes only.
-
-Publication records its policy revision in the same transaction as the existing `material_published` outbox event. A delayed event cannot adopt a changed policy. Group locks, deterministic `post-publication:<version>` job keys and a unique workspace/group/version automation record make duplicate delivery, concurrent workers and acknowledgement loss logically idempotent. Superseded publications cannot silently become automatic rollbacks.
-
-## Post-publication policies and human approval
-
-| Mode | Behavior |
-| --- | --- |
-| `manual` | Default. Publish and expose consumer lag; no automatic rollout. |
-| `approval_request` | Create a genuine pending Jobs approval for the exact immutable version and current destination snapshot. Notify reviewers through the existing notification bell. |
-| `preauthorized` | Require an independently reviewed policy job, a maximum 30-day expiry and an unchanged public scope. No approval ledger row is manufactured for later versions. |
-
-The standing approval contains the reviewable destination list, local/profile and authorization revisions, activation classes/calendars, required/optional flags, waves, maximum parallelism and fixed rollout/failure behavior, together with its canonical scope hash. Workspace approval policy/revision, owner/reviewer membership, source authority, management period and policy configuration participate in that scope. These are revalidated before expansion and dispatch; changed membership, reviewer revocation, policy changes or expiry refuse execution. Saving the same settings after a scope change creates a new revision and genuine review request.
-
-Mandatory workspace approval is never overridden by standing authority. Disruptive/explicit-approval activation, every retained-version deployment and every cleanup job require a genuine exact-intent human approval. Child jobs retain the existing independent workspace approval rules. Reviewers must satisfy the existing Jobs permissions and non-requester rule. Cancelled/rejected approval notices close without claiming deployment success.
+Select a published version and request a rollout. Reviewers approve the exact version, consumer scope and policy in Jobs when required. Manual distribution is the default; approval requests and reviewed automatic distribution require explicit configuration. A change to the authorized scope, relevant membership or policy can require a new independent review.
 
 ## Maintenance and activation
 
-Activation classes are `none`, `reload`, `rebind`, `no-restart-refresh`, `controlled-restart` and `manual`. The merged Linux material executor supports file-only `none` and approved local `reload`. Other mutating classes remain unavailable until their connector is implemented and qualified. Manual customer activation can be followed by an authorized verification-only job; it does not authorize automatic service mutation.
+Configure a consumer's maintenance calendar with its IANA time zone, allowed windows and blackouts. Blackouts take precedence; disruptive activation waits for an allowed window. Supported Linux targets can install files and use an approved local reload profile; unsupported service actions remain unavailable. An administrator may request a scoped, time-limited emergency exception that still requires rollout approval.
 
-Calendars use IANA zones, weekday windows and explicit ISO-instant blackouts. Overnight and overlapping windows are supported. Real UTC instants are evaluated in local wall time: nonexistent DST minutes never occur; both repetitions of a fallback hour follow that wall-time window. Window ends and blackout ends are exclusive. Blackouts override ordinary windows and emergency exceptions. A disruptive activation without an allowed window waits.
+Independent Linux preparation, when separately qualified, stages material before activation without changing the destination or proving service use. Activation remains a separate authorized job and requires unchanged scope, intact staged material and an open window. Windows independent staging is unavailable.
 
-Source issuance and secure store publication may finish before the activation window. The current Linux consumer executor defers the complete destination deployment rather than introducing an independently resumable per-consumer staging phase. Calendar admission is checked before dispatch and again customer-side, including immediately before reload. Losing the window after files changed leaves uncertain effects for reconciliation, never a false success.
+## Verify and monitor
 
-Per-consumer authorization expiry is independent of certificate validity. `POST .../consumers/:bindingId/emergency` requires `certops.distribution.emergency` (workspace admin), exact group/binding/revision scope, an audit reference and at most four hours. Administrators can configure and confirm this exception in the consumer's Maintenance form. It changes the authorization revision and still requires explicit rollout approval. There is no arbitrary command or shell field.
+Published, installed, served and trusted are different states. Select each consumer's required assurance and freshness policy. Recurring verification and incidents are off by default; enable them deliberately and configure eligible notification recipients. A new source publication does not prove consumers have converged. Required failures and stale canary evidence can pause a rollout; inspect Jobs and explicitly resume when safe.
 
-Monitoring escalates when no activation fits before the earlier desired/deployed certificate expiry. A bounded 35-day search reports an explicit horizon-exceeded escalation rather than silently assuming a future window exists. Stale canary proof pauses progression; historical successful stages alone cannot authorize later waves or complete a rollout.
-
-## Continuous verification and incidents
-
-Verification policy remains per consumer (`installed`, `served`, `trust`) with per-consumer freshness. Group policy controls enablement, interval, maximum backoff, stale-job threshold and escalation tolerance. Schedules persist sequence, due time, job reference, outcome and failure count. Workspace/group locks and a due-time recheck serialize concurrent schedulers. Each run pins the existing desired version; it never adopts a new publication just because a timer fired.
-
-The scheduler uses the existing signed verification-only path, concurrency limits and authorization. It waits for active deployments, explicit pauses, unresolved effects and pending approvals and backs off required offline agents. Existing job/lease reaping remains authoritative: the scheduler does not steal a live claim or clear uncertainty.
-
-A scheduler-owned verification cycle with terminal required-consumer failures finishes as degraded once all already-created children have settled. It starts no further waves and preserves failed jobs, diagnostics, receipts and audit history. The scheduler accounts for that failure once, schedules exponential backoff from the failure's completion time (capped by the configured maximum), then creates one fresh verification-only request for the currently authorized desired version. Ordinary verification intervals resume after successful fresh proof. Concurrent workers share the existing group/schedule locks and deterministic sequence key.
-
-Cancellation/rejection, changed binding authorization, live children, uncertain stages and reconciliation flags prevent this automatic completion. Paused rollouts are never guessed to be safe failures. In particular, pre-fix paused cycles have ambiguous pause provenance and require one explicit operator Resume or retirement; Resume revalidates normal admission before a safe read-only failure can finish and enter backoff. A still-uncertain or stale-authority cycle remains fenced. This is a group-level schedule; blocked required consumers can still hold a subsequent full-group run.
-
-Consumer health separates fresh convergence, installed-only assurance, served-without-trust proof, old material, drift, overdue verification, offline agents, incomplete coverage, failed verification and uncertainty. The management page expires cached fresh-proof labels at evidence deadlines using the existing server-clock/deadline hook. Source renewal never supplies consumer verification.
-
-Monitoring detects publication/rollout failures, stuck work, required offline consumers, overdue proof, fingerprint/version drift, older deployed material, deployed expiry/near expiry, uncertainty, missed maintenance and publication without required-consumer convergence. Publication job failure is detected even if its allocated version remains unresolved.
-
-Incidents have stable workspace-scoped identities, opened/updated/resolved audit evidence, deduplicated bell items and redacted links. Delivery uses `alert_queue` and the existing worker, anchored to the actual customer agent instead of manufacturing a token. Group routing is resolved again at delivery time. Email/webhooks retain the existing controls; WhatsApp uses an explicitly configured `TWILIO_WHATSAPP_ALERT_CONTENT_SID_DISTRIBUTION` template with `recipient_name`, `incident` and `evidence_url` placeholders. An absent template fails visibly through the normal retry path. PagerDuty payloads retain a stable incident deduplication key and an explicit resolve action.
-
-Reminders are configurable with a minimum one-hour interval; a workspace cap of 20 distribution queue entries/hour bounds incident storms. Verification failures notify when the affected binding reaches its own configured consecutive-cycle threshold. Each failed, blocked, rejected or cancelled verification-only cycle counts once, regardless of job attempts or failures on other required/optional consumers. Fresh proof meeting that binding's assurance resets its streak; pending, running, approval and uncertain work do not add failures. Offline and uncertain consumers retain their dedicated incidents. Manual deployment failures do not count as verification cycles. Optional failures retain their existing nongating semantics, with independent escalation. The scheduler's group backoff remains separate from these consumer counts.
-
-Consumer outcomes count once per binding and rollout. Changed authorization starts a separate streak; late older proof cannot erase newer failures. The normal migration runner backfills existing job/proof history without changing it. See the [compatibility guide](distribution-compatibility.md) before upgrading a preview database.
-
-Health resolution and delivery are separate durable obligations. Resolution records `resolution_delivery_pending` in the same transaction. Pending recoveries have priority on later monitoring sweeps and retain the existing hourly quota; enqueue and clearing that flag commit together. Committed recoveries remain deliverable after management stops or retirement; disabling distribution alerts still stops delivery. The incident/revision queue key prevents duplicate recovery events across retries or workers. The resolution-delivery migration (fresh version 91) backfills resolved incidents whose matching recovery event was never queued.
-
-Identity drift and expiry remain independently actionable. Delivery retries do not re-create incidents. A consumer incident resolves only when fresh, current-version proof postdating its latest changed condition establishes convergence. Source publication, heartbeat recovery, local repair alone, older evidence or removal of a destination cannot resolve it.
+Discovery reports observed relationships and coverage. A certificate found in a machine store is not proof that a service uses it.
 
 ## Discovery and recovery
 
-Configured binding IDs are stable across renewal. Jobless, credential-authenticated discovery additionally records a stable service key from workspace, agent, host, location kind and exact listener/configuration slot. Fingerprint rotation updates its observation without replacing its identity. Existing IIS/HTTP.sys observations confirm a relationship, not live served/trust assurance; Linux file observations remain configured/unconfirmed. Windows store-only entries do not become service consumers. Coverage remains explicitly partial, including offline/stale or unsupported roles. This does not add new RDP/SQL/appliance/firewall/TPM/KSP connectors.
+Use preflight to check current prerequisites without deploying material. For failures, open the original job and inspect its public evidence and customer-local journal. Retry the original intent only after correcting the cause and restoring current authorization. A separate read-only reconciliation may be requested and independently approved for an uncertain original deployment; it requires the same assigned agent, current binding and generation, and exact protected installation proof. Missing, replaced or superseded proof remains unresolved. Reconciliation does not rewrite the original outcome or establish current consumer verification.
 
-`GET .../preflight` performs non-mutating metadata checks and returns stable public codes for offline/capability/version/window/connector/reconciliation conditions. It explicitly reports customer-local checks as unknown. Distribution Management can download a public, exact-version preflight intent for each consumer, including before its first deployment. This planning metadata creates no job or execution authority. The API does not retrieve private material or claim to know local permissions.
+## Retention
 
-On an agent with an existing pinned binding journal, run:
+Retention starts in report-only mode. Preview the protection reasons before requesting any action. Referenced, uncertain and rollback-protected versions remain protected. Exact-version Vault/OpenBao soft deletion requires a qualified cleanup capability, explicit local and group opt-ins and independent approval; it does not destroy versions, delete metadata or purge a store. See [Retention and cleanup](distribution-retention-cleanup.md).
 
-```text
-certops-preflight-binding <binding-uuid>
-certops-preflight-binding <binding-uuid> --intent /protected/public-intent.json
-certops-reconcile-binding <binding-uuid>
-```
-
-Without `--intent`, preflight uses the existing protected binding journal. Before a first deployment, supply the public intent downloaded from Distribution Management, protected with the same owner-only permissions as agent metadata (for example, `chmod 600` on Linux). Only the public material-deployment fields are accepted; credentials, paths and another binding are rejected. The customer-local binding/store policy remains authoritative.
-
-Preflight reads the exact store version, verifies local scope/revisions and the calendar, checks destination access, configured reload references/probes and existing lock/uncertain metadata without acquiring a lock, creating a directory, installing files or running commands. It can establish a configured TLS listener's presence through a read-only handshake. An unreachable/unknown service remains explicitly unverified. Listener presence is separate from proof that a new version is installed, served or trusted. Reconciliation remains a separate explicit operation and proves the installed pair and required listeners before changing its local uncertain marker. A live lock is never removed by these tools. For a crashed lock owner, follow the existing customer-local ownership investigation before any manual repair.
-
-Retry preserves the original signed payload/version/generation and independently rechecks current membership, desired generation, exact version, approvals and automatic policy authority. The server keeps an uncertain deployment visibly uncertain while retry is pending. Neither local reconciliation nor retry request alone promotes deployment status; a fresh claim-bound receipt is required.
-
-For a rejected or exhausted uncertain deployment, use **Destinations → Request read-only reconciliation**, then have another authorized operator approve the inspection in Jobs. The assigned agent inspects the original operation without installing material or reloading services. Only matching original evidence can resolve uncertainty; unavailable or superseded evidence leaves the operation fenced. Resume only when authorized and obtain fresh verification.
-
-If an optional consumer failed after all required consumers completed, the rollout
-can be `degraded`. Retrying that current deployment puts the rollout in `paused`
-without redeploying successful consumers. Use **Resume** after local reconciliation;
-normal current-authority, version/generation and maintenance checks still apply. A
-temporary HTTP 429 during a confirmed lease is retried before expiry; if the
-job fails, review its error and retry it through Jobs.
-This does not reopen completed recurring verification cycles or stale rollouts.
-The workspace kill switch changes the authorization epoch. Clearing that switch
-and resuming a rollout cannot revive its earlier review: request fresh independent
-approval of the exact scope. An ordinary rollout pause/resume retains current
-authority when its scope and workspace authorization have not changed.
-
-## Retention and provider limitations
-
-Retention configuration controls minimum duration, minimum published-version count and rollback preservation. Preview explains protection for latest material, desired/observed consumer references, in-flight/pending approvals, resumable/paused rollouts and failed/uncertain/reconcilable work. Public version, approval, job and incident history remains intact.
-
-Metadata eligibility is **not** deletion authorization. The [cleanup protocol](distribution-retention-cleanup.md) implements independently approved, exact-version customer-side Vault soft deletion. It rechecks eligibility at claim, creates a permanent database reference fence before external effects, enforces a customer-local retention floor and accepts a fresh claim-bound metadata receipt. Minimum retained counts exclude already fenced versions. No destroy, metadata deletion, all-version deletion or purge is exposed.
-
-[Vault KV v2](https://developer.hashicorp.com/vault/api-docs/secret/kv/kv-v2) distinguishes reversible version soft deletion, permanent version destruction and metadata/all-version deletion. [Azure Key Vault secret deletion](https://learn.microsoft.com/en-us/rest/api/keyvault/secrets/delete-secret/delete-secret?view=rest-keyvault-secrets-2025-07-01) operates on the secret and its versions; it does not provide arbitrary individual-version deletion. Azure soft delete, recovery and purge protection must be honored by a separately reviewed operation. OpenBao material distribution is supported; Azure and shared Windows/IIS retain their protected qualification gates.
-
-## API, migrations and deployment
-
-New manager/session administration endpoints extend `/api/v1/workspaces/:id/certops/distribution-groups/:groupId`:
-
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /management` | Bounded public consumer/version/rollout/approval/incident/discovery overview and readiness preview. |
-| `GET, PUT /policy` | Manual defaults and revision-checked automation/verification/alert/retention policy. |
-| `PUT /consumers/:bindingId/activation-policy` | Revision-fenced calendar and activation contract. |
-| `POST /consumers/:bindingId/emergency` | Additional administrator-only bounded emergency authorization. |
-| `GET /preflight` | Explicitly incomplete, non-mutating control-plane preflight. |
-| `GET /retention` | Non-destructive retention eligibility and protection reasons. |
-| `POST /cleanups` | Administrator-only exact-version soft-deletion approval request or explicit fresh review. |
-
-Existing binding, exact-version rollout, pause/resume, retry and Jobs approval APIs are reused. Existing distribution read/write role restrictions, key rejection and global/workspace kill switches remain. No new credential entry surface is added.
-
-Run the composed migration plan before starting updated API/workers. Fresh installations retain main's **79–82**, use provider **83**, recipient/digest **84–85**, lifecycle **86–90**, resolution delivery **91**, PagerDuty **92–95**, independent preparation **96**, durable review-authority epochs **97**, manual rollout authority **98**, and subsequent migrations included with the matching release. Applied preview identities, including this PR's original **81–85**, retain their numbers, names and timestamps; only missing identities append. **Migration 97 invalidates existing distribution authorization once; obtain fresh independent review after upgrading.** Removing/restoring a reviewer or changing workspace ownership cannot revive the old review. Consumer outcomes and resolution delivery perform one-time backfills, so allow time on large histories. See the [cross-PR compatibility matrix](distribution-compatibility.md) for recognized provider, recipient/digest and PagerDuty previews. A workspace authorization-revision trigger invalidates standing scope after approval/kill-switch changes. Existing installations remain manual, automation/verification/alerts disabled and cleanup report-only. Retained-version real deployments and cleanup jobs always request explicit human approval.
-
-Deploy matching API, worker and agent versions before enabling calendars (`maintenance-calendar-v1`). Existing provider/deploy qualification gates remain authoritative. Cleanup additionally requires `CERTOPS_MATERIAL_CLEANUP_ENABLED=true`, enabled non-report-only group policy, local opt-in and an independently qualified `material-cleanup-vault-kv2-v1` agent. The production manifest omits that capability; enabling the runtime flag alone cannot authorize cleanup.
-
-Compose forwards `CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_ENABLED` / `CERTOPS_SWEEP_DISTRIBUTION_MONITORING_ENABLED` (both default `true`) and corresponding `_TIMEOUT_MS` values (default `120000`). Helm exposes these under `config.certopsDistribution{Scheduler,Monitoring}{Enabled,TimeoutMs}`, cleanup under `config.certopsMaterialCleanupEnabled` (default `false`), and the dedicated WhatsApp template under `twilio.alertContentSidDistribution`. Policies remain manual with verification/incidents disabled until explicitly configured. Monitoring can continue while execution is paused. Incident links prefer `APP_URL`, then `FRONTEND_URL`; set your instance's public URL.
-
-The merged provider, recipient-verification and PagerDuty migrations share the identity-based registry. Recognized earlier preview orders remain supported. Unknown names, duplicate/gapped histories and incomplete dependencies fail closed; no deployed ledger entry is rewritten.
-
-Earlier unmerged draft commits of this PR used 79–82. They were renumbered to 81–84 after main's auto-sync changes merged. Recreate disposable databases made from those earlier draft schemas; do not rewrite a deployed ledger to make it resemble another history.
-
-See [implementation and qualification status](distribution-lifecycle-status.md) before deployment.
+For upgrade precautions, see [Migration compatibility](distribution-compatibility.md).

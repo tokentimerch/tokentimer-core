@@ -13,7 +13,7 @@ their [qualification status](distribution-extensions-qualification.md).
 
 For ongoing administration after first setup, use **Certificate Management →
 Distribution** or **Manage distribution** from Deployments. See the [lifecycle
-workflow](distribution-lifecycle.md) and [qualification and remaining work](distribution-lifecycle-status.md).
+workflow](distribution-lifecycle.md).
 Publishing after renewal remains manual unless a configured policy authorizes
 an approval request or bounded automatic rollout.
 

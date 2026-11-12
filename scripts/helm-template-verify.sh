@@ -749,6 +749,14 @@ assert_contains "${lifecycle_custom}" 'CERTOPS_SWEEP_DISTRIBUTION_MONITORING_ENA
 assert_contains "${lifecycle_custom}" 'CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_TIMEOUT_MS: "23456"' "custom scheduler timeout"
 assert_contains "${lifecycle_custom}" 'CERTOPS_SWEEP_DISTRIBUTION_MONITORING_TIMEOUT_MS: "34567"' "custom monitoring timeout"
 assert_contains "${lifecycle_custom}" 'TWILIO_WHATSAPP_ALERT_CONTENT_SID_DISTRIBUTION: "HX00000000000000000000000000000000"' "dedicated distribution template"
+for setting in certopsDistributionSchedulerTimeoutMs certopsDistributionMonitoringTimeoutMs; do
+  if helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --set "config.${setting}=0" >/dev/null 2>&1; then
+    fail "accepted invalid ${setting}=0"
+  fi
+done
+if helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --set-string config.certopsMaterialCleanupEnabled=invalid >/dev/null 2>&1; then
+  fail "accepted invalid cleanup boolean"
+fi
 echo "==> verify explicit owner label permission and selection"
 owner_defaults="$(helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --show-only templates/configmap.yaml)"
 assert_contains "${owner_defaults}" 'AUTO_SYNC_METRICS_EXTRA_LABELS: ""' "owner label permission defaults empty"
