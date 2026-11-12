@@ -83,7 +83,17 @@ describe('package download and verification', () => {
   it('verifies the SHA-256 before extracting (Windows)', () => {
     const cmd = buildPackageCommand('windows');
     expect(cmd).toContain('tokentimer-agent-$Version.tgz');
-    expect(cmd).not.toContain('-windows-$Architecture.tgz');
+    expect(cmd).toContain(
+      'tokentimer-agent-$Version-windows-$Architecture.tgz'
+    );
+    expect(cmd).toContain("'AMD64' { 'amd64' } 'ARM64' { 'arm64' }");
+    expect(
+      cmd.indexOf(
+        "throw 'Bundled agent installation requires publisher verification"
+      )
+    ).toBeLessThan(cmd.indexOf('Invoke-WebRequest'));
+    expect(cmd).toContain("throw 'Unsupported Windows architecture'");
+    expect(cmd).toContain("if ($PackageType -ne 'legacy')");
     expect(cmd).toContain('Get-FileHash $Archive -Algorithm SHA256');
     expect(cmd).toContain("throw 'Agent archive checksum mismatch'");
     expect(cmd.indexOf('Get-FileHash')).toBeLessThan(cmd.indexOf('tar -xzf'));
