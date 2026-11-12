@@ -61,6 +61,7 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 109).name, "certops_period_creator_delete");
     assert.equal(migrations.find((entry) => entry.version === 113).name, "store_issuance_explicit_renewal_consent");
     assert.equal(migrations.find((entry) => entry.version === 110).name, "recipient_member_verification");
+    assert.equal(migrations.find((entry) => entry.version === 111).name, "auto_sync_owner_username");
     assert.equal(migrations.find((entry) => entry.version === 114).name, "certops_acme_store_enrollment_identity");
     assert.equal(migrations.find((entry) => entry.version === 115).name, "certops_adcs_expected_identity_receipts");
     assert.throws(() => validateMigrationHistory([

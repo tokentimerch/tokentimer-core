@@ -334,8 +334,8 @@ async function listUsers({ baseUrl, token, maxItems = 500, onError }) {
       page++;
     } catch (e) {
       onError?.(e);
-      if (e.status === 404 || e.status === 403) break;
-      throw e;
+      // Keep proven owners when a later enrichment page is unavailable.
+      break;
     }
   }
 
