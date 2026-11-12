@@ -421,7 +421,7 @@ test("non-admin PAT owners require an explicit current-user ID match", async () 
   assert.equal(
     fixture.calls.filter((call) => call.pathname.includes("personal_access_tokens"))
       .length,
-    1,
+    2,
   );
   assertComplete(result);
 });
@@ -435,7 +435,7 @@ test("non-admin missing username stays empty and an old PAT endpoint adds no inf
       if (pathname === "/api/v4/personal_access_tokens") throw httpError(404);
     },
   });
-  assert.deepEqual((await oldServer.scan()).items, []);
+  await assert.rejects(oldServer.scan(), { status: 404 });
   assert.equal(oldServer.lookupCalls().length, 0);
 });
 
