@@ -12,6 +12,44 @@ function summary(result, complete) {
   return entry;
 }
 
+test("admin PAT scan continues after short pages before reporting complete", async (t) => {
+  const fixture = await gitlabPatFixture(t);
+  fixture.isAdmin = true;
+  fixture.respond = ({ page }) => ({ data: page <= 2 ? [pat(page)] : [] });
+  const result = await scanGitLab(fixture.options);
+  assert.deepEqual(result.items.map((item) => item.sourceObjectId), ["1", "2"]);
+  summary(result, true);
+  assert.equal(fixture.listings().length, 3);
+});
+
+for (const response of [{ data: { unexpected: true } }, { data: [], headers: { "x-next-page": "2" } }]) {
+  test(`admin invalid PAT page blocks cleanup: ${JSON.stringify(response)}`, async (t) => {
+    const fixture = await gitlabPatFixture(t);
+    fixture.isAdmin = true;
+    fixture.respond = () => response;
+    summary(await scanGitLab(fixture.options), false);
+  });
+}
+
+test("admin repeated PAT page preserves earlier items but blocks cleanup", async (t) => {
+  const fixture = await gitlabPatFixture(t);
+  fixture.isAdmin = true;
+  fixture.respond = () => ({ data: [pat(1)] });
+  const result = await scanGitLab(fixture.options);
+  assert.deepEqual(result.items.map((item) => item.sourceObjectId), ["1"]);
+  summary(result, false);
+  assert.equal(fixture.listings().length, 2);
+});
+
+test("admin item cap blocks cleanup when further PATs may exist", async (t) => {
+  const fixture = await gitlabPatFixture(t);
+  fixture.isAdmin = true;
+  fixture.pats = [pat(1), pat(2)];
+  const result = await scanGitLab({ ...fixture.options, maxItems: 1 });
+  assert.deepEqual(result.items.map((item) => item.sourceObjectId), ["1"]);
+  summary(result, false);
+});
+
 for (const count of [0, 1, 21, 100, 101, 200]) {
   test(`non-admin enumerates ${count} PATs with explicit pages and an exhaustion probe`, async (t) => {
     const fixture = await gitlabPatFixture(t);
