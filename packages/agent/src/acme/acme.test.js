@@ -202,6 +202,7 @@ test("certbot adapter builds the documented argv (dryRun: false)", async () => {
   assert.equal(result.renewed, true);
   assert.equal(result.exitCode, 0);
   assert.equal(execStub.calls[0].options.env.CERTOPS_DNS_HOOK, DNS_HOOK_PATH);
+  assert.equal(execStub.calls[0].options.env.CERTOPS_NODE_EXEC_PATH, "/usr/bin/node");
 });
 
 // ---------------------------------------------------------------------------
@@ -364,7 +365,8 @@ test("certbot adapter maps EAB typed options and redacts hmac in argvUsed", asyn
 
 test("acme.sh adapter builds the documented argv (dryRun: false)", async () => {
   const execStub = makeExecStub();
-  const adapter = acmeShAdapter(execStub);
+  const selectedRuntime = "C:\\Program Files\\TokenTimer\\node.exe";
+  const adapter = acmeShAdapter(execStub, { nodeExecPath: selectedRuntime });
 
   const result = await adapter.runRenewal(baseRenewalInputs());
 
@@ -403,6 +405,7 @@ test("acme.sh adapter builds the documented argv (dryRun: false)", async () => {
   ]);
   assert.equal(result.renewed, true);
   assert.equal(execStub.calls[0].options.env.CERTOPS_DNS_HOOK, DNS_HOOK_PATH);
+  assert.equal(execStub.calls[0].options.env.CERTOPS_NODE_EXEC_PATH, selectedRuntime);
   assert.equal(execStub.calls[0].options.env.LE_CONFIG_HOME, STATE_PATHS.acmeShHome);
 });
 
@@ -752,9 +755,52 @@ test("dns_certops.sh defines sourced add/rm functions without exec", () => {
   assert.match(source, /_acme-challenge\.\*/);
   // Must not replace the shell process (acme.sh sources this file).
   assert.equal(/\bexec\s+node\b/.test(source), false);
-  assert.match(source, /node "\$_hook" present/);
-  assert.match(source, /node "\$_hook" cleanup/);
+  assert.match(source, /"\$_node" "\$_hook" present/);
+  assert.match(source, /"\$_node" "\$_hook" cleanup/);
   assert.match(source, /return \$\?/);
+});
+
+test("acme.sh wrapper uses the explicit runtime and never falls back to PATH", (t) => {
+  const os = require("node:os"), cp = require("node:child_process");
+  const bash = process.platform === "win32" ? "C:\\Program Files\\Git\\usr\\bin\\bash.exe" : "/bin/bash";
+  // skip-reason: prerequisite - requires bash to exercise the actual sourced wrapper
+  if (!fs.existsSync(bash)) { t.skip("bash unavailable"); return; }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-acme-runtime-"));
+  try {
+    const runtimeDir = path.join(dir, "private runtime"), rivalDir = path.join(dir, "rival runtime"), emptyDir = path.join(dir, "empty");
+    for (const folder of [runtimeDir, rivalDir, emptyDir]) fs.mkdirSync(folder);
+    const runtime = path.join(runtimeDir, process.platform === "win32" ? "node.exe" : "node");
+    const rival = path.join(rivalDir, process.platform === "win32" ? "node.exe" : "node");
+    fs.copyFileSync(process.execPath, runtime); fs.copyFileSync(process.execPath, rival);
+    if (process.platform !== "win32") { fs.chmodSync(runtime, 0o755); fs.chmodSync(rival, 0o755); }
+    const hook = path.join(dir, "benign hook.js");
+    fs.writeFileSync(hook, "console.log(JSON.stringify({exe:process.execPath,mode:process.argv[2],domain:process.env.ACME_DOMAIN}))\n");
+    const wrapper = path.resolve(__dirname, "..", "..", "bin", "dns_certops.sh");
+    // Git Bash source accepts POSIX paths; retain drive identity and spaces.
+    const shellPath = process.platform === "win32" ? `/${wrapper[0].toLowerCase()}${wrapper.slice(2).replaceAll("\\", "/")}` : wrapper;
+    const script = `. "$1"; dns_certops_add _acme-challenge.fixture.invalid value && dns_certops_rm _acme-challenge.fixture.invalid value`;
+    const run = (node, searchPath, shellCommand = script) => {
+      const env = { ...process.env, PATH: searchPath, CERTOPS_DNS_HOOK: hook };
+      if (node !== null) env.CERTOPS_NODE_EXEC_PATH = node; else delete env.CERTOPS_NODE_EXEC_PATH;
+      return cp.spawnSync(bash, ["-c", shellCommand, "fixture", shellPath], { env, encoding: "utf8", timeout: 15000, windowsHide: true });
+    };
+    for (const searchPath of [emptyDir, rivalDir]) {
+      const result = run(runtime, searchPath);
+      assert.equal(result.status, 0, result.stderr);
+      const records = result.stdout.trim().split(/\r?\n/).map(line => JSON.parse(line));
+      assert.deepEqual(records.map(item => item.mode), ["present", "cleanup"]);
+      for (const item of records) { assert.equal(path.resolve(item.exe).toLowerCase(), path.resolve(runtime).toLowerCase()); assert.equal(item.domain, "fixture.invalid"); }
+    }
+    for (const invalid of [path.join(dir, "missing node.exe"), ""]) {
+      for (const action of ["dns_certops_add", "dns_certops_rm"]) {
+        const result = run(invalid, rivalDir, `. "$1"; ${action} _acme-challenge.fixture.invalid value`);
+        assert.notEqual(result.status, 0); assert.equal(result.stdout.trim(), "");
+      }
+    }
+    const legacy = run(null, rivalDir);
+    assert.equal(legacy.status, 0, legacy.stderr);
+    assert.equal(path.resolve(JSON.parse(legacy.stdout.split(/\r?\n/)[0]).exe).toLowerCase(), path.resolve(rival).toLowerCase());
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 // ---------------------------------------------------------------------------

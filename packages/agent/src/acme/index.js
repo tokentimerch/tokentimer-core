@@ -823,6 +823,8 @@ function createAcmeAdapter({
     // the env before argv. Never forward credentials.
     const env = buildMinimalSubprocessEnv();
     env.CERTOPS_DNS_HOOK = resolvedDnsHookPath;
+    // The acme.sh wrapper must use this agent runtime, never an unrelated PATH Node.
+    env.CERTOPS_NODE_EXEC_PATH = nodeExecPath;
     const { acmeShHome } = resolveAcmeStatePaths(stateDir);
     env.LE_CONFIG_HOME = acmeShHome;
 

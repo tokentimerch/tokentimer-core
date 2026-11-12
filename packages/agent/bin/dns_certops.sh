@@ -25,6 +25,7 @@
 #
 # Required env (set by the agent ACME adapter, not a secret):
 #   CERTOPS_DNS_HOOK  absolute path to certops-dns-hook.js
+#   CERTOPS_NODE_EXEC_PATH  agent Node executable; absent only for legacy direct calls
 
 # Strip a single leading "_acme-challenge." so ACME_DOMAIN is the base
 # domain the Node hook will re-prefix. Idempotent if already bare.
@@ -65,8 +66,13 @@ dns_certops_add() {
   _basedomain="$(_certops_base_domain "$_fulldomain")"
   # Subshell call (NOT exec): acme.sh sourced this file and must regain
   # control after the hook returns. Propagate the Node exit status.
+  if [ "${CERTOPS_NODE_EXEC_PATH+x}" = x ]; then
+    _node="$CERTOPS_NODE_EXEC_PATH"
+  else
+    _node=node
+  fi
   ACME_DOMAIN="$_basedomain" ACME_TXT_VALUE="$_txtvalue" \
-    node "$_hook" present
+    "$_node" "$_hook" present
   return $?
 }
 
@@ -79,7 +85,12 @@ dns_certops_rm() {
     return 1
   }
   _basedomain="$(_certops_base_domain "$_fulldomain")"
+  if [ "${CERTOPS_NODE_EXEC_PATH+x}" = x ]; then
+    _node="$CERTOPS_NODE_EXEC_PATH"
+  else
+    _node=node
+  fi
   ACME_DOMAIN="$_basedomain" ACME_TXT_VALUE="$_txtvalue" \
-    node "$_hook" cleanup
+    "$_node" "$_hook" cleanup
   return $?
 }
