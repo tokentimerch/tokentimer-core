@@ -13730,7 +13730,7 @@ components:
         source: { type: string, nullable: true, enum: [env, database, null] }
         extra_labels:
           type: array
-          description: Deployment-permitted high-cardinality labels. Owner usernames require explicit AUTO_SYNC_METRICS_EXTRA_LABELS opt-in.
+          description: Permitted high-cardinality labels. Empty AUTO_SYNC_METRICS_EXTRA_LABELS uses saved System Settings permissions; a nonempty list restricts labels and none denies them. Owner permission never selects owner_username; effective global or connection selection must also include it.
           items: { type: string, enum: [asset_name, project, group, owner_username] }
         extra_labels_locked: { type: boolean }
         labels_locked: { type: boolean, description: Complete label selection is controlled by AUTO_SYNC_METRICS_LABELS. }

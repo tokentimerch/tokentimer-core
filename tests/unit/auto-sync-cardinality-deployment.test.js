@@ -41,6 +41,6 @@ it("Helm accepts owner allowlisting and selection without weakening label valida
 it("operator switches carry an adjacent warning about series growth and metadata", () => {
   for (const file of ["deploy/helm/values.yaml", "deploy/compose/docker-compose.yml", "deploy/compose/docker-compose.dev.yml", "deploy/compose/.env.example", ".env.example"]) {
     assert.match(read(file), /# Extra labels: asset_name, project, group, owner_username; none disables them\.[^\n]*\n(?:\s*#[^\n]*\n){3}\s*# Each distinct label combination creates a series in both metrics; combining labels can greatly increase cardinality and expose asset metadata\.\n\s*(?:- )?(?:AUTO_SYNC_METRICS_EXTRA_LABELS|extraLabels)/, file);
-    assert.match(read(file), /owner_username, which requires explicit allowlisting and selection/, file);
+    assert.match(read(file), /Empty uses saved System Settings permissions; a nonempty list restricts them\. Owner permission never selects owner_username\./, file);
   }
 });

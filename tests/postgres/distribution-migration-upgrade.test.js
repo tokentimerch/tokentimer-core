@@ -84,6 +84,9 @@ test("an installation at main's AD CS migration 72 upgrades to distribution with
       { version: 108, name: "certops_issuance_identity_transfer" },
       { version: 109, name: "certops_period_creator_delete" },
       { version: 110, name: "recipient_member_verification" },
+      { version: 111, name: "auto_sync_owner_username" },
+      { version: 112, name: "agent_credential_rotations" },
+      { version: 113, name: "agent_credential_rotation_ack" },
     ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition
