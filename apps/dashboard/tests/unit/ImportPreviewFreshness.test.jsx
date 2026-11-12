@@ -222,6 +222,72 @@ describe('Import preview freshness', () => {
 });
 
 describe('Restored Vault mount restrictions', () => {
+  it.each([
+    ['prod-only', ['prod/']],
+    ['all', null],
+    ['empty', []],
+  ])(
+    'preserves a %s selection made while mount refresh is pending',
+    async (selection, expected) => {
+      const prod = { path: 'prod/', type: 'kv', options: { version: '2' } };
+      const dev = { path: 'dev/', type: 'kv', options: { version: '2' } };
+      let finishRefresh;
+      mocks.listMounts
+        .mockResolvedValueOnce([prod, dev])
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              finishRefresh = resolve;
+            })
+        );
+      const { ref, onError } = renderForm(ImportVaultForm);
+      await connect('Vault', 'https://vault.your-org.com');
+      fireEvent.click(
+        screen.getByRole('button', { name: /Advanced: Secrets engines/ })
+      );
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Load engines' })
+      );
+      const devCheckbox = await screen.findByRole('checkbox', {
+        name: 'dev/ (kv v2)',
+      });
+      const allCheckbox = screen.getByRole('checkbox', {
+        name: 'Scan all secrets engines',
+      });
+      expect(allCheckbox).toBeChecked();
+      if (selection === 'all') fireEvent.click(devCheckbox);
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+      expect(mocks.listMounts).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+      fireEvent.click(selection === 'all' ? allCheckbox : devCheckbox);
+      if (selection === 'empty')
+        fireEvent.click(
+          screen.getByRole('checkbox', { name: 'prod/ (kv v2)' })
+        );
+      await act(async () => {
+        finishRefresh([prod, dev]);
+      });
+      expect(allCheckbox.checked).toBe(selection === 'all');
+      expect(devCheckbox.checked).toBe(selection === 'all');
+      expect(
+        screen.getByRole('checkbox', { name: 'prod/ (kv v2)' }).checked
+      ).toBe(selection !== 'empty');
+      expect(ref.current.getCredentials().scanParams.mounts).toEqual(expected);
+      fireEvent.click(scanButton('Vault'));
+      if (selection === 'empty') {
+        expect(mocks.vaultScan).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenLastCalledWith(
+          'Select at least one secrets engine to scan.'
+        );
+      } else {
+        await screen.findByText('1 matched');
+        expect(mocks.vaultScan).toHaveBeenLastCalledWith(
+          expect.objectContaining({ mounts: expected })
+        );
+      }
+    }
+  );
+
   it('retains explicit scope after a nonempty refresh shrink until all engines are deliberately chosen', async () => {
     const prod = { path: 'prod/', type: 'kv', options: { version: '2' } };
     const dev = { path: 'dev/', type: 'kv', options: { version: '2' } };

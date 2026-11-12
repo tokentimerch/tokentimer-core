@@ -194,8 +194,13 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   // default behavior) until the user explicitly loads and narrows the list.
   const [availableMounts, setAvailableMounts] = React.useState([]);
   const [mountSelectionKnown, setMountSelectionKnown] = React.useState(false);
-  const [mountSelectionExplicit, setMountSelectionExplicit] =
+  const [mountSelectionExplicit, setMountSelectionExplicitState] =
     React.useState(false);
+  const mountSelectionExplicitRef = React.useRef(false);
+  const setMountSelectionExplicit = React.useCallback(explicit => {
+    mountSelectionExplicitRef.current = explicit;
+    setMountSelectionExplicitState(explicit);
+  }, []);
   const [selectedMountPaths, setSelectedMountPaths] = React.useState(new Set());
   const [isLoadingMounts, setIsLoadingMounts] = React.useState(false);
   const [mountsError, setMountsError] = React.useState(null);
@@ -296,7 +301,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       setMountSelectionKnown(true);
       const availablePaths = new Set(scannable.map(m => m.path));
       setSelectedMountPaths(previous =>
-        mountSelectionExplicit
+        mountSelectionExplicitRef.current
           ? new Set([...previous].filter(path => availablePaths.has(path)))
           : availablePaths
       );

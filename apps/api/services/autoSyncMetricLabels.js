@@ -75,8 +75,10 @@ function systemMetricPolicy(stored = {}, env = process.env) {
   const labelsLocked = deploymentLabels !== null;
   const configured = deploymentLabels ?? (Array.isArray(stored?.labels) ? OPTIONAL_LABELS.filter(label => stored.labels.includes(label)) : DEFAULT_SYSTEM_LABELS);
   const permitted = permittedExtraLabels(env, stored);
+  // Owner permission is not selection; retain the older asset-label defaults.
   const labels = !labelsLocked && String(env.AUTO_SYNC_METRICS_EXTRA_LABELS || "").trim()
-    ? [...configured.filter(label => !HIGH_CARDINALITY_LABELS.includes(label)), ...permitted] : configured;
+    ? [...configured.filter(label => !HIGH_CARDINALITY_LABELS.includes(label)),
+      ...permitted.filter(label => label !== "owner_username" || configured.includes(label))] : configured;
   const group = typeof env.AUTO_SYNC_METRICS_MONITORING_GROUP === "string" ? env.AUTO_SYNC_METRICS_MONITORING_GROUP.trim() : "";
   return { enabled, labels: labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label) || permitted.includes(label)),
     override_metrics: Boolean(raw) || (stored?.override_metrics ?? typeof stored?.enabled === "boolean"),
