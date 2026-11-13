@@ -186,7 +186,8 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
             <Badge alignSelf='start'>Labels set by environment</Badge>
           ) : policy.extra_labels_locked ? (
             <Badge alignSelf='start'>
-              Asset labels restricted by environment; permitted owner is optional
+              Asset labels restricted by environment; permitted owner is
+              optional
             </Badge>
           ) : null}
           <Text fontSize='xs' color={muted}>
