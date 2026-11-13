@@ -5003,7 +5003,10 @@ migrations.push({
   sql: fs.readFileSync(require("path").join(__dirname, "113-certops-material-reconciliation.sql"), "utf8"),
 });
 
-const { composeMigrations } = require("./compose-migrations");
+migrations.push({ version: 114, name: "agent_credential_rotations", sql: fs.readFileSync(require("path").join(__dirname, "114-agent-credential-rotations.sql"), "utf8") });
+migrations.push({ version: 115, name: "agent_credential_rotation_ack", sql: fs.readFileSync(require("path").join(__dirname, "115-agent-rotation-ack.sql"), "utf8") });
+
+const { composeMigrations, assertUnambiguousRotationHistory } = require("./compose-migrations");
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored
 // the CertOps numbering. Those installations already have v45 in the ledger,
@@ -5335,6 +5338,7 @@ const canonicalMigrations = migrations.slice();
 require("./migration-reservations.cjs").validateMigrationReservations(canonicalMigrations);
 
 function resolveMigrationPlan(recorded) {
+  assertUnambiguousRotationHistory(recorded, canonicalMigrations);
   // The Enterprise adapter and upgrade tests may supply an already composed
   // executor list. Preserve that trusted composition and validate its ledger.
   const composed = migrations.length !== canonicalMigrations.length ||

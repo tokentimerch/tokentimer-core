@@ -275,16 +275,40 @@ jobs:
       - name: Pack agent release tarball
         run: |
           test "$(go env GOVERSION)" = "go${GO_VERSION}"
-          node packages/agent/scripts/pack-release.js --out-dir agent-dist
+          mkdir -p "$RUNNER_TEMP/node-runtime"
+          # Node's signed checksum manifest is verified using the release team's
+          # pinned official keyring before any archive is trusted.
+          curl --fail --silent --show-error --location \
+            'https://raw.githubusercontent.com/nodejs/release-keys/481637f813e912c4aa3622d7964ab426c97b8e8d/gpg/pubring.kbx' \
+            -o "$RUNNER_TEMP/node-runtime/node-release-keys.kbx"
+          echo '610b8d249da3d5733f5a128def2dd0294dbbf5b5713e6ca2529db8db419dee00  '"$RUNNER_TEMP/node-runtime/node-release-keys.kbx" | sha256sum --check
+          curl --fail --silent --show-error --location \
+            'https://nodejs.org/dist/v24.18.0/SHASUMS256.txt.asc' \
+            -o "$RUNNER_TEMP/node-runtime/SHASUMS256.txt.asc"
+          gpgv --keyring "$RUNNER_TEMP/node-runtime/node-release-keys.kbx" \
+            --output "$RUNNER_TEMP/node-runtime/SHASUMS256.txt" \
+            "$RUNNER_TEMP/node-runtime/SHASUMS256.txt.asc"
+          grep -Fx '0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821  node-v24.18.0-win-x64.zip' "$RUNNER_TEMP/node-runtime/SHASUMS256.txt"
+          grep -Fx 'f274669adb93b1fd0fbf8f21fd078609e9dcc84333d4f2718d2dde3f9a161a01  node-v24.18.0-win-arm64.zip' "$RUNNER_TEMP/node-runtime/SHASUMS256.txt"
+          grep -Fx '9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de  win-x64/node.exe' "$RUNNER_TEMP/node-runtime/SHASUMS256.txt"
+          grep -Fx 'c7225670c3f477778e18c43a55867f7a0d76468221245e5981ab80eb953c8102  win-arm64/node.exe' "$RUNNER_TEMP/node-runtime/SHASUMS256.txt"
+          for arch in x64 arm64; do
+            curl --fail --silent --show-error --location \
+              "https://nodejs.org/dist/v24.18.0/node-v24.18.0-win-${arch}.zip" \
+              -o "$RUNNER_TEMP/node-runtime/node-v24.18.0-win-${arch}.zip"
+          done
+          node packages/agent/scripts/pack-release.js --out-dir agent-dist --windows-runtime-dir "$RUNNER_TEMP/node-runtime"
 
       - name: Verify shipped native toolchain and provenance
         run: |
-          node --test scripts/verify-agent-native-package.test.js
+          node --test scripts/verify-agent-native-package.test.js scripts/verify-agent-release-assets.test.js scripts/windows-signing-targets.test.cjs
           archive=(agent-dist/*.tgz)
-          test "${#archive[@]}" -eq 1
-          node scripts/verify-agent-native-package.js \
-            --archive "${archive[0]}" --go-version "$GO_VERSION" \
-            --source-sha "$GITHUB_SHA" --out agent-dist/native-provenance.json
+          test "${#archive[@]}" -eq 3
+          for item in "${archive[@]}"; do
+            node scripts/verify-agent-native-package.js \
+              --archive "$item" --go-version "$GO_VERSION" \
+              --source-sha "$GITHUB_SHA" --out "${item%.tgz}.provenance.json"
+          done
 
       - name: Scan shipped package for fixed High and Critical advisories
         run: |
@@ -295,9 +319,13 @@ jobs:
           mkdir -p "$RUNNER_TEMP/core-grype" "$RUNNER_TEMP/agent-extracted"
           tar -xzf "$RUNNER_TEMP/grype.tar.gz" -C "$RUNNER_TEMP/core-grype" grype
           archive=(agent-dist/*.tgz)
-          tar -xzf "${archive[0]}" -C "$RUNNER_TEMP/agent-extracted"
-          "$RUNNER_TEMP/core-grype/grype" "dir:$RUNNER_TEMP/agent-extracted" \
-            --fail-on high --only-fixed -o json --file agent-dist/native-security.json
+          for item in "${archive[@]}"; do
+            rm -rf "$RUNNER_TEMP/agent-extracted"
+            mkdir -p "$RUNNER_TEMP/agent-extracted"
+            tar -xzf "$item" -C "$RUNNER_TEMP/agent-extracted"
+            "$RUNNER_TEMP/core-grype/grype" "dir:$RUNNER_TEMP/agent-extracted" \
+              --fail-on high --only-fixed -o json --file "${item%.tgz}.security.json"
+          done
 
       - name: Verify agent checksum
         run: |
@@ -311,8 +339,8 @@ jobs:
         with:
           name: agent-native-verification
           path: |
-            agent-dist/native-provenance.json
-            agent-dist/native-security.json
+            agent-dist/*.provenance.json
+            agent-dist/*.security.json
           if-no-files-found: warn
 
       - name: Upload agent release artifacts
@@ -496,10 +524,15 @@ jobs:
         run: |
           set -euo pipefail
           TAG_NAME="${GITHUB_REF#refs/tags/}"
-          test -n "$(ls agent-dist/*.tgz 2>/dev/null)"
-          test -n "$(ls agent-dist/*.sha256 2>/dev/null)"
+          AGENT_VERSION="${TAG_NAME#v}"
+          LINUX_ARCHIVE="agent-dist/tokentimer-agent-${AGENT_VERSION}.tgz"
+          test -f "$LINUX_ARCHIVE"
+          test -f "${LINUX_ARCHIVE}.sha256"
+          if compgen -G 'agent-dist/*-windows-*.tgz' >/dev/null; then
+            echo '::warning::Windows bundled-runtime archives are withheld pending signed, digest-bound pre-publication qualification.'
+          fi
           gh release create "$TAG_NAME" \
             --repo "${{ github.repository }}" \
             --title "${TAG_NAME}" \
-            --notes "Automated placeholder release for ${TAG_NAME}. See CHANGELOG.md for what changed; finalized release notes are added shortly after this is published." \
-            agent-dist/*.tgz agent-dist/*.sha256
+            --notes "Automated placeholder release for ${TAG_NAME}. Windows bundled-runtime archives are withheld pending qualification. See CHANGELOG.md; finalized release notes are added shortly after publication." \
+            "$LINUX_ARCHIVE" "${LINUX_ARCHIVE}.sha256"

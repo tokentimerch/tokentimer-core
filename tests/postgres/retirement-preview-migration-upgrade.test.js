@@ -29,6 +29,8 @@ test("an applied retirement preview upgrades and replays without rewriting its l
       { version: 111, name: "recipient_member_verification" },
       { version: 112, name: "auto_sync_owner_username" },
       {version:113,name:"certops_material_reconciliation"},
+      {version:114,name:"agent_credential_rotations"},
+      {version:115,name:"agent_credential_rotation_ack"},
     ]);
     await runMigrations();
     assert.deepEqual((await pool.query("SELECT * FROM migrations ORDER BY version")).rows, upgraded);

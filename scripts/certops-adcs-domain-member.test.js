@@ -61,13 +61,15 @@ test("worker report collection uses the control plane and requires candidate-bou
 test("native report collection preserves the stage failure but rejects missing evidence after success", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "certops-report-failure-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(directory, "read-report.ps1"), "param($ResourceGroup,$ReportKind)\nif($ReportKind -eq 'package-acceptance'){return}\nthrow 'TEST_REPORT_MISSING'\n");
+  fs.writeFileSync(path.join(directory, "read-report.ps1"), "param($ResourceGroup,$ReportKind)\nif($ReportKind -eq 'package-acceptance'){return}\nthrow 'TEST_REPORT_PRIVATE_VALUE'\n");
   const probe = path.join(directory, "probe.ps1");
   fs.writeFileSync(probe, String.raw`
 $ErrorActionPreference='Stop'
 $ast=[System.Management.Automation.Language.Parser]::ParseFile($env:CERTOPS_PROVISION_SCRIPT,[ref]$null,[ref]$null)
 $blocks=@($ast.FindAll({param($node) $node -is [System.Management.Automation.Language.TryStatementAst] -and $node.Extent.Text.Contains('# The focused CA oracle')},$true)|Sort-Object {$_.Extent.Text.Length})
 if($blocks.Count -eq 0){throw 'Native execution block missing'}
+. $env:CERTOPS_REPORT_ERROR_HELPER
+$WarningPreference='Stop'
 $nativeExecutionFailure=$null
 $QualificationScope='comprehensive';$runAcceptance=$true;$Shard='all'
 $IssuerReassignment='0';$PendingElapsedQualification='0';$HierarchyRole='root';$WindowsVersion='2022';$Language='en-US';$ResponseLossExperiment='0';$JournalPhaseExperiment='none';$ResourceGroup='tt-certops-1-1';$testParameters=@();$password='unused'
@@ -90,10 +92,12 @@ Write-Output 'NATIVE_FAILURE_PRESERVATION_PASSED'
   for (const failStage of ["1", "0", "package"]) {
     const result = spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-File", probe], {
       encoding: "utf8", windowsHide: true, timeout: 15000,
-      env: { ...process.env, CERTOPS_PROVISION_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/provision-lab.ps1"), CERTOPS_PROBE_ROOT: directory, CERTOPS_FAIL_STAGE: failStage },
+      env: { ...process.env, CERTOPS_PROVISION_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/provision-lab.ps1"), CERTOPS_PROBE_ROOT: directory, CERTOPS_FAIL_STAGE: failStage, CERTOPS_REPORT_ERROR_HELPER: path.resolve(__dirname, "../infra/certops-adcs/report-error.ps1") },
     });
     assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.match(result.stdout, /NATIVE_FAILURE_PRESERVATION_PASSED/);
+    assert.match(result.stdout, /CERTOPS_REPORT_RETRIEVAL_FAILURE=qualification:unclassified/);
+    assert.doesNotMatch(result.stdout + result.stderr, /TEST_REPORT_PRIVATE_VALUE/);
   }
 });
 

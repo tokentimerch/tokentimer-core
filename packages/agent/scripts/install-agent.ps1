@@ -101,6 +101,12 @@ $script:WritePathsFile = ""
 $script:AllowInsecureLocalHttp = $false
 $script:TrustStore = $false
 $script:NoTrustStore = $false
+$script:NodeRuntimeLock = $null
+$script:AuthorizedLauncherTransaction = $null
+$script:LauncherExpectedStages = @()
+$script:LauncherExpectedIdentities = @()
+# The release packer changes this constant only in Windows-specific archives.
+$script:RequiresBundledRuntime = $false
 
 function Write-Log {
     param([string]$Message)
@@ -109,8 +115,81 @@ function Write-Log {
 
 function Fail {
     param([string]$Message)
+    if ($null -ne $script:NodeRuntimeLock) {
+        $script:NodeRuntimeLock.Dispose()
+        $script:NodeRuntimeLock = $null
+    }
     [Console]::Error.WriteLine("install-agent: ERROR: $Message")
     exit 1
+}
+
+# Bundled packages may be used only after authenticated extraction to a
+# location which unprivileged users cannot replace or modify.
+function Assert-ProtectedBundleTree {
+    param([Parameter(Mandatory)][string]$Root)
+    $trustedOwners = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    $trustedWriters = $trustedOwners
+    # Setting a reparse point can require FILE_WRITE_DATA or
+    # FILE_WRITE_ATTRIBUTES. Reject these rights on ancestors as well as
+    # delete/ACL ownership rights and generic write/all.
+    $ancestorMask = [int64]0x500D0142
+    $payloadMask = [int64]0x500D0156
+    function Assert-ProtectedItem([string]$Path, [bool]$AncestorOnly) {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'bundle path contains a reparse point' }
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+        $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+        if ($owner -notin $trustedOwners) { throw 'bundle path has an untrusted owner' }
+        $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+        if (-not $rules.Count) { throw 'bundle path has an empty or unreadable DACL' }
+        $mask = if ($AncestorOnly) { $ancestorMask } else { $payloadMask }
+        foreach ($rule in $rules) {
+            if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+                ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
+            if ($rule.IdentityReference.Value -notin $trustedWriters -and
+                (([int64]$rule.FileSystemRights -band $mask) -ne 0)) {
+                throw 'bundle path permits an untrusted principal to modify or replace it'
+            }
+        }
+    }
+    $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $parents = New-Object 'System.Collections.Generic.Stack[string]'
+    $cursor = $rootPath
+    while ($cursor) {
+        $parents.Push($cursor)
+        $next = [IO.Path]::GetDirectoryName($cursor)
+        if (!$next -or $next -eq $cursor) { break }
+        $cursor = $next
+    }
+    while ($parents.Count) {
+        $path = $parents.Pop()
+        Assert-ProtectedItem $path (-not $path.Equals($rootPath, [StringComparison]::OrdinalIgnoreCase))
+    }
+    $pending = New-Object 'System.Collections.Generic.Stack[string]'
+    $pending.Push($rootPath)
+    while ($pending.Count) {
+        foreach ($entry in Get-ChildItem -LiteralPath $pending.Pop() -Force -ErrorAction Stop) {
+            Assert-ProtectedItem $entry.FullName $false
+            if ($entry.PSIsContainer) { $pending.Push($entry.FullName) }
+        }
+    }
+}
+
+# Do not allow the caller's Node preload/module-path settings to run code
+# inside the elevated installer or its local validation helpers.
+function Invoke-PackagedNode {
+    param([Parameter(Mandatory)][string[]]$NodeArguments)
+    $previousOptions = [Environment]::GetEnvironmentVariable('NODE_OPTIONS', 'Process')
+    $previousPath = [Environment]::GetEnvironmentVariable('NODE_PATH', 'Process')
+    try {
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS', $null, 'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH', $null, 'Process')
+        & $script:NodeExe @NodeArguments
+        $global:LASTEXITCODE = $LASTEXITCODE
+    } finally {
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS', $previousOptions, 'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH', $previousPath, 'Process')
+    }
 }
 
 # Runs (or prints, under -DryRun) a non-secret action. Never pass the
@@ -310,10 +389,180 @@ function Test-IsAdministrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# Cooperating installers and launchers serialize creation of a protected
+# execution intent with upgrade recovery. Earlier installers do not honor this
+# lock; they must not run concurrently with a verified launcher.
+function Enter-AgentInstallLock {
+    $trusted = @('S-1-5-18', 'S-1-5-32-544')
+    $security = New-Object System.Security.AccessControl.MutexSecurity
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($sid in $trusted) {
+        $identity = New-Object System.Security.Principal.SecurityIdentifier($sid)
+        $rule = New-Object System.Security.AccessControl.MutexAccessRule($identity, 'FullControl', 'Allow')
+        $security.AddAccessRule($rule)
+    }
+    $created = $false
+    $mutex = New-Object System.Threading.Mutex($false, 'Global\TokenTimer.Agent.Install.v1', [ref]$created, $security)
+    try {
+        $actual = $mutex.GetAccessControl()
+        $owner = $actual.GetOwner([Security.Principal.SecurityIdentifier]).Value
+        if ($owner -notin $trusted -or -not $actual.AreAccessRulesProtected) { throw 'untrusted installation lock owner or ACL' }
+        $rules = @($actual.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+        if (-not $rules.Count) { throw 'installation lock has no access rules' }
+        foreach ($rule in $rules) {
+            if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $rule.IdentityReference.Value -notin $trusted) {
+                throw 'installation lock grants untrusted access'
+            }
+        }
+        try { $acquired = $mutex.WaitOne([TimeSpan]::FromSeconds(60)) }
+        catch [Threading.AbandonedMutexException] { $acquired = $true }
+        if (-not $acquired) { throw 'another installer or launcher owns the installation lock' }
+        return $mutex
+    } catch {
+        $mutex.Dispose()
+        throw
+    }
+}
+
+function Assert-ProtectedIntentDirectory {
+    param([Parameter(Mandatory)][string]$Directory)
+    $trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    $cursor = [IO.Path]::GetFullPath($Directory).TrimEnd('\')
+    $first = $true
+    while ($cursor) {
+        $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
+        if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'intent directory is not a trusted directory' }
+        $acl = Get-Acl -LiteralPath $cursor -ErrorAction Stop
+        if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trusted) { throw 'untrusted intent directory owner' }
+        $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+        if (-not $rules.Count) { throw 'intent directory ACL unavailable' }
+        $mask = if ($first) { [int64]0x500D0156 } else { [int64]0x500D0142 }
+        foreach ($rule in $rules) {
+            if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+                ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and
+                $rule.IdentityReference.Value -notin $trusted -and (([int64]$rule.FileSystemRights -band $mask) -ne 0)) {
+                throw 'intent directory permits untrusted modification'
+            }
+        }
+        $first = $false
+        $next = [IO.Path]::GetDirectoryName($cursor)
+        if (-not $next -or $next -eq $cursor) { break }
+        $cursor = $next
+    }
+}
+
+function Assert-NoQuarantinedLauncherIntent {
+    param([Parameter(Mandatory)][string]$LauncherParent)
+    $intents = @(Get-ChildItem -LiteralPath $LauncherParent -Filter 'TokenTimer-Staging-*.intent' -Force -ErrorAction Stop)
+    if ($intents.Count -gt 0) { throw 'recovery_required: a launcher execution remains quarantined' }
+}
+
+function Assert-ProtectedIntentMarker {
+    param([Parameter(Mandatory)][string]$Path)
+    $trusted = @('S-1-5-18', 'S-1-5-32-544')
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -le 0 -or $item.Length -gt 4096) { throw 'invalid launcher intent file' }
+    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    if (-not $acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trusted) { throw 'untrusted launcher intent owner or ACL' }
+    $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    if (-not $rules.Count) { throw 'launcher intent ACL unavailable' }
+    foreach ($rule in $rules) {
+        if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $rule.IdentityReference.Value -notin $trusted) { throw 'launcher intent grants untrusted access' }
+    }
+}
+
+# The inherited pipe carries a one-use secret, not the environment. The two
+# immutable intent records and their protected parent bind it to these exact
+# directories. This gate never authorizes automatic recovery after a crash.
+function Assert-AuthorizedLauncherOrNoIntent {
+    if (-not [Environment]::Is64BitProcess) { throw 'native 64-bit PowerShell is required' }
+    $parent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+    if ([string]::IsNullOrWhiteSpace($parent)) { throw 'launcher staging parent unavailable' }
+    Assert-ProtectedIntentDirectory -Directory $parent
+    $intents = @(Get-ChildItem -LiteralPath $parent -Filter 'TokenTimer-Staging-*.intent' -Force -ErrorAction Stop)
+    $handleText = [Environment]::GetEnvironmentVariable('TOKENTIMER_AGENT_INTENT_HANDLE', 'Process')
+    [Environment]::SetEnvironmentVariable('TOKENTIMER_AGENT_INTENT_HANDLE', $null, 'Process')
+    if ($intents.Count -eq 0) {
+        if ($handleText) { throw 'unexpected launcher authorization handle' }
+        return
+    }
+    if ($intents.Count -ne 2 -or $handleText -notmatch '^[1-9][0-9]{0,18}$') { throw 'launcher execution remains quarantined' }
+    $payload = [IO.Path]::GetFullPath($PackageDir).TrimEnd('\')
+    $scratch = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\')
+    foreach ($stage in @($payload, $scratch)) {
+        if (-not ([IO.Path]::GetDirectoryName($stage).Equals($parent, [StringComparison]::OrdinalIgnoreCase)) -or
+            [IO.Path]::GetFileName($stage) -cnotmatch '^TokenTimer-Staging-[a-f0-9]{32}$') { throw 'launcher stage path rejected' }
+        Assert-ProtectedIntentDirectory -Directory $stage
+    }
+    if ($payload.Equals($scratch, [StringComparison]::OrdinalIgnoreCase)) { throw 'launcher stages are not distinct' }
+    $expected = @(($payload + '.intent'), ($scratch + '.intent'))
+    foreach ($entry in $intents) {
+        if (-not @($expected | Where-Object { $_.Equals($entry.FullName, [StringComparison]::OrdinalIgnoreCase) }).Count) { throw 'unrelated launcher intent remains quarantined' }
+    }
+    $records = @()
+    for ($i = 0; $i -lt 2; $i++) {
+        Assert-ProtectedIntentMarker -Path $expected[$i]
+        $record = Get-Content -LiteralPath $expected[$i] -Raw | ConvertFrom-Json -ErrorAction Stop
+        $stage = @($payload, $scratch)[$i]
+        if ($record.schemaVersion -ne 1 -or $record.phase -cne 'execution-intent' -or $record.stageName -cne [IO.Path]::GetFileName($stage) -or
+            ([string]$record.secret) -cnotmatch '^[a-f0-9]{64}$' -or ([string]$record.transaction) -cnotmatch '^[a-f0-9]{32}$' -or
+            ([string]$record.archiveSha256) -cnotmatch '^[a-f0-9]{64}$') { throw 'invalid launcher intent record' }
+        $records += $record
+    }
+    if ($records[0].transaction -cne $records[1].transaction -or $records[0].secret -cne $records[1].secret -or
+        $records[0].archiveSha256 -cne $records[1].archiveSha256) { throw 'launcher intents do not match' }
+    $handle = New-Object Microsoft.Win32.SafeHandles.SafeFileHandle([IntPtr]([int64]$handleText), $true)
+    $stream = New-Object IO.FileStream($handle, [IO.FileAccess]::Read, 64, $false)
+    try {
+        $bytes = New-Object byte[] 64
+        $offset = 0
+        while ($offset -lt $bytes.Length) {
+            $count = $stream.Read($bytes, $offset, $bytes.Length - $offset)
+            if ($count -le 0) { throw 'incomplete launcher authorization' }
+            $offset += $count
+        }
+        $actual = [Text.Encoding]::ASCII.GetString($bytes)
+        if ($actual -cne $records[0].secret) { throw 'launcher authorization rejected' }
+        $script:AuthorizedLauncherTransaction = [string]$records[0].transaction
+        $script:LauncherExpectedStages = @($payload, $scratch)
+        $script:LauncherExpectedIdentities = @($records | ForEach-Object { $index=([uint64]$_.indexHigh -shl 32) -bor [uint64]$_.indexLow; "{0}:{1}" -f [uint32]$_.volume, $index })
+    } finally { $stream.Dispose(); $handle.Dispose() }
+}
+
+function Assert-AuthorizedLauncherIdentities {
+    if ($null -eq $script:AuthorizedLauncherTransaction) { return }
+    if ($script:LauncherExpectedStages.Count -ne 2 -or $script:LauncherExpectedIdentities.Count -ne 2) { throw 'launcher stage identities unavailable' }
+    for ($i=0; $i -lt 2; $i++) {
+        if ((Get-PackageDirectoryIdentity -Directory $script:LauncherExpectedStages[$i]) -cne $script:LauncherExpectedIdentities[$i]) { throw 'launcher stage identity changed' }
+    }
+}
+
+if (-not $script:DryRun) {
+    if (-not (Test-IsAdministrator)) { Fail 'installation or uninstall requires an elevated PowerShell session' }
+    try { $script:AgentInstallMutex = Enter-AgentInstallLock }
+    catch { Fail "cannot acquire trusted installation lock ($($_.Exception.Message))" }
+    if (-not $script:Uninstall) {
+        try {
+            Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1')) -NoClobber -ErrorAction Stop
+            Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1')) -NoClobber -ErrorAction Stop
+            Assert-AuthorizedLauncherOrNoIntent
+        } catch { Fail "recovery_required: launcher authorization failed ($($_.Exception.Message))" }
+    }
+}
+
 # -------------------------------------------------------------- uninstall
 if ($script:Uninstall) {
     if (-not $script:DryRun -and -not (Test-IsAdministrator)) {
         Fail "uninstall must run from an elevated (Administrator) PowerShell session"
+    }
+    if (-not $script:DryRun) {
+        try {
+            if (-not [Environment]::Is64BitProcess) { throw 'native 64-bit PowerShell is required' }
+            $launcherParent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+            Assert-ProtectedIntentDirectory -Directory $launcherParent
+            Assert-NoQuarantinedLauncherIntent -LauncherParent $launcherParent
+            if (Test-Path -LiteralPath (Join-Path $StateDir 'upgrade-recovery.json') -ErrorAction Stop) { throw 'upgrade recovery record exists' }
+        } catch { Fail "recovery_required: launcher execution remains quarantined ($($_.Exception.Message))" }
     }
     $serviceExists = [bool](Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)
     if ($serviceExists) {
@@ -332,7 +581,113 @@ if ($script:Uninstall) {
     exit 0
 }
 
+function Get-PackageDirectoryIdentity {
+    param([Parameter(Mandatory)][string]$Directory)
+    if (-not [IO.Path]::IsPathRooted($Directory)) { throw 'Package directory identity requires an absolute path' }
+    $item = Get-Item -LiteralPath $Directory -Force -ErrorAction Stop
+    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing nonregular package directory identity' }
+    $ancestor = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Directory))
+    while ($ancestor) {
+        $parentItem = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
+        if (($parentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing linked package directory ancestor' }
+        $next = [IO.Path]::GetDirectoryName($ancestor)
+        if (!$next -or $next -eq $ancestor) { break }
+        $ancestor = $next
+    }
+    $prior = [Environment]::GetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH','Process')
+    $priorNodeOptions = [Environment]::GetEnvironmentVariable('NODE_OPTIONS','Process')
+    $priorNodePath = [Environment]::GetEnvironmentVariable('NODE_PATH','Process')
+    try {
+        $env:TOKENTIMER_INSTALLER_STAGE_ID_PATH = $Directory
+        # Do not allow inherited preload/module search settings into this identity probe.
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS',$null,'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH',$null,'Process')
+        # Built-in fs obtains the volume/file index, never package code. Passing
+        # the literal path through an environment value avoids argv quoting.
+        $identity = & $script:NodeExe -p '(()=>{const s=require(''fs'').statSync(process.env.TOKENTIMER_INSTALLER_STAGE_ID_PATH,{bigint:true});return s.dev.toString()+ '':'' + s.ino.toString()})()'
+        if ($LASTEXITCODE -ne 0 -or [string]$identity -notmatch '^\d+:[1-9]\d*$') { throw 'Package directory file identity unavailable' }
+        return ([string]$identity).Trim()
+    } finally {
+        [Environment]::SetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH',$prior,'Process')
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS',$priorNodeOptions,'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH',$priorNodePath,'Process')
+    }
+}
+
 # ----------------------------------------------------------- validate input
+$runtimeManifestPath = Join-Path $PackageDir "runtime\manifest.json"
+$runtimeArch = $arch.ToLowerInvariant()
+$runtimeManifest = $null
+try {
+    Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1')) -NoClobber -ErrorAction Stop
+    $package = Get-Content -LiteralPath (Join-Path $PackageDir "package.json") -Raw | ConvertFrom-Json -ErrorAction Stop
+    $runtimeMarker = $package.PSObject.Properties['windowsBundledRuntime']
+    if ($runtimeMarker -and (($runtimeMarker.Value -isnot [bool]) -or (-not $runtimeMarker.Value))) { throw "invalid bundled runtime marker" }
+    if ($script:RequiresBundledRuntime -and -not $runtimeMarker) { throw "Windows package bundled runtime marker is missing" }
+    if (-not $script:RequiresBundledRuntime -and $runtimeMarker) { throw "generic package unexpectedly contains a bundled runtime marker" }
+    $script:HasBundledRuntime = $null -ne $runtimeMarker
+    if (-not $script:HasBundledRuntime) {
+        if (Test-Path -LiteralPath (Join-Path $PackageDir "runtime")) { throw "runtime files exist without the bundled runtime marker" }
+        $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+        if (-not $nodeCommand) { throw "legacy generic package requires system Node on PATH" }
+        $script:NodeExe = $nodeCommand.Source
+        $script:InstalledNodeExe = $script:NodeExe
+        Write-Log "Legacy generic package: using system Node. The Windows-specific package includes its own runtime."
+    } else {
+    Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1')) -NoClobber -ErrorAction Stop
+    Assert-ProtectedBundleTree -Root $PackageDir
+    if (-not (Test-Path -LiteralPath $runtimeManifestPath -PathType Leaf)) { throw "packaged Node runtime manifest is missing" }
+    $runtimeManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    $expectedRuntimePath = "runtime/$runtimeArch/node.exe"
+    if ($runtimeManifest.architecture -cne $runtimeArch -or
+        $runtimeManifest.path -cne $expectedRuntimePath -or
+        $runtimeManifest.version -notmatch '^\d+\.\d+\.\d+$' -or
+        $runtimeManifest.sha256 -cnotmatch '^[0-9a-f]{64}$') {
+        throw "invalid runtime manifest"
+    }
+    $script:NodeExe = Join-Path $PackageDir ("runtime\$runtimeArch\node.exe")
+    $script:InstalledNodeExe = Join-Path $AppDir ("runtime\$runtimeArch\node.exe")
+    if (-not (Test-Path -LiteralPath $script:NodeExe -PathType Leaf)) { throw "packaged runtime is missing" }
+    $pinnedHash = if ($runtimeArch -eq 'amd64') { '9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de' } else { 'c7225670c3f477778e18c43a55867f7a0d76468221245e5981ab80eb953c8102' }
+    if ($runtimeManifest.version -cne '24.18.0' -or $runtimeManifest.sha256 -cne $pinnedHash) { throw "runtime manifest does not match the release pin" }
+    $script:NodeRuntimeLock = [IO.File]::Open($script:NodeExe, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $runtimeHash = [BitConverter]::ToString($sha.ComputeHash($script:NodeRuntimeLock)).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    if ($runtimeHash -cne $pinnedHash) {
+        throw "packaged runtime checksum mismatch"
+    }
+    $runtimeStream = $script:NodeRuntimeLock
+    $runtimeStream.Position = 0
+    try {
+        $runtimeReader = New-Object IO.BinaryReader($runtimeStream)
+        if ($runtimeStream.Length -lt 64 -or $runtimeReader.ReadUInt16() -ne 0x5A4D) { throw "invalid runtime PE image" }
+        $runtimeStream.Position = 0x3c
+        $peOffset = $runtimeReader.ReadUInt32()
+        if ($peOffset -gt ($runtimeStream.Length - 6)) { throw "invalid runtime PE header" }
+        $runtimeStream.Position = $peOffset
+        if ($runtimeReader.ReadUInt32() -ne 0x00004550) { throw "invalid runtime PE signature" }
+        $machine = $runtimeReader.ReadUInt16()
+        $expectedMachine = if ($runtimeArch -eq 'amd64') { 0x8664 } else { 0xaa64 }
+        if ($machine -ne $expectedMachine) { throw "runtime architecture mismatch" }
+    } finally { $runtimeStream.Position = 0 }
+    }
+    if ($null -ne $script:AuthorizedLauncherTransaction -and -not $script:HasBundledRuntime) { throw 'launcher requires an independently pinned bundled runtime' }
+    Assert-AuthorizedLauncherIdentities
+    $engineRange = [regex]::Match([string]$package.engines.node, '^>=([0-9]+\.[0-9]+\.[0-9]+)\s+<([0-9]+\.[0-9]+\.[0-9]+)$')
+    if (-not $engineRange.Success) { throw "unsupported Node engine range" }
+    $nodeVersionRaw = (Invoke-PackagedNode -NodeArguments @('-v')).Trim()
+    if ($LASTEXITCODE -ne 0 -or $nodeVersionRaw -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw "unable to determine Node runtime version" }
+    $runtimeVersion = [version]$nodeVersionRaw.Substring(1)
+    if ($runtimeVersion -lt [version]$engineRange.Groups[1].Value -or $runtimeVersion -ge [version]$engineRange.Groups[2].Value) {
+        throw "packaged runtime is outside the supported Node engine range"
+    }
+    if ($script:HasBundledRuntime -and $nodeVersionRaw -cne "v$($runtimeManifest.version)") {
+        throw "packaged runtime version does not match its manifest"
+    }
+} catch {
+    Fail "packaged Node runtime validation failed ($($_.Exception.Message))"
+}
 if ([string]::IsNullOrEmpty($script:ApiUrl)) { Fail "--api-url is required (control plane base URL)" }
 if ([string]::IsNullOrEmpty($script:WorkspaceId)) { Fail "--workspace-id is required" }
 
@@ -381,7 +736,7 @@ if (($script:ApiUrl + $script:WorkspaceId) -match '[\x00-\x08\x0B\x0C\x0E-\x1F\x
 if (-not (Test-Path -LiteralPath $ValidateServerUrlJs)) { Fail "server URL validator not found: $ValidateServerUrlJs" }
 $validateArgs = @($script:ApiUrl)
 if ($script:AllowInsecureLocalHttp) { $validateArgs += "--allow-insecure-local-http" }
-$normalizedApiUrl = & node $ValidateServerUrlJs @validateArgs 2>$null
+$normalizedApiUrl = Invoke-PackagedNode -NodeArguments (@($ValidateServerUrlJs) + $validateArgs) 2>$null
 if ($LASTEXITCODE -ne 0) {
     Fail "--api-url was rejected by the same rule the agent runtime uses (https required; http only for loopback with --allow-insecure-local-http)"
 }
@@ -439,7 +794,7 @@ $script:WritePaths = $validatedWritePaths
 
 $validatedReloadServices = New-Object System.Collections.Generic.List[string]
 foreach ($reloadService in $script:ReloadServices) {
-    & node $HostSandboxJs map-reload-service $reloadService | Out-Null
+    Invoke-PackagedNode -NodeArguments @($HostSandboxJs, 'map-reload-service', $reloadService) | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "invalid --reload-service: $reloadService" }
     $validatedReloadServices.Add($reloadService)
 }
@@ -449,37 +804,7 @@ if (-not $script:DryRun -and -not (Test-IsAdministrator)) {
     Fail "install must run from an elevated (Administrator) PowerShell session"
 }
 
-# -------------------------------------------------------- node version gate
-# engines.node is a single ">=x.y.z <a.b.c" range in this package; a plain
-# regex parse of the lower bound avoids needing node before the node check
-# itself, mirroring install-agent.sh's sed parse.
-$packageJsonText = Get-Content -Raw -LiteralPath (Join-Path $PackageDir "package.json")
-$engineMatch = [regex]::Match($packageJsonText, '"node"\s*:\s*"([^"]*)"')
-if (-not $engineMatch.Success) {
-    Fail "could not find engines.node in $PackageDir\package.json"
-}
-$requiredRange = $engineMatch.Groups[1].Value
-$requiredMajorMatch = [regex]::Match($requiredRange, '[0-9]+')
-if (-not $requiredMajorMatch.Success) {
-    Fail "could not parse required Node version from $PackageDir\package.json (engines.node='$requiredRange')"
-}
-$requiredMajor = [int]$requiredMajorMatch.Value
-
-$nodeCommand = Get-Command node -ErrorAction SilentlyContinue
-if (-not $nodeCommand) {
-    Fail "node is not installed or not on PATH; the agent requires Node '$requiredRange'"
-}
-$nodeVersionRaw = (& node -v).Trim()
-$nodeMajorMatch = [regex]::Match($nodeVersionRaw, '^v([0-9]+)')
-if (-not $nodeMajorMatch.Success) {
-    Fail "could not parse installed Node version from 'node -v' (got '$nodeVersionRaw')"
-}
-$nodeMajor = [int]$nodeMajorMatch.Groups[1].Value
-if ($nodeMajor -lt $requiredMajor) {
-    Fail "Node $nodeVersionRaw is too old; the agent requires engines.node '$requiredRange'"
-}
-Write-Log "Node $nodeVersionRaw satisfies engines.node '$requiredRange'."
-$script:NodeExe = $nodeCommand.Source
+Write-Log "Packaged Node $nodeVersionRaw satisfies engines.node '$($package.engines.node)'."
 
 # --------------------------------------------------- platform module helper
 # Reuses the package's own src/platform module (already ACL-tested; see
@@ -506,7 +831,7 @@ function Invoke-PlatformAcl {
     $scriptPath = Join-Path ([System.IO.Path]::GetTempPath()) "tokentimer-acl-$PID-$([guid]::NewGuid().ToString('N')).js"
     try {
         [System.IO.File]::WriteAllText($scriptPath, $jsSource, (New-Object System.Text.UTF8Encoding($false)))
-        & node $scriptPath
+        Invoke-PackagedNode -NodeArguments @($scriptPath)
         if ($LASTEXITCODE -ne 0) {
             Fail "failed to apply a restricted ACL to $TargetPath (kind=$Kind)"
         }
@@ -597,39 +922,6 @@ function Assert-WindowsPackageHelpers {
     $tag = $Architecture.ToLowerInvariant()
     foreach ($name in @("tokentimer-agent-host-$tag.exe","tokentimer-adcs-chain-$tag.exe")) {
         Assert-WindowsPeImage -LiteralPath (Join-Path $PackageDirectory "bin\$name") -Architecture $Architecture
-    }
-}
-
-function Get-PackageDirectoryIdentity {
-    param([Parameter(Mandatory)][string]$Directory)
-    if (-not [IO.Path]::IsPathRooted($Directory)) { throw 'Package directory identity requires an absolute path' }
-    $item = Get-Item -LiteralPath $Directory -Force -ErrorAction Stop
-    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing nonregular package directory identity' }
-    $ancestor = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Directory))
-    while ($ancestor) {
-        $parentItem = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
-        if (($parentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing linked package directory ancestor' }
-        $next = [IO.Path]::GetDirectoryName($ancestor)
-        if (!$next -or $next -eq $ancestor) { break }
-        $ancestor = $next
-    }
-    $prior = [Environment]::GetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH','Process')
-    $priorNodeOptions = [Environment]::GetEnvironmentVariable('NODE_OPTIONS','Process')
-    $priorNodePath = [Environment]::GetEnvironmentVariable('NODE_PATH','Process')
-    try {
-        $env:TOKENTIMER_INSTALLER_STAGE_ID_PATH = $Directory
-        # Do not allow inherited preload/module search settings into this identity probe.
-        [Environment]::SetEnvironmentVariable('NODE_OPTIONS',$null,'Process')
-        [Environment]::SetEnvironmentVariable('NODE_PATH',$null,'Process')
-        # Built-in fs obtains the volume/file index, never package code. Passing
-        # the literal path through an environment value avoids argv quoting.
-        $identity = & $script:NodeExe -p '(()=>{const s=require(''fs'').statSync(process.env.TOKENTIMER_INSTALLER_STAGE_ID_PATH,{bigint:true});return s.dev.toString()+ '':'' + s.ino.toString()})()'
-        if ($LASTEXITCODE -ne 0 -or [string]$identity -notmatch '^\d+:[1-9]\d*$') { throw 'Package directory file identity unavailable' }
-        return ([string]$identity).Trim()
-    } finally {
-        [Environment]::SetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH',$prior,'Process')
-        [Environment]::SetEnvironmentVariable('NODE_OPTIONS',$priorNodeOptions,'Process')
-        [Environment]::SetEnvironmentVariable('NODE_PATH',$priorNodePath,'Process')
     }
 }
 
@@ -749,6 +1041,9 @@ function Activate-StagedPackage {
         Rename-Item -LiteralPath $StagingDirectory -NewName (Split-Path -Leaf $AppDirectory) -ErrorAction Stop
     } catch {
         $activationError = $_.Exception.Message
+        if ($null -ne $script:AuthorizedLauncherTransaction) {
+            throw "recovery_required: package activation failed; application, backup and staging were retained ($activationError)"
+        }
         $recoveryErrors = @()
         if ($previousMoved) {
             try { Rename-Item -LiteralPath $PreviousDirectory -NewName (Split-Path -Leaf $AppDirectory) -ErrorAction Stop }
@@ -770,9 +1065,215 @@ function Activate-StagedPackage {
     }
 }
 
+# The recovery record lives in the protected state directory, never in the
+# application directory being swapped. It identifies directories by their
+# filesystem identity as well as their bounded, installer-generated names.
+function Get-UpgradeRecoveryPath {
+    return (Join-Path $StateDir "upgrade-recovery.json")
+}
+
+function Get-ServiceNodePath {
+    param([Parameter(Mandatory)][string]$ServiceCommand)
+    $parts = [regex]::Matches($ServiceCommand, '"([^"]+)"|([^\s"]+)')
+    if ($parts.Count -ne 3) { throw 'previous service command is not a supported host, runtime and entrypoint command' }
+    $node = if ($parts[1].Groups[1].Success) { $parts[1].Groups[1].Value } else { $parts[1].Groups[2].Value }
+    if (-not [IO.Path]::IsPathRooted($node) -or [IO.Path]::GetFileName($node) -ine 'node.exe') {
+        throw 'previous service runtime path is invalid'
+    }
+    return [IO.Path]::GetFullPath($node)
+}
+
+function Test-ServiceChildStable {
+    param([Parameter(Mandatory)][string]$ExpectedNodePath)
+    $deadline = (Get-Date).AddSeconds(20)
+    $previousChild = 0
+    while ((Get-Date) -lt $deadline) {
+        $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
+        if (-not $service -or $service.State -ne 'Running' -or -not $service.ProcessId) { return $false }
+        $children = @(Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId=$($service.ProcessId)" -ErrorAction Stop |
+            Where-Object { $_.ExecutablePath -and $_.ExecutablePath.Equals($ExpectedNodePath, [StringComparison]::OrdinalIgnoreCase) })
+        if ($children.Count -eq 1) {
+            if ($previousChild -eq $children[0].ProcessId) { return $true }
+            $previousChild = $children[0].ProcessId
+        } else { $previousChild = 0 }
+        Start-Sleep -Seconds 1
+    }
+    return $false
+}
+
+function Assert-UpgradeRecoveryAcl {
+    param(
+        [Parameter(Mandatory)][string]$JournalPath,
+        [ValidateSet('file','directory')][string]$Kind = 'file'
+    )
+    $oldModule = [Environment]::GetEnvironmentVariable('TOKENTIMER_RECOVERY_ACL_MODULE', 'Process')
+    $oldJournal = [Environment]::GetEnvironmentVariable('TOKENTIMER_RECOVERY_ACL_PATH', 'Process')
+    try {
+        $env:TOKENTIMER_RECOVERY_ACL_MODULE = Join-Path $PackageDir "src\platform\index.js"
+        $env:TOKENTIMER_RECOVERY_ACL_PATH = $JournalPath
+        $method = if ($Kind -eq 'directory') { 'assertWindowsAcl' } else { 'assertRestrictivePermissions' }
+        $requireProtected = if ($Kind -eq 'directory') { 'false' } else { 'true' }
+        $validation = "require(process.env.TOKENTIMER_RECOVERY_ACL_MODULE).$method(process.env.TOKENTIMER_RECOVERY_ACL_PATH,{label:'upgrade recovery',requireProtected:$requireProtected})"
+        Invoke-PackagedNode -NodeArguments @('-e', $validation)
+        if ($LASTEXITCODE -ne 0) { throw 'upgrade recovery record owner or ACL is not trusted' }
+    } finally {
+        [Environment]::SetEnvironmentVariable('TOKENTIMER_RECOVERY_ACL_MODULE', $oldModule, 'Process')
+        [Environment]::SetEnvironmentVariable('TOKENTIMER_RECOVERY_ACL_PATH', $oldJournal, 'Process')
+    }
+}
+
+function Recover-InterruptedUpgrade {
+    $journal = Get-UpgradeRecoveryPath
+    if (-not (Test-Path -LiteralPath $journal)) { return }
+    # A launcher intent is only a denial signal. It is never parsed or used to
+    # authorize recovery. Keep the shared lock through all later mutations.
+    if (-not [Environment]::Is64BitProcess) { throw 'recovery_required: native 64-bit PowerShell is required' }
+    $launcherParent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+    if ([string]::IsNullOrWhiteSpace($launcherParent)) { throw 'recovery_required: launcher staging parent unavailable' }
+    Assert-ProtectedIntentDirectory -Directory $launcherParent
+    Assert-NoQuarantinedLauncherIntent -LauncherParent $launcherParent
+    $journalItem = Get-Item -LiteralPath $journal -Force -ErrorAction Stop
+    if ($journalItem.PSIsContainer -or ($journalItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $journalItem.Length -gt 4096) {
+        throw 'refusing an unsafe upgrade recovery record'
+    }
+    Assert-UpgradeRecoveryAcl -JournalPath $journal
+    $record = Get-Content -LiteralPath $journal -Raw | ConvertFrom-Json -ErrorAction Stop
+    # A launcher-backed upgrade can have external actors even if its marker
+    # later disappeared. A transaction is a denial signal, never authority to
+    # replay or delete any staging path.
+    if ($null -ne $record.PSObject.Properties['launcherIntent']) { throw 'recovery_required: launcher upgrade remains quarantined' }
+    if ($record.version -ne 1 -or ([string]$record.pid) -notmatch '^[1-9][0-9]{0,9}$' -or
+        ([string]$record.previousIdentity) -notmatch '^\d+:[1-9]\d*$' -or
+        ([string]$record.stagingIdentity) -notmatch '^\d+:[1-9]\d*$' -or
+        [string]::IsNullOrWhiteSpace([string]$record.previousServicePath) -or
+        [string]::IsNullOrWhiteSpace([string]$record.previousServiceDisplayName) -or
+        $record.previousServiceStartMode -notin @('Automatic','Manual','Disabled')) {
+        throw 'invalid upgrade recovery record'
+    }
+    $priorPid = [int]$record.pid
+    if (Get-Process -Id $priorPid -ErrorAction SilentlyContinue) {
+        throw 'another installer may still own the upgrade recovery record'
+    }
+    $previous = "$AppDir.previous.$priorPid"
+    $staging = "$AppDir.staging.$priorPid"
+    $appExists = Test-Path -LiteralPath $AppDir
+    $previousExists = Test-Path -LiteralPath $previous
+    if ($previousExists -and (Get-PackageDirectoryIdentity -Directory $previous) -ne $record.previousIdentity) {
+        throw 'upgrade backup identity changed; manual recovery is required'
+    }
+    if ($appExists) {
+        $appIdentity = Get-PackageDirectoryIdentity -Directory $AppDir
+        if ($appIdentity -eq $record.stagingIdentity -and $previousExists) {
+            $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
+            $expectedHost = Join-Path $AppDir ("bin\tokentimer-agent-host-$runtimeArch.exe")
+            $expectedEntry = Join-Path $AppDir "bin\tokentimer-agent.js"
+            $newServicePath = '"' + $expectedHost + '" "' + $script:InstalledNodeExe + '" "' + $expectedEntry + '"'
+            if (-not $service -or ([string]$service.PathName -cne [string]$record.previousServicePath -and [string]$service.PathName -cne $newServicePath) -or (Test-Path -LiteralPath $staging)) {
+                throw 'upgrade activation is ambiguous; manual recovery is required'
+            }
+            if ($service.State -ne 'Stopped') {
+                Stop-Service -Name $ServiceName -Force -ErrorAction Stop
+                (Get-Service -Name $ServiceName).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(20))
+            }
+            Rename-Item -LiteralPath $AppDir -NewName (Split-Path -Leaf $staging) -ErrorAction Stop
+            $appExists = $false
+        } elseif ($appIdentity -ne $record.previousIdentity -or $previousExists) {
+            throw 'active application identity is ambiguous; manual recovery is required'
+        }
+    }
+    if (-not $appExists) {
+        if (-not $previousExists) { throw 'upgrade backup is missing; manual recovery is required' }
+        Rename-Item -LiteralPath $previous -NewName (Split-Path -Leaf $AppDir) -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $staging) {
+        Remove-OwnedPackageStaging -Directory $staging -ExpectedIdentity $record.stagingIdentity
+    }
+    $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
+    if (-not $service) { throw 'previous service is missing; manual recovery is required' }
+    if ($service.State -ne 'Stopped') {
+        Stop-Service -Name $ServiceName -Force -ErrorAction Stop
+        (Get-Service -Name $ServiceName).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(20))
+    }
+    $result = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{
+        PathName = [string]$record.previousServicePath
+        DisplayName = [string]$record.previousServiceDisplayName
+        StartMode = [string]$record.previousServiceStartMode
+    }
+    if ($result.ReturnValue -ne 0) { throw 'previous service configuration could not be restored' }
+    $serviceRegistryPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
+    if ($record.hadPreviousServiceEnvironment) {
+        New-ItemProperty -LiteralPath $serviceRegistryPath -Name "Environment" -PropertyType MultiString -Value @($record.previousServiceEnvironment) -Force | Out-Null
+    } else {
+        Remove-ItemProperty -LiteralPath $serviceRegistryPath -Name "Environment" -ErrorAction SilentlyContinue
+    }
+    Start-Service -Name $ServiceName -ErrorAction Stop
+    (Get-Service -Name $ServiceName).WaitForStatus('Running', [TimeSpan]::FromSeconds(20))
+    $previousNode = Get-ServiceNodePath -ServiceCommand $record.previousServicePath
+    if (-not (Test-ServiceChildStable -ExpectedNodePath $previousNode)) {
+        throw 'previous service started without a stable expected Node child; manual recovery is required'
+    }
+    Remove-Item -LiteralPath $journal -Force -ErrorAction Stop
+    Write-Log "Recovered the previous application after an interrupted upgrade; remote agent readiness has not been checked."
+}
+
+function Write-UpgradeRecoveryRecord {
+    param([Parameter(Mandatory)][string]$StagingIdentity)
+    if (-not (Test-Path -LiteralPath $StateDir -PathType Container)) {
+        throw 'protected agent state is missing; refusing an upgrade without a recovery record'
+    }
+    $null = Get-PackageDirectoryIdentity -Directory $StateDir
+    Assert-UpgradeRecoveryAcl -JournalPath $StateDir -Kind "directory"
+    Invoke-PlatformAcl -TargetPath $StateDir -Kind "directory"
+    $record = [ordered]@{
+        version = 1
+        pid = $PID
+        previousIdentity = Get-PackageDirectoryIdentity -Directory $AppDir
+        stagingIdentity = $StagingIdentity
+        previousServicePath = $script:PreviousServicePath
+        previousServiceDisplayName = $script:PreviousServiceDisplayName
+        previousServiceStartMode = $script:PreviousServiceStartMode
+        hadPreviousServiceEnvironment = $null -ne $script:PreviousServiceEnvironment
+        previousServiceEnvironment = @($script:PreviousServiceEnvironment)
+    }
+    if ($null -ne $script:AuthorizedLauncherTransaction) {
+        if ($script:AuthorizedLauncherTransaction -cnotmatch '^[a-f0-9]{32}$') { throw 'invalid authorized launcher transaction' }
+        $record['launcherIntent'] = $script:AuthorizedLauncherTransaction
+        if (-not $script:HasBundledRuntime -or $null -eq $runtimeManifest -or $runtimeManifest.sha256 -cne $pinnedHash -or $runtimeManifest.architecture -cne $runtimeArch) {
+            throw 'authenticated identity runtime contract is unavailable'
+        }
+        $record['identityContract'] = [ordered]@{
+            scheme = 'node-fs-win32-v1'
+            nodeVersion = [string]$runtimeManifest.version
+            architecture = [string]$runtimeArch
+            nodeSha256 = [string]$pinnedHash
+        }
+    }
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($record | ConvertTo-Json -Compress))
+    if ($bytes.Length -gt 4096) {
+        throw 'upgrade recovery record exceeds the supported size; the existing application was not changed'
+    }
+    $journal = Get-UpgradeRecoveryPath
+    $stream = [IO.File]::Open($journal, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+    } finally {
+        $stream.Dispose()
+    }
+    Invoke-PlatformAcl -TargetPath $journal -Kind "file"
+}
+
 if (-not $script:DryRun) {
     try { Assert-WindowsPackageHelpers -PackageDirectory $PackageDir -Architecture $arch }
     catch { Fail "native package preflight failed before installation changes ($($_.Exception.Message))" }
+    if (Test-Path -LiteralPath $StateDir -PathType Container) {
+        try {
+            $null = Get-PackageDirectoryIdentity -Directory $StateDir
+            Assert-UpgradeRecoveryAcl -JournalPath $StateDir -Kind "directory"
+            Invoke-PlatformAcl -TargetPath $StateDir -Kind "directory"
+            Recover-InterruptedUpgrade
+        } catch { Fail "interrupted upgrade recovery failed ($($_.Exception.Message))" }
+    }
 }
 
 Write-Log "Installing agent package from $PackageDir to $AppDir"
@@ -783,6 +1284,35 @@ if (-not $script:DryRun) {
 $script:AppStaging = "$AppDir.staging.$PID"
 $script:AppPrevious = "$AppDir.previous.$PID"
 $script:IsUpgrade = (Test-Path -LiteralPath $AppDir)
+$script:PreviousServicePath = ""
+$script:PreviousServiceEnvironment = $null
+$script:PreviousServiceDisplayName = ""
+$script:PreviousServiceStartMode = ""
+if ($script:IsUpgrade -and -not $script:DryRun) {
+    $previousService = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
+    if ($previousService) {
+        $script:PreviousServicePath = [string]$previousService.PathName
+        if ([string]::IsNullOrWhiteSpace($script:PreviousServicePath) -or $script:PreviousServicePath -match '[\x00-\x1F]') {
+            Fail "cannot preserve the existing service command before upgrading"
+        }
+        try { $script:PreviousNodeExe = Get-ServiceNodePath -ServiceCommand $script:PreviousServicePath }
+        catch { Fail "cannot validate the previous service runtime before upgrading ($($_.Exception.Message))" }
+        $script:PreviousServiceDisplayName = [string]$previousService.DisplayName
+        $script:PreviousServiceStartMode = switch ([string]$previousService.StartMode) {
+            'Auto' { 'Automatic' }
+            'Manual' { 'Manual' }
+            'Disabled' { 'Disabled' }
+            default { Fail "cannot preserve the existing service start mode before upgrading" }
+        }
+        if ([string]::IsNullOrWhiteSpace($script:PreviousServiceDisplayName)) {
+            Fail "cannot preserve the existing service display name before upgrading"
+        }
+        $serviceKey = Get-Item -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" -ErrorAction Stop
+        $script:PreviousServiceEnvironment = $serviceKey.GetValue("Environment", $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    } else {
+        Fail "an existing application has no service configuration to preserve; manual recovery is required"
+    }
+}
 
 if ($script:DryRun) {
     Write-Host "[dry-run] copy $PackageDir into $($script:AppStaging) (excluding node_modules, .git), then atomically swap into $AppDir"
@@ -793,8 +1323,18 @@ if ($script:DryRun) {
     try {
         Copy-PackageTree -Source $PackageDir -Destination $script:AppStaging
         Assert-WindowsPackageHelpers -PackageDirectory $script:AppStaging -Architecture $arch
+        if ($script:HasBundledRuntime) {
+            $stagedRuntime = Join-Path $script:AppStaging ("runtime\$runtimeArch\node.exe")
+            if (-not (Test-Path -LiteralPath $stagedRuntime -PathType Leaf) -or
+                (Get-FileHash -LiteralPath $stagedRuntime -Algorithm SHA256).Hash.ToLowerInvariant() -cne $runtimeManifest.sha256) {
+                throw "staged Node runtime checksum mismatch"
+            }
+        }
     } catch {
         $stagingError = $_.Exception.Message
+        if ($null -ne $script:AuthorizedLauncherTransaction) {
+            Fail "recovery_required: package staging failed; preserve $($script:AppStaging) for review ($stagingError)"
+        }
         try {
             Remove-OwnedPackageStaging -Directory $script:AppStaging -ExpectedIdentity $stagingIdentity
         } catch {
@@ -803,9 +1343,18 @@ if ($script:DryRun) {
         Fail "failed to stage the agent package; $AppDir was left untouched ($stagingError)"
     }
     try {
+        if ($script:IsUpgrade) { Write-UpgradeRecoveryRecord -StagingIdentity $stagingIdentity }
         Activate-StagedPackage -AppDirectory $AppDir -StagingDirectory $script:AppStaging -PreviousDirectory $script:AppPrevious -ExpectedStagingIdentity $stagingIdentity
     } catch {
-        Fail $_.Exception.Message
+        $activationError = $_.Exception.Message
+        if ($null -ne $script:AuthorizedLauncherTransaction) {
+            Fail "recovery_required: package activation failed; preserve the application, backup, staging and recovery journal ($activationError)"
+        }
+        if ($script:IsUpgrade -and -not (Test-Path -LiteralPath (Get-UpgradeRecoveryPath)) -and (Test-Path -LiteralPath $script:AppStaging)) {
+            try { Remove-OwnedPackageStaging -Directory $script:AppStaging -ExpectedIdentity $stagingIdentity }
+            catch { Fail "upgrade preparation failed; staging cleanup refused; manual inspection is required ($activationError)" }
+        }
+        Fail $activationError
     }
 }
 
@@ -885,7 +1434,7 @@ if ((Test-Path -LiteralPath $configPath) -and -not $script:DryRun) {
     Invoke-PlatformAcl -TargetPath $configPath -Kind "file"
     # Sanity-parse the result with the node we already verified, so a bad
     # value can never install an unreadable config.
-    & node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" $configPath
+    Invoke-PackagedNode -NodeArguments @('-e', "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))", $configPath)
     if ($LASTEXITCODE -ne 0) {
         Fail "generated $configPath is not valid JSON (unexpected characters in --api-url/--workspace-id?)"
     }
@@ -949,21 +1498,22 @@ function Set-ServiceBinaryPath {
     param(
         [Parameter(Mandatory = $true)][string]$ServiceName,
         [Parameter(Mandatory = $true)][string]$BinPath,
-        [Parameter(Mandatory = $true)][string]$DisplayName
+        [Parameter(Mandatory = $true)][string]$DisplayName,
+        [ValidateSet("Automatic", "Manual", "Disabled")][string]$StartMode = "Automatic"
     )
     $wmiService = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'"
     if (-not $wmiService) { Fail "service $ServiceName not found via Win32_Service for reconfiguration" }
     $changeResult = Invoke-CimMethod -InputObject $wmiService -MethodName Change -Arguments @{
         PathName    = $BinPath
         DisplayName = $DisplayName
-        StartMode   = "Automatic"
+        StartMode   = $StartMode
     }
     if ($changeResult.ReturnValue -ne 0) {
         Fail "Win32_Service.Change failed to update $ServiceName (ReturnValue $($changeResult.ReturnValue))"
     }
 }
 
-$quotedNode = '"' + $script:NodeExe + '"'
+$quotedNode = '"' + $script:InstalledNodeExe + '"'
 $quotedEntry = '"' + (Join-Path $AppDir "bin\tokentimer-agent.js") + '"'
 
 # The service's binPath is the native host, not node.exe: node never calls
@@ -1012,6 +1562,7 @@ if ($script:DryRun) {
     Write-Host "[dry-run] (re)start $ServiceName and health-check it"
     Write-Log ""
     Write-Log "Dry run complete. No changes were made."
+    if ($null -ne $script:NodeRuntimeLock) { $script:NodeRuntimeLock.Dispose(); $script:NodeRuntimeLock = $null }
     exit 0
 }
 
@@ -1061,27 +1612,50 @@ try {
     Write-Log "failed to (re)start ${ServiceName}: $($_.Exception.Message)"
 }
 
-$healthy = Test-ServiceHealthy -TimeoutSeconds 20
+$healthy = (Test-ServiceHealthy -TimeoutSeconds 20) -and (Test-ServiceChildStable -ExpectedNodePath $script:InstalledNodeExe)
 
 if (-not $healthy -and $script:IsUpgrade -and (Test-Path -LiteralPath $script:AppPrevious)) {
+    if ($null -ne $script:AuthorizedLauncherTransaction) {
+        # SCM and WMI can outlive the installer. Until they are reconciled,
+        # stopping the service silently is not proof it is safe to remove or
+        # replace the active application. Keep both app copies and the journal.
+        Fail "recovery_required: upgrade health check failed; the application, backup and recovery journal were retained"
+    }
     Write-Log "Health check failed after upgrade; rolling back to the previous version."
     Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $AppDir -Recurse -Force
     Rename-Item -LiteralPath $script:AppPrevious -NewName (Split-Path -Leaf $AppDir)
-    $rollbackBinPath = $binPath
-    Set-ServiceBinaryPath -ServiceName $ServiceName -BinPath $rollbackBinPath -DisplayName $ServiceDisplayName
-    Set-ServiceEnvironment -ConfigDir $StateDir -Token ""
-    Start-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrWhiteSpace($script:PreviousServicePath)) {
+        Fail "previous application was restored, but its service command was unavailable; manual recovery is required"
+    }
+    $rollbackBinPath = $script:PreviousServicePath
+    Set-ServiceBinaryPath -ServiceName $ServiceName -BinPath $rollbackBinPath -DisplayName $script:PreviousServiceDisplayName -StartMode $script:PreviousServiceStartMode
+    $serviceRegistryPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
+    if ($null -eq $script:PreviousServiceEnvironment) {
+        Remove-ItemProperty -LiteralPath $serviceRegistryPath -Name "Environment" -ErrorAction SilentlyContinue
+    } else {
+        New-ItemProperty -LiteralPath $serviceRegistryPath -Name "Environment" -PropertyType MultiString -Value $script:PreviousServiceEnvironment -Force | Out-Null
+    }
+    try {
+        Start-Service -Name $ServiceName -ErrorAction Stop
+    } catch {
+        Fail "previous application and service command were restored, but the service could not start; manual recovery is required"
+    }
+    if (-not (Test-ServiceHealthy -TimeoutSeconds 20) -or -not (Test-ServiceChildStable -ExpectedNodePath $script:PreviousNodeExe)) {
+        Fail "previous application and service command were restored, but the expected child did not remain healthy; manual recovery is required"
+    }
     # The credential file's ACL must be re-asserted after rollback, not
     # inherited from whatever the failed install left behind.
     $credentialPath = Join-Path $StateDir "credential"
     if (Test-Path -LiteralPath $credentialPath) {
         Invoke-PlatformAcl -TargetPath $credentialPath -Kind "file"
     }
+    Remove-Item -LiteralPath (Get-UpgradeRecoveryPath) -Force -ErrorAction Stop
     Fail "upgrade failed its post-install health check and was rolled back to the previous version; the agent credential and configuration were preserved and the credential file's ACL was re-asserted"
 }
 
-if (Test-Path -LiteralPath $script:AppPrevious) { Remove-Item -LiteralPath $script:AppPrevious -Recurse -Force }
+if ($healthy -and $script:IsUpgrade -and $null -eq $script:AuthorizedLauncherTransaction) { Remove-Item -LiteralPath (Get-UpgradeRecoveryPath) -Force -ErrorAction Stop }
+if ($null -eq $script:AuthorizedLauncherTransaction -and (Test-Path -LiteralPath $script:AppPrevious)) { Remove-Item -LiteralPath $script:AppPrevious -Recurse -Force }
 
 if (-not $healthy) {
     Fail "the $ServiceName service did not reach the Running state within 20 seconds; check 'Get-Service $ServiceName' and the agent's own logs"
@@ -1117,4 +1691,5 @@ if ($script:ReloadServices.Count -gt 0) {
     Write-Log "     (no polkit/sudoers equivalent needed): configure policy"
     Write-Log "     commandProfiles.reloadArgv for: $($script:ReloadServices -join ', ')"
 }
+if ($null -ne $script:NodeRuntimeLock) { $script:NodeRuntimeLock.Dispose(); $script:NodeRuntimeLock = $null }
 exit 0

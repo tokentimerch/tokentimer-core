@@ -603,6 +603,27 @@ describe("platform: clearWindowsServiceBootstrapToken", () => {
     } : { status: 0 } });
   }
 
+  it("scrubs only the selected generation's service after checking ownership", () => {
+    const serviceName = `TokenTimerAgent-${"a".repeat(64)}`;
+    const key = `HKLM\\SYSTEM\\CurrentControlSet\\Services\\${serviceName}`;
+    const entries = ["TOKENTIMER_AGENT_CONFIG_DIR=C:\\generation\\state", "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_secret"];
+    const spawn = registrySpawn(entries);
+    assert.equal(platform.clearWindowsServiceBootstrapToken({ configDir: "C:\\generation\\state", serviceName, platform: "win32", spawn }).cleared, true);
+    assert.deepEqual(spawn.calls.map((call) => call.args[1]), [key, key, key]);
+    const wrongOwner = registrySpawn(entries);
+    assert.equal(platform.clearWindowsServiceBootstrapToken({ configDir: "C:\\other\\state", serviceName, platform: "win32", spawn: wrongOwner }).cleared, false);
+    assert.deepEqual(wrongOwner.calls.map((call) => call.args[0]), ["query"]);
+  });
+
+  it("rejects malformed service names without querying the registry", () => {
+    for (const serviceName of [null, "", "OtherService", "TokenTimerAgent-", `TokenTimerAgent-${"A".repeat(64)}`, `TokenTimerAgent-${"a".repeat(63)}`, `TokenTimerAgent-${"a".repeat(64)}\\Other`, `TokenTimerAgent-${"a".repeat(64)}\n`, `TokenTimerAgent-${"a".repeat(64)}\0`, "TokenTimerAgent\\Other", "../TokenTimerAgent", "TokenTimerAgent\nOther"]) {
+      const spawn = registrySpawn([]);
+      const result = platform.clearWindowsServiceBootstrapToken({ configDir: "C:\\state", serviceName, platform: "win32", spawn });
+      assert.deepEqual(result, { attempted: false, cleared: false, reason: "invalid Windows service name" });
+      assert.deepEqual(spawn.calls, []);
+    }
+  });
+
   it("refuses a manually run agent whose config does not own the installed service", () => {
     const spawn = registrySpawn(["TOKENTIMER_AGENT_CONFIG_DIR=C:\\installed\\state", "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_other"]);
     const result = platform.clearWindowsServiceBootstrapToken({ configDir: "C:\\manual\\state", platform: "win32", spawn });

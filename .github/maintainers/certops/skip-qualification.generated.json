@@ -307,12 +307,238 @@
       "workflowJob": "backend_quality"
     },
     {
+      "id": "308cb32922acb66234c1",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 130,
+      "name": "restores the original application after a process dies between renames",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "39737d1a97acd47c327c",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 132,
+      "name": "restores the original application and service after activation",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "642f268099ad659b54d6",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 135,
+      "name": "recovery refuses any quarantined launcher intent and enumeration errors",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "89941a0b0e6fc5666021",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 165,
+      "name": "launcher authorization fails closed on missing or unrelated intent",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "0a0c6558cc43b6aee7ce",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 204,
+      "name": "launcher authorization rejects an invalid inherited handle before package Node is used",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "37f5b1994b9e008e9c0b",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 248,
+      "name": "launcher intent ACL validation rejects a user-owned marker",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "986110b88c8c5a84c4cb",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 276,
+      "name": "launcher-associated recovery refuses replay even if its markers disappeared",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "510353baf0a2b162d7d4",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 311,
+      "name": "upgrade journal persists the authorized launcher transaction",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "fba59215143685f149fb",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 353,
+      "name": "launcher-backed health failure preserves application and backup",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "f35cc299a49e02804ffc",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 376,
+      "name": "launcher-backed healthy upgrade retains recovery journal and backup",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "a9f0bb5cd5f906cd2ee3",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 399,
+      "name": "launcher-backed activation failure preserves both staged directories",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "8ab337c13acfbddaff43",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 431,
+      "name": "uninstall refuses an existing recovery barrier even without launcher markers",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "071598b6ec94fb078b1b",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 465,
+      "name": "uninstall fails closed on journal access error but permits the absent case",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "953f939ea68a34332613",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 500,
+      "name": "rejects an oversized recovery record before touching the existing application",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "f391783eec0f41b05b73",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 523,
+      "name": "installer Node helper rejects inherited preloads and restores the caller environment",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "b166f90b3ddb3472a9ec",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 557,
+      "name": "runtime package marker selects bundled Node and rejects incomplete bundles",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "e206633c7ffba2503490",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 631,
+      "name": "service health requires the expected child to survive a second observation",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "8a6e5fa21999c27b909a",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 660,
+      "name": "bundled bootstrap rejects ancestor permissions that can alter a reparse point",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "6f5c2bc6d58a2f302b18",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 701,
+      "name": "bundled bootstrap rejects a user-owned extraction directory",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "97a7e8b69c71ba14dbcd",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 732,
+      "name": "recovery refuses a journal with inherited, unprotected ACL",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "78715685e64f31f1566b",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 767,
+      "name": "validated bundled runtime stays locked against replacement during bootstrap",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "b622704734dee294a540",
+      "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
+      "line": 772,
+      "name": "validated bundled runtime stays locked against replacement during bootstrap",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
       "id": "9dd82ec990cd4e0a09af",
       "file": "packages/agent/src/acme/acme.test.js",
-      "line": 250,
+      "line": 278,
       "name": "POSIX hook executes non-executable archive bytes with spaces and quotes in the path",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
+      "environment": "linux-filesystem",
+      "workflowJob": "backend_quality"
+    },
+    {
+      "id": "cc33ada98dd841a0d39e",
+      "file": "packages/agent/src/acme/acme.test.js",
+      "line": 796,
+      "name": "acme.sh wrapper uses the explicit runtime and never falls back to PATH",
       "environment": "linux-filesystem",
       "workflowJob": "backend_quality"
     },
@@ -597,7 +823,7 @@
     {
       "id": "b45f65881e8f3ba572b1",
       "file": "packages/agent/src/index.test.js",
-      "line": 4223,
+      "line": 4245,
       "name": "refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -695,6 +921,86 @@
       "line": 468,
       "name": "enforces a real restricted ACL end to end on win32",
       "kind": "it(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "fd1f7bc50a0b5c63ee8c",
+      "file": "packages/agent/src/protocol/bound-rotation-startup.test.js",
+      "line": 18,
+      "name": "bound startup refuses a live IPv6 endpoint before opening the credential pipe",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "35ad432f5e264e8972a6",
+      "file": "packages/agent/src/protocol/bound-rotation-startup.test.js",
+      "line": 23,
+      "name": "bound startup refuses a live IPv6 endpoint before opening the credential pipe",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "8be30648a72a5663eb08",
+      "file": "packages/agent/src/protocol/bound-rotation-startup.test.js",
+      "line": 38,
+      "name": "bound startup requires matching protected context, TLS CA and remote workspace",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "127ffc657f3e884b47d2",
+      "file": "packages/agent/src/protocol/credential-pipe.test.js",
+      "line": 33,
+      "name": "pipe sends a credential only after authenticating the server",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "bc952f54bb2947ba0e3b",
+      "file": "packages/agent/src/protocol/credential-pipe.test.js",
+      "line": 60,
+      "name": "a fake server cannot receive a credential without a valid proof",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "265050e8906036be00dc",
+      "file": "packages/agent/src/protocol/credential-pipe.test.js",
+      "line": 82,
+      "name": "a pipe impersonator after host process death receives no credential",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "1fd9f3e70d4bd2af174d",
+      "file": "packages/agent/src/protocol/credential-pipe.test.js",
+      "line": 101,
+      "name": "authenticated responses must match the operation, credential hash and phase",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "ae73c732f053f274fbd2",
+      "file": "packages/agent/src/protocol/credential-pipe.test.js",
+      "line": 132,
+      "name": "socket failure after proof is sanitized and does not escape as an unhandled error",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "b1f77613dfd0db7abfe4",
+      "file": "packages/agent/src/protocol/credential-pipe.test.js",
+      "line": 148,
+      "name": "disposing an in-flight session refuses a proof made with the cleared key and sends no credential",
       "reason": "platform",
       "environment": "windows-elevated",
       "workflowJob": "windows_agent_quality"

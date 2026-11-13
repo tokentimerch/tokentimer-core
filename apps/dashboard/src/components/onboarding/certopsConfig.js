@@ -335,7 +335,7 @@ export const REGISTRATION_NOTES = [
 // --write-path only applies to the Linux service sandbox. The Windows
 // installer takes the flag for parity but does not use it.
 export const WINDOWS_REGISTRATION_NOTES = [
-  'On the server, download the agent package for your TokenTimer version and check its checksum, with the commands below. Node.js 22 or 24 must be installed on the server.',
+  'On the server, download the agent package for your TokenTimer version and check its checksum, with the commands below. Select legacy for published releases; Node.js 22 or 24 must be installed. Bundled packages are unavailable until publisher verification is supported.',
   'Extract it and open an elevated PowerShell in the extracted folder, the one that contains scripts\\install-agent.ps1.',
   'Run the install command below from that folder. Add --dry-run first to see what it will change.',
   'The installer asks for the bootstrap token with a hidden prompt: paste the token there. Do not put it on the command line.',
@@ -355,6 +355,14 @@ export function buildPackageCommand(os) {
   if (os === 'windows') {
     return [
       "$Version = '<version>'   # your TokenTimer version, for example 0.18.0",
+      "$PackageType = (Read-Host 'Package type (legacy; bundled is not yet available)').Trim().ToLowerInvariant()",
+      "if ($PackageType -eq 'bundled') {",
+      '  $Machine = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }',
+      "  $Architecture = switch (\"$Machine\".ToUpperInvariant()) { 'AMD64' { 'amd64' } 'ARM64' { 'arm64' } default { throw 'Unsupported Windows architecture' } }",
+      '  $Archive = "tokentimer-agent-$Version-windows-$Architecture.tgz"',
+      "  throw 'Bundled agent installation requires publisher verification, which is not available yet'",
+      '}',
+      "if ($PackageType -ne 'legacy') { throw 'Select legacy or bundled' }",
       '$Base = "https://github.com/tokentimerch/tokentimer-core/releases/download/v$Version"',
       '$Archive = "tokentimer-agent-$Version.tgz"',
       'Invoke-WebRequest "$Base/$Archive" -OutFile $Archive',

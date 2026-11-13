@@ -36,8 +36,15 @@ are reservations, not no-op migrations. They do not install another feature.
 | 104 | operator_inventory | MCP inventory metadata import (#406) |
 | 105 | operator_oauth_retention | MCP token retention (#406) |
 | 106 | operator_issuance | MCP certificate issuance (#406) |
+| 107 | certops_issuance_job_identity | Main; unchanged |
+| 108 | certops_issuance_identity_transfer | Main; unchanged |
 | 109 | certops_period_creator_delete | Main; unchanged |
 | 110 | recipient_member_verification | Reuse exact verified workspace-member email proof |
+| 111 | auto_sync_owner_username | Auto-sync owner username |
+| 112 | agent_credential_rotations | Credential rotation preparation and receipt |
+| 113 | agent_credential_rotation_ack | Credential rotation acknowledgement |
+
+A ledger based on the released numbering that records `agent_credential_rotations` or `agent_credential_rotation_ack` at version 109 or 110 is ambiguous and is rejected before migration SQL. Preserve the database and arrange a separately reviewed recovery; do not edit or relabel its ledger.
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.

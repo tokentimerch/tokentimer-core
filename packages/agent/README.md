@@ -62,6 +62,20 @@ internal artifact store, etc.). Full signing + SBOM should be added when the
 shared release pipeline gains those primitives; do not invent a one-off
 signing scheme only for this package.
 
+The experimental `scripts/agent-sbom-enrich.py` binds executable digests and
+the Node license to a scanned Windows archive and the pinned upstream runtime.
+Supply the archive digest from an independently trusted source. This tool is
+not part of release publishing and does not authenticate the scanner, validate
+the full schema, or prove transitive dependency coverage; maintainers must
+verify those separately before using its output.
+
+On an isolated, unprivileged Linux build runner without network access,
+`scripts/agent-sbom-generate.py`
+can scan, enrich and schema-validate a candidate with independently pinned
+scanner and validator executables. It trusts processes with the same user ID;
+it does not enforce network isolation, sign the result or establish transitive
+dependency completeness.
+
 ## Upgrade / rollback
 
 Upgrade (preserves `/opt/tokentimer-agent/state`):

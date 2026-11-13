@@ -34,7 +34,7 @@
         "Enrollment and steady state use different credentials, by design.",
         "POST /agent/register uses agentBootstrapTokenAuth: a single-use, hashed, expiring bootstrap token an admin creates. Registration returns a per-agent credential, shown once.",
         "/agent/heartbeat, /agent/jobs/claim, /agent/jobs/{jobId}/lease, /agent/jobs/{jobId}/logs, /agent/jobs/results use agentCredentialAuth: the issued per-agent credential (bearer). Bootstrap tokens do not authorize steady-state calls.",
-        "All routes CSRF-exempt (token-authenticated, non-cookie). Namespace frozen; request/response bodies for register/heartbeat/claim/result/evidence are specified authoritatively by packages/contracts/certops/agent-protocol.schema.json (message envelope, additionalProperties false). POST /agent/jobs/results accepts both result and evidence messageTypes; the server dispatches on the envelope messageType. POST /agent/jobs/{jobId}/lease is a lean claimId+sequence body that transitions claimed→running and renews the lease/nonce before side effects."
+        "All routes CSRF-exempt (token-authenticated, non-cookie). Namespace frozen; request/response bodies for register/heartbeat/claim/result/evidence are specified authoritatively by packages/contracts/certops/agent-protocol.schema.json (message envelope, additionalProperties false). POST /agent/jobs/results accepts both result and evidence messageTypes; the server dispatches on the envelope messageType. POST /agent/jobs/{jobId}/lease is a lean claimId+sequence body that transitions claimed\u2192running and renews the lease/nonce before side effects."
       ]
     }
   },
@@ -59,7 +59,11 @@
     "/api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/rollouts": "cookieAuth",
     "/api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/rollouts/{rolloutId}/state": "cookieAuth",
     "/api/v1/workspaces/{id}/certops/distribution-jobs/{jobId}/retry": "cookieAuth",
-    "/api/v1/certops/agent/jobs/{jobId}/logs": "agentCredentialAuth"
+    "/api/v1/certops/agent/jobs/{jobId}/logs": "agentCredentialAuth",
+    "/api/v1/certops/agent/credential-rotation/identity": "agentCredentialAuth",
+    "/api/v1/certops/agent/credential-rotation/prepare": "agentCredentialAuth",
+    "/api/v1/certops/agent/credential-rotation/confirm": "agentRotationCandidateAuth",
+    "/api/v1/certops/agent/credential-rotation/acknowledge": "agentCredentialAuth"
   },
   "guarantees": {
     "stableRoutes": [
@@ -281,6 +285,22 @@
       },
       {
         "path": "/api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/recover",
+        "method": "POST"
+      },
+      {
+        "path": "/api/v1/certops/agent/credential-rotation/identity",
+        "method": "POST"
+      },
+      {
+        "path": "/api/v1/certops/agent/credential-rotation/prepare",
+        "method": "POST"
+      },
+      {
+        "path": "/api/v1/certops/agent/credential-rotation/confirm",
+        "method": "POST"
+      },
+      {
+        "path": "/api/v1/certops/agent/credential-rotation/acknowledge",
         "method": "POST"
       }
     ],

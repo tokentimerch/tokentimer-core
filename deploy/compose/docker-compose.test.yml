@@ -141,6 +141,7 @@ services:
       - ../../packages:/app/packages
       - /app/node_modules
       - /app/apps/worker/node_modules
+      - /app/packages/contracts/node_modules
       - ../../.coverage/v8-worker-endpoint:/tmp/v8-coverage
     command: ["node", "src/endpoint-check-worker.js"]
 
@@ -177,6 +178,7 @@ services:
       - ../../packages:/app/packages
       - /app/node_modules
       - /app/apps/worker/node_modules
+      - /app/packages/contracts/node_modules
       - ../../.coverage/v8-worker-sync:/tmp/v8-coverage
     command: ["node", "src/auto-sync-worker.js"]
 
@@ -221,6 +223,7 @@ services:
       - ../../packages:/app/packages
       - /app/node_modules
       - /app/apps/worker/node_modules
+      - /app/packages/contracts/node_modules
       - ../../.coverage/v8-worker-delivery:/tmp/v8-coverage
     command: ["node", "src/delivery-worker.js"]
 

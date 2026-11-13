@@ -8,7 +8,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `prerequisite`: needs the fixture or privilege supplied by its owning CI job
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 157
+Total skips found: 189
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -20,7 +20,30 @@ Total skips found: 157
 | `packages/agent/scripts/installer-smoke.test.js` | 373 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/scripts/pack-release.test.js` | 208 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/scripts/pack-release.test.js` | 217 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `platform` |
-| `packages/agent/src/acme/acme.test.js` | 250 | POSIX hook executes non-executable archive bytes with spaces and quotes in the path | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 130 | restores the original application after a process dies between renames | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 132 | restores the original application and service after activation | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 135 | recovery refuses any quarantined launcher intent and enumeration errors | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 165 | launcher authorization fails closed on missing or unrelated intent | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 204 | launcher authorization rejects an invalid inherited handle before package Node is used | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 248 | launcher intent ACL validation rejects a user-owned marker | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 276 | launcher-associated recovery refuses replay even if its markers disappeared | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 311 | upgrade journal persists the authorized launcher transaction | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 353 | launcher-backed health failure preserves application and backup | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 376 | launcher-backed healthy upgrade retains recovery journal and backup | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 399 | launcher-backed activation failure preserves both staged directories | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 431 | uninstall refuses an existing recovery barrier even without launcher markers | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 465 | uninstall fails closed on journal access error but permits the absent case | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 500 | rejects an oversized recovery record before touching the existing application | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 523 | installer Node helper rejects inherited preloads and restores the caller environment | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 557 | runtime package marker selects bundled Node and rejects incomplete bundles | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 631 | service health requires the expected child to survive a second observation | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 660 | bundled bootstrap rejects ancestor permissions that can alter a reparse point | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 701 | bundled bootstrap rejects a user-owned extraction directory | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 732 | recovery refuses a journal with inherited, unprotected ACL | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 767 | validated bundled runtime stays locked against replacement during bootstrap | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 772 | validated bundled runtime stays locked against replacement during bootstrap | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `packages/agent/src/acme/acme.test.js` | 278 | POSIX hook executes non-executable archive bytes with spaces and quotes in the path | test(..., { skip }) option-object | `platform` |
+| `packages/agent/src/acme/acme.test.js` | 796 | acme.sh wrapper uses the explicit runtime and never falls back to PATH | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/config/config.test.js` | 121 | sets 0700 permissions on non-win32 platforms | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 129 | re-asserts 0700 on every call even if the mode was loosened | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 139 | applies a real restricted ACL on win32 | it(..., { skip }) option-object | `platform` |
@@ -50,7 +73,7 @@ Total skips found: 157
 | `packages/agent/src/discovery/windows.test.js` | 482 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 535 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 623 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/index.test.js` | 4223 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/index.test.js` | 4245 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/issuers/adcs-enrollment-reconcile.test.js` | 420 | skips E_ACCESSDENIED and denied probes so a later unique match can attach | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/issuers/adcs-enrollment.test.js` | 170 | pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `platform` |
@@ -61,6 +84,15 @@ Total skips found: 157
 | `packages/agent/src/material-store/material-store.test.js` | 148 | real Vault ACL separates issuer, consumer, scanner and customer prefixes | test(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/platform/platform.test.js` | 454 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/platform/platform.test.js` | 468 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/protocol/bound-rotation-startup.test.js` | 18 | bound startup refuses a live IPv6 endpoint before opening the credential pipe | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/src/protocol/bound-rotation-startup.test.js` | 23 | bound startup refuses a live IPv6 endpoint before opening the credential pipe | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `packages/agent/src/protocol/bound-rotation-startup.test.js` | 38 | bound startup requires matching protected context, TLS CA and remote workspace | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/src/protocol/credential-pipe.test.js` | 33 | pipe sends a credential only after authenticating the server | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/src/protocol/credential-pipe.test.js` | 60 | a fake server cannot receive a credential without a valid proof | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/src/protocol/credential-pipe.test.js` | 82 | a pipe impersonator after host process death receives no credential | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/src/protocol/credential-pipe.test.js` | 101 | authenticated responses must match the operation, credential hash and phase | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/src/protocol/credential-pipe.test.js` | 132 | socket failure after proof is sanitized and does not escape as an unhandled error | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/src/protocol/credential-pipe.test.js` | 148 | disposing an in-flight session refuses a proof made with the cleared key and sends no credential | dynamic (this.skip() / t.skip()) | `platform` |
 | `packages/agent/src/replay/replay.test.js` | 144 | writes the store file with 0600 permissions on non-win32 | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/trust-store/receipt.test.js` | 559 | reports {corrupt: true} for a symlink at the receipt path, never following it | dynamic (this.skip() / t.skip()) | `platform` |
 | `packages/agent/src/windows-material/pkcs12.test.js` | 14 | Windows CryptoAPI parses encrypted PKCS#12 and proves private-key association without persisting a key | test(..., { skip }) option-object | `platform` |
