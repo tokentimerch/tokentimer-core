@@ -85,7 +85,14 @@ const viewFragments = [
 function OverviewMetric({ name, value, detail }) {
   const { dashboard } = useDashboardTheme();
   return (
-    <Box minW={0}>
+    <Box
+      minW={0}
+      borderWidth='1px'
+      borderColor={dashboard.border.subtle}
+      borderRadius='md'
+      bg={dashboard.bg.panel}
+      p={{ base: 3, md: 4 }}
+    >
       <Text
         color={dashboard.text.muted}
         fontSize='xs'
@@ -767,7 +774,13 @@ function MaintenanceForm({
           rollout request. Publication can finish before activation is allowed.
         </Text>
         {policy.emergency ? (
-          <Alert status='warning'>
+          <Alert
+            status='warning'
+            variant='warning'
+            borderRadius='md'
+            borderWidth='1px'
+            alignItems='flex-start'
+          >
             <AlertIcon />
             An administrator emergency authorization exists. Review its scope in
             audit evidence before replacing this policy.
@@ -1045,7 +1058,13 @@ function Management({
   return (
     <Stack spacing={4}>
       {state.error ? (
-        <Alert status='warning'>
+        <Alert
+          status='warning'
+          variant='warning'
+          borderRadius='md'
+          borderWidth='1px'
+          alignItems='flex-start'
+        >
           <AlertIcon />
           Cached distribution data may be stale. Refresh before making changes.{' '}
           <Button size='sm' ml={2} onClick={state.refresh}>
@@ -1054,25 +1073,49 @@ function Management({
         </Alert>
       ) : null}
       {pauseUnresolved ? (
-        <Alert status='info'>
+        <Alert
+          status='info'
+          variant='info'
+          borderRadius='md'
+          borderWidth='1px'
+          alignItems='flex-start'
+        >
           <AlertIcon />
           Waiting for workspace pause status before allowing distribution
           changes.
         </Alert>
       ) : paused ? (
-        <Alert status='warning'>
+        <Alert
+          status='warning'
+          variant='warning'
+          borderRadius='md'
+          borderWidth='1px'
+          alignItems='flex-start'
+        >
           <AlertIcon />
           Certificate operations are paused for this workspace.
         </Alert>
       ) : null}
       {error ? (
-        <Alert status='error'>
+        <Alert
+          status='error'
+          variant='error'
+          borderRadius='md'
+          borderWidth='1px'
+          alignItems='flex-start'
+        >
           <AlertIcon />
           {error}
         </Alert>
       ) : null}
       {notice ? (
-        <Alert status='info'>
+        <Alert
+          status='info'
+          variant='info'
+          borderRadius='md'
+          borderWidth='1px'
+          alignItems='flex-start'
+        >
           <AlertIcon />
           {notice}
         </Alert>
@@ -1143,11 +1186,7 @@ function Management({
               >
                 {name}
                 {attention ? (
-                  <Badge
-                    ml={2}
-                    colorScheme={name === 'Issues' ? 'orange' : 'purple'}
-                    aria-hidden='true'
-                  >
+                  <Badge ml={2} colorScheme='gray' aria-hidden='true'>
                     {name === 'Issues' ? openIncidents : pendingApprovals}
                   </Badge>
                 ) : null}
@@ -1380,16 +1419,39 @@ function Management({
                     whiteSpace='normal'
                     overflowX={{ base: 'visible', lg: 'auto' }}
                   >
-                    <Table size='sm' display={{ base: 'block', lg: 'table' }}>
+                    <Table
+                      aria-label='Distribution consumers'
+                      size='sm'
+                      display={{ base: 'block', lg: 'table' }}
+                      sx={{
+                        'th, td': {
+                          borderColor: 'dashboard.modal.border',
+                          verticalAlign: 'top',
+                          whiteSpace: 'normal',
+                          overflowWrap: 'anywhere',
+                        },
+                        th: { color: 'dashboard.modal.muted' },
+                      }}
+                    >
                       <Thead
                         display={{ base: 'none', lg: 'table-header-group' }}
                       >
                         <Tr>
-                          <Th>Consumer / agent</Th>
-                          <Th>Status / versions</Th>
-                          <Th>Proof / deployed expiry</Th>
-                          <Th>Policy</Th>
-                          <Th>Actions</Th>
+                          <Th w='20%' px={2}>
+                            Consumer / agent
+                          </Th>
+                          <Th w='19%' px={2}>
+                            Status / versions
+                          </Th>
+                          <Th w='23%' px={2}>
+                            Proof / deployed expiry
+                          </Th>
+                          <Th w='22%' px={2}>
+                            Policy
+                          </Th>
+                          <Th w='16%' px={2}>
+                            Actions
+                          </Th>
                         </Tr>
                       </Thead>
                       <Tbody display={{ base: 'block', lg: 'table-row-group' }}>
@@ -1420,11 +1482,19 @@ function Management({
                               >
                                 Consumer / agent
                               </Text>
-                              {consumer.deployment_profile_ref}
-                              <Text fontSize='xs'>
+                              <Text fontSize='sm' fontWeight='medium'>
+                                {consumer.deployment_profile_ref}
+                              </Text>
+                              <Text
+                                fontSize='xs'
+                                color={dashboard.text.secondary}
+                              >
                                 {consumer.agent_name} · {consumer.agent_status}
                               </Text>
-                              <Text fontSize='xs'>
+                              <Text
+                                fontSize='xs'
+                                color={dashboard.text.secondary}
+                              >
                                 {consumer.binding_state}
                               </Text>
                             </Td>
@@ -1465,7 +1535,7 @@ function Management({
                               </Badge>
                               {consumer.latest_deployment?.jobStatus ===
                               'pending_approval' ? (
-                                <Badge colorScheme='purple' ml={1}>
+                                <Badge colorScheme='gray' ml={1}>
                                   Approval pending
                                 </Badge>
                               ) : null}
@@ -1982,26 +2052,6 @@ function Management({
                     })}
                   </Stack>
                 )}
-                <Box as='details' mt={3}>
-                  <Text
-                    as='summary'
-                    cursor='pointer'
-                    fontSize='sm'
-                    fontWeight='semibold'
-                    color={dashboard.accent.interactiveForeground}
-                  >
-                    Recovery guidance
-                  </Text>
-                  <Text mt={2} fontSize='sm' color={dashboard.text.secondary}>
-                    Inspect the affected job and public evidence. For a rejected
-                    or exhausted uncertain deployment, request read-only
-                    reconciliation from its destination and have another
-                    operator review the inspection in Jobs. Only matching
-                    evidence for the original operation can resolve its
-                    uncertainty. Resume when authorized and obtain fresh
-                    consumer verification.
-                  </Text>
-                </Box>
               </DashboardPanel>
               <DashboardPanel
                 id='distribution-discovery'
@@ -2084,23 +2134,6 @@ function Management({
                     ))}
                   </Stack>
                 )}
-                <Box as='details' mt={3}>
-                  <Text
-                    as='summary'
-                    cursor='pointer'
-                    fontSize='sm'
-                    fontWeight='semibold'
-                    color={dashboard.accent.interactiveForeground}
-                  >
-                    Supported targets
-                  </Text>
-                  <Text mt={2} fontSize='sm' color={dashboard.text.secondary}>
-                    Linux file installation and allowlisted reload are
-                    supported. IIS rebind is implemented and requires a
-                    production-qualified agent. SQL Server, RDP and generic
-                    Windows service restart/refresh remain unsupported.
-                  </Text>
-                </Box>
               </DashboardPanel>
             </Stack>
           </TabPanel>

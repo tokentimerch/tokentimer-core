@@ -151,19 +151,14 @@ describe('Distribution Management',()=>{
     page();await openView('Issues');
     expect(screen.getByText('No service relationships observed')).toBeInTheDocument();
     expect(screen.getByText(/unknown coverage is not healthy coverage/)).toBeInTheDocument();
-    expect(screen.getByText(/IIS rebind is implemented and requires a production-qualified agent/)).toBeInTheDocument();
   });
-  it('keeps recovery and supported-target guidance available in disclosures',async()=>{
+  it('shows actionable incident links without lengthy guidance blocks',async()=>{
     data.incidents=[{id:'incident',code:'consumer_offline',resolved_at:null,opened_at:'2026-01-02T00:00:00Z',updated_at:'2026-01-03T00:00:00Z',evidence:{jobId:'job'}}];
     page();await openView('Issues');
     expect(screen.getByText('consumer offline')).toBeInTheDocument();
     expect(screen.getByRole('link',{name:'View affected job'})).toHaveAttribute('href','/certops/jobs?workspace=workspace&job=job');
-    for(const title of ['Recovery guidance','Supported targets']){
-      const summary=screen.getByText(title),disclosure=summary.closest('details');
-      expect(disclosure).not.toHaveAttribute('open');fireEvent.click(summary);expect(disclosure).toHaveAttribute('open');
-    }
-    expect(screen.getByText(/request read-only reconciliation from its destination/)).toBeVisible();
-    expect(screen.getByText(/production-qualified agent/)).toBeVisible();
+    expect(screen.queryByText('Recovery guidance')).not.toBeInTheDocument();
+    expect(screen.queryByText('Supported targets')).not.toBeInTheDocument();
   });
   it('identifies jobless incidents and preserves historical binding evidence',async()=>{
     data.incidents=[
