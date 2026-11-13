@@ -171,6 +171,25 @@ function composeMigrations(migrations, recorded = []) {
     if (rows.every((row, index) => row.name === names[index] && row.version === versions[index])) priorOrder = names;
   }
   const recognizedPriorMcp = priorOrder !== null;
+  // An earlier preview applied both credential-rotation migrations before
+  // later reservations were integrated. Accept only its complete ledger and
+  // prefixes of the exact append order produced when upgrading it.
+  const previewVersions = [...Array.from({ length: 16 }, (_, i) => 70 + i),
+    92, 93, 94, 95, ...Array.from({ length: 14 }, (_, i) => 98 + i)];
+  const previewPrefix = previewVersions.map((version) => migrations.find((entry) => entry.version === version));
+  const previewComplete = previewPrefix.every(Boolean);
+  const oldRotation = [
+    { version: 112, name: "agent_credential_rotations" },
+    { version: 113, name: "agent_credential_rotation_ack" },
+  ];
+  const legacy = [...previewPrefix.filter(Boolean), ...oldRotation];
+  const legacyNames = new Set(legacy.map((entry) => entry.name));
+  const append = extensions.filter((entry) => !legacyNames.has(entry.name))
+    .map((entry, index) => ({ version: 114 + index, name: entry.name }));
+  const expected = [...legacy, ...append];
+  const recognizedRotationPreview = previewComplete && tail.length >= legacy.length &&
+    tail.length <= expected.length && tail.every((row, index) =>
+      row.version === expected[index].version && row.name === expected[index].name);
   const unknown = rows.find((row) => !byName.has(row.name));
   if (unknown)
     throw new Error(
@@ -199,7 +218,7 @@ function composeMigrations(migrations, recorded = []) {
       !base.every((name, index) =>
         rows.some((row) => row.version === 78 + index && row.name === name),
       ) ||
-      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp && !recognizedRetirementPreview)
+      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp && !recognizedRetirementPreview && !recognizedRotationPreview)
     )
       throw new Error("Unsupported Core migration history: noncanonical gap");
   }

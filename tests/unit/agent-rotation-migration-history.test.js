@@ -54,3 +54,26 @@ test("reviewed rotation preview remains exact and rejects gaps or swapped rows",
   const swapped = history.map(x => x.version === 110 ? { ...x, version: 111 } : x.version === 111 ? { ...x, version: 110 } : x);
   assert.throws(() => composeMigrations(migrations, swapped), /Unsupported Core migration history/);
 });
+
+test("complete credential rotation preview upgrades without rewriting its ledger", () => {
+  const original = migrations.filter(({ version }) => version <= 85 || (version >= 92 && version <= 95) || (version >= 98 && version <= 111))
+    .map(({ version, name }) => ({ version, name }));
+  const history = [...original, { version: 112, name: "agent_credential_rotations" }, { version: 113, name: "agent_credential_rotation_ack" }];
+  const plan = composeMigrations(migrations, history);
+  const applied = plan.map(({ version, name }) => ({ version, name }));
+  assert.deepEqual(applied.filter(({ version }) => version <= 113), history);
+  assert.doesNotThrow(() => validateMigrationHistory(history));
+  assert.doesNotThrow(() => validateMigrationHistory(applied));
+  assert.deepEqual(composeMigrations(migrations, applied), plan);
+  for (let end = history.length; end <= applied.length; end++) {
+    assert.deepEqual(composeMigrations(migrations, applied.slice(0, end)), plan);
+  }
+  const mutations = [
+    history.filter(({ version }) => version !== 105),
+    history.filter(({ version }) => version !== 113),
+    history.map((row) => row.version === 110 ? { ...row, name: "auto_sync_owner_username" } : row),
+    history.map((row) => row.version === 112 ? { ...row, name: "agent_credential_rotation_ack" } : row.version === 113 ? { ...row, name: "agent_credential_rotations" } : row),
+    applied.filter(({ version }) => version !== 114),
+  ];
+  for (const invalid of mutations) assert.throws(() => composeMigrations(migrations, invalid), /Unsupported/);
+});

@@ -23,8 +23,8 @@ async function withDatabase(run) {
     target = new Pool({ ...connection, database });
     const env = { ...process.env, NODE_ENV: "test", DB_HOST: connection.host, DB_PORT: String(connection.port), DB_USER: connection.user, DB_PASSWORD: connection.password, DB_NAME: database, DISABLE_ADMIN_BOOTSTRAP: "true" };
     delete env.DB_SSL; delete env.PGSSLROOTCERT; delete env.DATABASE_URL;
-    function migrate(maxVersion, fails = false, reviewedPreview = false) {
-      const source = `const m=require(${JSON.stringify(entry)}); ${maxVersion ? `for(let i=m.migrations.length-1;i>=0;i--)if(m.migrations[i].version>${maxVersion})m.migrations.splice(i,1);` : ""} ${reviewedPreview ? `const {composeMigrations}=require("./apps/api/migrations/compose-migrations"); const original=m.migrations.filter(x=>x.version<=85||[92,93].includes(x.version)); const names=["operator_connections","operator_enrollment_grants","operator_action_requests"]; const prior=[...original,...names.map((name,i)=>({...m.migrations.find(x=>x.name===name),version:94+i}))]; const legacy=m.migrations.filter(x=>!["certops_retirement_dossiers","certops_material_reconciliation"].includes(x.name)); const preview=composeMigrations(legacy,prior); m.migrations.splice(0,m.migrations.length,...preview);` : ""} m.runMigrations().then(()=>process.exit(0),e=>{console.error(e);process.exit(1)});`;
+    function migrate(maxVersion, fails = false, reviewedPreview = false, rotationPreview = false) {
+      const source = `const m=require(${JSON.stringify(entry)}); ${maxVersion ? `for(let i=m.migrations.length-1;i>=0;i--)if(m.migrations[i].version>${maxVersion})m.migrations.splice(i,1);` : ""} ${reviewedPreview ? `const {composeMigrations}=require("./apps/api/migrations/compose-migrations"); const original=m.migrations.filter(x=>x.version<=85||[92,93].includes(x.version)); const names=["operator_connections","operator_enrollment_grants","operator_action_requests"]; const prior=[...original,...names.map((name,i)=>({...m.migrations.find(x=>x.name===name),version:94+i}))]; const legacy=m.migrations.filter(x=>!["certops_retirement_dossiers","certops_material_reconciliation"].includes(x.name)); const preview=composeMigrations(legacy,prior); m.migrations.splice(0,m.migrations.length,...preview);` : ""} ${rotationPreview ? `const old=m.migrations.filter(x=>x.version<=85||(x.version>=92&&x.version<=95)||(x.version>=98&&x.version<=111)||["agent_credential_rotations","agent_credential_rotation_ack"].includes(x.name)).map(x=>x.name==="agent_credential_rotations"?{...x,version:112}:x.name==="agent_credential_rotation_ack"?{...x,version:113}:x); m.migrations.splice(0,m.migrations.length,...old);` : ""} m.runMigrations().then(()=>process.exit(0),e=>{console.error(e);process.exit(1)});`;
       const result = spawnSync(process.execPath, ["-e", source], { env, encoding: "utf8", timeout: 90000, maxBuffer: 8 * 1024 * 1024 });
       const output = String(result.error || "") + result.stdout + result.stderr;
       assert.equal(result.status, fails ? 1 : 0, output.slice(-6000));
@@ -110,5 +110,35 @@ test("reviewed preview with a missing historical row fails without ledger change
     const before = await ledger(target);
     assert.match(migrate(undefined, true), /Unsupported Core migration history/);
     assert.deepEqual(await ledger(target), before);
+  });
+});
+
+test("complete earlier rotation preview upgrades and replays without rewriting its ledger", { timeout: 120000 }, async () => {
+  await withDatabase(async ({ target, migrate }) => {
+    // Reconstruct the candidate's recorded identities using retained migration SQL.
+    migrate(undefined, false, false, true);
+    const before = await ledger(target);
+    assert.equal(before.length, 105);
+    assert.deepEqual(before.slice(-2).map(({ version, name }) => ({ version, name })), [
+      { version: 112, name: "agent_credential_rotations" },
+      { version: 113, name: "agent_credential_rotation_ack" },
+    ]);
+    migrate();
+    const after = await ledger(target);
+    assert.deepEqual(after.slice(0, before.length), before);
+    assert.deepEqual(after.slice(before.length).map(({ version, name }) => ({ version, name })), [
+      { version: 114, name: "certops_distribution_lifecycle" },
+      { version: 115, name: "certops_distribution_incident_delivery" },
+      { version: 116, name: "certops_stable_consumer_discovery" },
+      { version: 117, name: "certops_material_cleanup" },
+      { version: 118, name: "certops_consumer_verification_failures" },
+      { version: 119, name: "certops_distribution_resolution_delivery" },
+      { version: 120, name: "certops_consumer_staging" },
+      { version: 121, name: "certops_review_authority_epochs" },
+      { version: 122, name: "certops_retirement_dossiers" },
+      { version: 123, name: "certops_material_reconciliation" },
+    ]);
+    migrate();
+    assert.deepEqual(await ledger(target), after);
   });
 });
