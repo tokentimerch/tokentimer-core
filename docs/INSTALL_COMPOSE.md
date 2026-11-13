@@ -52,7 +52,7 @@ Optional but common additions: SMTP sender identity (`SMTP_HOST`, `SMTP_PORT`, `
 
 > **Note**
 >
-> If the API sits behind a reverse proxy or load balancer, set `TRUST_PROXY_HOPS` to the number of proxy hops (the Compose default is 2, covering LB plus reverse proxy; set 0 when nothing is in front).
+> Compose defaults to `TRUST_PROXY_HOPS=0` for direct access. Behind a reverse proxy or load balancer, set the actual trusted hop count, restrict direct API access, and ensure proxies sanitize forwarding headers.
 
 <a id="compose-start"></a>
 

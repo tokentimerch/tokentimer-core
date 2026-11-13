@@ -1,6 +1,8 @@
 "use strict";
 
 const express = require("express");
+const { createCertOpsMachineIpRateLimit } = require("./machine-ip-rate-limit");
+const { CERTOPS_EXECUTOR_PRE_AUTH_LIMITER_APPLIED, hasCertOpsExecutorPreAuthLimit, markCertOpsExecutorPreAuthLimit } = require("./machine-boundary-marker");
 const {
   createCertOpsMachineTokenPreAuthRateLimit,
 } = require("./machine-token-rate-limit");
@@ -36,9 +38,6 @@ const CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
 const CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE =
   "CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE";
 const CERTOPS_EXECUTOR_EVENT_INVALID = "CERTOPS_EXECUTOR_EVENT_INVALID";
-const CERTOPS_EXECUTOR_PRE_AUTH_LIMITER_APPLIED = Symbol(
-  "certopsExecutorPreAuthLimiterApplied",
-);
 
 function normalizedRequestPath(requestPath) {
   if (typeof requestPath !== "string") return "";
@@ -127,18 +126,6 @@ function isExactCertOpsMachineWritePost(req, options = {}) {
   );
 }
 
-function hasCertOpsExecutorPreAuthLimit(req) {
-  return Boolean(req?.[CERTOPS_EXECUTOR_PRE_AUTH_LIMITER_APPLIED]);
-}
-
-function markCertOpsExecutorPreAuthLimit(req) {
-  Object.defineProperty(req, CERTOPS_EXECUTOR_PRE_AUTH_LIMITER_APPLIED, {
-    configurable: false,
-    enumerable: false,
-    value: true,
-  });
-}
-
 function createCertOpsMachineWriteJsonParser(options = {}) {
   return express.json({
     limit:
@@ -182,6 +169,7 @@ function isAgentJobLogPost(req) {
 }
 
 function createCertOpsMachineWritePreParserBoundary(options = {}) {
+  const ipRateLimitMiddleware = options.ipRateLimitMiddleware || createCertOpsMachineIpRateLimit();
   const preAuthRateLimitMiddleware =
     options.preAuthRateLimitMiddleware ||
     createCertOpsMachineTokenPreAuthRateLimit(options.rateLimitOptions || {});
@@ -198,12 +186,15 @@ function createCertOpsMachineWritePreParserBoundary(options = {}) {
   return function certOpsMachineWritePreParserBoundary(req, res, next) {
     if (!isExactCertOpsMachineWritePost(req)) return next();
     const selectedParser = isAgentJobLogPost(req) ? logParser : parser;
-    return preAuthRateLimitMiddleware(req, res, (rateLimitError) => {
-      if (rateLimitError) return next(rateLimitError);
-      markCertOpsExecutorPreAuthLimit(req);
-      return selectedParser(req, res, (parserError) => {
-        if (parserError) return errorHandler(parserError, req, res, next);
-        return next();
+    return ipRateLimitMiddleware(req, res, (ipError) => {
+      if (ipError) return next(ipError);
+      return preAuthRateLimitMiddleware(req, res, (rateLimitError) => {
+        if (rateLimitError) return next(rateLimitError);
+        markCertOpsExecutorPreAuthLimit(req);
+        return selectedParser(req, res, (parserError) => {
+          if (parserError) return errorHandler(parserError, req, res, next);
+          return next();
+        });
       });
     });
   };

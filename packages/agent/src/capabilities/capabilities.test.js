@@ -34,6 +34,9 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
         "material-store-openbao-kv2-v1",
         "material-store-azure-key-vault-v1",
         "windows-material-iis-v1",
+        "material-cleanup-vault-kv2-v1",
+        "material-cleanup-openbao-kv2-v1",
+        "material-consumer-staging-v1",
       ],
     );
   });
@@ -59,6 +62,9 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
     assert.equal(manifest.qualified.includes("windows-store-only-adcs-v1"), false);
     assert.equal(manifest.qualified.includes("windows-store-only-acme-v1"), false);
     assert.equal(manifest.qualified.includes("adcs-store-proof-only-v1"), false);
+    assert.equal(manifest.qualified.includes("material-cleanup-vault-kv2-v1"),false);
+    assert.equal(manifest.qualified.includes("material-cleanup-openbao-kv2-v1"),false);
+    assert.equal(manifest.qualified.includes("material-consumer-staging-v1"),false);
   });
 
   it("advertises all three real-host-verified gated capabilities plus any ungated candidate", () => {
@@ -189,6 +195,7 @@ describe("qualified-capabilities loader startup rejection (defense in depth agai
     _resetQualifiedCapabilitiesCacheForTests();
     const manifest = loadQualifiedCapabilitiesManifest();
     assert.deepEqual([...manifest.qualified].sort(), [...require("./qualified-capabilities.json").qualified].sort());
+    assert.equal(manifest.qualified.includes("material-cleanup-vault-kv2-v1"),false);
   });
 });
 

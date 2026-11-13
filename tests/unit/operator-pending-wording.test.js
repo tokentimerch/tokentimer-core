@@ -26,6 +26,14 @@ describe("operator pending-reason wording", () => {
     }
   });
 
+  it("distinguishes incomplete reconciliation scope from unsupported agent actions", () => {
+    const scope = read.pendingWording("material_reconciliation_scope_missing");
+    const unsupported = read.pendingWording("operation_unsupported");
+    assert.match(scope, /missing the original deployment details/);
+    assert.match(unsupported, /does not support/);
+    assert.notEqual(scope, unsupported);
+  });
+
   it("answers an unknown or hostile code with the generic line, never with the code or upstream text", () => {
     const generic = read.pendingWording("not_a_real_code");
     for (const code of ["__proto__", "constructor", "toString", "hasOwnProperty", INJECTED, "", null, undefined, 7]) {

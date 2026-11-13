@@ -160,7 +160,9 @@ it('refreshes a terminal job and its output after retrying the same job ID', asy
   fireEvent.click(
     screen.getByRole('button', { name: 'Retry deployment to Web server' })
   );
-  await screen.findByText('Deployment: Certificate and TLS trust validated');
+  await screen.findByText('Certificate and TLS trust validated', {
+    exact: false,
+  });
   expect(
     (await screen.findAllByText(/New attempt output/)).length
   ).toBeGreaterThan(0);

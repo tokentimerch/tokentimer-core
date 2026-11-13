@@ -62,16 +62,21 @@ test("upgrades a real main database with migrations through 110 and repeats safe
       [109, "certops_period_creator_delete"],
       [110, "recipient_member_verification"],
       [111, "auto_sync_owner_username"],
-      [112, "certops_observed_revocation"],
-      [113, "store_issuance_explicit_renewal_consent"],
-      [114, "certops_acme_store_enrollment_identity"],
-      [115, "certops_adcs_expected_identity_receipts"],
-      [116, "certops_windows_iis_consent"],
+      [112, "certops_retirement_dossiers"],
+      [113, "certops_material_reconciliation"],
+      [114, "certops_observed_revocation"],
+      [115, "store_issuance_explicit_renewal_consent"],
+      [116, "certops_acme_store_enrollment_identity"],
+      [117, "certops_adcs_expected_identity_receipts"],
+      [118, "certops_windows_iis_consent"],
+      [119, "certops_material_adcs_operation_union"],
     ]);
     const preserved = await client.query("SELECT version,name,executed_at FROM migrations WHERE version=98");
     assert.deepEqual(preserved.rows[0], before.rows[0]);
     const objects = await client.query("SELECT to_regclass('certops_acme_store_enrollments') AS acme, to_regclass('certops_adcs_expected_identity_receipts') AS adcs, to_regprocedure('certops_sync_open_management_automation()') AS sync");
     assert.ok(objects.rows[0].acme && objects.rows[0].adcs && objects.rows[0].sync);
+    const constraint = await client.query("SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid='certificate_jobs'::regclass AND conname='certificate_jobs_operation_check'");
+    for (const operation of ["cleanup-from-store", "reconcile-from-store", "adcs-installation-proof"]) assert.match(constraint.rows[0].definition, new RegExp(operation));
     migrate();
     const afterSecond = await client.query("SELECT version,name,executed_at FROM migrations WHERE version >= 109 ORDER BY version");
     assert.deepEqual(afterSecond.rows, afterFirst.rows);

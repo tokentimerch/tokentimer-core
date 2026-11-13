@@ -45,6 +45,7 @@ const JOB_OPERATION_LABELS = {
   'continue-enrollment': 'Continue enrollment',
   'adcs-preflight': 'AD CS preflight',
   'adcs-installation-proof': 'Verify AD CS installation',
+  'reconcile-from-store': 'Read-only deployment reconciliation',
 };
 
 const EVENT_TYPE_LABELS = {

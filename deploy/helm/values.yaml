@@ -95,6 +95,7 @@ api:
   # or shadow. Set the same value on the worker. See docs/recipient-verification.md.
   # Set advanced invitation/test limits here using their documented environment
   # names; weekly-digest retry tuning belongs in worker.env.
+  # Set CERTOPS_MACHINE_IP_* limits here when sizing a fleet behind a NAT.
   env: {}
   # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
   # (e.g. '{{ .Release.Name }}-overlay-env').
@@ -544,8 +545,8 @@ config:
   # generation and rate-limit keys).
   #   0 = no proxy in front of the API
   #   1 = single ingress / reverse proxy
-  #   2 = LB -> ingress (default, matches typical K8s ingress + Service LB)
-  trustProxyHops: 2
+  #   2 = LB -> ingress, when both proxies are trusted and direct access is restricted
+  trustProxyHops: 0
 
   # Fallback when workspace has no custom thresholds (workspace DB > env > code).
   alertThresholds: "30,14,7,1,0"
@@ -554,6 +555,12 @@ config:
   # false to disable the /certops API surface and worker monitor bridge.
   # Precedence: this value > System Settings DB > code default (disabled).
   certopsEnabled: true
+  # Cleanup also requires qualified agents and group/local opt-in.
+  certopsMaterialCleanupEnabled: false
+  certopsDistributionSchedulerEnabled: true
+  certopsDistributionSchedulerTimeoutMs: 120000
+  certopsDistributionMonitoringEnabled: true
+  certopsDistributionMonitoringTimeoutMs: 120000
   # Days of agent output console lines to keep. Empty = code default (30).
   # 0 stores no lines and the next certops sweep deletes stored ones.
   certopsAgentLogRetentionDays: ""
@@ -624,6 +631,7 @@ twilio:
   alertContentSidExpired: ""
   alertContentSidEndpointDown: ""
   alertContentSidEndpointRecovered: ""
+  alertContentSidDistribution: ""
   weeklyDigestContentSid: ""
   # Inbound StatusCallback limiter. Empty keeps code defaults (60s / 1200 in production).
   webhookRateLimitWindowMs: ""

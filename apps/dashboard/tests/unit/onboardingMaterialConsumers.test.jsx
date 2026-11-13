@@ -129,6 +129,29 @@ describe('Connect and validate consumers', () => {
     expect(verificationButton()).toBeDisabled();
     expect(requestRollout).not.toHaveBeenCalled();
   });
+  it('shows missing capabilities only for the selected consumer', async () => {
+    const ctx = materialContext('openbao-kv2');
+    ctx.summary.certops.agents.items.push({
+      ...ctx.summary.certops.agents.items[1],
+      id: 'outdated-consumer',
+      wireAgentId: 'outdated-wire',
+      name: 'Outdated consumer',
+      declaredCapabilities: [],
+    });
+    show(ctx);
+    expect(
+      screen.queryByText(/Outdated consumer: requirements not met/)
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('First consumer'), {
+      target: { value: 'outdated-consumer' },
+    });
+    expect(
+      await screen.findByText('Outdated consumer: requirements not met')
+    ).toBeVisible();
+    expect(
+      screen.getByText('Missing capability: material-store-openbao-kv2-v1')
+    ).toBeVisible();
+  });
   it('persists the exact consumer intent before authorization can take effect', async () => {
     const ctx = materialContext();
     let finish;
@@ -471,6 +494,8 @@ describe('Connect and validate consumers', () => {
       consumers: [
         {
           binding_id: 'existing-iis',
+          binding_state: 'active',
+          assigned_agent_id: CONSUMER,
           agent_platform: 'win32',
           agent_name: 'IIS fixture',
           profile_revision: 1,
@@ -546,9 +571,11 @@ describe('Connect and validate consumers', () => {
         'I applied the exact authorized binding configuration and enabled real execution on the consumer'
       )
     );
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Request real IIS deployment' })
-    );
+    const deploy = screen.getByRole('button', {
+      name: 'Request real IIS deployment',
+    });
+    await waitFor(() => expect(deploy).toBeEnabled());
+    fireEvent.click(deploy);
     await waitFor(() => expect(requestRollout).toHaveBeenCalledTimes(1));
     expect(requestRollout.mock.calls[0][2]).toMatchObject({
       materialVersionId: VERSION,

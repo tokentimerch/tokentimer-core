@@ -644,9 +644,50 @@
         },
         "provider": {
           "$ref": "#/definitions/materialDistribution_provider"
+        },
+        "activationPolicy": {
+          "$ref": "#/definitions/materialDistribution_activationPolicy"
+        },
+        "preparationOnly": {
+          "const": true,
+          "description": "Signed customer-local preparation only; cannot install, activate or advance convergence. Requires independent staging policy and capability."
         }
       },
       "allOf": [
+        {
+          "if": {
+            "required": [
+              "preparationOnly"
+            ]
+          },
+          "then": {
+            "required": [
+              "activationPolicy"
+            ],
+            "properties": {
+              "activationPolicy": {
+                "required": [
+                  "independentStaging"
+                ],
+                "properties": {
+                  "independentStaging": {
+                    "const": true
+                  }
+                }
+              }
+            },
+            "not": {
+              "required": [
+                "verificationOnly"
+              ],
+              "properties": {
+                "verificationOnly": {
+                  "const": true
+                }
+              }
+            }
+          }
+        },
         {
           "if": {
             "required": [
@@ -770,6 +811,10 @@
         "observedAt"
       ],
       "properties": {
+        "staged": {
+          "type": "boolean",
+          "description": "Protected customer-local material is prepared; this is not installed, served or trusted proof."
+        },
         "schemaVersion": {
           "const": 1
         },
@@ -918,6 +963,418 @@
           "pattern": "^[a-f0-9]{32}$"
         }
       ]
+    },
+    "materialDistribution_activationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "disruptive",
+        "requiresApproval",
+        "timezone",
+        "windows",
+        "blackouts",
+        "validUntil",
+        "emergency"
+      ],
+      "properties": {
+        "independentStaging": {
+          "type": "boolean",
+          "description": "Explicitly authorize preparation outside the service activation window on a qualified connector."
+        },
+        "method": {
+          "enum": [
+            "none",
+            "reload",
+            "rebind",
+            "no-restart-refresh",
+            "controlled-restart",
+            "manual"
+          ]
+        },
+        "disruptive": {
+          "type": "boolean"
+        },
+        "requiresApproval": {
+          "type": "boolean"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "windows": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "days",
+              "start",
+              "end"
+            ],
+            "properties": {
+              "days": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 7,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 6
+                }
+              },
+              "start": {
+                "type": "string",
+                "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+              },
+              "end": {
+                "type": "string",
+                "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+              }
+            }
+          }
+        },
+        "blackouts": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "start",
+              "end"
+            ],
+            "properties": {
+              "start": {
+                "type": "string",
+                "format": "date-time",
+                "maxLength": 40
+              },
+              "end": {
+                "type": "string",
+                "format": "date-time",
+                "maxLength": 40
+              }
+            }
+          }
+        },
+        "validUntil": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "format": "date-time",
+              "maxLength": 40
+            }
+          ]
+        },
+        "emergency": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "start",
+                "end",
+                "reference"
+              ],
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 40
+                },
+                "end": {
+                  "type": "string",
+                  "format": "date-time",
+                  "maxLength": 40
+                },
+                "reference": {
+                  "$ref": "#/definitions/materialDistribution_alias"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "materialDistribution_materialCleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cleanupId",
+        "groupId",
+        "managementPeriodId",
+        "materialVersionId",
+        "materialStoreRef",
+        "profileRevision",
+        "providerVersion",
+        "policyRevision",
+        "scopeHash",
+        "retentionPolicy",
+        "expiresAt"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "type"
+          ],
+          "not": {
+            "required": [
+              "operation"
+            ]
+          }
+        },
+        {
+          "required": [
+            "operation",
+            "provider"
+          ],
+          "not": {
+            "required": [
+              "type"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2-soft-delete"
+        },
+        "operation": {
+          "const": "soft-delete"
+        },
+        "provider": {
+          "enum": [
+            "vault-kv2",
+            "openbao-kv2"
+          ]
+        },
+        "cleanupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "policyRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "scopeHash": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "retentionPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "minimumSeconds",
+            "minimumVersions",
+            "rollbackSeconds",
+            "cleanupEnabled",
+            "reportOnly",
+            "requiresApproval"
+          ],
+          "properties": {
+            "minimumSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 315360000
+            },
+            "minimumVersions": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 1000
+            },
+            "rollbackSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 31536000
+            },
+            "cleanupEnabled": {
+              "const": true
+            },
+            "reportOnly": {
+              "const": false
+            },
+            "requiresApproval": {
+              "const": true
+            }
+          }
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_cleanupReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "cleanupId",
+        "groupId",
+        "materialVersionId",
+        "providerVersion",
+        "method",
+        "softDeleted",
+        "observedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "cleanupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "method": {
+          "enum": [
+            "vault-kv2-soft-delete",
+            "openbao-kv2-soft-delete"
+          ]
+        },
+        "softDeleted": {
+          "const": true
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_cleanupRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "materialVersionId",
+        "expectedRevision"
+      ],
+      "properties": {
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "expectedRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "reauthorize": {
+          "type": "boolean"
+        }
+      }
+    },
+    "materialDistribution_materialReconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "originalJobId",
+        "assignedAgentId",
+        "workspaceAuthorizationRevision",
+        "intent"
+      ],
+      "properties": {
+        "originalJobId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "assignedAgentId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "workspaceAuthorizationRevision": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "intent": {
+          "$ref": "#/definitions/materialDistribution_materialDeployment"
+        }
+      }
+    },
+    "materialDistribution_reconciliationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "originalJobId",
+        "groupId",
+        "bindingId",
+        "materialVersionId",
+        "generation",
+        "fingerprintSha256",
+        "observedAt",
+        "proofKind"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "originalJobId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "generation": {
+          "$ref": "#/definitions/materialDistribution_generation"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "proofKind": {
+          "enum": [
+            "staged",
+            "deployed"
+          ]
+        }
+      }
     }
   },
   "allOf": [

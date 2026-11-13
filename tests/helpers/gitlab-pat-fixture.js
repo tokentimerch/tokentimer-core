@@ -8,13 +8,13 @@ const pat = (id, userId = 17) => ({
 });
 
 async function gitlabPatFixture(t) {
-  const fixture = { pats: [], calls: [], respond: null };
+  const fixture = { pats: [], calls: [], respond: null, isAdmin: false };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://localhost");
     fixture.calls.push(url);
     res.setHeader("Content-Type", "application/json");
     if (url.pathname === "/api/v4/user") {
-      res.end(JSON.stringify({ id: 17, username: "pat-owner", is_admin: false }));
+      res.end(JSON.stringify({ id: 17, username: "pat-owner", is_admin: fixture.isAdmin }));
       return;
     }
     if (url.pathname !== "/api/v4/personal_access_tokens") {

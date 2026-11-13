@@ -28,8 +28,11 @@ import {
   subjectTypeLabel,
   truncateId,
 } from './certopsJobsFormat';
+import JobApprovalScope, {
+  cleanupScopeAvailable,
+} from './JobApprovalScope.jsx';
 import AssistantApprovalReview from './AssistantApprovalReview.jsx';
-import { getApprovalReview } from './certopsJobsApi.js';
+import { getJob, getApprovalReview } from './certopsJobsApi.js';
 
 /**
  * Confirm dialog for approving or rejecting a job at `pending_approval`.
@@ -62,6 +65,36 @@ export default function ApprovalDecisionModal({
   const [reload, setReload] = useState(0);
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const jobId = job?.id;
+  const scopeKey = `${workspaceId}:${jobId}`;
+  const [scopeState, setScopeState] = useState(null);
+
+  useEffect(() => {
+    if (!isOpen || !workspaceId || !jobId) {
+      setScopeState(null);
+      return undefined;
+    }
+    const controller = new AbortController();
+    let cancelled = false;
+    setScopeState({ key: scopeKey, loading: true });
+    // The Jobs list deliberately omits payloads. Always fetch the immutable
+    // detail for this decision instead of approving its abbreviated summary.
+    getJob(workspaceId, jobId, { signal: controller.signal })
+      .then(data => {
+        const detail = data?.job || data;
+        if (detail?.id !== jobId || detail?.workspaceId !== workspaceId) {
+          throw new Error('Approval scope identity mismatch');
+        }
+        if (!cancelled) setScopeState({ key: scopeKey, job: detail });
+      })
+      .catch(() => {
+        if (!cancelled) setScopeState({ key: scopeKey, error: true });
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [isOpen, workspaceId, jobId, scopeKey]);
   const [reviewState, setReviewState] = useState(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -107,9 +140,15 @@ export default function ApprovalDecisionModal({
       setReason('');
       setSubmitting(false);
     }
-  }, [isOpen, reviewKey]);
+  }, [isOpen, jobId, workspaceId, reviewKey]);
 
   const approving = decision === 'approve';
+  const currentScope = scopeState?.key === scopeKey ? scopeState : null;
+  const scopeJob = currentScope?.job;
+  const loadingScope = !currentScope || currentScope.loading;
+  const jobNotPending = scopeJob && scopeJob.status !== 'pending_approval';
+  const scopeUnavailable =
+    approving && (!scopeJob || !cleanupScopeAvailable(scopeJob));
   const currentState = reviewState?.key === reviewKey ? reviewState : null;
   const review = currentState?.review;
   const reviewValid =
@@ -129,7 +168,13 @@ export default function ApprovalDecisionModal({
   };
 
   const handleConfirm = async () => {
-    if (submitting || (approving && approvalBlocked)) return;
+    if (
+      submitting ||
+      scopeUnavailable ||
+      jobNotPending ||
+      (approving && approvalBlocked)
+    )
+      return;
     setSubmitting(true);
     try {
       const accepted = await onDecide(
@@ -156,7 +201,7 @@ export default function ApprovalDecisionModal({
       <ModalOverlay {...overlayProps} />
       <DashboardModalFrame
         type={approving ? 'standard' : 'danger'}
-        maxW={{ base: 'calc(100vw - 24px)', md: assistant ? '880px' : '520px' }}
+        maxW={{ base: 'calc(100vw - 24px)', md: assistant ? '880px' : '680px' }}
         maxH='calc(100vh - 48px)'
       >
         <ModalHeader {...headerProps}>
@@ -249,6 +294,21 @@ export default function ApprovalDecisionModal({
                   : ''}
               </Text>
             ) : null}
+            {loadingScope ? (
+              <Text fontSize='sm'>Loading approval scope...</Text>
+            ) : currentScope.error ? (
+              <Text role='alert' fontSize='sm'>
+                Could not load exact approval scope. Close and reopen the dialog
+                to retry.
+              </Text>
+            ) : (
+              <JobApprovalScope job={scopeJob} />
+            )}
+            {jobNotPending ? (
+              <Text role='alert' fontSize='sm'>
+                This job is no longer pending approval. Refresh Jobs.
+              </Text>
+            ) : null}
             <FormControl>
               <FormLabel {...labelProps} htmlFor={reasonId}>
                 Reason (optional)
@@ -283,7 +343,11 @@ export default function ApprovalDecisionModal({
             {...(approving ? primaryButtonProps : dangerButtonProps)}
             onClick={handleConfirm}
             isLoading={submitting}
-            isDisabled={approving && approvalBlocked}
+            isDisabled={
+              scopeUnavailable ||
+              jobNotPending ||
+              (approving && approvalBlocked)
+            }
             loadingText={approving ? 'Approving' : 'Rejecting'}
           >
             {approving ? 'Approve' : 'Reject'}

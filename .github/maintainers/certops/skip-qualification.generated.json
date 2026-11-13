@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "description": "Static skip ownership and candidate execution environments. Classification is a review aid, never execution evidence. No entry claims qualified execution.",
   "environments": {
+    "core-material-reconciliation": {
+      "capabilities": [
+        "linux",
+        "postgres",
+        "core-api",
+        "agent"
+      ],
+      "owner": "Original deployment reconciliation",
+      "workflow": ".github/workflows/ci.yml",
+      "status": "candidate-environment-not-qualified"
+    },
     "windows-material-iis": {
       "capabilities": [
         "windows-server",
@@ -653,7 +664,7 @@
     {
       "id": "f95b49bb19f40cd2479e",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 479,
+      "line": 482,
       "name": "unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -662,7 +673,7 @@
     {
       "id": "37eb38150afcae9c2681",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 532,
+      "line": 535,
       "name": "reports an http.sys binding with no matching IIS site as http_sys, not iis_binding",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -671,7 +682,7 @@
     {
       "id": "896b620b80b9c787229a",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 620,
+      "line": 623,
       "name": "reports real subjectAltNames end-to-end from the certificate's raw bytes",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -680,7 +691,7 @@
     {
       "id": "b45f65881e8f3ba572b1",
       "file": "packages/agent/src/index.test.js",
-      "line": 4310,
+      "line": 4318,
       "name": "refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -745,7 +756,7 @@
     {
       "id": "0b022e58e2d61f2eee08",
       "file": "packages/agent/src/material-store/material-store.test.js",
-      "line": 95,
+      "line": 105,
       "name": "real isolated Vault KV v2: pinned publication and idempotent CAS",
       "kind": "test(..., { skip }) option-object",
       "environment": "distribution-vault-adapter",
@@ -755,7 +766,7 @@
     {
       "id": "501fb9619042e3d53d38",
       "file": "packages/agent/src/material-store/material-store.test.js",
-      "line": 137,
+      "line": 148,
       "name": "real Vault ACL separates issuer, consumer, scanner and customer prefixes",
       "kind": "test(..., { skip }) option-object",
       "environment": "distribution-vault-adapter",
@@ -1329,7 +1340,7 @@
     {
       "id": "6bd9e1c9d0000f95ba08",
       "file": "tests/e2e/certops-native-agent-e2e.test.js",
-      "line": 81,
+      "line": 82,
       "name": "real native agent signed gates durable outbox restart and observe-only behavior",
       "environment": "native-agent-stack",
       "workflow": ".github/workflows/certops-native-agent-qualification.yml",
@@ -1812,6 +1823,16 @@
       "name": "serializes real PostgreSQL pause and manual-job races in both commit orders",
       "environment": "core-postgres-integration",
       "workflowJob": "build_and_test"
+    },
+    {
+      "id": "22201f4e045161486b0e",
+      "file": "tests/postgres/material-reconciliation.test.js",
+      "line": 694,
+      "name": "real login approval and Linux agent inspect installed legacy evidence through lost-ack recovery",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "core-material-reconciliation",
+      "workflowJob": "vault_cleanup_regression"
     }
   ],
   "siteDefaults": {

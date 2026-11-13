@@ -7,6 +7,16 @@ server. Ordinary, multi-domain (SAN), and wildcard certificates use the same
 workflow. Sharing a private key increases the impact of a compromised server;
 use separate certificates when sharing is unnecessary.
 
+For explicit OpenBao compatibility, Azure Key Vault Secrets and Windows/IIS
+shared import, see [distribution extensions](distribution-extensions.md) and
+their [qualification status](distribution-extensions-qualification.md).
+
+For ongoing administration after first setup, use **Certificate Management →
+Distribution** or **Manage distribution** from Deployments. See the [lifecycle
+workflow](distribution-lifecycle.md).
+Publishing after renewal remains manual unless a configured policy authorizes
+an approval request or bounded automatic rollout.
+
 TokenTimer records version IDs, certificate fingerprints, job status and
 verification results. Private keys and Vault/DNS credentials stay on your
 infrastructure.

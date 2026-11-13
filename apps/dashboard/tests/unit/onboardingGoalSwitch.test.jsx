@@ -207,6 +207,34 @@ describe('goal picker', () => {
     };
   };
 
+  it('preselects the distribution journey without changing saved progress until Continue', async () => {
+    const { ctx, captured } = makeCtx('certops_adcs', adcsSaved);
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <MemoryRouter
+            initialEntries={['/onboarding?area=certops&goal=certops_vault']}
+          >
+            <GoalStep ctx={ctx} />
+          </MemoryRouter>
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    expect(
+      screen.getByRole('radio', {
+        name: /Share one certificate across servers/,
+      })
+    ).toBeChecked();
+    expect(ctx.controller.update).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() =>
+      expect(captured.patch?.intent.goal).toBe('certops_vault')
+    );
+    expect(captured.patch.progress.certops.byObjective.adcs).toMatchObject(
+      adcsSaved
+    );
+  });
+
   it('parks the previous objective config when a new certificate goal is picked', async () => {
     const { ctx, captured } = makeCtx('certops_adcs', adcsSaved);
     wrap(<GoalStep ctx={ctx} />);

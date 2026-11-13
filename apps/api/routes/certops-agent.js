@@ -426,6 +426,19 @@ function handleAgentRouteError(res, error) {
         error: "Result status is invalid",
         code: CERTOPS_AGENT_RESULT_STATUS_INVALID,
       });
+    case "CERTOPS_MATERIAL_CONTRACT_INVALID":
+    case "CERTOPS_MATERIAL_RECEIPT_REQUIRED":
+    case "CERTOPS_MATERIAL_RECEIPT_UNEXPECTED":
+      return res.status(422).json({
+        error: "Material result receipt is invalid",
+        code: error.code,
+      });
+    case "CERTOPS_MATERIAL_CLEANUP_RECEIPT_MISMATCH":
+    case "CERTOPS_MATERIAL_CLEANUP_CLAIM_EXPIRED":
+      return res.status(409).json({
+        error: "Cleanup receipt does not match the authorized claim",
+        code: error.code,
+      });
     case CERTOPS_AGENT_OBSERVATION_INVALID:
     case CERTOPS_AGENT_EVIDENCE_ID_REQUIRED:
       return res.status(400).json({

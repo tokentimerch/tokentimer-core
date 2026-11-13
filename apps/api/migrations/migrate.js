@@ -4861,6 +4861,26 @@ const migrations = [
     sql: fs.readFileSync(require("path").join(__dirname, "082-auto-sync-system-metrics.sql"), "utf8"),
   },
   {
+    version: 86,
+    name: "certops_distribution_lifecycle",
+    sql: fs.readFileSync(require("path").join(__dirname, "081-certops-distribution-lifecycle.sql"), "utf8"),
+  },
+  {
+    version: 87,
+    name: "certops_distribution_incident_delivery",
+    sql: fs.readFileSync(require("path").join(__dirname,"082-certops-distribution-incident-delivery.sql"),"utf8"),
+  },
+  {
+    version: 88,
+    name:"certops_stable_consumer_discovery",
+    sql:fs.readFileSync(require("path").join(__dirname,"083-certops-stable-consumer-discovery.sql"),"utf8"),
+  },
+  {version: 89,name:"certops_material_cleanup",sql:fs.readFileSync(require("path").join(__dirname,"084-certops-material-cleanup.sql"),"utf8")},
+  {version: 90,name:"certops_consumer_verification_failures",sql:fs.readFileSync(require("path").join(__dirname,"085-certops-consumer-verification-failures.sql"),"utf8")},
+  // Schema compatibility only: related PR runtime features remain independently
+  // reviewed and gated. Applied previews keep their original version and name.
+  {version: 91,name:"certops_distribution_resolution_delivery",sql:fs.readFileSync(require("path").join(__dirname,"091-certops-distribution-resolution-delivery.sql"),"utf8")},
+  {
     // Companion migration plans extend through 91; leave unapplied slots unregistered.
     version: 92,
     name: "pagerduty_incident_lifecycle",
@@ -4880,6 +4900,16 @@ const migrations = [
     version: 95,
     name: "remove_pagerduty_rest_lookup",
     sql: fs.readFileSync(require("path").join(__dirname, "095-remove-pagerduty-rest-lookup.sql"), "utf8"),
+  },
+  {
+    version: 96,
+    name: "certops_consumer_staging",
+    sql: fs.readFileSync(require("path").join(__dirname, "096-certops-consumer-staging.sql"), "utf8"),
+  },
+  {
+    version: 97,
+    name: "certops_review_authority_epochs",
+    sql: fs.readFileSync(require("path").join(__dirname, "097-certops-review-authority-epochs.sql"), "utf8"),
   },
   {
     version: 98,
@@ -4948,11 +4978,16 @@ const migrations = [
   },
   {
     version: 112,
+    name: "certops_retirement_dossiers",
+    sql: fs.readFileSync(require("path").join(__dirname, "109-certops-retirement-dossiers.sql"), "utf8"),
+  },
+  {
+    version: 114,
     name: "certops_observed_revocation",
     sql: fs.readFileSync(require("path").join(__dirname, "112-certops-observed-revocation.sql"), "utf8"),
   },
   {
-    version: 116,
+    version: 118,
     name: "certops_windows_iis_consent",
     sql: fs.readFileSync(require("path").join(__dirname, "116-certops-windows-iis-consent.sql"), "utf8"),
   },
@@ -4970,6 +5005,12 @@ migrations.push({
   version: 111,
   name: "auto_sync_owner_username",
   sql: fs.readFileSync(require("path").join(__dirname, "111-auto-sync-owner-username.sql"), "utf8"),
+});
+
+migrations.push({
+  version: 113,
+  name: "certops_material_reconciliation",
+  sql: fs.readFileSync(require("path").join(__dirname, "113-certops-material-reconciliation.sql"), "utf8"),
 });
 
 const { composeMigrations } = require("./compose-migrations");
@@ -5298,7 +5339,7 @@ migrations.push({
 });
 
 migrations.push({
-  version: 113,
+  version: 115,
   name: "store_issuance_explicit_renewal_consent",
   sql: `
     CREATE OR REPLACE FUNCTION certops_sync_open_management_automation()
@@ -5320,7 +5361,7 @@ migrations.push({
 });
 
 migrations.push({
-  version: 114,
+  version: 116,
   name: "certops_acme_store_enrollment_identity",
   sql: `
     CREATE TABLE IF NOT EXISTS certops_acme_store_enrollments (
@@ -5362,9 +5403,15 @@ migrations.push({
 });
 
 migrations.push({
-  version: 115,
+  version: 117,
   name: "certops_adcs_expected_identity_receipts",
   sql: fs.readFileSync(require("path").join(__dirname, "115-certops-adcs-expected-identity.sql"), "utf8"),
+});
+
+migrations.push({
+  version: 119,
+  name: "certops_material_adcs_operation_union",
+  sql: fs.readFileSync(require("path").join(__dirname, "119-certops-material-adcs-operation-union.sql"), "utf8"),
 });
 
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.

@@ -40,11 +40,14 @@ are reservations, not no-op migrations. They do not install another feature.
 | 108 | certops_issuance_identity_transfer | Main; unchanged |
 | 109 | certops_period_creator_delete | Main; unchanged |
 | 110 | recipient_member_verification | Reuse exact verified workspace-member email proof |
-| 112 | certops_observed_revocation | Observed certificate revocation (#589) |
-| 113 | store_issuance_explicit_renewal_consent | Windows store issuance consent |
-| 114 | certops_acme_store_enrollment_identity | Windows store ACME enrollment identity |
-| 115 | certops_adcs_expected_identity_receipts | Windows store AD CS identity receipts |
-| 116 | certops_windows_iis_consent | Windows IIS reassociation consent |
+| 112 | certops_retirement_dossiers | Distribution lifecycle on main |
+| 113 | certops_material_reconciliation | Distribution lifecycle on main |
+| 114 | certops_observed_revocation | Observed certificate revocation (#589) |
+| 115 | store_issuance_explicit_renewal_consent | Windows store issuance consent |
+| 116 | certops_acme_store_enrollment_identity | Windows store ACME enrollment identity |
+| 117 | certops_adcs_expected_identity_receipts | Windows store AD CS identity receipts |
+| 118 | certops_windows_iis_consent | Windows IIS reassociation consent |
+| 119 | certops_material_adcs_operation_union | Preserve both material and AD CS job operations |
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.

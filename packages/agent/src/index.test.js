@@ -876,7 +876,7 @@ describe("registerIfNeeded", () => {
         : [
             ...(AGENT_TRUST_STORE_PREREQUISITES.candidate ? ["trust-anchor-deploy-v1"] : []),
             ...(process.platform === "linux"
-              ? ["material-store-vault-kv2-v1", "material-store-openbao-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1"]
+              ? ["material-store-vault-kv2-v1", "material-store-openbao-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1", "maintenance-calendar-v1"]
               : []),
           ]),
       "agent-id-binding-v1",
@@ -4304,6 +4304,14 @@ describe("renew chain deployment", () => {
     );
     assert.equal(acmeExecFileImpl.calls.length, 0);
     assert.equal(client.calls.reportEvidence.length, 0);
+  });
+
+  it("refuses cleanup execution while its new capability is absent from the immutable release manifest",async()=>{
+    const client=createRecordingClient();
+    const outcome=await executeJob({jobId:"job-cleanup",claimId:"claim-cleanup",job:{action:"cleanup-from-store",mode:"real"},
+      policyEngine:permissiveEngine(),client,executionContext:makeExecutionContext(),log:silentLog});
+    assert.equal(outcome.status,"blocked");assert.match(outcome.errorMessage,/has not qualified material-(?:store|cleanup)-vault-kv2-v1/);
+    assert.equal(client.calls.reportEvidence.length,0);
   });
 
   // skip-reason: platform - Linux declares the material capabilities, so this refusal only applies to other hosts.

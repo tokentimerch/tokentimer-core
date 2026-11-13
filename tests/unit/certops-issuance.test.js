@@ -1327,7 +1327,7 @@ describe("migration 34 issue job operation", () => {
       .split(",")
       .map((entry) => entry.trim().replace(/^'|'$/g, ""));
     const operationsAsOfMigration34 = JOB_OPERATIONS.filter(
-      (operation) => operation !== "continue-enrollment" && operation !== "protocol_smoke" && operation !== "deploy-from-store" && operation !== "adcs-preflight" && operation !== "adcs-installation-proof" && !isTrustAnchorOperation(operation),
+      (operation) => !["continue-enrollment", "protocol_smoke", "deploy-from-store", "cleanup-from-store", "reconcile-from-store", "adcs-preflight", "adcs-installation-proof"].includes(operation) && !isTrustAnchorOperation(operation),
     );
     assert.deepEqual([...values].sort(), [...operationsAsOfMigration34].sort());
   });

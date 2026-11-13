@@ -775,6 +775,21 @@ describe("handleAgentRouteError", () => {
       assert.equal(res.body.code, code);
     }
   });
+  for (const [code, status] of [
+    ["CERTOPS_MATERIAL_CONTRACT_INVALID", 422],
+    ["CERTOPS_MATERIAL_RECEIPT_REQUIRED", 422],
+    ["CERTOPS_MATERIAL_RECEIPT_UNEXPECTED", 422],
+    ["CERTOPS_MATERIAL_CLEANUP_RECEIPT_MISMATCH", 409],
+    ["CERTOPS_MATERIAL_CLEANUP_CLAIM_EXPIRED", 409],
+  ]) {
+    it(`maps ${code} to ${status} without exposing the internal exception`, () => {
+      const res = createResponse();
+      _test.handleAgentRouteError(res, Object.assign(new Error("private diagnostic detail"), { code }));
+      assert.equal(res.statusCode, status);
+      assert.equal(res.body.code, code);
+      assert.doesNotMatch(JSON.stringify(res.body), /private diagnostic detail/);
+    });
+  }
   it("maps an uncoded Error to a generic 500 without leaking the message", () => {
     const res = createResponse();
     const error = new Error("internal sql detail should stay off the wire");

@@ -163,6 +163,9 @@ export default function ExecutorJobsPanel({
   const [createOpen, setCreateOpen] = useState(false);
   const [acmeIssueOpen, setAcmeIssueOpen] = useState(false);
   const [decisionTarget, setDecisionTarget] = useState(null);
+  useEffect(() => {
+    setDecisionTarget(null);
+  }, [workspaceId]);
   const [searchResetSignal, setSearchResetSignal] = useState(0);
   // Bumped alongside the list refresh so an already-expanded row's
   // EvidenceTimeline (a separate hook instance, not something the list's own

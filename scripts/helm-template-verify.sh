@@ -732,6 +732,31 @@ for hops in 0 1 2; do
   assert_contains "${proxy_value}" "TRUST_PROXY_HOPS: \"${hops}\"" "explicit proxy trust hops ${hops} preserved"
 done
 
+lifecycle_defaults="$(helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --show-only templates/configmap.yaml)"
+assert_contains "${lifecycle_defaults}" 'CERTOPS_MATERIAL_CLEANUP_ENABLED: "false"' "cleanup remains opt-in"
+for sweep in SCHEDULER MONITORING; do
+  assert_contains "${lifecycle_defaults}" "CERTOPS_SWEEP_DISTRIBUTION_${sweep}_ENABLED: \"true\"" "default distribution sweep enabled"
+  assert_contains "${lifecycle_defaults}" "CERTOPS_SWEEP_DISTRIBUTION_${sweep}_TIMEOUT_MS: \"120000\"" "default distribution timeout"
+done
+lifecycle_custom="$(helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --show-only templates/configmap.yaml \
+  --set config.certopsMaterialCleanupEnabled=true \
+  --set config.certopsDistributionSchedulerEnabled=false --set config.certopsDistributionSchedulerTimeoutMs=23456 \
+  --set config.certopsDistributionMonitoringEnabled=false --set config.certopsDistributionMonitoringTimeoutMs=34567 \
+  --set-string twilio.alertContentSidDistribution=HX00000000000000000000000000000000)"
+assert_contains "${lifecycle_custom}" 'CERTOPS_MATERIAL_CLEANUP_ENABLED: "true"' "explicit cleanup runtime flag"
+assert_contains "${lifecycle_custom}" 'CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_ENABLED: "false"' "scheduler false preserved"
+assert_contains "${lifecycle_custom}" 'CERTOPS_SWEEP_DISTRIBUTION_MONITORING_ENABLED: "false"' "monitoring false preserved"
+assert_contains "${lifecycle_custom}" 'CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_TIMEOUT_MS: "23456"' "custom scheduler timeout"
+assert_contains "${lifecycle_custom}" 'CERTOPS_SWEEP_DISTRIBUTION_MONITORING_TIMEOUT_MS: "34567"' "custom monitoring timeout"
+assert_contains "${lifecycle_custom}" 'TWILIO_WHATSAPP_ALERT_CONTENT_SID_DISTRIBUTION: "HX00000000000000000000000000000000"' "dedicated distribution template"
+for setting in certopsDistributionSchedulerTimeoutMs certopsDistributionMonitoringTimeoutMs; do
+  if helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --set "config.${setting}=0" >/dev/null 2>&1; then
+    fail "accepted invalid ${setting}=0"
+  fi
+done
+if helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --set-string config.certopsMaterialCleanupEnabled=invalid >/dev/null 2>&1; then
+  fail "accepted invalid cleanup boolean"
+fi
 echo "==> verify explicit owner label permission and selection"
 owner_defaults="$(helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --show-only templates/configmap.yaml)"
 assert_contains "${owner_defaults}" 'AUTO_SYNC_METRICS_EXTRA_LABELS: ""' "owner label permission defaults empty"
@@ -753,5 +778,4 @@ for setting in extraLabels autoSyncLabels; do
     fi
   done
 done
-
 echo "helm-template-verify: ok -> ${OUT}"
