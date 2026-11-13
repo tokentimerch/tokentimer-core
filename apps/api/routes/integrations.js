@@ -43,7 +43,8 @@ const {
   awsScanPersistRecords,
 } = require("../services/awsScanPersist");
 const { scanAzure } = require("../services/azureIntegration");
-const { scanAzureAD } = require("../services/azureADIntegration");
+const { scanAzureAD, validateManagedIdentityMode } = require("../services/azureADIntegration");
+const { legacyManagedIdentityLocation } = require("../services/entraIdentity");
 const {
   KEY_VAULT_SCOPE,
   GRAPH_SCOPE,
@@ -579,6 +580,7 @@ router.post(
         items,
         default_category,
         default_type,
+        filterRules,
         cleanup,
         scan_id: scanId,
       } = req.body || {};
@@ -596,6 +598,10 @@ router.post(
       if (cleanupError) {
         return res.status(400).json({ error: cleanupError });
       }
+      const filterRulesError = validateFilterRules(filterRules);
+      if (filterRulesError) {
+        return res.status(400).json({ error: filterRulesError });
+      }
       // A complete scan that legitimately finds zero items is still a real
       // cleanup-driving result (see importCleanup.js), so an empty items
       // array is only rejected when cleanup isn't the reason for the call.
@@ -605,13 +611,16 @@ router.post(
         return res.status(400).json({ error: "items array required" });
       }
 
+      const { items: itemsToImport, excludedCount: filteredOutCount } =
+        applyFilterRules(filterRules, items);
+
       // Bind each submitted item to the scan that actually discovered it
       // (metadata-only integration_scan_items rows), so provenance comes
       // from what the backend recorded, never from client-echoed fields.
       // Items that don't bind (no scan_id, stale scan_id, or the item
       // wasn't part of that scan) import unattributed, same as before this
       // feature existed -- never a cleanup candidate.
-      const bindingPairs = items.map((it) => ({
+      const bindingPairs = itemsToImport.map((it) => ({
         sourceKind: it?.sourceKind || it?.source || "vault-kv",
         sourceObjectId:
           it?.sourceObjectId ||
@@ -666,8 +675,8 @@ router.post(
       const updated = [];
       const errors = [];
       const NEVER_EXPIRES_DATE = "2099-12-31"; // Default for tokens without expiration
-      for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
-        const it = items[itemIndex];
+      for (let itemIndex = 0; itemIndex < itemsToImport.length; itemIndex++) {
+        const it = itemsToImport[itemIndex];
         try {
           const name = String(it?.name || "").trim();
           let expiration = it?.expiration || it?.expiresAt || null;
@@ -918,6 +927,7 @@ router.post(
         created_count: created.length,
         updated_count: updated.length,
         error_count: errors.length,
+        filtered_out_count: filteredOutCount,
         deleted_count: autoCleanupResult?.deleted ?? cleanupDeleted.length,
         detached_count: autoCleanupResult?.detached || 0,
         cleanup_complete: autoCleanupResult?.complete ?? null,
@@ -2095,6 +2105,8 @@ router.post(
           .status(400)
           .json(withQuota({ error: "maxItems must be between 1 and 2000" }));
       }
+      try { validateManagedIdentityMode(req.body?.managedIdentityMode); }
+      catch (error) { return res.status(400).json(withQuota({ error: error.message })); }
       const resolved = await resolveAzureScanAuth({
         authMethod,
         token,
@@ -2107,6 +2119,7 @@ router.post(
         token: resolved.token,
         authProvider: resolved.authProvider,
         tenantId: resolved.tenantId,
+        managedIdentityMode: req.body?.managedIdentityMode,
         include: {
           applications:
             include && typeof include.applications === "boolean"
@@ -2138,14 +2151,23 @@ router.post(
             items: (result.items || []).map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: {},
+              dimensions: item.servicePrincipalType
+                ? { servicePrincipalType: item.servicePrincipalType } : {},
             })),
-            subScopes: (result.summary || []).map((s) => ({
-              sourceKind: s.sourceKind,
-              dimensions: {},
-              complete: s.complete === true,
-              reason: s.error ? "error" : s.truncated ? "truncated" : null,
-            })),
+            subScopes: (result.summary || []).map((s) => {
+              // Manual cleanup cannot delete principals outside the selected class.
+              // Fenced workers reconcile only their own configuration's links.
+              const partialIdentityClass =
+                !(req.isWorkerCall && req.body?.auto_sync_run) &&
+                (req.body?.managedIdentityMode ?? "all") !== "all" &&
+                s.type === "service_principals";
+              return {
+                sourceKind: s.sourceKind,
+                dimensions: {},
+                complete: s.complete === true && !partialIdentityClass,
+                reason: s.error ? "error" : s.truncated ? "truncated" : partialIdentityClass ? "managed_identity_filter" : null,
+              };
+            }),
           });
           result.scan_id = scan.scanId;
         }
@@ -2761,6 +2783,7 @@ router.post(
           let tok;
           const imported = await upsertImportedToken({ context: autoSyncRun,
             payload: tokenPayload, workspaceId, userId: req.user.id, manual: !req.isWorkerCall,
+            legacyLocation: legacyManagedIdentityLocation(it),
             assignMembership: (payload, options) => assignTokenContactGroups(payload, membership, options) });
           tok = imported.token;
           if (!imported.created) {

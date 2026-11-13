@@ -145,6 +145,50 @@ describe("auto-sync provenance transaction boundaries", () => {
 });
 
 describe("auto-sync contact groups setting", () => {
+  it("preserves selections on unrelated edits and accepts explicit reset", () => {
+    const previous = { managedIdentityMode: "only", filterRules: [
+      { action: "include", field: "name", matchType: "exact", value: "prod" },
+    ] };
+    assert.deepEqual(provenance.preserveIntegrationSelection({ maxItems: 30 }, previous), {
+      maxItems: 30, ...previous,
+    });
+    assert.deepEqual(provenance.preserveIntegrationSelection({
+      managedIdentityMode: "all", filterRules: [],
+    }, previous), { managedIdentityMode: "all", filterRules: [] });
+  });
+
+  it("validates identity selection and filter rules before saving", () => {
+    assert.equal(provenance.validateAutoSyncSettings({ scan_params: { managedIdentityMode: "only" } }), null);
+    assert.match(provenance.validateAutoSyncSettings({ scan_params: { managedIdentityMode: "invalid" } }), /managedIdentityMode/);
+    assert.match(provenance.validateAutoSyncSettings({ scan_params: { filterRules: "invalid" } }), /filterRules/);
+  });
+
+  it("validates metrics together with identity selection and filters", () => {
+    const settings = {
+      scan_params: {
+        managedIdentityMode: "only",
+        filterRules: [{ action: "include", field: "name", matchType: "exact", value: "prod" }],
+      },
+      metrics_settings: { enabled: true, labels: ["kind"] },
+    };
+    assert.equal(provenance.validateAutoSyncSettings(settings), null);
+    assert.ok(provenance.validateAutoSyncSettings({
+      ...settings, metrics_settings: { enabled: "true" },
+    }));
+    assert.match(provenance.validateAutoSyncSettings({
+      ...settings, scan_params: { ...settings.scan_params, managedIdentityMode: "invalid" },
+    }), /managedIdentityMode/);
+    assert.match(provenance.validateAutoSyncSettings({
+      ...settings, scan_params: { ...settings.scan_params, filterRules: "invalid" },
+    }), /filterRules/);
+  });
+
+  it("includes identity selection in the credential-free run snapshot", async () => {
+    const { settingsSnapshot } = await import("../../apps/worker/src/shared/autoSyncRuns.js");
+    assert.equal(settingsSnapshot({ scan_params: { managedIdentityMode: "only" } }).managedIdentityMode, "only");
+    assert.equal(provenance.scanSettingsEqual({ managedIdentityMode: "all" }, { managedIdentityMode: "only" }), false);
+  });
+
   it("does not treat a group change as a scan change", () => {
     assert.equal(
       provenance.scanSettingsEqual(

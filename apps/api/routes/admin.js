@@ -15,6 +15,7 @@ const {
   multiConfigDisabledBody,
   normalizeConnectionName,
   validateAutoSyncSettings,
+  preserveIntegrationSelection,
   scanSettingsEqual,
   sanitizePublicAutoSyncError,
 } = require("../services/autoSyncProvenance");
@@ -301,10 +302,14 @@ router.put("/api/v1/admin/auto-sync/metrics", getApiLimiter(), requireAuth, asyn
     const currentPolicy = await readSystemMetricPolicy(pool);
     if (currentPolicy.locked) delete payload.override_metrics;
     if (currentPolicy.monitoring_group_locked) delete payload.override_monitoring_group;
-    if (options.extra_labels_locked) {
+    if (currentPolicy.labels_locked) delete payload.labels;
+    else if (options.extra_labels_locked) {
       const previous = await systemSettings.getJsonSetting(pool, "auto_sync_metrics", "labels");
-      payload.labels = [...body.labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label)),
-        ...(Array.isArray(previous.value) ? previous.value.filter(label => HIGH_CARDINALITY_LABELS.includes(label)) : [])];
+      // Owner permission allows selection; older asset labels retain deployment defaults.
+      const editable = label => !HIGH_CARDINALITY_LABELS.includes(label) ||
+        (label === "owner_username" && options.extra_labels.includes(label));
+      payload.labels = [...body.labels.filter(editable),
+        ...(Array.isArray(previous.value) ? previous.value.filter(label => !editable(label)) : [])];
     }
     await systemSettings.saveJsonColumn(pool, "auto_sync_metrics", payload, req.user.id, { strictKeys: true });
     const policy = await readSystemMetricPolicy(pool);
@@ -601,9 +606,10 @@ router.put(
           scanAffecting = true;
         }
         if (scan_params !== undefined) {
+          const nextScanParams = preserveIntegrationSelection(scan_params, existing.rows[0].scan_params);
           updates.push(`scan_params = $${idx++}`);
-          values.push(scan_params);
-          scanAffecting = !scanSettingsEqual(scan_params, existing.rows[0].scan_params) || scanAffecting;
+          values.push(nextScanParams);
+          scanAffecting = !scanSettingsEqual(nextScanParams, existing.rows[0].scan_params) || scanAffecting;
         }
         if (frequency !== undefined) {
           updates.push(`frequency = $${idx++}`);

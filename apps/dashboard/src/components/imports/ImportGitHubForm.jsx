@@ -144,6 +144,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
   // The backend-authoritative scan record cleanup is driven from; the
   // backend (not this form) decides which sub-scopes are safe to clean.
   const [lastScanId, setLastScanId] = React.useState(null);
+  const [previewReady, setPreviewReady] = React.useState(false);
 
   // Restore persisted rules from auto-sync scan_params
   React.useEffect(() => {
@@ -212,6 +213,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
         },
         filterRules: sanitizeFilterRules(filterRules),
       });
+      if (!isScanCurrent(scanTicket)) return;
       const items = Array.isArray(res?.items) ? res.items : [];
       setGithubItems(items);
       setGithubSummary(Array.isArray(res?.summary) ? res.summary : []);
@@ -226,9 +228,11 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
       }
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
+      if (!isScanCurrent(scanTicket)) return;
       setGithubDuplicates(dups);
       completeScanVerification(scanTicket);
     } catch (e) {
+      if (!isScanCurrent(scanTicket)) return;
       setGithubItems([]);
       setGithubSummary([]);
       setFilterSummary(null);
@@ -242,7 +246,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
         if (refreshIntegrationQuota) await refreshIntegrationQuota();
       }
     } finally {
-      setIsScanning(false);
+      if (isScanCurrent(scanTicket)) setIsScanning(false);
     }
   };
 
@@ -288,6 +292,10 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
   };
 
   const importGithubSelected = async () => {
+    if (!previewReady || isScanning) {
+      onError?.('Run a scan with the current settings before importing.');
+      return;
+    }
     try {
       const selected = githubItems
         .filter((_, i) => selectedRowsGithub.has(i))
@@ -304,6 +312,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
       await integrationAPI.import({
         workspaceId,
         items: selected,
+        filterRules: sanitizeFilterRules(filterRules),
         defaults: contactGroupFieldsForImportDefaults(bulkContactGroupIds),
         // scan_id is sent whenever this import followed a scan, regardless
         // of whether cleanup is enabled -- provenance attribution must not
@@ -341,17 +350,31 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
       cleanupObsolete,
     },
   });
-  const { beginScanVerification, completeScanVerification } =
+  const { beginScanVerification, completeScanVerification, isScanCurrent } =
     useScanVerification({
       identity: {
         workspaceId,
         scanContext,
+        filterRules,
         payload: getCredentials(),
         rawBaseUrl: githubBaseUrl,
       },
       provider: 'github',
-      onScanSuccess,
-      onScanInvalidated,
+      onScanSuccess: provider => {
+        setPreviewReady(true);
+        onScanSuccess?.(provider);
+      },
+      onScanInvalidated: () => {
+        setPreviewReady(false);
+        setIsScanning(false);
+        setGithubItems([]);
+        setGithubSummary([]);
+        setFilterSummary(null);
+        setSelectedRowsGithub(new Set());
+        setGithubDuplicates(new Set());
+        setLastScanId(null);
+        onScanInvalidated?.();
+      },
     });
 
   React.useImperativeHandle(ref, () => ({

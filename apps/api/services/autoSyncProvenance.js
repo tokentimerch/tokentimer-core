@@ -3,6 +3,8 @@
 const { pool } = require("../db/database");
 const { claimScanForCleanup, getScan } = require("./integrationScans");
 const { buildDimensionFilterSql } = require("./importCleanup");
+const { validateFilterRules } = require("./importFilterRules");
+const { validateManagedIdentityMode } = require("./azureADIntegration");
 
 const { metricSettingsError, recordCreationMetrics } = require("./autoSyncMetricLabels");
 
@@ -51,6 +53,10 @@ function validateAutoSyncSettings(body) {
   if (body.scan_params !== undefined && (!body.scan_params || typeof body.scan_params !== "object" || Array.isArray(body.scan_params))) return "Invalid scan parameters";
   const groups = body.scan_params?.contactGroupIds;
   if (groups !== undefined && (!Array.isArray(groups) || groups.length > 50 || groups.some((id) => typeof id !== "string" || !id || id.length > 255))) return "Invalid contact groups";
+  const filterError = validateFilterRules(body.scan_params?.filterRules);
+  if (filterError) return filterError;
+  try { validateManagedIdentityMode(body.scan_params?.managedIdentityMode); }
+  catch (error) { return error.message; }
   if (body.metrics_settings !== undefined) return metricSettingsError(body.metrics_settings);
   return null;
 }
@@ -62,6 +68,17 @@ function canonicalJson(value) {
       .map((key) => [key, canonicalJson(value[key])]));
   }
   return value;
+}
+
+function preserveIntegrationSelection(next, previous) {
+  const result = { ...next };
+  for (const key of ["filterRules", "managedIdentityMode"]) {
+    if (!Object.prototype.hasOwnProperty.call(result, key) &&
+        Object.prototype.hasOwnProperty.call(previous || {}, key)) {
+      result[key] = previous[key];
+    }
+  }
+  return result;
 }
 
 // Which groups new assets get does not change what a scan covers, so changing
@@ -180,11 +197,15 @@ async function withFencedImport(context, work) {
   }
 }
 
-async function upsertImportedToken({ context, payload, workspaceId, userId, manual, assignMembership }) {
+async function upsertImportedToken({ context, payload, workspaceId, userId, manual, assignMembership, legacyLocation = null }) {
   const Token = require("../db/models/Token");
   return withFencedImport(context, async (client, config) => {
     if (context && !payload.source_object_id) throw new Error("Auto-sync item is not part of its persisted scan");
     const keys = [JSON.stringify([workspaceId, "name", payload.name, payload.location])];
+    if (legacyLocation) {
+      keys.push(JSON.stringify([workspaceId, "entra-location", legacyLocation]));
+      keys.push(JSON.stringify([workspaceId, "name", payload.name, legacyLocation]));
+    }
     if (payload.source_object_id) keys.push(JSON.stringify([workspaceId, "source",
       payload.source_provider, payload.source_instance, payload.source_owner_key,
       payload.source_kind, payload.source_object_id]));
@@ -198,6 +219,19 @@ async function upsertImportedToken({ context, payload, workspaceId, userId, manu
     }, { client }) : await Token.findByNameLocationAndWorkspace(payload.name, payload.location, workspaceId, { client });
     if (!existing && payload.source_object_id) {
       existing = await Token.findUnattributedByNameLocation(payload.name, payload.location, workspaceId, { client });
+    }
+    if (!existing && legacyLocation) {
+      const legacy = await client.query(
+        `SELECT * FROM tokens WHERE workspace_id = $1 AND location = ANY($2::text[])
+           AND source_object_id IS NULL ORDER BY id LIMIT 2 FOR UPDATE`,
+        [workspaceId, [legacyLocation, payload.location]],
+      );
+      if (legacy.rows.length > 1) throw new Error("Ambiguous legacy managed-identity inventory; resolve duplicate records before importing");
+      existing = legacy.rows[0] || null;
+    }
+    if (existing && legacyLocation) {
+      // Identity reclassification must not overwrite operator-owned metadata.
+      for (const key of ["section", "domains", "used_by", "contacts", "notes", "renewal_url", "renewal_date"]) delete payload[key];
     }
     assignMembership(payload, { isCreate: !existing });
     // Keep metric-only metadata out of permanent inventory provenance.
@@ -400,6 +434,7 @@ module.exports = {
   parseAutoSyncContext,
   normalizeConnectionName,
   validateAutoSyncSettings,
+  preserveIntegrationSelection,
   scanSettingsEqual,
   sanitizePublicAutoSyncError,
   assertRunFence,

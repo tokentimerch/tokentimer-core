@@ -14,6 +14,10 @@ import { azureAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
 import LearnMorePanel from '../LearnMorePanel';
+import FilterRulesEditor, {
+  sanitizeFilterRules,
+  FilterRulesSummary,
+} from '../FilterRulesEditor';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -91,6 +95,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     autoSyncTokenPlaceholder,
     autoSyncManageMode = false,
     initialVaultUrl = '',
+    initialScanParams = null,
     updateQuotaFromResponse,
     refreshIntegrationQuota,
     isQuotaExceededError,
@@ -122,12 +127,24 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupIds, setBulkContactGroupIds] = React.useState([]);
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
+  const [filterRules, setFilterRules] = React.useState([]);
+  const [filterSummary, setFilterSummary] = React.useState(null);
+  const [previewReady, setPreviewReady] = React.useState(false);
+  React.useEffect(() => {
+    if (!initialScanParams) return;
+    setFilterRules(
+      Array.isArray(initialScanParams.filterRules)
+        ? initialScanParams.filterRules
+        : []
+    );
+  }, [initialScanParams]);
   // The backend-authoritative scan record cleanup is driven from.
   const [lastScanId, setLastScanId] = React.useState(null);
 
   React.useEffect(() => {
-    onSelectionChange && onSelectionChange(selectedRowsAzure.size);
-  }, [selectedRowsAzure.size, onSelectionChange]);
+    onSelectionChange &&
+      onSelectionChange(previewReady ? selectedRowsAzure.size : 0);
+  }, [selectedRowsAzure.size, previewReady, onSelectionChange]);
 
   React.useEffect(() => {
     const next = String(initialVaultUrl || '').trim();
@@ -164,6 +181,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     setIsScanning(true);
     setAzureItems([]);
     setAzureSummary([]);
+    setFilterSummary(null);
     try {
       const credentials = buildAzureInventoryCredentials({
         vaultUrl: azureVaultUrl,
@@ -177,11 +195,14 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
         workspaceId,
         vaultUrl: azureVaultUrl,
         maxItems: 2000,
+        filterRules: sanitizeFilterRules(filterRules),
         ...azureInventoryScanAuthPayload(credentials),
       });
+      if (!isScanCurrent(scanTicket)) return;
       const items = Array.isArray(res?.items) ? res.items : [];
       setAzureItems(items);
       setAzureSummary(Array.isArray(res?.summary) ? res.summary : []);
+      setFilterSummary(res?.filterSummary || null);
       setLastScanId(res?.scan_id || null);
 
       if (updateQuotaFromResponse && !updateQuotaFromResponse(res)) {
@@ -189,11 +210,15 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
       }
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
+      if (!isScanCurrent(scanTicket)) return;
       setAzureDuplicates(dups);
+      setPreviewReady(true);
       completeScanVerification(scanTicket);
     } catch (e) {
+      if (!isScanCurrent(scanTicket)) return;
       setAzureItems([]);
       setAzureSummary([]);
+      setFilterSummary(null);
       setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
@@ -204,7 +229,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
         if (refreshIntegrationQuota) await refreshIntegrationQuota();
       }
     } finally {
-      setIsScanning(false);
+      if (isScanCurrent(scanTicket)) setIsScanning(false);
     }
   };
 
@@ -217,6 +242,10 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   };
 
   const importAzureSelected = async () => {
+    if (!previewReady || isScanning) {
+      onError?.('Run a scan with the current settings before importing.');
+      return;
+    }
     try {
       const selected = azureItems
         .filter((_, i) => selectedRowsAzure.has(i))
@@ -233,6 +262,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
       await integrationAPI.import({
         workspaceId,
         items: selected,
+        filterRules: sanitizeFilterRules(filterRules),
         defaults: contactGroupFieldsForImportDefaults(bulkContactGroupIds),
         // scan_id is sent whenever this import followed a scan, regardless
         // of whether cleanup is enabled -- provenance attribution must not
@@ -265,6 +295,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     const scanParams = {
       vaultUrl: azureVaultUrl,
       include: { secrets: true, certificates: true, keys: true },
+      filterRules: sanitizeFilterRules(filterRules),
     };
     if (autoSyncManageMode && !replacingCredentials) {
       return { credentials: {}, scanParams };
@@ -279,22 +310,32 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     });
     return { credentials, scanParams };
   };
-  const { beginScanVerification, completeScanVerification } =
+  const { beginScanVerification, completeScanVerification, isScanCurrent } =
     useScanVerification({
       identity: {
         workspaceId,
         scanContext,
         payload: getCredentials(),
-        cleanupObsolete,
+        filterRules,
       },
       provider: 'azure',
       onScanSuccess,
-      onScanInvalidated,
+      onScanInvalidated: () => {
+        setPreviewReady(false);
+        setIsScanning(false);
+        setAzureItems([]);
+        setAzureSummary([]);
+        setFilterSummary(null);
+        setSelectedRowsAzure(new Set());
+        setAzureDuplicates(new Set());
+        setLastScanId(null);
+        onScanInvalidated?.();
+      },
     });
 
   React.useImperativeHandle(ref, () => ({
     importSelected: importAzureSelected,
-    getSelectedCount: () => selectedRowsAzure.size,
+    getSelectedCount: () => (previewReady ? selectedRowsAzure.size : 0),
     validateReplacement: () =>
       azureReplacementAuthError({
         replacing: replacingCredentials,
@@ -394,6 +435,13 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
           clearAzureAuthFields();
         }}
       />
+      <FilterRulesEditor
+        rules={filterRules}
+        onChange={setFilterRules}
+        borderColor={borderColor}
+        helpTextColor={helpTextColor}
+      />
+      <FilterRulesSummary summary={filterSummary} />
       {errorContent}
       <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
         <VStack align='stretch' spacing={2}>

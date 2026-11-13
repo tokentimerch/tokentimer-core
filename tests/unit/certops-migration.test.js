@@ -53,7 +53,9 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 108).name, "certops_issuance_identity_transfer");
     assert.equal(migrations.find((entry) => entry.version === 109).name, "certops_period_creator_delete");
     assert.equal(migrations.find((entry) => entry.version === 110).name, "recipient_member_verification");
-    assert.equal(migrations.at(-1).name, "certops_material_reconciliation");    assert.equal(migrations.find(entry => entry.version === 95).name, "remove_pagerduty_rest_lookup");
+    assert.equal(migrations.find((entry) => entry.version === 111).name, "auto_sync_owner_username");
+    assert.equal(migrations.at(-1).name, "certops_material_reconciliation");
+    assert.equal(migrations.find(entry => entry.version === 95).name, "remove_pagerduty_rest_lookup");
     assert.throws(() => validateMigrationHistory([
       ...migrations.filter(entry => entry.version <= 78).map(({version, name}) => ({version, name})),
       { version: 79, name: "pagerduty_incident_lifecycle" },

@@ -165,7 +165,9 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
                     !policy.override_metrics ||
                     !policy.enabled ||
                     !permitted ||
-                    (EXTRA.includes(key) && policy.extra_labels_locked)
+                    (key !== 'owner_username' &&
+                      EXTRA.includes(key) &&
+                      policy.extra_labels_locked)
                   }
                   onChange={e =>
                     change({
@@ -180,8 +182,13 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
               );
             })}
           </SimpleGrid>
-          {policy.labels_locked || policy.extra_labels_locked ? (
+          {policy.labels_locked ? (
             <Badge alignSelf='start'>Labels set by environment</Badge>
+          ) : policy.extra_labels_locked ? (
+            <Badge alignSelf='start'>
+              Asset labels restricted by environment; permitted owner is
+              optional
+            </Badge>
           ) : null}
           <Text fontSize='xs' color={muted}>
             Combining labels increases time series and alerts and exposes

@@ -145,6 +145,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     extractQuotaFromError,
     contactGroups,
     onSelectionChange,
+    initialScanParams = null,
   },
   ref
 ) {
@@ -192,6 +193,14 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   // hasn't been engaged yet, so scans keep scanning every mount (unchanged
   // default behavior) until the user explicitly loads and narrows the list.
   const [availableMounts, setAvailableMounts] = React.useState([]);
+  const [mountSelectionKnown, setMountSelectionKnown] = React.useState(false);
+  const [mountSelectionExplicit, setMountSelectionExplicitState] =
+    React.useState(false);
+  const mountSelectionExplicitRef = React.useRef(false);
+  const setMountSelectionExplicit = React.useCallback(explicit => {
+    mountSelectionExplicitRef.current = explicit;
+    setMountSelectionExplicitState(explicit);
+  }, []);
   const [selectedMountPaths, setSelectedMountPaths] = React.useState(new Set());
   const [isLoadingMounts, setIsLoadingMounts] = React.useState(false);
   const [mountsError, setMountsError] = React.useState(null);
@@ -203,6 +212,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
 
   const [filterRules, setFilterRules] = React.useState([]);
   const [filterSummary, setFilterSummary] = React.useState(null);
+  const [previewReady, setPreviewReady] = React.useState(false);
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
   // The backend-authoritative scan record cleanup is driven from.
   const [lastScanId, setLastScanId] = React.useState(null);
@@ -221,10 +231,29 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   // Shared bulk assignment state
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupIds, setBulkContactGroupIds] = React.useState([]);
+  React.useEffect(() => {
+    if (!initialScanParams) return;
+    const sp = initialScanParams;
+    setVaultAddress(sp.address || '');
+    setVaultNamespace(sp.namespace || '');
+    setIncludeKV(sp.include?.kv ?? true);
+    setIncludePKI(sp.include?.pki ?? true);
+    setPathPrefix(sp.pathPrefix || '');
+    setFilterRules(Array.isArray(sp.filterRules) ? sp.filterRules : []);
+    setSelectedCategories(
+      new Set(sp.categories || VAULT_CATEGORY_OPTIONS.map(c => c.value))
+    );
+    setMountSelectionExplicit(Array.isArray(sp.mounts));
+    setSelectedMountPaths(new Set(sp.mounts || []));
+    setAvailableMounts([]);
+    setMountSelectionKnown(false);
+    setMountsError(null);
+  }, [initialScanParams]);
 
   React.useEffect(() => {
-    onSelectionChange && onSelectionChange(selectedRowsVault.size);
-  }, [selectedRowsVault.size, onSelectionChange]);
+    onSelectionChange &&
+      onSelectionChange(previewReady ? selectedRowsVault.size : 0);
+  }, [selectedRowsVault.size, previewReady, onSelectionChange]);
 
   const vaultAuthPayload = () => {
     const namespace = vaultNamespace.trim();
@@ -269,9 +298,14 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       });
       const scannable = mounts.filter(m => m.type === 'kv' || m.type === 'pki');
       setAvailableMounts(scannable);
-      setSelectedMountPaths(new Set(scannable.map(m => m.path)));
+      setMountSelectionKnown(true);
+      const availablePaths = new Set(scannable.map(m => m.path));
+      setSelectedMountPaths(previous =>
+        mountSelectionExplicitRef.current
+          ? new Set([...previous].filter(path => availablePaths.has(path)))
+          : availablePaths
+      );
     } catch (e) {
-      setAvailableMounts([]);
       setMountsError(e?.message || 'Failed to load secrets engines');
     } finally {
       setIsLoadingMounts(false);
@@ -279,6 +313,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   };
 
   const toggleMount = path => {
+    setMountSelectionExplicit(true);
     setSelectedMountPaths(prev => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
@@ -296,12 +331,18 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     });
   };
 
-  // Only send an explicit mount list when the picker was used and the user
-  // narrowed it down; otherwise every mount is scanned (unchanged default).
+  // Discovery must not turn an explicit restriction into unrestricted scope.
   const mountsFilterForScan = () => {
-    if (availableMounts.length === 0) return null;
-    if (selectedMountPaths.size >= availableMounts.length) return null;
-    return Array.from(selectedMountPaths);
+    if (mountsError) return [];
+    if (mountSelectionExplicit) return Array.from(selectedMountPaths);
+    if (availableMounts.length === 0) return mountSelectionKnown ? [] : null;
+    return null;
+  };
+  const validateSelection = () => {
+    const mounts = mountsFilterForScan();
+    return Array.isArray(mounts) && mounts.length === 0
+      ? 'Select at least one secrets engine to scan.'
+      : null;
   };
 
   const doVaultScan = async () => {
@@ -316,8 +357,9 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       onError && onError(authError);
       return;
     }
-    if (availableMounts.length > 0 && selectedMountPaths.size === 0) {
-      onError && onError('Select at least one secrets engine to scan.');
+    const selectionError = validateSelection();
+    if (selectionError) {
+      onError && onError(selectionError);
       return;
     }
     if (selectedCategories.size === 0) {
@@ -342,6 +384,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         categories: Array.from(selectedCategories),
         filterRules: sanitizeFilterRules(filterRules),
       });
+      if (!isScanCurrent(scanTicket)) return;
       const items = Array.isArray(res?.items) ? res.items : [];
       setVaultItems(items);
       setSummary(Array.isArray(res?.summary) ? res.summary : []);
@@ -353,10 +396,14 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       }
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
+      if (!isScanCurrent(scanTicket)) return;
       setVaultDuplicates(dups);
+      setPreviewReady(true);
       completeScanVerification(scanTicket);
     } catch (e) {
+      if (!isScanCurrent(scanTicket)) return;
       setVaultItems([]);
+      setFilterSummary(null);
       setSummary([]);
       setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
@@ -368,7 +415,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         if (refreshIntegrationQuota) await refreshIntegrationQuota();
       }
     } finally {
-      setIsScanning(false);
+      if (isScanCurrent(scanTicket)) setIsScanning(false);
     }
   };
 
@@ -390,6 +437,15 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   };
 
   const importVaultSelected = async () => {
+    const selectionError = validateSelection();
+    if (selectionError) {
+      onError?.(selectionError);
+      return;
+    }
+    if (!previewReady || isScanning) {
+      onError?.('Run a scan with the current settings before importing.');
+      return;
+    }
     try {
       const selected = vaultItems
         .filter((_, i) => selectedRowsVault.has(i))
@@ -405,6 +461,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       await vaultAPI.import({
         workspaceId,
         items: selected,
+        filterRules: sanitizeFilterRules(filterRules),
         defaults: {
           ...vaultDefaults,
           ...contactGroupFieldsForImportDefaults(bulkContactGroupIds),
@@ -432,6 +489,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     credentials: { address: vaultAddress, ...vaultAuthPayload() },
     scanParams: {
       address: vaultAddress,
+      namespace: vaultNamespace.trim(),
       include: { kv: includeKV, pki: includePKI },
       pathPrefix: pathPrefix || '',
       maxItemsPerMount,
@@ -440,23 +498,34 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       filterRules: sanitizeFilterRules(filterRules),
     },
   });
-  const { beginScanVerification, completeScanVerification } =
+  const { beginScanVerification, completeScanVerification, isScanCurrent } =
     useScanVerification({
       identity: {
         workspaceId,
         scanContext,
         payload: getCredentials(),
-        cleanupObsolete,
+        filterRules,
       },
       provider: 'vault',
       onScanSuccess,
-      onScanInvalidated,
+      onScanInvalidated: () => {
+        setPreviewReady(false);
+        setIsScanning(false);
+        setVaultItems([]);
+        setSummary([]);
+        setFilterSummary(null);
+        setSelectedRowsVault(new Set());
+        setVaultDuplicates(new Set());
+        setLastScanId(null);
+        onScanInvalidated?.();
+      },
     });
 
   React.useImperativeHandle(ref, () => ({
     importSelected: importVaultSelected,
-    getSelectedCount: () => selectedRowsVault.size,
+    getSelectedCount: () => (previewReady ? selectedRowsVault.size : 0),
     getCredentials,
+    validateSelection,
   }));
 
   return (
@@ -771,6 +840,18 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
                       {availableMounts.length > 0 ? 'Refresh' : 'Load engines'}
                     </Button>
                   </HStack>
+                  <Checkbox
+                    size='sm'
+                    isChecked={!mountSelectionExplicit}
+                    onChange={e => {
+                      setMountSelectionExplicit(!e.target.checked);
+                      setSelectedMountPaths(
+                        new Set(availableMounts.map(m => m.path))
+                      );
+                    }}
+                  >
+                    Scan all secrets engines
+                  </Checkbox>
                   {mountsError ? (
                     <Text fontSize='xs' color='red.400' mb={1}>
                       {mountsError}

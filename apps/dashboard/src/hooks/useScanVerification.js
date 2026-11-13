@@ -39,14 +39,14 @@ export function useScanVerification({
       attempt: current.current.attempt,
     };
   };
+  const isScanCurrent = ticket =>
+    current.current.mounted &&
+    ticket.identity === current.current.identity &&
+    ticket.attempt === current.current.attempt;
   const completeScanVerification = ticket => {
-    if (
-      current.current.mounted &&
-      ticket.identity === current.current.identity &&
-      ticket.attempt === current.current.attempt
-    ) {
+    if (isScanCurrent(ticket)) {
       callbacks.current.onScanSuccess?.(provider);
     }
   };
-  return { beginScanVerification, completeScanVerification };
+  return { beginScanVerification, completeScanVerification, isScanCurrent };
 }

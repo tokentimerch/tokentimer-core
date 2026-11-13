@@ -216,6 +216,102 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
     assert.equal(await createdTotal(), before + 1n, "cleanup cannot reduce the historical counter");
   });
 
+  async function entraRun(mode, config) {
+    if (!config) {
+      config = (await pool.query(`INSERT INTO auto_sync_configs
+        (workspace_id,provider,credentials_encrypted,connection_key,created_by,scan_params,next_sync_at)
+        VALUES($1,'azure-ad','test-only',$2,$3,$4,NOW()) RETURNING *`,
+      [workspaceId, mode, userId, JSON.stringify({ managedIdentityMode: mode })])).rows[0];
+    } else {
+      await pool.query("UPDATE auto_sync_configs SET next_sync_at=NOW(),scan_params=$2 WHERE id=$1",
+        [config.id, JSON.stringify({ managedIdentityMode: mode })]);
+    }
+    const [claimed] = await runs.claimDueAutoSyncRuns();
+    assert.equal(claimed.id, config.id);
+    return { config: claimed, context: { configId: claimed.id, workspaceId, provider: "azure-ad",
+      runId: claimed.runId, generation: claimed.generation, scanVersion: Number(claimed.scanVersion),
+      leaseOwner: claimed.leaseOwner } };
+  }
+  const entraItem = {
+    name: "Renamed managed identity", type: "api_key", expiresAt: "2028-01-01",
+    location: "azure-ad:managedIdentities/app/secrets/key",
+    source: "azure-ad-sp-secret", sourceKind: "azure-ad-sp-secret",
+    sourceObjectId: "app:key", servicePrincipalType: "ManagedIdentity",
+  };
+  async function entraScan(run, items = [entraItem], complete = true) {
+    const result = await persistScan({
+      workspaceId, provider: "azure-ad", identityContext: { tenantId: "11111111-1111-4111-8111-111111111111" },
+      createdBy: userId, items: items.map(item => ({
+        sourceKind: item.sourceKind, sourceObjectId: item.sourceObjectId,
+        dimensions: { servicePrincipalType: item.servicePrincipalType },
+      })),
+      subScopes: [{ sourceKind: "azure-ad-sp-secret", complete }],
+      request: { isWorkerCall: true, integrationScanStartedAt: new Date(),
+        body: { auto_sync_run: runs.runContext(run.config) } },
+    });
+    run.context.scanId = result.scanId;
+  }
+  async function entraImport(run) {
+    const response = await request(app).post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
+      .set("Authorization", "Bearer issue71-test-worker").send({
+        items: [entraItem], scan_id: run.context.scanId, auto_sync_run: runs.runContext(run.config),
+      });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.error_count, 0, JSON.stringify(response.body));
+    return response.body;
+  }
+
+  for (const attributed of [false, true]) {
+    it(`reclassifies ${attributed ? "attributed" : "legacy manual"} Entra inventory without losing alerts or groups`, async () => {
+      const token = await Token.create({
+        userId, workspaceId, name: "Old identity name", type: "api_key", expiration: "2028-01-01",
+        location: "azure-ad:servicePrincipals/app/secrets/key", notes: "operator note",
+        used_by: "operator", contact_group_ids: ["retain"],
+        section: ["production", "critical"], domains: ["internal.example.com"],
+        ...(attributed ? {
+          source_provider: "azure-ad", source_instance: "11111111-1111-4111-8111-111111111111",
+          source_owner_key: "11111111-1111-4111-8111-111111111111", source_kind: "azure-ad-sp-secret", source_object_id: "app:key",
+        } : {}),
+      });
+      await pool.query(`INSERT INTO alert_queue(user_id,token_id,alert_key,threshold_days,due_date,status,attempts)
+        VALUES($1,$2,$3,7,'2028-01-01','sent',2)`, [userId, token.id, crypto.randomUUID()]);
+      const run = await entraRun("only");
+      await entraScan(run);
+      for (let i = 0; i < 2; i++) assert.equal((await entraImport(run)).updated[0].id, token.id);
+      const stored = await inventory(token.id);
+      assert.equal(stored.location, entraItem.location);
+      assert.equal(stored.notes, "operator note");
+      assert.equal(stored.used_by, "operator");
+      assert.deepEqual(stored.section, ["production", "critical"]);
+      assert.deepEqual(stored.domains, ["internal.example.com"]);
+      assert.equal(stored.user_id, userId);
+      assert.equal(stored.auto_sync_managed, false);
+      assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM tokens WHERE workspace_id=$1", [workspaceId])).rows[0].n, 1);
+      assert.deepEqual((await pool.query("SELECT contact_group_id FROM token_contact_groups WHERE token_id=$1", [token.id])).rows,
+        [{ contact_group_id: "retain" }]);
+      assert.deepEqual((await pool.query("SELECT status,attempts FROM alert_queue WHERE token_id=$1", [token.id])).rows,
+        [{ status: "sent", attempts: 2 }]);
+      assert.equal((await pool.query("SELECT 1 FROM auto_sync_token_links WHERE token_id=$1", [token.id])).rowCount, 1);
+      await finish(run);
+    });
+  }
+
+  it("protects shared Entra inventory through a complementary-config split and incomplete scans", async () => {
+    const all = await entraRun("all"); await entraScan(all);
+    const tokenId = (await entraImport(all)).created[0].id; await finish(all);
+    const managed = await entraRun("only"); await entraScan(managed);
+    assert.equal((await entraImport(managed)).updated[0].id, tokenId); await finish(managed);
+    const rest = await entraRun("exclude", all.config); await entraScan(rest, []);
+    assert.deepEqual(await provenance.reconcileAutoSyncRun(rest.context), { complete: true, detached: 1, deleted: 0 });
+    assert.ok(await inventory(tokenId)); await finish(rest);
+    const partial = await entraRun("only", managed.config); await entraScan(partial, [], false);
+    assert.deepEqual(await provenance.reconcileAutoSyncRun(partial.context), { complete: false, detached: 0, deleted: 0 });
+    assert.ok(await inventory(tokenId)); await finish(partial);
+    const complete = await entraRun("only", managed.config); await entraScan(complete, []);
+    assert.deepEqual(await provenance.reconcileAutoSyncRun(complete.context), { complete: true, detached: 1, deleted: 1 });
+    assert.equal(await inventory(tokenId), undefined); await finish(complete);
+  });
+
   it("manual integration adoption and confirmed file import relinquish ownership", async () => {
     const run = await start(await configuration());
     await scan(run, ["42"]);

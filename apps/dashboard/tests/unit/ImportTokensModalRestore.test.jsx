@@ -6,12 +6,13 @@ import {
   screen,
   fireEvent,
   cleanup,
+  act,
   within,
 } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import ImportTokensModal from '../../src/components/ImportTokensModal.jsx';
-import {
+import apiClient, {
   tokenAPI,
   integrationAPI,
   azureADAPI,
@@ -71,7 +72,14 @@ vi.mock('../../src/utils/apiClient', () => ({
 }));
 
 vi.mock('../../src/components/IntegrationImportTable', () => ({
-  default: () => <div>import-table</div>,
+  default: ({ items, onToggleRow }) => (
+    <div>
+      import-table
+      <button
+        onClick={() => onToggleRow?.(0)}
+      >{`select-first-${items?.length || 0}`}</button>
+    </div>
+  ),
 }));
 vi.mock('../../src/components/BulkIntegrationAssignment', () => ({
   default: () => <div>bulk-assignment</div>,
@@ -531,6 +539,406 @@ describe('ImportTokensModal restored scan params provider scoping', () => {
       },
     });
     expect(await screen.findByText(/second-history/)).toBeTruthy();
+  });
+});
+
+describe('Entra identity selection and saved filters', () => {
+  const filterRules = [
+    {
+      action: 'include',
+      field: 'location',
+      matchType: 'regex',
+      value: '^azure-ad:managedIdentities/',
+    },
+  ];
+  beforeEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    apiClient.put.mockResolvedValue({ data: {} });
+    apiGetMock.mockImplementation(url =>
+      Promise.resolve({
+        data: String(url).endsWith('/auto-sync')
+          ? {
+              items: [
+                {
+                  id: 'entra-config',
+                  provider: 'azure-ad',
+                  name: 'Managed identities',
+                  frequency: 'daily',
+                  schedule_time: '08:00',
+                  schedule_tz: 'UTC',
+                  enabled: true,
+                  scan_params: {
+                    managedIdentityMode: 'only',
+                    filterRules,
+                    include: { applications: true, servicePrincipals: false },
+                  },
+                },
+              ],
+            }
+          : {},
+      })
+    );
+  });
+
+  it('restores the native mode and rules and preserves them on a credential-retaining save', async () => {
+    render(
+      renderModal({
+        provider: 'azure-ad',
+        integrationSubTab: 'manage',
+        autoSyncConfigId: 'entra-config',
+      })
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole('combobox', { name: 'Identity selection' })
+      ).toHaveValue('only')
+    );
+    expect(screen.getByDisplayValue(filterRules[0].value)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(apiClient.put).toHaveBeenCalled());
+    const body = apiClient.put.mock.calls[0][1];
+    expect(body.scan_params).toMatchObject({
+      managedIdentityMode: 'only',
+      filterRules,
+      include: { applications: false, servicePrincipals: true },
+    });
+    expect(body.credentials).toBeUndefined();
+  });
+
+  it.each(['scan', 'manage'])(
+    'places identity and filter settings after scope selectors in the %s view',
+    async integrationSubTab => {
+      render(
+        renderModal({
+          provider: 'azure-ad',
+          integrationSubTab,
+          autoSyncConfigId: 'entra-config',
+        })
+      );
+      const identity = await screen.findByRole('combobox', {
+        name: 'Identity selection',
+      });
+      const filters = screen.getByText('Filter rules');
+      for (const label of [
+        'Scan App Registrations',
+        'Scan Service Principals',
+      ]) {
+        expect(
+          screen.getByText(label).compareDocumentPosition(identity) &
+            Node.DOCUMENT_POSITION_FOLLOWING
+        ).toBeTruthy();
+      }
+      expect(
+        identity.compareDocumentPosition(filters) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+      expect(identity).toBeVisible();
+      expect(filters).toBeVisible();
+    }
+  );
+
+  it.each(['all', 'exclude', 'only'])(
+    'saves edited %s selection and filter rules without replacing credentials',
+    async mode => {
+      render(
+        renderModal({
+          provider: 'azure-ad',
+          integrationSubTab: 'manage',
+          autoSyncConfigId: 'entra-config',
+        })
+      );
+      const rule = await screen.findByDisplayValue(filterRules[0].value);
+      fireEvent.change(
+        screen.getByRole('combobox', { name: 'Identity selection' }),
+        { target: { value: mode } }
+      );
+      fireEvent.change(rule, { target: { value: '^azure-ad:.*production' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(apiClient.put).toHaveBeenCalled());
+      const body = apiClient.put.mock.calls[0][1];
+      expect(body.scan_params).toMatchObject({
+        managedIdentityMode: mode,
+        filterRules: [{ ...filterRules[0], value: '^azure-ad:.*production' }],
+      });
+      expect(body.credentials).toBeUndefined();
+    }
+  );
+
+  it('can clear rules and change identity mode while replacing credentials', async () => {
+    render(
+      renderModal({
+        provider: 'azure-ad',
+        integrationSubTab: 'manage',
+        autoSyncConfigId: 'entra-config',
+      })
+    );
+    await screen.findByDisplayValue(filterRules[0].value);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove rule' }));
+    fireEvent.change(
+      screen.getByRole('combobox', { name: 'Identity selection' }),
+      { target: { value: 'exclude' } }
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Replace credentials' })
+    );
+    fireEvent.click(
+      screen.getByRole('radio', { name: 'Entra app (client credentials)' })
+    );
+    for (const [placeholder, value] of [
+      ['Tenant ID or domain', 'tenant'],
+      ['Client ID', 'client'],
+      ['Client secret', 'secret'],
+    ]) {
+      fireEvent.change(screen.getByPlaceholderText(placeholder), {
+        target: { value },
+      });
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(apiClient.put).toHaveBeenCalled());
+    expect(apiClient.put.mock.calls[0][1]).toMatchObject({
+      scan_params: { managedIdentityMode: 'exclude', filterRules: [] },
+      credentials: {
+        authMethod: 'client_credentials',
+        tenantId: 'tenant',
+        clientId: 'client',
+        clientSecret: 'secret',
+      },
+    });
+  });
+
+  it.each(['all', 'exclude', 'only'])(
+    'sends %s mode and generic rules on a manual scan',
+    async mode => {
+      apiGetMock.mockResolvedValue({ data: {} });
+      azureADAPI.scan.mockResolvedValue({
+        items: [],
+        summary: [],
+        scan_id: 'scan',
+      });
+      render(renderModal({ provider: 'azure-ad' }));
+      await screen.findByRole('combobox', { name: 'Identity selection' });
+      fireEvent.change(
+        screen.getByRole('combobox', { name: 'Identity selection' }),
+        { target: { value: mode } }
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+      fireEvent.change(screen.getByPlaceholderText('exact value'), {
+        target: { value: 'ignore-me' },
+      });
+      fireEvent.change(document.querySelector('input[type="password"]'), {
+        target: { value: 'graph-token' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+      await waitFor(() => expect(azureADAPI.scan).toHaveBeenCalled());
+      expect(azureADAPI.scan.mock.calls[0][0]).toMatchObject({
+        managedIdentityMode: mode,
+        filterRules: [
+          {
+            action: 'exclude',
+            field: 'name',
+            matchType: 'exact',
+            value: 'ignore-me',
+          },
+        ],
+        ...(mode === 'only'
+          ? { include: { applications: false, servicePrincipals: true } }
+          : {}),
+      });
+    }
+  );
+  const preview = {
+    items: [
+      {
+        name: 'Ordinary principal',
+        location: 'azure-ad:servicePrincipals/app/secrets/key',
+        sourceKind: 'azure-ad-sp-secret',
+        sourceObjectId: 'app:key',
+        servicePrincipalType: 'Application',
+      },
+    ],
+    summary: [{ type: 'service_principals', found: 1, complete: true }],
+    scan_id: 'entra-preview',
+    filterSummary: { matchedCount: 1, excludedCount: 2 },
+  };
+  const scanEntra = async () => {
+    apiGetMock.mockResolvedValue({ data: {} });
+    azureADAPI.scan.mockResolvedValue(preview);
+    render(renderModal({ provider: 'azure-ad' }));
+    fireEvent.change(
+      await screen.findByPlaceholderText(/Paste (?:access )?token/),
+      {
+        target: { value: 'graph-token' },
+      }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+    await screen.findByText('1 matched');
+    fireEvent.click(screen.getByRole('button', { name: 'select-first-1' }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Import selected' })
+      ).toBeEnabled()
+    );
+  };
+
+  it('imports a verified Entra preview with its original scan id', async () => {
+    await scanEntra();
+    fireEvent.click(screen.getByRole('button', { name: 'Import selected' }));
+    await waitFor(() => expect(integrationAPI.import).toHaveBeenCalled());
+    expect(integrationAPI.import.mock.calls[0][0]).toMatchObject({
+      scanId: 'entra-preview',
+      items: preview.items,
+    });
+  });
+
+  it.each(['identity', 'rules', 'scope', 'credentials'])(
+    'invalidates an Entra preview after changing %s',
+    async change => {
+      await scanEntra();
+      expect(screen.getByText('2 excluded by rules')).toBeInTheDocument();
+      if (change === 'identity')
+        fireEvent.change(
+          screen.getByRole('combobox', { name: 'Identity selection' }),
+          { target: { value: 'only' } }
+        );
+      if (change === 'rules')
+        fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+      if (change === 'scope')
+        fireEvent.click(
+          screen
+            .getByText('Scan Service Principals')
+            .parentElement.querySelector('input')
+        );
+      if (change === 'credentials')
+        fireEvent.change(
+          screen.getByPlaceholderText(/Paste (?:access )?token/),
+          {
+            target: { value: 'new-graph-token' },
+          }
+        );
+      expect(
+        screen.getByRole('button', { name: 'Import selected' })
+      ).toBeDisabled();
+      expect(
+        screen.queryByRole('status', { name: 'Filter results' })
+      ).toBeNull();
+      expect(
+        screen.getByRole('checkbox', { name: /Remove previously imported/ })
+      ).toBeDisabled();
+      fireEvent.click(screen.getByRole('button', { name: 'Import selected' }));
+      expect(integrationAPI.import).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['resolve', 'reject'])(
+    'keeps the newer Entra scan loading when a discarded request settles by %s',
+    async outcome => {
+      let finishOld, failOld, finishCurrent;
+      azureADAPI.scan
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve, reject) => {
+              finishOld = resolve;
+              failOld = reject;
+            })
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              finishCurrent = resolve;
+            })
+        );
+      apiGetMock.mockResolvedValue({ data: {} });
+      render(renderModal({ provider: 'azure-ad' }));
+      fireEvent.change(
+        await screen.findByPlaceholderText(/Paste (?:access )?token/),
+        {
+          target: { value: 'graph-token' },
+        }
+      );
+      const scanElement = screen.getByRole('button', {
+        name: 'Scan',
+        exact: true,
+      });
+      const scan = () => scanElement;
+      fireEvent.click(scan());
+      fireEvent.change(
+        screen.getByRole('combobox', { name: 'Identity selection' }),
+        {
+          target: { value: 'only' },
+        }
+      );
+      fireEvent.click(scan());
+      expect(azureADAPI.scan).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        if (outcome === 'reject') failOld(new Error('Old scan failed'));
+        else finishOld(preview);
+      });
+      expect(scan()).toBeDisabled();
+      expect(
+        screen.getByRole('button', { name: 'Import selected' })
+      ).toBeDisabled();
+      expect(screen.queryByText('1 matched')).toBeNull();
+      fireEvent.click(scan());
+      expect(azureADAPI.scan).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        finishCurrent(preview);
+      });
+      await waitFor(() => expect(scan()).toBeEnabled());
+      expect(screen.getByText('1 matched')).toBeInTheDocument();
+    }
+  );
+
+  it('ignores an Entra scan that completes after identity selection changes', async () => {
+    let finish;
+    apiGetMock.mockResolvedValue({ data: {} });
+    azureADAPI.scan.mockReturnValue(
+      new Promise(resolve => {
+        finish = resolve;
+      })
+    );
+    render(renderModal({ provider: 'azure-ad' }));
+    fireEvent.change(
+      await screen.findByPlaceholderText(/Paste (?:access )?token/),
+      {
+        target: { value: 'graph-token' },
+      }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+    fireEvent.change(
+      screen.getByRole('combobox', { name: 'Identity selection' }),
+      { target: { value: 'only' } }
+    );
+    await act(async () => {
+      finish(preview);
+    });
+    expect(
+      screen.getByRole('button', { name: 'Import selected' })
+    ).toBeDisabled();
+    expect(screen.queryByText('1 matched')).toBeNull();
+    expect(
+      screen.getByRole('checkbox', { name: /Remove previously imported/ })
+    ).toBeDisabled();
+  });
+
+  it('shows filter feedback when all Entra credentials were excluded', async () => {
+    apiGetMock.mockResolvedValue({ data: {} });
+    azureADAPI.scan.mockResolvedValue({
+      items: [],
+      summary: [],
+      scan_id: 'empty',
+      filterSummary: { matchedCount: 0, excludedCount: 3 },
+    });
+    render(renderModal({ provider: 'azure-ad' }));
+    fireEvent.change(
+      await screen.findByPlaceholderText(/Paste (?:access )?token/),
+      {
+        target: { value: 'graph-token' },
+      }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+    expect(await screen.findByText('0 matched')).toBeInTheDocument();
+    expect(screen.getByText('3 excluded by rules')).toBeInTheDocument();
   });
 });
 
