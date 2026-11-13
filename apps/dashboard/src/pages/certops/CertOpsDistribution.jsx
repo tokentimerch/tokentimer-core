@@ -136,7 +136,12 @@ function NumberField({ name, value, onChange, min = 1, max = 604800 }) {
 }
 function JobLink({ workspaceId, id, children }) {
   return id ? (
-    <Link as={RouterLink} to={jobsLink(workspaceId, id)} color='blue.500'>
+    <Link
+      as={RouterLink}
+      to={jobsLink(workspaceId, id)}
+      color='blue.400'
+      fontSize='xs'
+    >
       {children || 'View job'}
     </Link>
   ) : null;
@@ -1636,6 +1641,7 @@ function Management({
                                   <>
                                     <Button
                                       size='xs'
+                                      variant='link'
                                       isDisabled={disabled}
                                       onClick={() => setEditor(consumer)}
                                     >
@@ -1643,6 +1649,7 @@ function Management({
                                     </Button>
                                     <Button
                                       size='xs'
+                                      variant='link'
                                       isDisabled={disabled}
                                       onClick={() => setMaintenance(consumer)}
                                     >
@@ -1657,6 +1664,7 @@ function Management({
                                     ) ? (
                                       <Button
                                         size='xs'
+                                        variant='link'
                                         isDisabled={disabled}
                                         onClick={() =>
                                           confirm(
@@ -1690,6 +1698,7 @@ function Management({
                                     ) ? (
                                       <Button
                                         size='xs'
+                                        variant='link'
                                         isDisabled={disabled}
                                         onClick={() =>
                                           confirm(
@@ -2033,7 +2042,8 @@ function Management({
                                     search: `?${consumerParams}`,
                                     hash: '#distribution-consumers',
                                   }}
-                                  color='blue.500'
+                                  color='blue.400'
+                                  fontSize='xs'
                                   display='block'
                                 >
                                   View consumer
@@ -2061,7 +2071,7 @@ function Management({
               >
                 <DashboardPanelHeader
                   title='Discovery coverage'
-                  description='Coverage is partial. A certificate in a machine store does not establish that every service has been discovered.'
+                  description='Observed relationships may not include every service using the certificate.'
                 />
                 <Text mb={3} fontSize='sm' color={dashboard.text.secondary}>
                   All entries are read-only configuration observations; served
@@ -2284,13 +2294,12 @@ function Management({
                           </Text>
                         ) : null}
                         {value.cleanup_job_id ? (
-                          <Link
-                            as={RouterLink}
-                            to={jobsLink(workspaceId, value.cleanup_job_id)}
-                            color='blue.500'
+                          <JobLink
+                            workspaceId={workspaceId}
+                            id={value.cleanup_job_id}
                           >
                             View cleanup job and approval
-                          </Link>
+                          </JobLink>
                         ) : null}
                         {canAdmin &&
                         retention.cleanupAvailable &&
@@ -2412,14 +2421,14 @@ export default function CertOpsDistribution() {
           description='Manage certificate destinations, rollouts and verification.'
           mb={3}
           action={
-            <Link
+            <DashboardActionButton
               as={RouterLink}
               to={onboardingPath({ workspaceId, area: 'certops' })}
-              color='blue.500'
-              fontSize='sm'
+              variant='outline'
+              size='sm'
             >
               Open first-distribution setup guide
-            </Link>
+            </DashboardActionButton>
           }
         />
         <Stack

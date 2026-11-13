@@ -130,7 +130,7 @@ describe('Distribution Management',()=>{
     manage.mockReturnValue(false);admin.mockReturnValue(false);page();await screen.findByRole('tab',{name:'Overview'});expect(screen.queryByRole('button',{name:'Request rollout'})).not.toBeInTheDocument();await openView('Destinations');await screen.findByText('Consumer host · offline');
     expect(screen.getByText(/old certificate active/)).toBeInTheDocument();expect(screen.getByText('installed')).toBeInTheDocument();
     expect(screen.queryByRole('button',{name:'Add consumer'})).not.toBeInTheDocument();expect(screen.queryByRole('button',{name:'Request rollout'})).not.toBeInTheDocument();
-    await openView('Issues');expect(screen.getByText(/A certificate in a machine store does not establish/)).toBeInTheDocument();
+    await openView('Issues');expect(screen.getByText(/Observed relationships may not include every service using the certificate/)).toBeInTheDocument();
   });
   it('presents discovery observations with explicit confidence and a shared served-certificate caveat',async()=>{
     data.discoveries=[
