@@ -1428,6 +1428,7 @@ function Management({
                       aria-label='Distribution consumers'
                       size='sm'
                       display={{ base: 'block', lg: 'table' }}
+                      tableLayout={{ lg: 'fixed' }}
                       sx={{
                         'th, td': {
                           borderColor: 'dashboard.modal.border',
@@ -1442,16 +1443,16 @@ function Management({
                         display={{ base: 'none', lg: 'table-header-group' }}
                       >
                         <Tr>
-                          <Th w='20%' px={2}>
+                          <Th w='19%' px={2}>
                             Consumer / agent
                           </Th>
-                          <Th w='19%' px={2}>
+                          <Th w='16%' px={2}>
                             Status / versions
                           </Th>
-                          <Th w='23%' px={2}>
+                          <Th w='26%' px={2}>
                             Proof / deployed expiry
                           </Th>
-                          <Th w='22%' px={2}>
+                          <Th w='23%' px={2}>
                             Policy
                           </Th>
                           <Th w='16%' px={2}>
@@ -1471,6 +1472,7 @@ function Management({
                           >
                             <Td
                               display={{ base: 'block', lg: 'table-cell' }}
+                              px={2}
                               whiteSpace='normal'
                               overflowWrap='anywhere'
                               borderBottomWidth={{ base: 0, lg: '1px' }}
@@ -1505,6 +1507,7 @@ function Management({
                             </Td>
                             <Td
                               display={{ base: 'block', lg: 'table-cell' }}
+                              px={2}
                               whiteSpace='normal'
                               overflowWrap='anywhere'
                               borderBottomWidth={{ base: 0, lg: '1px' }}
@@ -1563,6 +1566,7 @@ function Management({
                             </Td>
                             <Td
                               display={{ base: 'block', lg: 'table-cell' }}
+                              px={2}
                               whiteSpace='normal'
                               overflowWrap='anywhere'
                               borderBottomWidth={{ base: 0, lg: '1px' }}
@@ -1579,17 +1583,27 @@ function Management({
                               >
                                 Proof / deployed expiry
                               </Text>
-                              {label(consumer.verification_method)}
-                              <Text fontSize='xs'>
+                              <Text fontSize='sm' fontWeight='medium'>
+                                {label(consumer.verification_method)}
+                              </Text>
+                              <Text
+                                fontSize='xs'
+                                color={dashboard.text.secondary}
+                                mt={1}
+                              >
                                 Proof {formatDateTime(consumer.observed_at)}
                               </Text>
-                              <Text fontSize='xs'>
+                              <Text
+                                fontSize='xs'
+                                color={dashboard.text.secondary}
+                              >
                                 Deployed expiry{' '}
                                 {formatDateTime(consumer.observed_valid_to)}
                               </Text>
                             </Td>
                             <Td
                               display={{ base: 'block', lg: 'table-cell' }}
+                              px={2}
                               whiteSpace='normal'
                               overflowWrap='anywhere'
                               borderBottomWidth={{ base: 0, lg: '1px' }}
@@ -1606,16 +1620,28 @@ function Management({
                               >
                                 Policy
                               </Text>
-                              {consumer.required ? 'Required' : 'Optional'} ·
-                              wave {consumer.wave}
-                              <Text fontSize='xs'>
+                              <Text fontSize='sm' fontWeight='medium'>
+                                {consumer.required ? 'Required' : 'Optional'} ·
+                                wave {consumer.wave}
+                              </Text>
+                              <Text
+                                fontSize='xs'
+                                color={dashboard.text.secondary}
+                                mt={1}
+                              >
                                 Authorization revision{' '}
-                                {consumer.authorization_revision} / local
-                                profile {consumer.profile_revision}
+                                {consumer.authorization_revision}
+                              </Text>
+                              <Text
+                                fontSize='xs'
+                                color={dashboard.text.secondary}
+                              >
+                                Local profile {consumer.profile_revision}
                               </Text>
                             </Td>
                             <Td
                               display={{ base: 'block', lg: 'table-cell' }}
+                              px={2}
                               whiteSpace='normal'
                               overflowWrap='anywhere'
                               borderBottomWidth={{ base: 0, lg: '1px' }}
@@ -1632,7 +1658,18 @@ function Management({
                               >
                                 Actions
                               </Text>
-                              <Stack align='start' spacing={1}>
+                              <Stack
+                                align='start'
+                                spacing={1}
+                                sx={{
+                                  button: {
+                                    color: 'blue.400',
+                                    fontWeight: 'normal',
+                                    textAlign: 'left',
+                                    whiteSpace: 'normal',
+                                  },
+                                }}
+                              >
                                 <JobLink
                                   workspaceId={workspaceId}
                                   id={consumer.latest_deployment?.jobId}
