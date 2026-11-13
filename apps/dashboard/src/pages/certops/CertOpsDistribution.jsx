@@ -22,8 +22,19 @@ import {
   FormControl,
   FormLabel,
   HStack,
+  IconButton,
   Input,
   Link,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
+  Modal,
+  ModalBody,
+  ModalCloseButton,
+  ModalHeader,
+  ModalOverlay,
+  Portal,
   Select,
   SimpleGrid,
   Stack,
@@ -41,6 +52,7 @@ import {
   Thead,
   Tr,
 } from '@chakra-ui/react';
+import { FiMoreHorizontal } from 'react-icons/fi';
 import {
   DashboardActionButton,
   DashboardPanel,
@@ -48,6 +60,10 @@ import {
   DashboardState,
 } from '../../components/DashboardPrimitives';
 import DashboardPagination from '../../components/DashboardPagination.jsx';
+import {
+  DashboardModalFrame,
+  DashboardModalTitle,
+} from '../../components/DashboardModalFrame.jsx';
 import {
   CertOpsMobileFieldLabel,
   useCertOpsResponsiveTableStyles,
@@ -152,6 +168,24 @@ function JobLink({ workspaceId, id, children }) {
       {children || 'View job'}
     </Link>
   ) : null;
+}
+
+function RowActions({ name, onTrigger, children }) {
+  return (
+    <Menu placement='bottom-end' isLazy>
+      <MenuButton
+        as={IconButton}
+        aria-label={name}
+        icon={<FiMoreHorizontal />}
+        size='sm'
+        variant='outline'
+        onClick={event => onTrigger?.(event.currentTarget)}
+      />
+      <Portal>
+        <MenuList>{children}</MenuList>
+      </Portal>
+    </Menu>
+  );
 }
 
 function PolicyForm({ data, disabled, onSave }) {
@@ -449,9 +483,6 @@ function ConsumerForm({ consumer, agents, disabled, onSave, onCancel }) {
       }}
     >
       <Stack spacing={3}>
-        <Text fontWeight='semibold'>
-          {consumer ? 'Edit consumer' : 'Add consumer'}
-        </Text>
         <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
           <Field name='Registered agent'>
             <Select
@@ -588,9 +619,6 @@ function MaintenanceForm({
       }}
     >
       <Stack spacing={3}>
-        <Text fontWeight='semibold'>
-          Activation and maintenance: {consumer.deployment_profile_ref}
-        </Text>
         <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
           <Field name='Activation method'>
             <Select
@@ -940,7 +968,8 @@ function Management({
     [retention, setRetention] = useState(null),
     [confirmation, setConfirmation] = useState(null);
   const cancelRef = useRef(null),
-    keys = useRef(new Map());
+    keys = useRef(new Map()),
+    modalReturnFocusRef = useRef(null);
   const { data } = state,
     disabled =
       busy ||
@@ -1429,7 +1458,11 @@ function Management({
                     canManage ? (
                       <DashboardActionButton
                         isDisabled={disabled}
-                        onClick={() => setEditor({})}
+                        onClick={event => {
+                          modalReturnFocusRef.current = event.currentTarget;
+                          setError('');
+                          setEditor({});
+                        }}
                       >
                         Add consumer
                       </DashboardActionButton>
@@ -1660,123 +1693,131 @@ function Management({
                               >
                                 Actions
                               </Text>
-                              <Stack
-                                align='start'
-                                spacing={1}
-                                sx={{
-                                  button: {
-                                    color: 'blue.400',
-                                    fontWeight: 'normal',
-                                    textAlign: 'left',
-                                    whiteSpace: 'normal',
-                                  },
-                                }}
-                              >
-                                <JobLink
-                                  workspaceId={workspaceId}
-                                  id={consumer.latest_deployment?.jobId}
-                                />
-                                {canManage ? (
-                                  <>
-                                    <Button
-                                      size='xs'
-                                      variant='link'
-                                      isDisabled={disabled}
-                                      onClick={() => setEditor(consumer)}
+                              {canManage ||
+                              consumer.latest_deployment?.jobId ? (
+                                <RowActions
+                                  name={`Actions for destination ${consumer.deployment_profile_ref}`}
+                                  onTrigger={element => {
+                                    modalReturnFocusRef.current = element;
+                                  }}
+                                >
+                                  {consumer.latest_deployment?.jobId ? (
+                                    <MenuItem
+                                      as={RouterLink}
+                                      to={jobsLink(
+                                        workspaceId,
+                                        consumer.latest_deployment.jobId
+                                      )}
                                     >
-                                      Edit consumer
-                                    </Button>
-                                    <Button
-                                      size='xs'
-                                      variant='link'
-                                      isDisabled={disabled}
-                                      onClick={() => setMaintenance(consumer)}
-                                    >
-                                      Maintenance
-                                    </Button>
-                                    {[
-                                      'failed',
-                                      'blocked',
-                                      'orphaned_unknown_effect',
-                                    ].includes(
-                                      consumer.latest_deployment?.jobStatus
-                                    ) ? (
-                                      <Button
-                                        size='xs'
-                                        variant='link'
+                                      View job
+                                    </MenuItem>
+                                  ) : null}
+                                  {canManage ? (
+                                    <>
+                                      <MenuItem
                                         isDisabled={disabled}
-                                        onClick={() =>
-                                          confirm(
-                                            'Retry original signed job',
-                                            'Inspect job evidence and run preflight. Reconcile on the customer host before retrying an uncertain operation. The original version, generation and approval stay pinned.',
-                                            () =>
-                                              run(
-                                                () =>
-                                                  distributionApi.retry(
-                                                    workspaceId,
-                                                    consumer.latest_deployment
-                                                      .jobId
-                                                  ),
-                                                'Original job retry requested. Resume the rollout after reconciliation, then obtain fresh verification.'
-                                              )
-                                          )
-                                        }
+                                        onClick={() => {
+                                          setError('');
+                                          setEditor(consumer);
+                                        }}
                                       >
-                                        Retry original job
-                                      </Button>
-                                    ) : null}
-                                    {consumer.latest_deployment
-                                      ?.needsOperatorReconciliation &&
-                                    [
-                                      'failed',
-                                      'blocked',
-                                      'rejected',
-                                      'orphaned_unknown_effect',
-                                    ].includes(
-                                      consumer.latest_deployment?.jobStatus
-                                    ) ? (
-                                      <Button
-                                        size='xs'
-                                        variant='link'
+                                        Edit consumer
+                                      </MenuItem>
+                                      <MenuItem
                                         isDisabled={disabled}
-                                        onClick={() =>
-                                          confirm(
-                                            'Request read-only reconciliation',
-                                            'Request a fresh inspection of the original deployment on its assigned agent. A different authorized operator must approve it. The inspection does not install material, reload services or treat newer deployment evidence as proof of the original operation.',
-                                            () =>
-                                              run(
-                                                () =>
-                                                  distributionApi.reconcile(
-                                                    workspaceId,
-                                                    consumer.latest_deployment
-                                                      .jobId
-                                                  ),
-                                                result => (
-                                                  <Text as='span'>
-                                                    Read-only reconciliation
-                                                    requested.{' '}
-                                                    <JobLink
-                                                      workspaceId={workspaceId}
-                                                      id={
-                                                        result.job?.id ||
-                                                        result.id
-                                                      }
-                                                    >
-                                                      Review the inspection in
-                                                      Jobs
-                                                    </JobLink>
-                                                  </Text>
+                                        onClick={() => {
+                                          setError('');
+                                          setMaintenance(consumer);
+                                        }}
+                                      >
+                                        Maintenance
+                                      </MenuItem>
+                                      {[
+                                        'failed',
+                                        'blocked',
+                                        'orphaned_unknown_effect',
+                                      ].includes(
+                                        consumer.latest_deployment?.jobStatus
+                                      ) ? (
+                                        <MenuItem
+                                          isDisabled={disabled}
+                                          onClick={() =>
+                                            confirm(
+                                              'Retry original signed job',
+                                              'Inspect job evidence and run preflight. Reconcile on the customer host before retrying an uncertain operation. The original version, generation and approval stay pinned.',
+                                              () =>
+                                                run(
+                                                  () =>
+                                                    distributionApi.retry(
+                                                      workspaceId,
+                                                      consumer.latest_deployment
+                                                        .jobId
+                                                    ),
+                                                  'Original job retry requested. Resume the rollout after reconciliation, then obtain fresh verification.'
                                                 )
-                                              )
-                                          )
-                                        }
-                                      >
-                                        Request read-only reconciliation
-                                      </Button>
-                                    ) : null}
-                                  </>
-                                ) : null}
-                              </Stack>
+                                            )
+                                          }
+                                        >
+                                          Retry original job
+                                        </MenuItem>
+                                      ) : null}
+                                      {consumer.latest_deployment
+                                        ?.needsOperatorReconciliation &&
+                                      [
+                                        'failed',
+                                        'blocked',
+                                        'rejected',
+                                        'orphaned_unknown_effect',
+                                      ].includes(
+                                        consumer.latest_deployment?.jobStatus
+                                      ) ? (
+                                        <MenuItem
+                                          isDisabled={disabled}
+                                          onClick={() =>
+                                            confirm(
+                                              'Request read-only reconciliation',
+                                              'Request a fresh inspection of the original deployment on its assigned agent. A different authorized operator must approve it. The inspection does not install material, reload services or treat newer deployment evidence as proof of the original operation.',
+                                              () =>
+                                                run(
+                                                  () =>
+                                                    distributionApi.reconcile(
+                                                      workspaceId,
+                                                      consumer.latest_deployment
+                                                        .jobId
+                                                    ),
+                                                  result => (
+                                                    <Text as='span'>
+                                                      Read-only reconciliation
+                                                      requested.{' '}
+                                                      <JobLink
+                                                        workspaceId={
+                                                          workspaceId
+                                                        }
+                                                        id={
+                                                          result.job?.id ||
+                                                          result.id
+                                                        }
+                                                      >
+                                                        Review the inspection in
+                                                        Jobs
+                                                      </JobLink>
+                                                    </Text>
+                                                  )
+                                                )
+                                            )
+                                          }
+                                        >
+                                          Request read-only reconciliation
+                                        </MenuItem>
+                                      ) : null}
+                                    </>
+                                  ) : null}
+                                </RowActions>
+                              ) : (
+                                <Text fontSize='xs' color={muted}>
+                                  --
+                                </Text>
+                              )}
                             </Td>
                           </Tr>
                         ))}
@@ -1785,71 +1826,124 @@ function Management({
                   </TableContainer>
                 )}
                 {editor ? (
-                  <Box mt={4}>
-                    <ConsumerForm
-                      key={editor.binding_id || 'new'}
-                      consumer={editor.binding_id ? editor : null}
-                      agents={data.agents || []}
-                      disabled={disabled}
-                      onCancel={() => setEditor(null)}
-                      onSave={(id, binding) =>
-                        run(async () => {
-                          await distributionApi.consumer(
-                            workspaceId,
-                            groupId,
-                            id,
-                            binding
-                          );
-                          setEditor(null);
-                        }, 'Consumer saved. Approvals and customer-local authorization must use the new revision.')
-                      }
-                    />
-                  </Box>
+                  <Modal
+                    isOpen
+                    onClose={() => setEditor(null)}
+                    finalFocusRef={modalReturnFocusRef}
+                    isCentered
+                    scrollBehavior='inside'
+                  >
+                    <ModalOverlay />
+                    <DashboardModalFrame
+                      type='workflow'
+                      maxW={{ base: 'calc(100vw - 24px)', md: '900px' }}
+                    >
+                      <ModalHeader>
+                        <DashboardModalTitle>
+                          {editor.binding_id ? 'Edit consumer' : 'Add consumer'}
+                        </DashboardModalTitle>
+                      </ModalHeader>
+                      <ModalCloseButton />
+                      <ModalBody pb={6}>
+                        {error ? (
+                          <Alert status='error' mb={4}>
+                            <AlertIcon />
+                            {error}
+                          </Alert>
+                        ) : null}
+                        <ConsumerForm
+                          key={editor.binding_id || 'new'}
+                          consumer={editor.binding_id ? editor : null}
+                          agents={data.agents || []}
+                          disabled={disabled}
+                          onCancel={() => setEditor(null)}
+                          onSave={(id, binding) =>
+                            run(async () => {
+                              await distributionApi.consumer(
+                                workspaceId,
+                                groupId,
+                                id,
+                                binding
+                              );
+                              setEditor(null);
+                            }, 'Consumer saved. Approvals and customer-local authorization must use the new revision.')
+                          }
+                        />
+                      </ModalBody>
+                    </DashboardModalFrame>
+                  </Modal>
                 ) : null}
                 {maintenance ? (
-                  <Box mt={4}>
-                    <MaintenanceForm
-                      key={`${maintenance.binding_id}/${maintenance.authorization_revision}`}
-                      consumer={maintenance}
-                      disabled={disabled}
-                      onCancel={() => setMaintenance(null)}
-                      onEmergency={
-                        canAdmin
-                          ? (consumer, policy) =>
-                              confirm(
-                                'Authorize emergency exception',
-                                `Authorize this consumer for a bounded emergency period (${policy.emergency.reference}). Blackouts still apply and a separate rollout approval is required.`,
-                                () =>
-                                  run(async () => {
-                                    await distributionApi.emergency(
-                                      workspaceId,
-                                      groupId,
-                                      consumer.binding_id,
-                                      {
-                                        policy,
-                                        expectedAuthorizationRevision:
-                                          consumer.authorization_revision,
-                                      }
-                                    );
-                                    setMaintenance(null);
-                                  }, 'Emergency authorization saved. Request a fresh rollout approval.')
-                              )
-                          : undefined
-                      }
-                      onSave={(consumer, policy) =>
-                        run(async () => {
-                          await distributionApi.activation(
-                            workspaceId,
-                            groupId,
-                            consumer.binding_id,
-                            policy,
-                            consumer.authorization_revision
-                          );
-                          setMaintenance(null);
-                        }, 'Activation policy saved. Request a fresh rollout approval.')
-                      }
-                    />
-                  </Box>
+                  <Modal
+                    isOpen
+                    onClose={() => setMaintenance(null)}
+                    finalFocusRef={modalReturnFocusRef}
+                    isCentered
+                    scrollBehavior='inside'
+                  >
+                    <ModalOverlay />
+                    <DashboardModalFrame
+                      type='workflow'
+                      maxW={{ base: 'calc(100vw - 24px)', md: '900px' }}
+                    >
+                      <ModalHeader>
+                        <DashboardModalTitle>
+                          Activation and maintenance:{' '}
+                          {maintenance.deployment_profile_ref}
+                        </DashboardModalTitle>
+                      </ModalHeader>
+                      <ModalCloseButton />
+                      <ModalBody pb={6}>
+                        {error ? (
+                          <Alert status='error' mb={4}>
+                            <AlertIcon />
+                            {error}
+                          </Alert>
+                        ) : null}
+                        <MaintenanceForm
+                          key={`${maintenance.binding_id}/${maintenance.authorization_revision}`}
+                          consumer={maintenance}
+                          disabled={disabled}
+                          onCancel={() => setMaintenance(null)}
+                          onEmergency={
+                            canAdmin
+                              ? (consumer, policy) =>
+                                  confirm(
+                                    'Authorize emergency exception',
+                                    `Authorize this consumer for a bounded emergency period (${policy.emergency.reference}). Blackouts still apply and a separate rollout approval is required.`,
+                                    () =>
+                                      run(async () => {
+                                        await distributionApi.emergency(
+                                          workspaceId,
+                                          groupId,
+                                          consumer.binding_id,
+                                          {
+                                            policy,
+                                            expectedAuthorizationRevision:
+                                              consumer.authorization_revision,
+                                          }
+                                        );
+                                        setMaintenance(null);
+                                      }, 'Emergency authorization saved. Request a fresh rollout approval.')
+                                  )
+                              : undefined
+                          }
+                          onSave={(consumer, policy) =>
+                            run(async () => {
+                              await distributionApi.activation(
+                                workspaceId,
+                                groupId,
+                                consumer.binding_id,
+                                policy,
+                                consumer.authorization_revision
+                              );
+                              setMaintenance(null);
+                            }, 'Activation policy saved. Request a fresh rollout approval.')
+                          }
+                        />
+                      </ModalBody>
+                    </DashboardModalFrame>
+                  </Modal>
                 ) : null}
               </DashboardPanel>
             </Stack>
@@ -2124,34 +2218,39 @@ function Management({
                                     <CertOpsMobileFieldLabel color={muted}>
                                       Actions
                                     </CertOpsMobileFieldLabel>
-                                    <Stack align='start' spacing={1}>
-                                      {consumer ? (
-                                        <Link
-                                          as={RouterLink}
-                                          to={{
-                                            pathname: location.pathname,
-                                            search: `?${consumerParams}`,
-                                            hash: '#distribution-consumers',
-                                          }}
-                                          color='blue.400'
-                                          fontSize='xs'
-                                        >
-                                          View consumer
-                                        </Link>
-                                      ) : null}
-                                      <JobLink
-                                        workspaceId={workspaceId}
-                                        id={incident.evidence?.jobId}
+                                    {consumer || incident.evidence?.jobId ? (
+                                      <RowActions
+                                        name={`Actions for incident ${label(incident.code)} ${incident.id}`}
                                       >
-                                        View affected job
-                                      </JobLink>
-                                      {!consumer &&
-                                      !incident.evidence?.jobId ? (
-                                        <Text fontSize='xs' color={muted}>
-                                          --
-                                        </Text>
-                                      ) : null}
-                                    </Stack>
+                                        {consumer ? (
+                                          <MenuItem
+                                            as={RouterLink}
+                                            to={{
+                                              pathname: location.pathname,
+                                              search: `?${consumerParams}`,
+                                              hash: '#distribution-consumers',
+                                            }}
+                                          >
+                                            View consumer
+                                          </MenuItem>
+                                        ) : null}
+                                        {incident.evidence?.jobId ? (
+                                          <MenuItem
+                                            as={RouterLink}
+                                            to={jobsLink(
+                                              workspaceId,
+                                              incident.evidence.jobId
+                                            )}
+                                          >
+                                            View affected job
+                                          </MenuItem>
+                                        ) : null}
+                                      </RowActions>
+                                    ) : (
+                                      <Text fontSize='xs' color={muted}>
+                                        --
+                                      </Text>
+                                    )}
                                   </Td>
                                 </Tr>
                               );

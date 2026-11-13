@@ -16,6 +16,7 @@ const consumer={binding_id:'binding',assigned_agent_id:'agent',deployment_profil
 let data;
 function page({paused=false,resolved=true}={}){return render(<ChakraProvider><DashboardThemeProvider><MemoryRouter><Routes><Route element={<Outlet context={{certOpsPaused:paused,killSwitchResolved:resolved}}/>}><Route path='/' element={<CertOpsDistribution/>}/></Route></Routes></MemoryRouter></DashboardThemeProvider></ChakraProvider>);}
 async function openView(name){fireEvent.click(await screen.findByRole('tab',{name:new RegExp('^'+name)}));}
+async function openDestinationActions(){fireEvent.click(await screen.findByRole('button',{name:'Actions for destination nginx'}));}
 beforeEach(()=>{vi.clearAllMocks();manage.mockReturnValue(true);admin.mockReturnValue(true);api.cleanup.mockResolvedValue({status:'pending_approval'});data={evaluated_at:new Date().toISOString(),group:{id:'group',state:'active',generation:1,material_store_ref:'customer',latest_material_version_id:latest},
   policy:null,defaults:structuredClone(policy),consumers:[structuredClone(consumer)],versions:[{id:latest,state:'published',provider_version:2,valid_to:'2027-01-01T00:00:00Z'},{id:retained,state:'published',provider_version:1,valid_to:'2026-12-01T00:00:00Z'}],
   rollouts:[],approvals:[],incidents:[],schedule:null,discoveries:[],agents:[{id:'agent',name:'Consumer host',status:'active'}],contactGroups:[{id:'ops',name:'Operations'}]};
@@ -46,7 +47,7 @@ describe('Distribution Management',()=>{
     data.consumers[0].latest_deployment={jobId:'original-job',jobStatus:'rejected',needsOperatorReconciliation:true};
     api.reconcile.mockResolvedValue({job:{id:'inspection-job'}});
     page();await openView('Destinations');
-    fireEvent.click(await screen.findByRole('button',{name:'Request read-only reconciliation'}));
+    await openDestinationActions();fireEvent.click(await screen.findByRole('menuitem',{name:'Request read-only reconciliation'}));
     expect(api.reconcile).not.toHaveBeenCalled();
     expect(screen.getByText(/A different authorized operator must approve it/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button',{name:'Confirm'}));
@@ -58,20 +59,20 @@ describe('Distribution Management',()=>{
   it('does not offer reconciliation without an uncertain terminal original job or write access',async()=>{
     data.consumers[0].latest_deployment={jobId:'original-job',jobStatus:'completed',needsOperatorReconciliation:false};
     page();await openView('Destinations');
-    expect(screen.queryByRole('button',{name:'Request read-only reconciliation'})).not.toBeInTheDocument();
+    await openDestinationActions();expect(screen.queryByRole('menuitem',{name:'Request read-only reconciliation'})).not.toBeInTheDocument();
   });
   it('keeps the reconciliation action unavailable to viewers and paused workspaces',async()=>{
     data.consumers[0].latest_deployment={jobId:'original-job',jobStatus:'rejected',needsOperatorReconciliation:true};
     manage.mockReturnValue(false);
     const view=page();await openView('Destinations');
-    expect(screen.queryByRole('button',{name:'Request read-only reconciliation'})).not.toBeInTheDocument();
+    await openDestinationActions();expect(screen.queryByRole('menuitem',{name:'Request read-only reconciliation'})).not.toBeInTheDocument();
     view.unmount();manage.mockReturnValue(true);page({paused:true});await openView('Destinations');
-    expect(screen.getByRole('button',{name:'Request read-only reconciliation'})).toBeDisabled();
+    await openDestinationActions();expect(await screen.findByRole('menuitem',{name:'Request read-only reconciliation'})).toBeDisabled();
   });
   it('shows an unavailable-proof error without claiming that reconciliation succeeded',async()=>{
     data.consumers[0].latest_deployment={jobId:'original-job',jobStatus:'rejected',needsOperatorReconciliation:true};
     api.reconcile.mockRejectedValue({response:{data:{error:'Original deployment proof is unavailable.',code:'CERTOPS_RECONCILIATION_UNAVAILABLE'}}});
-    page();await openView('Destinations');fireEvent.click(await screen.findByRole('button',{name:'Request read-only reconciliation'}));
+    page();await openView('Destinations');await openDestinationActions();fireEvent.click(await screen.findByRole('menuitem',{name:'Request read-only reconciliation'}));
     fireEvent.click(screen.getByRole('button',{name:'Confirm'}));
     expect(await screen.findByText(/Original deployment proof is unavailable/)).toBeInTheDocument();
     expect(screen.queryByRole('link',{name:'Review the inspection in Jobs'})).not.toBeInTheDocument();
@@ -138,7 +139,8 @@ describe('Distribution Management',()=>{
   });
   it('makes independent staging an explicit Linux policy choice',async()=>{
     data.consumers[0].agent_platform='linux';page();await openView('Destinations');
-    fireEvent.click(await screen.findByRole('button',{name:'Maintenance'}));
+    await openDestinationActions();fireEvent.click(await screen.findByRole('menuitem',{name:'Maintenance'}));
+    expect(screen.getByRole('dialog',{name:'Activation and maintenance: nginx'})).toBeInTheDocument();
     const staging=screen.getByRole('checkbox',{name:/Stage material before the activation window/});
     expect(staging).not.toBeChecked();fireEvent.click(staging);
     fireEvent.click(screen.getByRole('button',{name:'Save activation policy'}));
@@ -175,7 +177,8 @@ describe('Distribution Management',()=>{
     data.incidents=[{id:'incident',code:'consumer_offline',resolved_at:null,opened_at:'2026-01-02T00:00:00Z',updated_at:'2026-01-03T00:00:00Z',evidence:{jobId:'job'}}];
     page();await openView('Issues');
     expect(screen.getByText('consumer offline')).toBeInTheDocument();
-    expect(screen.getByRole('link',{name:'View affected job'})).toHaveAttribute('href','/certops/jobs?workspace=workspace&job=job');
+    fireEvent.click(screen.getByRole('button',{name:'Actions for incident consumer offline incident'}));
+    expect(await screen.findByRole('menuitem',{name:'View affected job'})).toHaveAttribute('href','/certops/jobs?workspace=workspace&job=job');
     expect(screen.queryByText('Recovery guidance')).not.toBeInTheDocument();
     expect(screen.queryByText('Supported targets')).not.toBeInTheDocument();
   });
@@ -189,16 +192,18 @@ describe('Distribution Management',()=>{
     expect(first.getByText('Agent: agent')).toBeInTheDocument();
     expect(first.getByText('Current profile: nginx')).toBeInTheDocument();
     expect(first.getByText('Desired version: version-a')).toBeInTheDocument();
-    expect(first.getByRole('link',{name:'View consumer'})).toHaveAttribute('href','/?workspace=workspace&group=group#distribution-consumers');
-    expect(first.queryByRole('link',{name:'View affected job'})).not.toBeInTheDocument();
     const historical=within(screen.getByText('Binding: historical-binding').closest('tr'));
     expect(historical.getByText('Agent: former-agent')).toBeInTheDocument();
     expect(historical.getByText('Observed version: version-b')).toBeInTheDocument();
     expect(historical.getByText('Rollout: rollout-old')).toBeInTheDocument();
     expect(historical.getByText('Severity: critical')).toBeInTheDocument();
     expect(historical.getByText('Resolved')).toBeInTheDocument();
-    expect(historical.queryByRole('link',{name:'View consumer'})).not.toBeInTheDocument();
-    fireEvent.click(first.getByRole('link',{name:'View consumer'}));
+    expect(historical.queryByRole('button',{name:/Actions for incident/})).not.toBeInTheDocument();
+    fireEvent.click(first.getByRole('button',{name:/Actions for incident/}));
+    const viewConsumer=await screen.findByRole('menuitem',{name:'View consumer'});
+    expect(viewConsumer).toHaveAttribute('href','/?workspace=workspace&group=group#distribution-consumers');
+    expect(screen.queryByRole('menuitem',{name:'View affected job'})).not.toBeInTheDocument();
+    fireEvent.click(viewConsumer);
     await waitFor(()=>expect(screen.getByRole('tab',{name:'Destinations'})).toHaveAttribute('aria-selected','true'));
   });
   it('displays opaque provider versions in overview and retention',async()=>{
@@ -252,11 +257,33 @@ describe('Distribution Management',()=>{
     fireEvent.change(screen.getByLabelText('Customer-local deployment profile'),{target:{value:'web_secondary'}});fireEvent.click(screen.getByRole('button',{name:'Save consumer'}));
     await waitFor(()=>expect(api.consumer).toHaveBeenCalledWith('workspace','group',expect.any(String),expect.objectContaining({agentId:'agent',deploymentProfileRef:'web_secondary',required:true,wave:0,verificationPolicy:'served'})));
   });
-  it('keeps an unfinished destination form when changing views',async()=>{
+  it('opens the selected consumer in a dismissible edit dialog',async()=>{
+    page();await openView('Destinations');await openDestinationActions();
+    fireEvent.click(await screen.findByRole('menuitem',{name:'Edit consumer'}));
+    const dialog=screen.getByRole('dialog',{name:'Edit consumer'});
+    expect(within(dialog).getByLabelText('Customer-local deployment profile')).toHaveValue('nginx');
+    fireEvent.click(within(dialog).getByRole('button',{name:'Close'}));
+    await waitFor(()=>expect(screen.queryByRole('dialog',{name:'Edit consumer'})).not.toBeInTheDocument());
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Actions for destination nginx'})).toHaveFocus());
+    expect(api.consumer).not.toHaveBeenCalled();
+  });
+  it('shows a failed save inside the consumer dialog',async()=>{
+    api.consumer.mockRejectedValueOnce({response:{data:{error:'Could not save consumer'}}});
+    page();await openView('Destinations');await openDestinationActions();
+    fireEvent.click(await screen.findByRole('menuitem',{name:'Edit consumer'}));
+    const dialog=screen.getByRole('dialog',{name:'Edit consumer'});
+    fireEvent.click(within(dialog).getByRole('button',{name:'Save consumer'}));
+    expect(await within(dialog).findByText('Could not save consumer')).toBeInTheDocument();
+  });
+  it('closes the destination dialog without saving and can reopen it',async()=>{
     page();await openView('Destinations');fireEvent.click(screen.getByRole('button',{name:'Add consumer'}));
+    expect(screen.getByRole('dialog',{name:'Add consumer'})).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Customer-local deployment profile'),{target:{value:'unfinished'}});
-    await openView('Deployments');await openView('Destinations');
-    expect(screen.getByLabelText('Customer-local deployment profile')).toHaveValue('unfinished');
+    fireEvent.click(screen.getByRole('button',{name:'Cancel'}));
+    await waitFor(()=>expect(screen.queryByRole('dialog',{name:'Add consumer'})).not.toBeInTheDocument());
+    expect(api.consumer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button',{name:'Add consumer'}));
+    expect(screen.getByLabelText('Customer-local deployment profile')).toHaveValue('');
   });
   it('keeps policy edits when switching views',async()=>{
     page();await openView('Policy');fireEvent.click(screen.getByRole('button',{name:'Edit policy settings'}));
@@ -331,7 +358,7 @@ describe('Distribution Management',()=>{
     await waitFor(()=>expect(api.cleanup).toHaveBeenCalledWith('workspace','group',{materialVersionId:oldest,expectedRevision:1,reauthorize:false}));
   });
   it('requires confirmation for a bounded administrator emergency and still requires rollout approval',async()=>{
-    page();await openView('Destinations');fireEvent.click(await screen.findByRole('button',{name:'Maintenance'}));
+    page();await openView('Destinations');await openDestinationActions();fireEvent.click(await screen.findByRole('menuitem',{name:'Maintenance'}));
     fireEvent.change(screen.getByLabelText('Emergency audit reference'),{target:{value:'CHANGE_248'}});
     fireEvent.click(screen.getByRole('button',{name:'Review emergency exception'}));expect(api.emergency).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button',{name:'Confirm'}));await screen.findByText(/Emergency authorization saved. Request a fresh rollout approval/);
