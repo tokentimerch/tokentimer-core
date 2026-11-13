@@ -30,6 +30,7 @@ const { generateSigningKeyPair, signJobPayload } = require("../signing");
 const {
   AGENT_PROTOCOL_ERROR_CODES,
   AgentProtocolError,
+  createProtocolClient,
 } = require("../protocol");
 
 function makeTempConfigDir() {
@@ -204,6 +205,128 @@ describe("agent runtime: lease, journal, multi-target transaction", () => {
     assert.equal(outcome.status, "blocked");
     assert.equal(client.calls.renewLease.length, 1);
     assert.match(client.calls.reportResult[0].errorMessage, /HTTP 409/);
+  });
+
+  it("retries a rate-limited mandatory material lease only before confirmed expiry", async () => {
+    const leaseState = createLeaseState();
+    let nowMs = 1_000, attempts = 0;
+    leaseState.lastConfirmedExpiresAtMs = 10_000;
+    const gate = await renewJobLeaseOrAbort({
+      leaseClient: { renewLease: async () => {
+        if (++attempts === 1) throw Object.assign(new AgentProtocolError("limited", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: 429 }), { retryAfterMs: 2_000 });
+        return { ok: true, leaseExpiresAt: new Date(20_000).toISOString() };
+      } },
+      jobId: "job-rate", claimId: "claim-rate", leaseState, required: true,
+      now: () => nowMs, sleep: async (ms) => { nowMs += ms; }, log: silentLog,
+    });
+    assert.equal(gate.ok, true);
+    assert.equal(attempts, 2);
+    assert.equal(nowMs, 3_000);
+  });
+
+  it("does not wait or execute after a rate limit exceeds the confirmed lease", async () => {
+    const leaseState = createLeaseState();
+    leaseState.lastConfirmedExpiresAtMs = 2_000;
+    let attempts = 0, slept = false;
+    const gate = await renewJobLeaseOrAbort({
+      leaseClient: { renewLease: async () => { attempts++; throw Object.assign(new AgentProtocolError("limited", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: 429 }), { retryAfterMs: 2_000 }); } },
+      jobId: "job-rate-expiry", claimId: "claim-rate-expiry", leaseState, required: true,
+      now: () => 1_000, sleep: async () => { slept = true; }, log: silentLog,
+    });
+    assert.equal(gate.ok, false);
+    assert.equal(attempts, 1);
+    assert.equal(slept, false);
+  });
+
+  it("still rejects ownership loss after waiting for a rate limit", async () => {
+    const leaseState = createLeaseState();
+    leaseState.lastConfirmedExpiresAtMs = 10_000;
+    let nowMs = 1_000, attempts = 0;
+    const gate = await renewJobLeaseOrAbort({
+      leaseClient: { renewLease: async () => {
+        if (++attempts === 1) throw Object.assign(new AgentProtocolError("limited", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: 429 }), { retryAfterMs: 1_000 });
+        return { ok: false, status: 409, code: "CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH" };
+      } },
+      jobId: "job-rate-conflict", claimId: "claim-rate-conflict", leaseState, required: true,
+      now: () => nowMs, sleep: async (ms) => { nowMs += ms; }, log: silentLog,
+    });
+    assert.equal(gate.ok, false);
+    assert.equal(attempts, 2);
+    assert.match(gate.abort.errorMessage, /HTTP 409/);
+  });
+
+  it("does not retry a first mandatory lease without confirmed expiry", async () => {
+    let attempts = 0;
+    const gate = await renewJobLeaseOrAbort({
+      leaseClient: { renewLease: async () => { attempts++; throw Object.assign(new AgentProtocolError("limited", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: 429 }), { retryAfterMs: 1_000 }); } },
+      jobId: "job-rate-first", claimId: "claim-rate-first", leaseState: createLeaseState(), required: true,
+      sleep: async () => { throw new Error("must not sleep"); }, log: silentLog,
+    });
+    assert.equal(gate.ok, false);
+    assert.equal(attempts, 1);
+  });
+
+  it("aborts if the confirmed lease expires while waiting for rate limiting", async () => {
+    const leaseState = createLeaseState();
+    leaseState.lastConfirmedExpiresAtMs = 3_000;
+    let nowMs = 1_000, attempts = 0;
+    const gate = await renewJobLeaseOrAbort({
+      leaseClient: { renewLease: async () => { attempts++; throw Object.assign(new AgentProtocolError("limited", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: 429 }), { retryAfterMs: 1_000 }); } },
+      jobId: "job-rate-oversleep", claimId: "claim-rate-oversleep", leaseState, required: true,
+      now: () => nowMs, sleep: async () => { nowMs = 3_001; }, log: silentLog,
+    });
+    assert.equal(gate.ok, false);
+    assert.equal(attempts, 1);
+  });
+
+  it("bounds repeated rate-limit retries even with a frozen clock", async () => {
+    const leaseState = createLeaseState();
+    leaseState.lastConfirmedExpiresAtMs = 100_000;
+    let attempts = 0;
+    const gate = await renewJobLeaseOrAbort({
+      leaseClient: { renewLease: async () => { attempts++; throw Object.assign(new AgentProtocolError("limited", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: 429 }), { retryAfterMs: 1_000 }); } },
+      jobId: "job-rate-loop", claimId: "claim-rate-loop", leaseState, required: true,
+      now: () => 1_000, sleep: async () => {}, log: silentLog,
+    });
+    assert.equal(gate.ok, false);
+    assert.equal(attempts, 4);
+  });
+
+  it("retries a real protocol 429 with a new sequence before allowing a material boundary", async () => {
+    const leaseState = createLeaseState();
+    leaseState.lastConfirmedExpiresAtMs = 10_000;
+    let nowMs = 1_000;
+    const bodies = [];
+    const client = createProtocolClient({
+      serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0",
+      getCredential: () => "ttagent_agent-1_0123456789abcdef",
+      fetchImpl: async (_url, options) => {
+        bodies.push(JSON.parse(options.body));
+        const status = bodies.length === 1 ? 429 : 200;
+        return { status, ok: status === 200, headers: { get: (name) => name === "retry-after" ? "2" : null }, json: async () => ({ ok: true, leaseExpiresAt: new Date(20_000).toISOString() }) };
+      },
+    });
+    const gate = await renewJobLeaseOrAbort({
+      leaseClient: client, jobId: "job-rate-wire", claimId: "claim-rate-wire", leaseState, required: true,
+      now: () => nowMs, sleep: async (ms) => { nowMs += ms; }, log: silentLog,
+    });
+    assert.equal(gate.ok, true);
+    assert.deepEqual(bodies.map((body) => body.sequence), [1, 2]);
+    assert.equal(nowMs, 3_000);
+  });
+
+  it("does not retry if a concurrent lease monitor aborts while waiting", async () => {
+    const leaseState = createLeaseState();
+    leaseState.lastConfirmedExpiresAtMs = 10_000;
+    let nowMs = 1_000, attempts = 0;
+    const gate = await renewJobLeaseOrAbort({
+      leaseClient: { renewLease: async () => { attempts++; throw Object.assign(new AgentProtocolError("limited", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: 429 }), { retryAfterMs: 1_000 }); } },
+      jobId: "job-rate-abort", claimId: "claim-rate-abort", leaseState, required: true,
+      now: () => nowMs, sleep: async (ms) => { nowMs += ms; leaseState.abort = { status: "blocked", errorMessage: "ownership lost" }; }, log: silentLog,
+    });
+    assert.equal(gate.ok, false);
+    assert.equal(gate.abort.errorMessage, "ownership lost");
+    assert.equal(attempts, 1);
   });
 
   it("aborts mid-job when ownership is lost on a subsequent renew", async () => {

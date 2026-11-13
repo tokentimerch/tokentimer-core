@@ -50,6 +50,19 @@ test("distribution provider and native custody skips select their actual executa
     assert.ok(result.environments[site.environment].capabilities.length > 0);
   }
 });
+test("ACME runtime wrapper skip routes to the Linux agent test job", () => {
+  const result = generate([{
+    file: "packages/agent/src/acme/acme.test.js",
+    name: "acme.sh wrapper uses the explicit runtime and never falls back to PATH",
+    line: 1, kind: "dynamic", reason: "prerequisite",
+  }]);
+  const site = result.sites[0];
+  assert.equal(site.environment, "linux-filesystem");
+  assert.equal(site.workflow, ".github/workflows/ci.yml");
+  assert.equal(site.workflowJob, "backend_quality");
+  assert.equal(site.workflowStatus, "file-selected-not-qualified");
+  assert.equal(site.executionStatus, "not-qualified");
+});
 test("new or changed skip prerequisites require mapping regeneration", () => {
   const site = {
     file: "tests/fixture.test.js",

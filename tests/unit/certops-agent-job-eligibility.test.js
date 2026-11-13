@@ -218,6 +218,16 @@ describe("shared agent-job eligibility", () => {
     }
   });
 
+  it("routes cleanup by its pinned issuer without treating the signed group as a target selector", () => {
+    const candidate = agent({ supportedOperations: ["cleanup-from-store"], declaredCapabilities: ["evidence-claim-binding-v1", "material-store-vault-kv2-v1", "material-cleanup-vault-kv2-v1"] });
+    const payload = { target: { type: "endpoint", reference: "distribution-group" }, materialCleanup: { provider: "vault-kv2" } };
+    const job = { operation: "cleanup-from-store", executorKind: "agent", assignedAgentId: candidate.id, payload };
+    assert.equal(resolveAgentJobRoutingRequirements(job).requiredTargetSelector, null);
+    assert.equal(evaluateAgentJobEligibility({ agent: candidate, job, compatibility: computeAgentCompatibility(candidate, {}), now: NOW }).eligible, true);
+    assert.equal(resolveAgentJobRoutingRequirements({ ...job, operation: "renew" }).requiredTargetSelector, "distribution-group");
+    assert.equal(resolveAgentJobRoutingRequirements({ ...job, requiredTargetSelector: "explicit" }).requiredTargetSelector, "explicit");
+  });
+
   it("requires fresh claim-binding capability for provisioning renewals", () => {
     const candidate = agent({
       declaredCapabilities: ["evidence-claim-binding-v1"],

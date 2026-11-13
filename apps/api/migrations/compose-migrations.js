@@ -97,6 +97,22 @@ function composeMigrations(migrations, recorded = []) {
     .slice()
     .sort((a, b) => a.version - b.version);
   const byName = new Map(extensions.map((entry) => [entry.name, entry]));
+  // Validate the already-applied preview with the previous registry before
+  // appending main's newer migrations under unoccupied identities.
+  const hasRetirementPreview = byName.get("certops_retirement_dossiers")?.version !== 109 &&
+    rows.some((row) => row.version === 109 && row.name === "certops_retirement_dossiers");
+  let recognizedRetirementPreview = false;
+  if (hasRetirementPreview) {
+    const oldRegistry = migrations.filter((entry) => !["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username"].includes(entry.name))
+      .map((entry) => entry.name === "certops_retirement_dossiers" ? { ...entry, version: 109 } : entry);
+    const oldRows = recorded.filter((row) => row.version <= 109);
+    const oldComposed = composeMigrations(oldRegistry, oldRows);
+    const oldIdentity = new Map(oldComposed.map((entry) => [entry.name, entry.version]));
+    const appended = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation", "agent_credential_rotations", "agent_credential_rotation_ack"];
+    recognizedRetirementPreview = oldRows.every((row) => row.version < 70 || oldIdentity.get(row.name) === row.version) &&
+      rows.filter((row) => row.version > 109).every((row, index) => row.version === 110 + index && row.name === appended[index]);
+    if (!recognizedRetirementPreview) throw new Error("Unsupported Core retirement preview migration history");
+  }
   // This reviewed preview predates main's PagerDuty migrations at 94/95.
   // Keep its applied identities and finish any partial MCP tail before appending.
   const priorMcpNames = ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "auto_sync_metric_labels", "auto_sync_system_metrics", "certops_material_providers", "recipient_channel_verification", "weekly_digest_recipient_claim_token", "pagerduty_incident_lifecycle", "pagerduty_resolution_reason", "operator_connections", "operator_enrollment_grants", "operator_action_requests"];
@@ -114,9 +130,31 @@ function composeMigrations(migrations, recorded = []) {
     for (const append of [priorAppend, priorAppendWithAuthority]) {
       for (let length = 0; length <= append.length; length++) {
         const appliedAppend = append.slice(0, length);
-        const names = [...priorMcpNames, ...appliedAppend, ...extensions.map((entry) => entry.name).filter((name) => !priorMcpNames.includes(name) && !appliedAppend.includes(name))];
-        const versions = [...priorMcpVersions, ...names.slice(priorMcpNames.length).map((_name, index) => 97 + index)];
-        if (rows.every((row, index) => row.name === names[index] && row.version === versions[index])) { priorOrder = names; break; }
+        const remaining = extensions.map((entry) => entry.name).filter((name) => !priorMcpNames.includes(name) && !appliedAppend.includes(name));
+        const lifecycle = new Set([
+          "certops_distribution_lifecycle", "certops_distribution_incident_delivery",
+          "certops_stable_consumer_discovery", "certops_material_cleanup",
+          "certops_consumer_verification_failures", "certops_distribution_resolution_delivery",
+          "certops_consumer_staging", "certops_review_authority_epochs",
+        ]);
+        // Keep the existing MCP preview append order when no later lifecycle
+        // migration has been applied, but recognize either historical ordering.
+        const independent = remaining.filter((name) => !lifecycle.has(name));
+        const companions = remaining.filter((name) => lifecycle.has(name));
+        // A prior MCP preview could have applied agent rotation before the
+        // retirement features existed. Preserve that reviewed append order.
+        const laterRetirement = new Set(["certops_retirement_dossiers", "certops_material_reconciliation"]);
+        const beforeRetirement = [...independent.filter((name) => !laterRetirement.has(name)), ...independent.filter((name) => laterRetirement.has(name))];
+        const historicalOrders = [independent, beforeRetirement].flatMap((ordered) =>
+          Array.from({ length: ordered.length + 1 }, (_entry, cut) =>
+            [...ordered.slice(0, cut), ...companions, ...ordered.slice(cut)]),
+        );
+        for (const tail of [[...independent, ...companions], remaining, ...historicalOrders]) {
+          const names = [...priorMcpNames, ...appliedAppend, ...tail];
+          const versions = [...priorMcpVersions, ...names.slice(priorMcpNames.length).map((_name, index) => 97 + index)];
+          if (rows.every((row, index) => row.name === names[index] && row.version === versions[index])) { priorOrder = names; break; }
+        }
+        if (priorOrder) break;
       }
       if (priorOrder) break;
     }
@@ -161,13 +199,13 @@ function composeMigrations(migrations, recorded = []) {
       !base.every((name, index) =>
         rows.some((row) => row.version === 78 + index && row.name === name),
       ) ||
-      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp)
+      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp && !recognizedRetirementPreview)
     )
       throw new Error("Unsupported Core migration history: noncanonical gap");
   }
 
   let contiguousOrder = null;
-  if (contiguous && rows.length) {
+  if (contiguous && rows.length && !recognizedRetirementPreview) {
     const I = "certops_installed_file_distribution",
       S = "auto_sync_provider_stats",
       R = "auto_sync_run_metrics",
@@ -270,6 +308,8 @@ function composeMigrations(migrations, recorded = []) {
     certops_distribution_resolution_delivery: [
       "certops_distribution_incident_delivery",
     ],
+    certops_consumer_staging: ["certops_distribution_lifecycle"],
+    certops_review_authority_epochs: ["certops_distribution_lifecycle"],
   };
   const seen = new Set();
   for (const row of rows) {

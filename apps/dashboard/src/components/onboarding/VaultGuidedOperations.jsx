@@ -1081,9 +1081,17 @@ export function VaultRolloutGuide({
                       Configuration saved and agent restarted
                     </Checkbox>
                     <Text fontSize='sm'>
-                      Deployment:{' '}
+                      <strong>Latest recorded deployment:</strong>{' '}
                       {deploymentStageLabel(binding.latest_deployment?.stage)}
                     </Text>
+                    {binding.latest_deployment?.stage && (
+                      <Text fontSize='xs' color={dashboard.text.secondary}>
+                        This is separate from the signed check above.
+                        {binding.latest_deployment.stage === 'installed' &&
+                          ' Installation alone does not confirm the certificate is being served.'}{' '}
+                        Check the deployment evidence for the current version.
+                      </Text>
+                    )}
                     {binding.latest_deployment?.jobId &&
                     deploymentEvidenceOwners.get(
                       binding.latest_deployment.jobId

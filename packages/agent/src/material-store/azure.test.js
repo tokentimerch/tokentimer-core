@@ -175,6 +175,29 @@ test("Azure publishes one version, pins reads, and recovers a lost write respons
   const get = f.requests.find((r) => r.path.includes(receipt.providerVersion));
   assert.ok(get);
 });
+test("downloaded Azure preflight preserves its opaque version through the CLI and fetches without installing", async (t) => {
+  const f = await fixture(t), receipt = await f.client().publish(f.bundle);
+  const bindingId = crypto.randomUUID(), directory = path.dirname(f.tokenFile);
+  const target = {type:"endpoint",reference:"files",certPath:path.join(directory,"installed.pem"),keyPath:path.join(directory,"installed.key")};
+  const binding = {workspaceId:f.intent.workspaceId,groupId:f.intent.groupId,agentId:"consumer-agent",materialStoreRef:"customer",
+    deploymentProfileRef:"files",profileRevision:1,authorizationRevision:1,verificationPolicy:"installed",target,probes:[]};
+  const intent = {groupId:f.intent.groupId,bindingId,materialVersionId:f.intent.materialVersionId,materialStoreRef:"customer",provider:"azure-key-vault",
+    providerVersion:receipt.providerVersion,fingerprintSha256:f.bundle.fingerprintSha256,generation:1,deploymentProfileRef:"files",profileRevision:1,authorizationRevision:1,verificationPolicy:"installed"};
+  const file = path.join(directory,"public-intent.json");writeProtectedJson(file,intent);
+  const parsed = require("../../bin/preflight-material-binding").readPublicPreflightIntent(file,bindingId);
+  assert.equal(parsed.providerVersion,receipt.providerVersion);
+  const stateDir=path.join(directory,"state"),options={job:{workspaceId:f.intent.workspaceId,agentId:"consumer-agent",materialDeployment:parsed},
+    stores:f.stores,bindings:{[bindingId]:binding},stateDir,policyEngine:{checkPath:()=>({allowed:true})},fixtureLoopbackHttp:true,platform:"linux"};
+  const {preflightPinnedDeployment}=require("./lifecycle");
+  const report=await preflightPinnedDeployment(options);
+  assert.equal(report.ready,true);assert.equal(report.readOnly,true);assert.equal(f.puts,1);
+  assert.ok(f.requests.some(r=>r.path.includes(receipt.providerVersion)));
+  assert.equal(fs.existsSync(target.certPath),false);assert.equal(fs.existsSync(target.keyPath),false);assert.equal(fs.existsSync(stateDir),false);
+  assert.doesNotMatch(JSON.stringify(report),/PRIVATE KEY|privateKeyPem/);
+  const confused=await preflightPinnedDeployment({...options,job:{...options.job,materialDeployment:{...parsed,provider:"openbao-kv2"}}});
+  assert.equal(confused.ready,false);assert.equal(confused.diagnostics[0].code,"material_provider_mismatch");
+});
+
 test("Azure never reissues a PUT after an uncertain checkpoint when the object is absent", async (t) => {
   const f = await fixture(t);
   await assert.rejects(f.client().publish(f.bundle, { writeAttempted: true }), {

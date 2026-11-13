@@ -1,68 +1,16 @@
 # Distribution providers and Windows IIS consumers
 
-This extends [the distribution operations runbook](wildcard-vault-operations.md).
-The existing onboarding wizard now guides [material-store setup and consumer
-validation](distribution-onboarding-lab.md), including reproducible UI checks
-and a manual operator/API lab walkthrough.
-One ordinary, wildcard or SAN certificate can be published once, then rolled
-out independently to authorized consumers. Sharing a key increases the impact
-of a consumer compromise. Use an explicit distribution group and operator
-opt-in; use local CNG enrollment when sharing is unnecessary.
+Use the [distribution guide](distribution-lifecycle.md) for rollouts, verification and recovery, and the [onboarding lab](distribution-onboarding-lab.md) for a disposable setup. Sharing a private key increases the impact of a compromised consumer; use separate certificates where sharing is unnecessary.
 
 ## Availability and qualification
 
-Vault KV v2 and Linux nginx/Apache/HAProxy retain their released behavior.
-OpenBao uses the same KV v2 implementation, with explicit `openbao-kv2` identity.
-Azure and Windows shared import are implemented behind independent production
-qualification gates. A configuration example or a passing mock is not a
-qualification claim. See [qualification](distribution-extensions-qualification.md)
-for exact evidence and remaining gates.
+Vault and OpenBao KV v2 support Linux distribution. Azure Key Vault material storage and shared Windows/IIS material deployment are available only after their separate capabilities are qualified and enabled. Staging and exact-version cleanup also have separate closed gates. Upgrade matching API, worker and agents together; use the normal migration runner and preserve applied migration identities.
 
-The canonical schema sequence is migration 78 for installed-file assurance,
-released auto-sync migrations 79–82, then migration 83 for immutable provider references. Upgrade API/worker and
-consumer agents together. Previously applied migration rows are retained;
-recognized early provider-first preview databases append the missing assurance
-change without renumbering their ledger. Provider-at-81 previews retain that row
-and receive metric labels at 82 and system metrics at 83. Provider-at-82 previews
-retain that row and append system metrics at 83. See the [cross-PR integration plan](../migrations/open-pr-numbering.md)
-before combining #461, #496 or #498; unknown or mixed ledgers fail closed.
-
-Cleanup operation identity is separate from provider identity in the shared
-`material-provider.cjs` contract: new cleanup intents use
-`operation: "vault-kv2-soft-delete", provider: "vault-kv2"`. The exact legacy
-#498 `type: "vault-kv2-soft-delete"` is also recognized as an operation and maps
-only to Vault. Contradictory identities and unsupported providers are rejected.
-The shared adapter primitive uses the separate local cleanup credential,
-retention floor, lease checks, pre-mutation journal callback and metadata-first
-retry. This does not enable cleanup jobs or its production capability; #498
-still owns independent approval, permanent reference fences and receipt admission.
-
-Linux endpoint consumers support `installed`, `served` and `trust`. Installed
-assurance reads back the certificate, key and full chain without probes or a
-reload hook. IIS consumers require the typed Windows connector and `served` or
-`trust`; installed-only assurance is rejected by the API and agent.
-
-Public provider identifiers are `vault-kv2`, `openbao-kv2`, and
-`azure-key-vault`. Existing store configuration can omit `provider`, which
-means Vault. New publication requests use `publicationDestination.type`:
-
-```json
-{
-  "publicationDestination": {
-    "type": "openbao-kv2",
-    "materialStoreRef": "primary",
-    "issuanceProfileRef": "shared-web",
-    "profileRevision": 1
-  }
-}
-```
-
-The group ID/workspace ID, issuer agent, CA, DNS zone/provider, SANs, algorithm
-and revisions must match the host-local policy, just as in the existing
-Vault issuer example. Provider endpoints and credential paths belong only in
-the agent's protected configuration. They are never API request fields.
+Linux consumers support installed, served and trust assurance. IIS consumers require a typed Windows connector and served or trust verification. Store endpoints, credentials and executable target configuration remain customer-local; the API uses public aliases and references.
 
 ## OpenBao
+
+Set the public publicationDestination.type to openbao-kv2; omitting the store provider defaults to Vault.
 
 Set `materialStores.primary.provider` to `openbao-kv2` in the existing Vault
 example, point `address` at your HTTPS OpenBao listener, and retain
@@ -71,8 +19,6 @@ AppRole auto-auth to maintain the protected token sink; follow the existing
 [agent authentication walkthrough](vault-agent-authentication.md) with `bao`
 and OpenBao Agent equivalents. Credentials are read again for every request.
 
-Compatibility tests exercise OpenBao 2.3.2 and 2.4.1. This establishes KV v2
-compatibility for these versions, not a provider-vendor security support claim.
 KV v1, PKI issuance, namespaces and custom KV response formats are unsupported
 by this compatibility boundary. Do not configure `namespace` for OpenBao.
 
@@ -87,10 +33,7 @@ and read at version 1. Deleted/destroyed versions fail rather than using latest.
 The [dedicated Azure CI runbook](azure-keyvault-ci-qualification.md) describes
 trusted-main OIDC activation, exact issuer/consumer roles, disposable vault
 ownership and cleanup, and the mandatory provider/signed-service campaign.
-The [real development campaign](azure-keyvault-ci-qualification.md) passed all eighteen
-mandatory scenarios at its recorded source/package hashes. Final merged HEAD and
-the exact production release artifact require their own validation; the Azure
-production capability remains disabled.
+The Azure material-store capability remains disabled until its exact native artifact and complete operator journey are qualified.
 
 Use your own dedicated **public Azure Key Vault Secrets**
 namespace. Private endpoints are supported through your DNS resolving the
@@ -222,10 +165,7 @@ service SIDs receive read access. Shared import uses the Microsoft Software
 Key Storage Provider; TPM/HSM and custom KSP imports are unsupported. Windows
 may expand generic ACL masks, so verification compares their effective rights
 while still rejecting additional permissions and inheritance.
-The shared IIS connector accepts RSA and EC P-256/P-384 material. P-521
-passed native CNG parsing and signing but failed IIS activation in the Server
-2022 and 2025 lab, so `material_windows_algorithm_unsupported` rejects it
-before import, binding changes or an uncertainty record. General provider
+The shared IIS connector accepts RSA and EC P-256/P-384 material. P-521 is rejected before import or binding changes with `material_windows_algorithm_unsupported`. General provider
 storage and Linux validation retain their existing algorithm support.
 An existing identical certificate is reused
 only when key association and the exact protected key ACL already match.

@@ -47,6 +47,7 @@ function stubFetch(responses) {
     return Promise.resolve({
       ok: entry.status >= 200 && entry.status < 300,
       status: entry.status,
+      headers: { get: (name) => entry.headers?.[name.toLowerCase()] ?? null },
       json: () => Promise.resolve(entry.json ?? {}),
     });
   };
@@ -530,6 +531,7 @@ test("reportResult: sends correct envelope shape (messageType + resultBody field
   assert.equal(calls[0].parsedBody.body.rejectionReason, null);
   assert.equal("preflightResult" in calls[0].parsedBody.body, false);
   assert.equal("enrollmentResult" in calls[0].parsedBody.body, false);
+  assert.equal("cleanupReceipt" in calls[0].parsedBody.body, false);
 });
 
 test("reportResult: forwards preflight and enrollment results when provided", async () => {
@@ -560,6 +562,29 @@ test("reportResult: forwards preflight and enrollment results when provided", as
   assert.deepEqual(calls[0].parsedBody.body.preflightResult, preflightResult);
   assert.deepEqual(calls[0].parsedBody.body.enrollmentResult, enrollmentResult);
 });
+
+for (const method of ["vault-kv2-soft-delete", "openbao-kv2-soft-delete"]) {
+  test(`cleanup result survives durable outbox and protocol serialization: ${method}`, async t => {
+    const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+    const { enqueueOutboxEntry, listOutboxEntries, transmitOutboxEntry } = require("../outbox");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-cleanup-result-"));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
+    const client = createProtocolClient({serverUrl:"https://example.test",agentId:"agent-1",protocolVersion:"1.0.0",getCredential:()=>CREDENTIAL});
+    const id = "12345678-1234-4123-8123-123456789abc";
+    const cleanupReceipt = {schemaVersion:1,workspaceId:id,cleanupId:id,groupId:id,materialVersionId:id,providerVersion:7,method,softDeleted:true,observedAt:"2026-11-09T00:00:00.000Z"};
+    const result = {jobId:"job-1",attemptId:"attempt-1",claimId:"claim-1",nonce:"nonce-0123456789abcdef",status:"succeeded",cleanupReceipt};
+    enqueueOutboxEntry(dir, { result });
+    const [persisted] = listOutboxEntries(dir);
+    assert.deepEqual(persisted.result.cleanupReceipt,cleanupReceipt);
+    await transmitOutboxEntry(persisted,client);
+    assert.deepEqual(calls[0].parsedBody.body.cleanupReceipt,cleanupReceipt);
+    assert.equal(calls[0].parsedBody.body.claimId,"claim-1");
+    assert.equal(calls[0].parsedBody.body.nonce,"nonce-0123456789abcdef");
+    await assert.rejects(client.reportResult({...result,cleanupReceipt:{...cleanupReceipt,softDeleted:false}}), {code:AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE});
+    assert.equal(calls.length,1,"invalid receipts must never be sent");
+  });
+}
 
 test("reportResult: forwards claimId and nonce in the body when provided", async () => {
   const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
@@ -1386,6 +1411,16 @@ test("createCaAwareFetch: https request against an untrusted-by-bundle endpoint 
   await assert.rejects(
     caFetch("https://127.0.0.1:1/never-listens", { method: "POST", body: "{}" }),
   );
+});
+
+test("renewLease: preserves a rate-limit retry delay", async () => {
+  stubFetch([{ status: 429, json: { code: "CERTOPS_MACHINE_RATE_LIMITED" }, headers: { "retry-after": "8" } }]);
+  const client = createProtocolClient({ serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0", getCredential: () => CREDENTIAL });
+  await assert.rejects(() => client.renewLease({ jobId: "job-1", claimId: "claim-1" }), (err) => {
+    assert.equal(err.status, 429);
+    assert.equal(err.retryAfterMs, 8_000);
+    return true;
+  });
 });
 
 test("renewLease: other non-2xx still throws AgentProtocolError", async () => {

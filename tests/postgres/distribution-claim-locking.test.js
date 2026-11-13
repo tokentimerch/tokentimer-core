@@ -76,6 +76,21 @@ async function fixture() {
       VALUES($1,$2,$3,$4,1)`, [workspaceId, groupId, bindingId, versionId]);
     jobs.push(job);
   }
+  // Claim admission rechecks the exact reviewed rollout. The workspace owner
+  // remains authorized, and these bindings have no disruptive activation.
+  const distributionRevision = (await pool.query(
+    "SELECT certops_distribution_authorization_revision FROM workspaces WHERE id=$1",
+    [workspaceId])).rows[0].certops_distribution_authorization_revision;
+  await pool.query(`UPDATE certificate_jobs SET requested_by_user_id=$2, payload=$3::jsonb
+    WHERE workspace_id=$1 AND id=$4`, [workspaceId, userId, JSON.stringify({
+    distributionRollout: {
+      groupId,
+      workspaceAuthorizationRevision: String(distributionRevision),
+      manualRolloutAuthorizationRevision: String(revision),
+      verificationOnly: false,
+      bindings: jobs.map(job => ({ bindingId: job.payload.materialDeployment.bindingId })),
+    },
+  }), approvalJobId]);
   return { workspaceId, groupId, periodId: period.id, jobs };
 }
 

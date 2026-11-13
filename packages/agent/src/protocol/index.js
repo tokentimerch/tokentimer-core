@@ -69,6 +69,7 @@ class AgentProtocolError extends Error {
     this.name = "AgentProtocolError";
     this.code = code;
     if (options.status !== undefined) this.status = options.status;
+    if (options.retryAfterMs !== undefined) this.retryAfterMs = options.retryAfterMs;
     if (options.cause !== undefined) this.cause = options.cause;
   }
 }
@@ -447,7 +448,10 @@ async function postPlainJson(url, { token, body, signal, requestTimeoutMs = REQU
     }
   }
   const json = await readBoundedResponseJson(response);
-  return { status: response.status, ok: response.ok, json, body: sanitized };
+  const retryAfterHeader = response.headers?.get?.("retry-after");
+  const retryAfterMs = typeof retryAfterHeader === "string" && /^\d+$/.test(retryAfterHeader)
+    ? Number(retryAfterHeader) * 1000 : null;
+  return { status: response.status, ok: response.ok, json, body: sanitized, retryAfterMs };
 }
 
 function validateRegistrationResponse(json, expectedProtocolVersion) {
@@ -885,7 +889,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     }
     const token = await resolveCredential(getCredential);
     const leasePath = `${ROUTES.LEASE}/${encodeURIComponent(jobId)}/lease`;
-    const { status, ok, json } = await enqueueSequencedSend((sequence) =>
+    const { status, ok, json, retryAfterMs } = await enqueueSequencedSend((sequence) =>
       sendPlain(leasePath, token, { claimId, sequence }),
     );
     if (status === 409 || status === 410) {
@@ -899,7 +903,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
       throw new AgentProtocolError(
         `lease renew failed with HTTP ${status}`,
         AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR,
-        { status },
+        { status, ...(status === 429 && retryAfterMs !== null ? { retryAfterMs } : {}) },
       );
     }
     return json ?? {};
@@ -915,7 +919,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
    * report stays schema-minimal (the results route falls back to attemptId
    * when claimId is absent).
    */
-  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, claimId = null, nonce = null, clockOffsetMs = null, trustResult = null, enrollmentResult = null, preflightResult = null, publicationReceipt = null, publicationCertificatePem = null, deploymentReceipt = null } = {}) {
+  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, claimId = null, nonce = null, clockOffsetMs = null, trustResult = null, enrollmentResult = null, preflightResult = null, publicationReceipt = null, publicationCertificatePem = null, deploymentReceipt = null, cleanupReceipt = null, reconciliationReceipt = null } = {}) {
     const body = {
       jobId,
       attemptId,
@@ -930,6 +934,8 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
       ...(trustResult !== null ? { trustResult } : {}),
       ...(publicationReceipt !== null ? { publicationReceipt, publicationCertificatePem } : {}),
       ...(deploymentReceipt !== null ? { deploymentReceipt } : {}),
+      ...(cleanupReceipt !== null ? { cleanupReceipt } : {}),
+      ...(reconciliationReceipt !== null ? { reconciliationReceipt } : {}),
       ...(enrollmentResult !== null ? { enrollmentResult } : {}),
       ...(preflightResult !== null ? { preflightResult } : {}),
     };

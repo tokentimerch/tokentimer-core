@@ -8,7 +8,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `prerequisite`: needs the fixture or privilege supplied by its owning CI job
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 188
+Total skips found: 189
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -42,8 +42,8 @@ Total skips found: 188
 | `packages/agent/scripts/windows-upgrade-recovery.test.js` | 732 | recovery refuses a journal with inherited, unprotected ACL | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/windows-upgrade-recovery.test.js` | 767 | validated bundled runtime stays locked against replacement during bootstrap | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/windows-upgrade-recovery.test.js` | 772 | validated bundled runtime stays locked against replacement during bootstrap | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `packages/agent/src/acme/acme.test.js` | 251 | POSIX hook executes non-executable archive bytes with spaces and quotes in the path | test(..., { skip }) option-object | `platform` |
-| `packages/agent/src/acme/acme.test.js` | 767 | acme.sh wrapper uses the explicit runtime and never falls back to PATH | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `packages/agent/src/acme/acme.test.js` | 278 | POSIX hook executes non-executable archive bytes with spaces and quotes in the path | test(..., { skip }) option-object | `platform` |
+| `packages/agent/src/acme/acme.test.js` | 796 | acme.sh wrapper uses the explicit runtime and never falls back to PATH | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/config/config.test.js` | 121 | sets 0700 permissions on non-win32 platforms | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 129 | re-asserts 0700 on every call even if the mode was loosened | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 139 | applies a real restricted ACL on win32 | it(..., { skip }) option-object | `platform` |
@@ -70,18 +70,18 @@ Total skips found: 188
 | `packages/agent/src/discovery/windows.test.js` | 359 | prefers the raw-bytes-derived SANs over windows-discovery's own list | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 402 | reports a windows_store observation using windows-discovery's parsed fields plus an adapter-computed fingerprint | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 431 | resolves an http.sys binding matched to an IIS site as iis_binding, reusing the store's fingerprint | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 479 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 532 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 620 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/index.test.js` | 4237 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/discovery/windows.test.js` | 482 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/windows.test.js` | 535 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/windows.test.js` | 623 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/index.test.js` | 4245 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/issuers/adcs-enrollment-reconcile.test.js` | 420 | skips E_ACCESSDENIED and denied probes so a later unique match can attach | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/issuers/adcs-enrollment.test.js` | 170 | pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/keys/keys.test.js` | 209 | refuses to write through a symlink at the key path | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/keys/keys.test.js` | 499 | verifies the CSR with openssl when available | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/material-preflight.test.js` | 10 | a local material policy refusal has no uncertain side effect | test(..., { skip }) option-object | `platform` |
-| `packages/agent/src/material-store/material-store.test.js` | 95 | real isolated Vault KV v2: pinned publication and idempotent CAS | test(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/material-store/material-store.test.js` | 137 | real Vault ACL separates issuer, consumer, scanner and customer prefixes | test(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/material-store/material-store.test.js` | 105 | real isolated Vault KV v2: pinned publication and idempotent CAS | test(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/material-store/material-store.test.js` | 148 | real Vault ACL separates issuer, consumer, scanner and customer prefixes | test(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/platform/platform.test.js` | 454 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/platform/platform.test.js` | 468 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/protocol/bound-rotation-startup.test.js` | 18 | bound startup refuses a live IPv6 endpoint before opening the credential pipe | dynamic (this.skip() / t.skip()) | `platform` |
@@ -157,7 +157,7 @@ Total skips found: 188
 | `tests/e2e/certops-log-pagination-e2e.test.js` | 13 | agent log cursor polling preserves live append and reconnect order | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-membership-fences-e2e.test.js` | 17 | live workspace membership and machine workspace fences | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-multi-target-deploy-e2e.test.js` | 31 | production multi-target coordinator preserves files and exposes uncertain rollback | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/e2e/certops-native-agent-e2e.test.js` | 81 | real native agent signed gates durable outbox restart and observe-only behavior | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/certops-native-agent-e2e.test.js` | 82 | real native agent signed gates durable outbox restart and observe-only behavior | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-observe-only-e2e.test.js` | 16 | observe-only polling preserves queued work until explicit execution advertisement | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-pause-ingestion-e2e.test.js` | 21 | workspace pause blocks new work while retaining owned result ingestion | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-profile-issuer-switch-e2e.test.js` | 24 | public renewal issuer changes retain runnable policy and atomic audit | dynamic (this.skip() / t.skip()) | `prerequisite` |
@@ -200,3 +200,4 @@ Total skips found: 188
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 672 | keeps a same-request idempotent manual-job replay to one audit | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 774 | keeps machine event and evidence ingestion available for pre-existing work while paused | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 904 | serializes real PostgreSQL pause and manual-job races in both commit orders | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/postgres/material-reconciliation.test.js` | 694 | real login approval and Linux agent inspect installed legacy evidence through lost-ack recovery | test(..., { skip }) option-object | `platform` |

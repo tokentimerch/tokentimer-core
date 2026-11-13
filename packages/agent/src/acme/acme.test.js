@@ -228,23 +228,50 @@ test("buildDnsHookCommand explicitly invokes Node on POSIX without requiring exe
   );
 });
 
-test("buildDnsHookCommand quotes and prefixes the node executable on win32", () => {
+function assertWindowsHook(command, node, hook, mode) {
+  const parts = command.split(" ");
+  assert.equal(parts[0], "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  assert.deepEqual(parts.slice(1, 4), ["-NoProfile", "-NonInteractive", "-EncodedCommand"]);
+  const quote = (value) => `'${value.replace(/'/g, "''")}'`;
+  assert.equal(Buffer.from(parts[4], "base64").toString("utf16le"), `& ${quote(node)} ${quote(hook)} ${mode}`);
+}
+
+test("buildDnsHookCommand quotes and prefixes the node executable on win32", (t) => {
+  const original = process.env.SystemRoot; process.env.SystemRoot = "C:\\Windows";
+  t.after(() => { if (original === undefined) delete process.env.SystemRoot; else process.env.SystemRoot = original; });
   const winHookPath = "C:\\ProgramData\\TokenTimerAgent\\bin\\certops-dns-hook.js";
   const winNodePath = "C:\\Program Files\\nodejs\\node.exe";
-  assert.equal(
+  assertWindowsHook(
     buildDnsHookCommand(winHookPath, "present", {
       platform: "win32",
       nodeExecPath: winNodePath,
     }),
-    `"${winNodePath}" "${winHookPath}" present`,
+    winNodePath, winHookPath, "present",
   );
-  assert.equal(
+  assertWindowsHook(
     buildDnsHookCommand(winHookPath, "cleanup", {
       platform: "win32",
       nodeExecPath: winNodePath,
     }),
-    `"${winNodePath}" "${winHookPath}" cleanup`,
+    winNodePath, winHookPath, "cleanup",
   );
+});
+
+test("Windows hook preserves metacharacters as literal paths and refuses invalid SystemRoot", (t) => {
+  const original = process.env.SystemRoot; process.env.SystemRoot = "C:\\Windows";
+  t.after(() => { if (original === undefined) delete process.env.SystemRoot; else process.env.SystemRoot = original; });
+  const node = "C:\\spaces ' & $(unused)\\node.exe";
+  const hook = "C:\\spaces ' & $(unused)\\hook.js";
+  for (const mode of ["present", "cleanup"]) {
+    assertWindowsHook(buildDnsHookCommand(hook, mode, { platform: "win32", nodeExecPath: node }), node, hook, mode);
+  }
+  assert.throws(() => buildDnsHookCommand(hook, "invalid", { platform: "win32", nodeExecPath: node }), /Invalid DNS hook mode/);
+  for (const value of ["C:\\unsafe root", "C:\\Windows\\..\\other", "C:\\Windows&unsafe"]) {
+    process.env.SystemRoot = value;
+    assert.throws(() => buildDnsHookCommand(hook, "present", { platform: "win32", nodeExecPath: node }), /Unsupported SystemRoot/);
+  }
+  delete process.env.SystemRoot;
+  assert.throws(() => buildDnsHookCommand(hook, "present", { platform: "win32", nodeExecPath: node }), /Unsupported SystemRoot/);
 });
 
 // skip-reason: platform - requires a POSIX shell; Linux CI executes the real hook
@@ -263,7 +290,9 @@ test("POSIX hook executes non-executable archive bytes with spaces and quotes in
   }
 });
 
-test("certbot adapter builds win32-formatted --manual-auth-hook/--manual-cleanup-hook when platform is win32", async () => {
+test("certbot adapter builds win32-formatted --manual-auth-hook/--manual-cleanup-hook when platform is win32", async (t) => {
+  const original = process.env.SystemRoot; process.env.SystemRoot = "C:\\Windows";
+  t.after(() => { if (original === undefined) delete process.env.SystemRoot; else process.env.SystemRoot = original; });
   const execStub = makeExecStub();
   const winNodePath = "C:\\Program Files\\nodejs\\node.exe";
   const adapter = certbotAdapter(execStub, {
@@ -274,13 +303,13 @@ test("certbot adapter builds win32-formatted --manual-auth-hook/--manual-cleanup
   await adapter.runRenewal(baseRenewalInputs());
 
   const args = execStub.calls[0].args;
-  assert.equal(
+  assertWindowsHook(
     args[args.indexOf("--manual-auth-hook") + 1],
-    `"${winNodePath}" "${DNS_HOOK_PATH}" present`,
+    winNodePath, DNS_HOOK_PATH, "present",
   );
-  assert.equal(
+  assertWindowsHook(
     args[args.indexOf("--manual-cleanup-hook") + 1],
-    `"${winNodePath}" "${DNS_HOOK_PATH}" cleanup`,
+    winNodePath, DNS_HOOK_PATH, "cleanup",
   );
 });
 

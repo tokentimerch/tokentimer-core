@@ -75,6 +75,25 @@
         "certopsEnabled": {
           "type": "boolean"
         },
+        "certopsMaterialCleanupEnabled": {
+          "type": "boolean"
+        },
+        "certopsDistributionSchedulerEnabled": {
+          "type": "boolean"
+        },
+        "certopsDistributionSchedulerTimeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "certopsDistributionMonitoringEnabled": {
+          "type": "boolean"
+        },
+        "certopsDistributionMonitoringTimeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
         "certopsAgentLogRetentionDays": {
           "type": [
             "integer",

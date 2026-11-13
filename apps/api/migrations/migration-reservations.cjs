@@ -34,8 +34,10 @@ const reservations = Object.freeze({
   109: "certops_period_creator_delete",
   110: "recipient_member_verification",
   111: "auto_sync_owner_username",
-  112: "agent_credential_rotations",
-  113: "agent_credential_rotation_ack",
+  112: "certops_retirement_dossiers",
+  113: "certops_material_reconciliation",
+  114: "agent_credential_rotations",
+  115: "agent_credential_rotation_ack",
 });
 
 function validateMigrationReservations(migrations) {

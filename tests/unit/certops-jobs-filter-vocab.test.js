@@ -56,7 +56,7 @@ describe("Jobs filter vocabulary parity", () => {
   const openapiSource = fs.readFileSync(
     path.join(__dirname, "../../packages/contracts/openapi/openapi.yaml"),
     "utf8",
-  );
+  ).replace(/\r\n/g, "\n");
 
   it("dashboard status and operation dropdowns match the jobs service vocabulary", () => {
     assert.deepEqual(

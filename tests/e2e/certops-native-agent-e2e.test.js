@@ -15,12 +15,13 @@
  * Qualification: foreground native agent faults
  *
  * Run separate trusted-main certops-native-agent-qualification.yml against migrated
- * API/Postgres on disposable Ubuntu 24.04; retain actual 300 seconds test bound rather
+ * API/Postgres on disposable Ubuntu 24.04; retain the actual 600 seconds test bound rather
  * than central API timeout. Real candidate process/signing/lease/state cover
  * registration/private credentials, signed noop/dry-run, command-policy refusal, restart
  * with pin/credential, tampered payload/signature/unknown key, cross-agent valid-claim
  * misdelivery, initial lease loss, outbox retry, replay refusal, real logs across
- * restart, corrupt pin, observe-only and cleanup. Follow advertised wire capabilities;
+ * restart, corrupt pin, observe-only and cleanup. Pause the agent between untrusted
+ * claim cases so the real one-minute machine-token budget can recover. Follow advertised wire capabilities;
  * do not claim v2 from this source. Public admission is normal noop; dry-run uses
  * production creator because public generic jobs lack that mode. Harmless operations do
  * not qualify native cert/service. Loopback HTTP 503, HTTP 429 and connection-reset
@@ -74,7 +75,7 @@ async function wait(check, timeout = 30000) {
   while (Date.now() < deadline) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 100)); }
   throw new Error("Actual native agent fixture exceeded its deadline");
 }
-test("real native agent signed gates durable outbox restart and observe-only behavior", { timeout: 300000 }, async (t) => {
+test("real native agent signed gates durable outbox restart and observe-only behavior", { timeout: 600000 }, async (t) => {
   const baseUrl = process.env.CERTOPS_CSR_API_URL;
   if (!baseUrl && process.env.CERTOPS_E2E_REQUIRED !== "1") {
     // skip-reason: prerequisite - requires disposable real API PostgreSQL and Linux agent process
@@ -89,7 +90,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
   gate.report.executionScope = "Unmodified native Node agent with real API signing leases results and persisted state; deliberate loopback transport faults, harmless noop jobs, local certificate dry-run/deploy and explicit command sentinels; no live CA/DNS-provider or Windows qualification";
   gate.report.artifactQualification = process.env.GITHUB_ACTIONS === "true" ? "workflow-checkout-source" : "local-worktree-source-baseline-sha-only";
   let mode = "normal", agent, proxy, ready = false, failure, cleanup = "failed";
-  let clockRejections=0;
+  let clockRejections=0, upstreamRateLimits=0;
   let rejected = 0, bindingRejected = 0, misdeliveredJob, capturedOwnJob, replayRejections = 0, heartbeatCount = 0, claimCount = 0, blockedResults = 0, blockedLeases = 0, leak = false;
   const heartbeatFacts = { declaredOperations: -1, lastStatus: 0, acceptedObserveOnly: 0 };
   const prohibited = new Set(), counters = new Map(), children = [];
@@ -158,6 +159,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
           respond(503, Buffer.from(JSON.stringify({ error: "Qualification transport interruption" }))); return;
         }
         const upstream = http.request(new URL(request.url, baseUrl), { method: "POST", headers: { "content-type": "application/json", authorization: request.headers.authorization, "accept-encoding": "identity" }, timeout: 15000 }, (reply) => {
+          if (reply.statusCode === 429) upstreamRateLimits++;
           const parts = []; let length = 0;
           reply.on("data", (chunk) => { length += chunk.length; if (length > 1048576) reply.destroy(); else parts.push(chunk); });
           reply.on("end", async () => {
@@ -233,11 +235,18 @@ test("real native agent signed gates durable outbox restart and observe-only beh
     });
     await gate.scenario(scenarios[4], async () => {
       for (const fault of ["payload", "signature", "unknown-key"]) {
+        // Leave the production machine-token limiter in place. A quiet interval
+        // prevents earlier traffic from starving the next signed-claim case.
+        await stop();
+        await new Promise((resolve) => setTimeout(resolve, 65000));
+        const rateLimitsBefore = upstreamRateLimits;
+        start();
         mode = fault; const before = rejected; const id = await create();
         try { await wait(() => (counters.get(id)?.mutations || 0) > 0 && rejected > before); }
         catch { throw new Error(`Native ${fault} fault oracle: mutations=${counters.get(id)?.mutations || 0}, rejections=${rejected - before}, status=${(await row(id)).status}`); }
         const heartbeats = heartbeatCount; await wait(() => heartbeatCount >= heartbeats + 2);
         assert.equal(counters.get(id).results, 0); assert.equal(counters.get(id).evidence, 0); assert.equal(counters.get(id).leases, 0);
+        assert.equal(upstreamRateLimits, rateLimitsBefore, "Untrusted claim case exceeded the machine-token budget");
         assert.equal((await row(id)).status, "claimed"); assert.equal((await fixture.pool.query("SELECT count(*)::int AS count FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [fixture.workspaceId, id])).rows[0].count, 0);
       }
       mode = "normal";

@@ -216,7 +216,15 @@ function buildDnsHookCommand(
   { platform = process.platform, nodeExecPath = process.execPath } = {},
 ) {
   if (platform === "win32") {
-    return `"${nodeExecPath}" "${dnsHookPath}" ${mode}`;
+    if (!["present", "cleanup"].includes(mode)) throw new TypeError("Invalid DNS hook mode");
+    const systemRoot = process.env.SystemRoot;
+    if (!systemRoot || !/^[A-Za-z]:\\[A-Za-z0-9_.-]+(?:\\[A-Za-z0-9_.-]+)*$/.test(systemRoot) || /(?:^|\\)\.{1,2}(?:\\|$)/.test(systemRoot)) {
+      throw new Error("Unsupported SystemRoot for Certbot hook");
+    }
+    const powershell = path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+    const literal = (value) => `'${String(value).replace(/'/g, "''")}'`;
+    const script = `& ${literal(nodeExecPath)} ${literal(dnsHookPath)} ${mode}`;
+    return `${powershell} -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(script, "utf16le").toString("base64")}`;
   }
   const quote = (value) => `'${value.replace(/'/g, `'"'"'`)}'`;
   // Certbot validates the first whitespace-delimited token without shell

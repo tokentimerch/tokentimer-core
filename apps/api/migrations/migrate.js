@@ -4861,6 +4861,26 @@ const migrations = [
     sql: fs.readFileSync(require("path").join(__dirname, "082-auto-sync-system-metrics.sql"), "utf8"),
   },
   {
+    version: 86,
+    name: "certops_distribution_lifecycle",
+    sql: fs.readFileSync(require("path").join(__dirname, "081-certops-distribution-lifecycle.sql"), "utf8"),
+  },
+  {
+    version: 87,
+    name: "certops_distribution_incident_delivery",
+    sql: fs.readFileSync(require("path").join(__dirname,"082-certops-distribution-incident-delivery.sql"),"utf8"),
+  },
+  {
+    version: 88,
+    name:"certops_stable_consumer_discovery",
+    sql:fs.readFileSync(require("path").join(__dirname,"083-certops-stable-consumer-discovery.sql"),"utf8"),
+  },
+  {version: 89,name:"certops_material_cleanup",sql:fs.readFileSync(require("path").join(__dirname,"084-certops-material-cleanup.sql"),"utf8")},
+  {version: 90,name:"certops_consumer_verification_failures",sql:fs.readFileSync(require("path").join(__dirname,"085-certops-consumer-verification-failures.sql"),"utf8")},
+  // Schema compatibility only: related PR runtime features remain independently
+  // reviewed and gated. Applied previews keep their original version and name.
+  {version: 91,name:"certops_distribution_resolution_delivery",sql:fs.readFileSync(require("path").join(__dirname,"091-certops-distribution-resolution-delivery.sql"),"utf8")},
+  {
     // Companion migration plans extend through 91; leave unapplied slots unregistered.
     version: 92,
     name: "pagerduty_incident_lifecycle",
@@ -4880,6 +4900,16 @@ const migrations = [
     version: 95,
     name: "remove_pagerduty_rest_lookup",
     sql: fs.readFileSync(require("path").join(__dirname, "095-remove-pagerduty-rest-lookup.sql"), "utf8"),
+  },
+  {
+    version: 96,
+    name: "certops_consumer_staging",
+    sql: fs.readFileSync(require("path").join(__dirname, "096-certops-consumer-staging.sql"), "utf8"),
+  },
+  {
+    version: 97,
+    name: "certops_review_authority_epochs",
+    sql: fs.readFileSync(require("path").join(__dirname, "097-certops-review-authority-epochs.sql"), "utf8"),
   },
   {
     version: 98,
@@ -4948,13 +4978,8 @@ const migrations = [
   },
   {
     version: 112,
-    name: "agent_credential_rotations",
-    sql: fs.readFileSync(require("path").join(__dirname, "112-agent-credential-rotations.sql"), "utf8"),
-  },
-  {
-    version: 113,
-    name: "agent_credential_rotation_ack",
-    sql: fs.readFileSync(require("path").join(__dirname, "113-agent-rotation-ack.sql"), "utf8"),
+    name: "certops_retirement_dossiers",
+    sql: fs.readFileSync(require("path").join(__dirname, "109-certops-retirement-dossiers.sql"), "utf8"),
   },
 ];
 
@@ -4971,6 +4996,15 @@ migrations.push({
   name: "auto_sync_owner_username",
   sql: fs.readFileSync(require("path").join(__dirname, "111-auto-sync-owner-username.sql"), "utf8"),
 });
+
+migrations.push({
+  version: 113,
+  name: "certops_material_reconciliation",
+  sql: fs.readFileSync(require("path").join(__dirname, "113-certops-material-reconciliation.sql"), "utf8"),
+});
+
+migrations.push({ version: 114, name: "agent_credential_rotations", sql: fs.readFileSync(require("path").join(__dirname, "114-agent-credential-rotations.sql"), "utf8") });
+migrations.push({ version: 115, name: "agent_credential_rotation_ack", sql: fs.readFileSync(require("path").join(__dirname, "115-agent-rotation-ack.sql"), "utf8") });
 
 const { composeMigrations, assertUnambiguousRotationHistory } = require("./compose-migrations");
 

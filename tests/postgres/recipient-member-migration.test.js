@@ -46,8 +46,10 @@ test("normal runner appends member verification to the released ledger and resta
     assert.deepEqual(after.slice(0, before.length), before);
     assert.equal(after.find(row => row.version === 110).name, "recipient_member_verification");
     assert.equal(after.find(row => row.version === 111).name, "auto_sync_owner_username");
-    assert.equal(after.find(row => row.version === 112).name, "agent_credential_rotations");
-    assert.equal(after.at(-1).version, 113);
+    assert.equal(after.find(row => row.version === 112).name, "certops_retirement_dossiers");
+    assert.equal(after.find(row => row.version === 113).name, "certops_material_reconciliation");
+    assert.equal(after.find(row => row.version === 114).name, "agent_credential_rotations");
+    assert.equal(after.at(-1).version, 115);
     assert.equal(after.at(-1).name, "agent_credential_rotation_ack");
     assert.ok((await target.query("SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='recipient_verified_email'")).rowCount);
     assert.ok((await target.query("SELECT 1 FROM pg_trigger WHERE tgname='recipient_member_verification_preserve_revocation'")).rowCount);
