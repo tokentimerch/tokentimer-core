@@ -67,14 +67,14 @@ async function freshSystemRoots({ run = execFileAsync, executable = process.exec
 }
 
 async function freshWindowsIntermediates({ run = execFileAsync } = {}) {
-  const script = "$ErrorActionPreference='Stop'; $out=@{}; foreach($name in @('CA','Disallowed')) { $out[$name]=@(Get-ChildItem -Path ('Cert:\\LocalMachine\\'+$name) | ForEach-Object { @{ Thumbprint=$_.Thumbprint; RawData=[int[]]$_.RawData } }) }; $out | ConvertTo-Json -Compress -Depth 5";
+  const script = "$ErrorActionPreference='Stop'; $out=@{}; foreach($name in @('Root','CA','Disallowed')) { $out[$name]=@(Get-ChildItem -Path ('Cert:\\LocalMachine\\'+$name) | ForEach-Object { @{ Thumbprint=$_.Thumbprint; RawData=[int[]]$_.RawData } }) }; $out | ConvertTo-Json -Compress -Depth 5";
   const env = { ...process.env }; for (const key of Object.keys(env)) if (key.toLowerCase() === "psmodulepath") delete env[key];
   let result;
   const powershell = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   try { result = await run(powershell, ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true, timeout: 30000, maxBuffer: 4 * 1024 * 1024, shell: false, env }); }
   catch (_) { throw new Error("Windows trust stores unavailable"); }
   let stores; try { stores = JSON.parse(result.stdout); } catch (_) { throw new Error("Windows trust stores unavailable"); }
-  if (!Array.isArray(stores.CA) || !Array.isArray(stores.Disallowed)) throw new Error("Windows trust stores unavailable");
+  if (!Array.isArray(stores.Root) || !Array.isArray(stores.CA) || !Array.isArray(stores.Disallowed)) throw new Error("Windows trust stores unavailable");
   const parse = (entries) => {
     const out = new Map();
     for (const item of entries) {
@@ -85,7 +85,7 @@ async function freshWindowsIntermediates({ run = execFileAsync } = {}) {
     }
     return out;
   };
-  return { denied: parse(stores.Disallowed), ca: parse(stores.CA) };
+  return { denied: parse(stores.Disallowed), ca: parse(stores.CA), root: parse(stores.Root) };
 }
 
 async function loadTrustMaterial(config, { io = fs, systemRoots = freshSystemRoots, platform = process.platform, windowsStores = freshWindowsIntermediates } = {}) {
@@ -96,10 +96,15 @@ async function loadTrustMaterial(config, { io = fs, systemRoots = freshSystemRoo
   const intermediates = [], platformIntermediates = [];
   let denied = new Map();
   if (platform === "win32") {
-    let ca;
-    ({ denied, ca } = await windowsStores());
-    if (!(denied instanceof Map) || !(ca instanceof Map)) throw new Error("Windows trust stores unavailable");
-    platformRoots = platformRoots.filter((pem) => !denied.has(new X509Certificate(pem).fingerprint.replace(/:/g, "").toLowerCase()));
+    let ca, root;
+    ({ denied, ca, root } = await windowsStores());
+    if (!(denied instanceof Map) || !(ca instanceof Map) || !(root instanceof Map)) throw new Error("Windows trust stores unavailable");
+    // Node's Windows system list includes the CA store as well as Root. A CA
+    // entry is an intermediate unless it is also explicitly trusted in Root.
+    platformRoots = platformRoots.filter((pem) => {
+      const thumbprint = new X509Certificate(pem).fingerprint.replace(/:/g, "").toLowerCase();
+      return !denied.has(thumbprint) && (!ca.has(thumbprint) || root.has(thumbprint));
+    });
     roots = roots.filter((pem) => !denied.has(new X509Certificate(pem).fingerprint.replace(/:/g, "").toLowerCase()));
     for (const [thumbprint, pem] of ca) if (!denied.has(thumbprint)) platformIntermediates.push(pem);
   }

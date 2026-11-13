@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { X509Certificate } = require("node:crypto");
-const { validateObservedRevocation, readCertificateBundle, freshSystemRoots, loadTrustMaterial } = require("./config");
+const { validateObservedRevocation, readCertificateBundle, freshSystemRoots, freshWindowsIntermediates, loadTrustMaterial } = require("./config");
 
 const cert = fs.readFileSync(path.join(__dirname, "../verify/fixtures/chain-leaf.crt.pem"), "utf8");
 
@@ -26,7 +26,7 @@ test("system trust is reloaded and Windows disallowed certificates are excluded"
   const run = (_executable, _args, options) => { calls++; assert.equal(options.shell, false); return { status: 0, stdout: JSON.stringify([cert]) }; };
   const thumbprint = new X509Certificate(cert).fingerprint.replace(/:/g, "").toLowerCase();
   const config = { enabled: true, trustAnchorFiles: [], intermediateFiles: [] };
-  const windowsStores = () => ({ denied: new Map([[thumbprint, "unused"]]), ca: new Map() });
+  const windowsStores = () => ({ denied: new Map([[thumbprint, "unused"]]), ca: new Map(), root: new Map() });
   await assert.rejects(() => loadTrustMaterial(config, { systemRoots: () => freshSystemRoots({ run }), platform: "win32", windowsStores }), /unavailable/);
   await assert.rejects(() => loadTrustMaterial(config, { systemRoots: () => freshSystemRoots({ run }), platform: "win32", windowsStores }), /unavailable/);
   assert.equal(calls, 2);
@@ -53,7 +53,7 @@ test("Windows disallowed store also excludes explicitly configured intermediates
   const root = fs.readFileSync(path.join(__dirname, "../verify/fixtures/ca.crt.pem"), "utf8");
   const thumbprint = new X509Certificate(cert).fingerprint.replace(/:/g, "").toLowerCase();
   const config = { enabled: true, trustAnchorFiles: [], intermediateFiles: [path.join(__dirname, "../verify/fixtures/chain-leaf.crt.pem")] };
-  const material = await loadTrustMaterial(config, { systemRoots: () => [root], platform: "win32", windowsStores: () => ({ denied: new Map([[thumbprint, cert]]), ca: new Map() }) });
+  const material = await loadTrustMaterial(config, { systemRoots: () => [root], platform: "win32", windowsStores: () => ({ denied: new Map([[thumbprint, cert]]), ca: new Map(), root: new Map() }) });
   assert.equal(material.systemRoots.length, 1);
   assert.equal(material.intermediates.length, 0);
 });
@@ -65,9 +65,35 @@ test("platform and explicit trust stay separate for strict helper validation", a
   const intermediate = new X509Certificate(fs.readFileSync(intermediateFile));
   const thumbprint = intermediate.fingerprint.replace(/:/g, "").toLowerCase();
   const config = { enabled: true, trustAnchorFiles: [rootFile], intermediateFiles: [] };
-  const material = await loadTrustMaterial(config, { systemRoots: () => [cert], platform: "win32", windowsStores: () => ({ denied: new Map(), ca: new Map([[thumbprint, intermediate.toString()]]) }) });
+  const material = await loadTrustMaterial(config, { systemRoots: () => [cert], platform: "win32", windowsStores: () => ({ denied: new Map(), ca: new Map([[thumbprint, intermediate.toString()]]), root: new Map() }) });
   assert.deepEqual(material.roots, [root]);
   assert.deepEqual(material.systemRoots, [cert]);
   assert.deepEqual(material.intermediates, []);
   assert.deepEqual(material.systemIntermediates, [intermediate.toString()]);
+});
+
+test("Windows CA entries in Node system certificates are intermediates unless also trusted in Root", async () => {
+  const root = new X509Certificate(fs.readFileSync(path.join(__dirname, "../verify/fixtures/ca.crt.pem"))).toString();
+  const intermediate = new X509Certificate(fs.readFileSync(path.join(__dirname, "../verify/fixtures/intermediate.crt.pem"))).toString();
+  const thumbprint = new X509Certificate(intermediate).fingerprint.replace(/:/g, "").toLowerCase();
+  const config = { enabled: true, trustAnchorFiles: [], intermediateFiles: [] };
+  const ca = new Map([[thumbprint, intermediate]]);
+  const options = { systemRoots: () => [root, intermediate], platform: "win32" };
+  const material = await loadTrustMaterial(config, { ...options, windowsStores: () => ({ denied: new Map(), ca, root: new Map() }) });
+  assert.deepEqual(material.systemRoots, [root]);
+  assert.deepEqual(material.systemIntermediates, [intermediate]);
+  const explicitlyTrusted = await loadTrustMaterial(config, { ...options, windowsStores: () => ({ denied: new Map(), ca, root: new Map([[thumbprint, intermediate]]) }) });
+  assert.deepEqual(explicitlyTrusted.systemRoots, [root, intermediate]);
+});
+
+test("Windows trust enumeration reads Root, CA and Disallowed and validates their certificates", async () => {
+  const parsed = new X509Certificate(cert);
+  const item = { Thumbprint: parsed.fingerprint.replace(/:/g, ""), RawData: [...parsed.raw] };
+  const stores = await freshWindowsIntermediates({ run: (_file, args) => {
+    assert.match(args.at(-1), /'Root','CA','Disallowed'/);
+    return { stdout: JSON.stringify({ Root: [item], CA: [item], Disallowed: [] }) };
+  } });
+  assert.equal(stores.root.size, 1);
+  assert.equal(stores.ca.size, 1);
+  await assert.rejects(() => freshWindowsIntermediates({ run: () => ({ stdout: JSON.stringify({ CA: [], Disallowed: [] }) }) }), /unavailable/);
 });
