@@ -3,6 +3,8 @@ import {
   Box,
   Button,
   HStack,
+  Input,
+  SimpleGrid,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -37,6 +39,7 @@ import {
 } from '../DashboardModalFrame.jsx';
 
 const PAGE_SIZE = 10;
+const EMPTY_FILTERS = { status: '', location: '', since: '', until: '' };
 const VERDICTS = {
   good: 'Not revoked',
   revoked: 'Revoked',
@@ -45,6 +48,7 @@ const VERDICTS = {
   not_configured: 'Revocation not configured',
   disabled: 'Revocation disabled',
   invalid_observation: 'Invalid revocation observation',
+  unavailable: 'Revocation not reported',
 };
 
 export default function CertificateObservationHistory({
@@ -68,6 +72,9 @@ export default function CertificateObservationHistory({
   const [sortBy, setSortBy] = useState('');
   const [sortDirection, setSortDirection] = useState('desc');
   const [offset, setOffset] = useState(0);
+  const [draftFilters, setDraftFilters] = useState(EMPTY_FILTERS);
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [filterError, setFilterError] = useState('');
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -81,6 +88,9 @@ export default function CertificateObservationHistory({
     setOffset(0);
     setSortBy('');
     setSortDirection('desc');
+    setDraftFilters(EMPTY_FILTERS);
+    setFilters(EMPTY_FILTERS);
+    setFilterError('');
     setHasHistory(false);
     setIsOpen(false);
   }, [workspaceId, certificateId, fingerprintSha256, enabled]);
@@ -91,6 +101,15 @@ export default function CertificateObservationHistory({
       setSortDirection('desc');
     }
   }, [canSortTopology, sortBy]);
+  useEffect(() => {
+    if (!canSortTopology) {
+      setDraftFilters(current => ({ ...current, location: '' }));
+      setFilters(current =>
+        current.location ? { ...current, location: '' } : current
+      );
+      setOffset(0);
+    }
+  }, [canSortTopology]);
   useEffect(() => {
     onAvailabilityChange?.(hasHistory);
   }, [hasHistory, onAvailabilityChange]);
@@ -108,6 +127,12 @@ export default function CertificateObservationHistory({
           params: {
             limit: PAGE_SIZE,
             offset,
+            ...(filters.status ? { revocationStatus: filters.status } : {}),
+            ...(canSortTopology && filters.location
+              ? { location: filters.location }
+              : {}),
+            ...(filters.since ? { since: filters.since } : {}),
+            ...(filters.until ? { until: filters.until } : {}),
             ...(effectiveSortBy
               ? { sortBy: effectiveSortBy, sortDirection }
               : {}),
@@ -120,7 +145,14 @@ export default function CertificateObservationHistory({
         if (controller.signal.aborted) return;
         const nextItems = Array.isArray(data?.items) ? data.items : [];
         setItems(nextItems);
-        if (offset === 0) setHasHistory(nextItems.length > 0);
+        if (
+          offset === 0 &&
+          !filters.status &&
+          !filters.location &&
+          !filters.since &&
+          !filters.until
+        )
+          setHasHistory(nextItems.length > 0);
       })
       .catch(err => {
         if (!controller.signal.aborted)
@@ -143,7 +175,39 @@ export default function CertificateObservationHistory({
     attempt,
     effectiveSortBy,
     sortDirection,
+    filters,
+    canSortTopology,
   ]);
+
+  function applyFilters(event) {
+    event.preventDefault();
+    const since = draftFilters.since ? new Date(draftFilters.since) : null;
+    const until = draftFilters.until ? new Date(draftFilters.until) : null;
+    if (
+      (since && Number.isNaN(since.getTime())) ||
+      (until && Number.isNaN(until.getTime())) ||
+      (since && until && since > until)
+    ) {
+      setFilterError('Enter a valid time range with the start before the end.');
+      return;
+    }
+    setFilterError('');
+    setOffset(0);
+    setFilters({
+      status: draftFilters.status,
+      location: canSortTopology ? draftFilters.location.trim() : '',
+      since: since?.toISOString() || '',
+      until: until?.toISOString() || '',
+    });
+  }
+
+  function clearFilters() {
+    const empty = EMPTY_FILTERS;
+    setDraftFilters(empty);
+    setFilters(empty);
+    setFilterError('');
+    setOffset(0);
+  }
 
   function changeSort(field) {
     setOffset(0);
@@ -196,6 +260,98 @@ export default function CertificateObservationHistory({
               Observations for this registration’s current fingerprint. Previous
               fingerprints are excluded.
             </DashboardModalDescription>
+            <Box as='form' onSubmit={applyFilters} mb={4}>
+              <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={3}>
+                <Box>
+                  <Text as='label' htmlFor='history-status'>
+                    Revocation status
+                  </Text>
+                  <Select
+                    id='history-status'
+                    size='sm'
+                    value={draftFilters.status}
+                    onChange={event =>
+                      setDraftFilters(current => ({
+                        ...current,
+                        status: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value=''>All statuses</option>
+                    {Object.entries(VERDICTS).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </Select>
+                </Box>
+                {canSortTopology ? (
+                  <Box>
+                    <Text as='label' htmlFor='history-location'>
+                      Location
+                    </Text>
+                    <Input
+                      id='history-location'
+                      size='sm'
+                      value={draftFilters.location}
+                      onChange={event =>
+                        setDraftFilters(current => ({
+                          ...current,
+                          location: event.target.value,
+                        }))
+                      }
+                    />
+                  </Box>
+                ) : null}
+                <Box>
+                  <Text as='label' htmlFor='history-since'>
+                    Observed from
+                  </Text>
+                  <Input
+                    id='history-since'
+                    type='datetime-local'
+                    size='sm'
+                    value={draftFilters.since}
+                    onChange={event =>
+                      setDraftFilters(current => ({
+                        ...current,
+                        since: event.target.value,
+                      }))
+                    }
+                  />
+                </Box>
+                <Box>
+                  <Text as='label' htmlFor='history-until'>
+                    Observed until
+                  </Text>
+                  <Input
+                    id='history-until'
+                    type='datetime-local'
+                    size='sm'
+                    value={draftFilters.until}
+                    onChange={event =>
+                      setDraftFilters(current => ({
+                        ...current,
+                        until: event.target.value,
+                      }))
+                    }
+                  />
+                </Box>
+              </SimpleGrid>
+              {filterError ? (
+                <Text role='alert' mt={2}>
+                  {filterError}
+                </Text>
+              ) : null}
+              <HStack mt={3}>
+                <Button type='submit' size='sm'>
+                  Apply filters
+                </Button>
+                <Button type='button' size='sm' onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              </HStack>
+            </Box>
             {loading ? (
               <Spinner size='sm' aria-label='Loading observation history' />
             ) : error ? (
@@ -257,7 +413,11 @@ export default function CertificateObservationHistory({
                   </Select>
                 </HStack>
                 {!items.length ? (
-                  <Text>No more observations.</Text>
+                  <Text>
+                    {offset === 0
+                      ? 'No observations match these filters.'
+                      : 'No more observations.'}
+                  </Text>
                 ) : (
                   <Box
                     {...tableStyles.tableContainerProps}

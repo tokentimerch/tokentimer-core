@@ -37,6 +37,10 @@ separate service bindings remain distinct. Unknown visibility at a genuinely
 unmonitored location is still shown and still matters for decommissioning.
 Seeing a certificate does not by itself configure automatic renewal.
 
+A registration’s **Observation history** can be filtered by revocation status and
+observation time (entered in local time); roles allowed to manage CertOps can
+also search locations.
+
 ## Certificate management
 
 This section answers **“Through which registrations does CertOps track or

@@ -199,3 +199,68 @@ it('keeps long observation values and expanded details available', async () => {
   fireEvent.click(screen.getByText('View details'));
   expect(screen.getByText(detail)).toBeTruthy();
 });
+
+it('applies filters with sorting, resets pagination and keeps empty results accessible', async () => {
+  apiClient.get
+    .mockResolvedValueOnce({
+      data: {
+        items: Array.from({ length: 10 }, (_, id) => ({ id, metadata: {} })),
+      },
+    })
+    .mockResolvedValueOnce({
+      data: {
+        items: Array.from({ length: 10 }, (_, id) => ({ id, metadata: {} })),
+      },
+    })
+    .mockResolvedValueOnce({ data: { items: [] } });
+  render(view());
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Observation history' })
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Sort by Observed' }));
+  await waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(2));
+  fireEvent.change(screen.getByLabelText('Revocation status'), {
+    target: { value: 'revoked' },
+  });
+  fireEvent.change(screen.getByLabelText('Location'), {
+    target: { value: ' host ' },
+  });
+  fireEvent.change(screen.getByLabelText('Observed from'), {
+    target: { value: '2026-01-01T12:00' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
+  expect(
+    await screen.findByText('No observations match these filters.')
+  ).toBeTruthy();
+  expect(apiClient.get.mock.calls.at(-1)[1].params).toMatchObject({
+    offset: 0,
+    sortBy: 'observedAt',
+    revocationStatus: 'revoked',
+    location: 'host',
+    since: new Date('2026-01-01T12:00').toISOString(),
+  });
+  expect(screen.getByRole('dialog')).toBeTruthy();
+});
+
+it('validates date ranges and hides location filtering from readers', async () => {
+  access.canManage = false;
+  apiClient.get.mockResolvedValue({
+    data: { items: [{ id: '1', metadata: {} }] },
+  });
+  render(view());
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Observation history' })
+  );
+  expect(screen.queryByLabelText('Location')).toBeNull();
+  fireEvent.change(screen.getByLabelText('Observed from'), {
+    target: { value: '2026-02-01T12:00' },
+  });
+  fireEvent.change(screen.getByLabelText('Observed until'), {
+    target: { value: '2026-01-01T12:00' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
+  expect(screen.getByRole('alert').textContent).toContain('valid time range');
+  expect(apiClient.get).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+  expect(screen.queryByRole('alert')).toBeNull();
+});

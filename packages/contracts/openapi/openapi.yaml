@@ -7056,6 +7056,12 @@ paths:
         - { in: query, name: fingerprint, schema: { type: string } }
         - { in: query, name: limit, schema: { type: integer, minimum: 1 } }
         - { in: query, name: offset, schema: { type: integer, minimum: 0 } }
+        - { in: query, name: sortBy, schema: { type: string, enum: [source, observedAt, location] } }
+        - { in: query, name: sortDirection, schema: { type: string, enum: [asc, desc] } }
+        - { in: query, name: revocationStatus, schema: { type: string, enum: [good, revoked, issuer_revoked, unknown, not_configured, disabled, invalid_observation, unavailable] } }
+        - { in: query, name: location, description: Case-insensitive literal location search; manager access required., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { in: query, name: since, description: Inclusive observed timestamp lower bound with explicit timezone., schema: { type: string, format: date-time } }
+        - { in: query, name: until, description: Inclusive observed timestamp upper bound with explicit timezone., schema: { type: string, format: date-time } }
       responses:
         "200": { description: Paginated certificate observations }
         "401": { $ref: "#/components/responses/Unauthorized" }

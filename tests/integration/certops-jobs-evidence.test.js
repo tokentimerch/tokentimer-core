@@ -172,6 +172,27 @@ describe("CertOps jobs and evidence persistence", function () {
     }
   });
 
+  it("filters observation history before sorting and pagination within its workspace", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair("observation-filter");
+    try {
+      const insert = async (workspace, metadata, observed, created) => (await TestUtils.execQuery(
+        `INSERT INTO certificate_evidence (workspace_id, evidence_type, subject_type, subject_id, metadata, observed_at, created_at)
+         VALUES ($1, 'certificate.observed', 'managed_certificate', 'filter-test', $2::jsonb, $3, $4) RETURNING id`,
+        [workspace, JSON.stringify(metadata), observed, created],
+      )).rows[0].id;
+      const match = await insert(workspaceA, { fingerprintSha256: "abc", observedRevocationState: "disabled", targetHost: "Host%One" }, null, "2026-01-02T00:00:00Z");
+      await insert(workspaceA, { fingerprintSha256: "abc", observedRevocationState: "disabled", targetHost: "HostXOne" }, "2026-01-02T00:00:00Z", "2026-01-01T00:00:00Z");
+      await insert(workspaceA, { fingerprintSha256: "other", observedRevocationState: "disabled", targetHost: "Host%One" }, "2026-01-02T00:00:00Z", "2026-01-01T00:00:00Z");
+      await insert(workspaceB, { fingerprintSha256: "abc", observedRevocationState: "disabled", targetHost: "Host%One" }, "2026-01-02T00:00:00Z", "2026-01-01T00:00:00Z");
+      const result = await listCertificateEvidence({ workspaceId: workspaceA, subjectId: "filter-test", observationsOnly: true, expectedFingerprint: "abc", revocationStatus: "disabled", location: "%", since: "2026-01-02T00:00:00Z", until: "2026-01-02T00:00:00Z", sortBy: "observedAt", sortDirection: "asc", limit: 1, offset: 0 });
+      expect(result.items.map((item) => item.id)).to.deep.equal([match]);
+      const next = await listCertificateEvidence({ workspaceId: workspaceA, subjectId: "filter-test", observationsOnly: true, expectedFingerprint: "abc", revocationStatus: "disabled", location: "%", limit: 1, offset: 1 });
+      expect(next.items).to.have.length(0);
+      const legacyPage = await listCertificateEvidence({ workspaceId: workspaceA, subjectId: "filter-test", observationsOnly: true, limit: "101", offset: "-1" });
+      expect(legacyPage.pagination).to.deep.equal({ limit: 100, offset: 0 });
+    } finally { await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]); }
+  });
+
   it("creates the job, log, and evidence tables with safe columns and indexes", async () => {
     const tables = await TestUtils.execQuery(
       `SELECT table_name

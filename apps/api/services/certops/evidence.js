@@ -550,6 +550,25 @@ async function listCertificateEvidence(options) {
     conditions.push(`lower(metadata->>'fingerprintSha256') = lower($${params.length})`);
   }
 
+  if (options.revocationStatus) {
+    if (options.revocationStatus === "unavailable") {
+      conditions.push("coalesce(nullif(metadata->>'observedRevocationVerdict', ''), nullif(metadata->>'observedRevocationState', '')) IS NULL");
+    } else {
+      params.push(options.revocationStatus);
+      conditions.push(`coalesce(nullif(metadata->>'observedRevocationVerdict', ''), nullif(metadata->>'observedRevocationState', '')) = $${params.length}`);
+    }
+  }
+  if (options.location) {
+    params.push(`%${options.location.replace(/[%_\\]/g, "\\$&")}%`);
+    conditions.push(`(metadata->>'targetHost' ILIKE $${params.length} OR metadata->>'locationSlot' ILIKE $${params.length} OR metadata->>'filePath' ILIKE $${params.length})`);
+  }
+  for (const [key, operator] of [["since", ">="], ["until", "<="]]) {
+    if (options[key]) {
+      params.push(options[key]);
+      conditions.push(`coalesce(observed_at, created_at) ${operator} $${params.length}::timestamptz`);
+    }
+  }
+
   params.push(limit, offset);
   const result = await db.query(
     `SELECT ${SAFE_EVIDENCE_SELECT_FIELDS}

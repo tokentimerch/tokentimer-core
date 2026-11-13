@@ -4066,6 +4066,24 @@ function createObservationHistoryHandler({ certificateReader = getManagedCertifi
         return res.status(409).json({ error: "Certificate changed. Reload its details.", code: "CERTOPS_CERTIFICATE_CHANGED" });
       }
       const includeTopology = req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager");
+      const query = req.query;
+      const invalid = () => res.status(400).json({ error: "Invalid observation history query", code: CERTOPS_EVIDENCE_INVALID });
+      const validTimestamp = (value) => {
+        if (typeof value !== "string") return false;
+        const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(value);
+        if (!match) return false;
+        const [, year, month, day, hour, minute, second, , zoneHour, zoneMinute] = match;
+        const days = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
+        return Number(year) >= 100 && Number(month) >= 1 && Number(month) <= 12 && Number(day) >= 1 && Number(day) <= days && Number(hour) <= 23 && Number(minute) <= 59 && Number(second) <= 59 && (zoneHour === undefined || (Number(zoneHour) <= 23 && Number(zoneMinute) <= 59)) && Number.isFinite(Date.parse(value));
+      };
+      const statuses = ["good", "revoked", "issuer_revoked", "unknown", "not_configured", "disabled", "invalid_observation", "unavailable"];
+      if (query.location !== undefined && !includeTopology) {
+        return res.status(403).json({ error: "Insufficient permissions for observation filter", code: "FORBIDDEN" });
+      }
+      if ((query.revocationStatus !== undefined && (typeof query.revocationStatus !== "string" || !statuses.includes(query.revocationStatus))) ||
+          (query.location !== undefined && (typeof query.location !== "string" || !query.location.trim() || query.location.length > 256)) ||
+          ["since", "until"].some((key) => query[key] !== undefined && !validTimestamp(query[key])) ||
+          (query.since !== undefined && query.until !== undefined && Date.parse(query.since) > Date.parse(query.until))) return invalid();
       if (!includeTopology && (req.query.sortBy === "source" || req.query.sortBy === "location")) {
         return res.status(403).json({ error: "Insufficient permissions for observation sort", code: "FORBIDDEN" });
       }
@@ -4080,6 +4098,10 @@ function createObservationHistoryHandler({ certificateReader = getManagedCertifi
         offset: req.query.offset,
         sortBy: req.query.sortBy,
         sortDirection: req.query.sortDirection,
+        revocationStatus: query.revocationStatus,
+        location: query.location?.trim(),
+        since: query.since,
+        until: query.until,
       });
       return res.json({ items: result.items.map((item) => observationHistoryItem(item, includeTopology)), pagination: result.pagination });
     } catch (err) {
