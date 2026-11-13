@@ -946,12 +946,18 @@ function classifyRenewalBlock(row) {
   }
   if (!row.profile_id) return RENEWAL_BLOCKED_NO_PROFILE;
   try {
-    resolveRenewalProfileSnapshot(row);
+    if (row.profile_issuer_kind === "adcs" && row.profile_issuer_id) {
+      validateAdcsRenewalProfile(row.profile_public_metadata?.renewalProfile);
+    } else {
+      resolveRenewalProfileSnapshot(row);
+    }
     return null;
   } catch (error) {
     if (
       error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE ||
-      error?.code === CERTOPS_RENEWAL_PROFILE_INVALID
+      error?.code === CERTOPS_RENEWAL_PROFILE_INVALID ||
+      error?.code === CERTOPS_PROFILE_INVALID ||
+      error?.code === CERTOPS_PROFILE_ISSUER_INCOMPATIBLE
     ) {
       return RENEWAL_BLOCKED_INCOMPLETE_PROFILE;
     }

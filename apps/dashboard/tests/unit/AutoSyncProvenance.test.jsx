@@ -135,7 +135,9 @@ describe('association provenance API contract', () => {
         <AutoSyncProvenance tokenId={71} ownership='Manual or legacy' />
       </ChakraProvider>
     );
-    expect(await screen.findByText('Auto-sync history could not be loaded.')).toBeTruthy();
+    expect(
+      await screen.findByText('Auto-sync history could not be loaded.')
+    ).toBeTruthy();
     expect(screen.queryByText('Manual or legacy')).toBeNull();
   });
 
@@ -196,4 +198,95 @@ describe('association provenance API contract', () => {
       screen.getByRole('button', { name: 'Earlier history' })
     ).toBeTruthy();
   });
+
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])(
+    'isolates pagination after switching assets (revisit: %s, rejection: %s)',
+    async (revisit, rejectOld) => {
+      const page = name => ({
+        managed: true,
+        configurations: [],
+        items: [
+          {
+            id: name,
+            config_name: name,
+            event: 'attached',
+            occurred_at: '2026-10-01T00:00:00Z',
+          },
+        ],
+        next_before: '26',
+      });
+      let finishOld;
+      let finishCurrent;
+      let initialLoads = 0;
+      let paginationLoads = 0;
+      get.mockImplementation(url => {
+        if (!url.includes('?')) {
+          initialLoads += 1;
+          return Promise.resolve({ data: page(`Current ${initialLoads}`) });
+        }
+        paginationLoads += 1;
+        if (paginationLoads === 1) {
+          return new Promise((resolve, reject) => {
+            finishOld = () =>
+              rejectOld
+                ? reject(new Error('stale failure'))
+                : resolve({ data: page('Stale page') });
+          });
+        }
+        return new Promise(resolve => {
+          finishCurrent = () => resolve({ data: page('Earlier current page') });
+        });
+      });
+      const component = tokenId => (
+        <ChakraProvider>
+          <AutoSyncProvenance tokenId={tokenId} ownership='Managed' />
+        </ChakraProvider>
+      );
+      const view = render(component(71));
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Show history' })
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Earlier history' }));
+      expect(
+        screen.getByRole('button', { name: /Earlier history/ })
+      ).toBeDisabled();
+
+      view.rerender(component(72));
+      await screen.findByRole('button', { name: 'Show history' });
+      if (revisit) {
+        view.rerender(component(71));
+        await waitFor(() => expect(initialLoads).toBe(3));
+      }
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Show history' })
+      );
+      const currentName = `Current ${revisit ? 3 : 2}`;
+      expect(
+        await screen.findByText(`Added to ${currentName}`)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Earlier history' })
+      ).not.toBeDisabled();
+      fireEvent.click(screen.getByRole('button', { name: 'Earlier history' }));
+      await act(async () => finishOld());
+      expect(screen.queryByText('Added to Stale page')).not.toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: /Earlier history/ })
+      ).toBeDisabled();
+      await act(async () => finishCurrent());
+      expect(
+        screen.getByText('Added to Earlier current page')
+      ).toBeInTheDocument();
+      expect(screen.getByText(`Added to ${currentName}`)).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Earlier history' })
+      ).not.toBeDisabled();
+    }
+  );
 });

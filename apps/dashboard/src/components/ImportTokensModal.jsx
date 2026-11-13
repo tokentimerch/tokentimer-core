@@ -1248,6 +1248,7 @@ function ImportTokensModalContent({
   const [autoSyncRunsCursor, setAutoSyncRunsCursor] = React.useState(null);
   const [loadingAutoSyncRuns, setLoadingAutoSyncRuns] = React.useState(false);
   const autoSyncHistoryConfigRef = React.useRef(null);
+  const autoSyncHistoryGenerationRef = React.useRef(0);
   autoSyncHistoryConfigRef.current = autoSyncConfig?.id;
   const [requestedAutoSyncConfig, setRequestedAutoSyncConfig] =
     React.useState(null);
@@ -1462,6 +1463,8 @@ function ImportTokensModalContent({
   }, [workspaceId, source, requestedAutoSyncConfig]);
 
   React.useEffect(() => {
+    autoSyncHistoryGenerationRef.current += 1;
+    setLoadingAutoSyncRuns(false);
     if (!workspaceId || !autoSyncConfig?.id) {
       setAutoSyncRuns([]);
       setAutoSyncRunsCursor(null);
@@ -1491,6 +1494,7 @@ function ImportTokensModalContent({
       });
     return () => {
       cancelled = true;
+      autoSyncHistoryGenerationRef.current += 1;
     };
   }, [
     workspaceId,
@@ -1503,19 +1507,24 @@ function ImportTokensModalContent({
   const loadEarlierAutoSyncRuns = async () => {
     if (!autoSyncRunsCursor || !autoSyncConfig?.id) return false;
     const configId = autoSyncConfig.id;
+    const generation = ++autoSyncHistoryGenerationRef.current;
     setLoadingAutoSyncRuns(true);
     try {
       const res = await apiClient.get(
         `/api/v1/workspaces/${workspaceId}/auto-sync/${configId}/runs?limit=5&cursor=${encodeURIComponent(autoSyncRunsCursor)}`
       );
-      if (autoSyncHistoryConfigRef.current === configId) {
+      if (
+        autoSyncHistoryGenerationRef.current === generation &&
+        autoSyncHistoryConfigRef.current === configId
+      ) {
         setAutoSyncRuns(previous => [...previous, ...(res.data?.items || [])]);
         setAutoSyncRunsCursor(res.data?.next_cursor || null);
         return (res.data?.items || []).length > 0;
       }
       return false;
     } finally {
-      setLoadingAutoSyncRuns(false);
+      if (autoSyncHistoryGenerationRef.current === generation)
+        setLoadingAutoSyncRuns(false);
     }
   };
 

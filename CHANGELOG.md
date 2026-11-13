@@ -27,6 +27,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **AD CS renewal schedule.** Valid native AD CS profiles no longer appear as incomplete in upcoming renewals, and CA-capacity waits remain visible.
+
 - **Certificate management history.** Deleting a former certificate manager now clears their attribution from closed management periods while retaining the history.
 
 - **Webhook proxy delivery.** HTTP and HTTPS webhook requests use the configured proxy correctly when `NODE_USE_ENV_PROXY=1`, without being sent through the proxy twice.
