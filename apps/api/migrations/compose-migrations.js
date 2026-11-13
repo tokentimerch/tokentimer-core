@@ -97,7 +97,10 @@ function composeMigrations(migrations, recorded = []) {
     const oldRows = recorded.filter((row) => row.version <= 109);
     const oldComposed = composeMigrations(oldRegistry, oldRows);
     const oldIdentity = new Map(oldComposed.map((entry) => [entry.name, entry.version]));
-    const appended = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation"];
+    const appended = [
+      "certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation",
+      ...extensions.filter((entry) => entry.version >= 114).map((entry) => entry.name),
+    ];
     recognizedRetirementPreview = oldRows.every((row) => row.version < 70 || oldIdentity.get(row.name) === row.version) &&
       rows.filter((row) => row.version > 109).every((row, index) => row.version === 110 + index && row.name === appended[index]);
     if (!recognizedRetirementPreview) throw new Error("Unsupported Core retirement preview migration history");
