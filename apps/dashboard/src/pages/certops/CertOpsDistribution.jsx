@@ -47,7 +47,13 @@ import {
   DashboardPanelHeader,
   DashboardState,
 } from '../../components/DashboardPrimitives';
+import DashboardPagination from '../../components/DashboardPagination.jsx';
+import {
+  CertOpsMobileFieldLabel,
+  useCertOpsResponsiveTableStyles,
+} from '../../components/certops/CertOpsResponsiveTable.jsx';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
+import { CERTOPS_PAGE_SIZE_OPTIONS } from '../../hooks/useCertOpsUrlState.js';
 import CertOpsBadge from '../../components/certops/CertOpsBadge.jsx';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { onboardingPath } from '../../utils/onboardingPath.js';
@@ -64,6 +70,7 @@ import { diagnosticExplanation } from '../../components/certops/distributionDiag
 import { formatDateTime } from '../../components/certops/certopsFormat.js';
 
 const label = value => String(value || 'Unknown').replaceAll('_', ' ');
+const distributionPageSizes = [5, ...CERTOPS_PAGE_SIZE_OPTIONS];
 const jobsLink = (workspaceId, id) =>
   `/certops/jobs?workspace=${encodeURIComponent(workspaceId)}&job=${encodeURIComponent(id)}`;
 const distributionViews = {
@@ -887,13 +894,16 @@ function Management({
     },
     [workspaceId, groupId]
   );
-  const { dashboard } = useDashboardTheme();
+  const { dashboard, muted } = useDashboardTheme();
+  const tableStyles = useCertOpsResponsiveTableStyles();
   const location = useLocation();
   const navigate = useNavigate();
   const [activeView, setActiveView] = useState(
     () => distributionViews[location.hash] ?? 0
   );
   const [policyOpen, setPolicyOpen] = useState(false);
+  const [incidentPage, setIncidentPage] = useState({ limit: 5, offset: 0 });
+  const [discoveryPage, setDiscoveryPage] = useState({ limit: 5, offset: 0 });
   const activeViewRef = useRef(activeView);
   useEffect(() => {
     if (!location.hash || Object.hasOwn(distributionViews, location.hash)) {
@@ -971,6 +981,18 @@ function Management({
         action={<Button onClick={state.refresh}>Retry</Button>}
       />
     );
+  // The management response is already bounded; these controls page only the
+  // returned rows. Clamp after refresh if the selected page no longer exists.
+  const incidentOffset = Math.min(
+    incidentPage.offset,
+    Math.max(0, Math.ceil(data.incidents.length / incidentPage.limit) - 1) *
+      incidentPage.limit
+  );
+  const discoveryOffset = Math.min(
+    discoveryPage.offset,
+    Math.max(0, Math.ceil(data.discoveries.length / discoveryPage.limit) - 1) *
+      discoveryPage.limit
+  );
   const selectedVersion =
     version || data.group.latest_material_version_id || '';
   const latestPublishedVersion = data.versions.find(
@@ -1492,16 +1514,10 @@ function Management({
                               <Text fontSize='sm' fontWeight='medium'>
                                 {consumer.deployment_profile_ref}
                               </Text>
-                              <Text
-                                fontSize='xs'
-                                color={dashboard.text.secondary}
-                              >
+                              <Text fontSize='xs' color={muted}>
                                 {consumer.agent_name} · {consumer.agent_status}
                               </Text>
-                              <Text
-                                fontSize='xs'
-                                color={dashboard.text.secondary}
-                              >
+                              <Text fontSize='xs' color={muted}>
                                 {consumer.binding_state}
                               </Text>
                             </Td>
@@ -1586,17 +1602,10 @@ function Management({
                               <Text fontSize='sm' fontWeight='medium'>
                                 {label(consumer.verification_method)}
                               </Text>
-                              <Text
-                                fontSize='xs'
-                                color={dashboard.text.secondary}
-                                mt={1}
-                              >
+                              <Text fontSize='xs' color={muted} mt={1}>
                                 Proof {formatDateTime(consumer.observed_at)}
                               </Text>
-                              <Text
-                                fontSize='xs'
-                                color={dashboard.text.secondary}
-                              >
+                              <Text fontSize='xs' color={muted}>
                                 Deployed expiry{' '}
                                 {formatDateTime(consumer.observed_valid_to)}
                               </Text>
@@ -1624,18 +1633,11 @@ function Management({
                                 {consumer.required ? 'Required' : 'Optional'} ·
                                 wave {consumer.wave}
                               </Text>
-                              <Text
-                                fontSize='xs'
-                                color={dashboard.text.secondary}
-                                mt={1}
-                              >
+                              <Text fontSize='xs' color={muted} mt={1}>
                                 Authorization revision{' '}
                                 {consumer.authorization_revision}
                               </Text>
-                              <Text
-                                fontSize='xs'
-                                color={dashboard.text.secondary}
-                              >
+                              <Text fontSize='xs' color={muted}>
                                 Local profile {consumer.profile_revision}
                               </Text>
                             </Td>
@@ -1976,128 +1978,198 @@ function Management({
               >
                 <DashboardPanelHeader
                   title='Incidents and recovery'
-                  description='Source renewal cannot resolve a consumer incident. Fresh evidence must prove the relevant condition cleared.'
+                  description='Showing up to 100 recent incidents. Fresh consumer evidence must prove the relevant condition cleared.'
                 />
                 {!data.incidents.length ? (
                   <Text fontSize='sm'>No incidents in the recent history.</Text>
                 ) : (
-                  <Stack
-                    as='ul'
-                    listStyleType='none'
-                    m={0}
-                    spacing={0}
-                    borderTop='1px solid'
-                    borderColor={dashboard.border.subtle}
-                  >
-                    {data.incidents.map(incident => {
-                      const bindingId =
-                        incident.binding_id || incident.evidence?.bindingId;
-                      const consumer = data.consumers.find(
-                        item => item.binding_id === bindingId
-                      );
-                      const agentId = incident.evidence?.agentId;
-                      const consumerParams = new URLSearchParams(
-                        location.search
-                      );
-                      consumerParams.set('workspace', workspaceId);
-                      consumerParams.set('group', groupId);
-                      return (
-                        <Box
-                          as='li'
-                          key={incident.id}
-                          py={3}
-                          borderBottom='1px solid'
-                          borderColor={dashboard.border.subtle}
-                        >
-                          <SimpleGrid
-                            columns={{ base: 1, md: 3 }}
-                            spacing={2}
-                            alignItems='center'
-                          >
-                            <HStack minW={0} spacing={2} flexWrap='wrap'>
-                              <Text
-                                fontSize='sm'
-                                fontWeight='semibold'
-                                overflowWrap='anywhere'
-                              >
-                                {label(incident.code)}
-                              </Text>
-                              <CertOpsBadge
-                                colorScheme={
-                                  incident.resolved_at ? 'green' : 'orange'
-                                }
-                              >
-                                {incident.resolved_at ? 'Resolved' : 'Open'}
-                              </CertOpsBadge>
-                            </HStack>
-                            <Box color={dashboard.text.secondary} fontSize='sm'>
-                              {incident.severity ? (
-                                <Text>
-                                  Severity: {label(incident.severity)}
-                                </Text>
-                              ) : null}
-                              {bindingId ? (
-                                <Text>Binding: {bindingId}</Text>
-                              ) : null}
-                              {agentId ? <Text>Agent: {agentId}</Text> : null}
-                              {consumer ? (
-                                <Text>
-                                  Current profile:{' '}
-                                  {consumer.deployment_profile_ref}
-                                </Text>
-                              ) : null}
-                              {incident.evidence?.desiredVersionId ? (
-                                <Text>
-                                  Desired version:{' '}
-                                  {incident.evidence.desiredVersionId}
-                                </Text>
-                              ) : null}
-                              {incident.evidence?.observedVersionId ? (
-                                <Text>
-                                  Observed version:{' '}
-                                  {incident.evidence.observedVersionId}
-                                </Text>
-                              ) : null}
-                              {incident.evidence?.rolloutId ? (
-                                <Text>
-                                  Rollout: {incident.evidence.rolloutId}
-                                </Text>
-                              ) : null}
-                              <Text>
-                                Opened {formatDateTime(incident.opened_at)}
-                              </Text>
-                              <Text>
-                                Updated {formatDateTime(incident.updated_at)}
-                              </Text>
-                            </Box>
-                            <Box>
-                              {consumer ? (
-                                <Link
-                                  as={RouterLink}
-                                  to={{
-                                    pathname: location.pathname,
-                                    search: `?${consumerParams}`,
-                                    hash: '#distribution-consumers',
-                                  }}
-                                  color='blue.400'
-                                  fontSize='xs'
-                                  display='block'
-                                >
-                                  View consumer
-                                </Link>
-                              ) : null}
-                              <JobLink
-                                workspaceId={workspaceId}
-                                id={incident.evidence?.jobId}
-                              >
-                                View affected job
-                              </JobLink>
-                            </Box>
-                          </SimpleGrid>
-                        </Box>
-                      );
-                    })}
-                  </Stack>
+                  <>
+                    <TableContainer {...tableStyles.tableContainerProps}>
+                      <Table
+                        {...tableStyles.tableProps}
+                        aria-label='Incidents and recovery'
+                      >
+                        <Thead {...tableStyles.theadProps}>
+                          <Tr>
+                            <Th>Incident</Th>
+                            <Th>Destination and evidence</Th>
+                            <Th>Activity</Th>
+                            <Th>Actions</Th>
+                          </Tr>
+                        </Thead>
+                        <Tbody {...tableStyles.tbodyProps}>
+                          {data.incidents
+                            .slice(
+                              incidentOffset,
+                              incidentOffset + incidentPage.limit
+                            )
+                            .map(incident => {
+                              const bindingId =
+                                incident.binding_id ||
+                                incident.evidence?.bindingId;
+                              const consumer = data.consumers.find(
+                                item => item.binding_id === bindingId
+                              );
+                              const agentId = incident.evidence?.agentId;
+                              const consumerParams = new URLSearchParams(
+                                location.search
+                              );
+                              consumerParams.set('workspace', workspaceId);
+                              consumerParams.set('group', groupId);
+                              return (
+                                <Tr key={incident.id} {...tableStyles.rowProps}>
+                                  <Td
+                                    {...tableStyles.primaryCellProps}
+                                    whiteSpace='normal'
+                                    verticalAlign='top'
+                                  >
+                                    <Text
+                                      fontSize='sm'
+                                      fontWeight='medium'
+                                      overflowWrap='anywhere'
+                                    >
+                                      {label(incident.code)}
+                                    </Text>
+                                    <CertOpsBadge
+                                      mt={1}
+                                      colorScheme={
+                                        incident.resolved_at
+                                          ? 'green'
+                                          : 'orange'
+                                      }
+                                    >
+                                      {incident.resolved_at
+                                        ? 'Resolved'
+                                        : 'Open'}
+                                    </CertOpsBadge>
+                                    {incident.severity ? (
+                                      <Text fontSize='xs' color={muted} mt={1}>
+                                        Severity: {label(incident.severity)}
+                                      </Text>
+                                    ) : null}
+                                  </Td>
+                                  <Td
+                                    {...tableStyles.cellProps}
+                                    whiteSpace='normal'
+                                    overflowWrap='anywhere'
+                                    verticalAlign='top'
+                                  >
+                                    <CertOpsMobileFieldLabel color={muted}>
+                                      Destination and evidence
+                                    </CertOpsMobileFieldLabel>
+                                    {consumer ? (
+                                      <Text fontSize='sm'>
+                                        Current profile:{' '}
+                                        {consumer.deployment_profile_ref}
+                                      </Text>
+                                    ) : null}
+                                    <Box color={muted} fontSize='xs'>
+                                      {bindingId ? (
+                                        <Text>Binding: {bindingId}</Text>
+                                      ) : null}
+                                      {agentId ? (
+                                        <Text>Agent: {agentId}</Text>
+                                      ) : null}
+                                      {incident.evidence?.desiredVersionId ? (
+                                        <Text>
+                                          Desired version:{' '}
+                                          {incident.evidence.desiredVersionId}
+                                        </Text>
+                                      ) : null}
+                                      {incident.evidence?.observedVersionId ? (
+                                        <Text>
+                                          Observed version:{' '}
+                                          {incident.evidence.observedVersionId}
+                                        </Text>
+                                      ) : null}
+                                      {incident.evidence?.rolloutId ? (
+                                        <Text>
+                                          Rollout: {incident.evidence.rolloutId}
+                                        </Text>
+                                      ) : null}
+                                      {!bindingId &&
+                                      !agentId &&
+                                      !consumer &&
+                                      !incident.evidence?.desiredVersionId &&
+                                      !incident.evidence?.observedVersionId &&
+                                      !incident.evidence?.rolloutId ? (
+                                        <Text>--</Text>
+                                      ) : null}
+                                    </Box>
+                                  </Td>
+                                  <Td
+                                    {...tableStyles.cellProps}
+                                    whiteSpace='normal'
+                                    verticalAlign='top'
+                                  >
+                                    <CertOpsMobileFieldLabel color={muted}>
+                                      Activity
+                                    </CertOpsMobileFieldLabel>
+                                    <Box color={muted} fontSize='xs'>
+                                      <Text>
+                                        Opened{' '}
+                                        {formatDateTime(incident.opened_at)}
+                                      </Text>
+                                      <Text>
+                                        Updated{' '}
+                                        {formatDateTime(incident.updated_at)}
+                                      </Text>
+                                    </Box>
+                                  </Td>
+                                  <Td
+                                    {...tableStyles.actionCellProps}
+                                    whiteSpace='normal'
+                                    verticalAlign='top'
+                                  >
+                                    <CertOpsMobileFieldLabel color={muted}>
+                                      Actions
+                                    </CertOpsMobileFieldLabel>
+                                    <Stack align='start' spacing={1}>
+                                      {consumer ? (
+                                        <Link
+                                          as={RouterLink}
+                                          to={{
+                                            pathname: location.pathname,
+                                            search: `?${consumerParams}`,
+                                            hash: '#distribution-consumers',
+                                          }}
+                                          color='blue.400'
+                                          fontSize='xs'
+                                        >
+                                          View consumer
+                                        </Link>
+                                      ) : null}
+                                      <JobLink
+                                        workspaceId={workspaceId}
+                                        id={incident.evidence?.jobId}
+                                      >
+                                        View affected job
+                                      </JobLink>
+                                      {!consumer &&
+                                      !incident.evidence?.jobId ? (
+                                        <Text fontSize='xs' color={muted}>
+                                          --
+                                        </Text>
+                                      ) : null}
+                                    </Stack>
+                                  </Td>
+                                </Tr>
+                              );
+                            })}
+                        </Tbody>
+                      </Table>
+                    </TableContainer>
+                    <Box mt={3}>
+                      <DashboardPagination
+                        limit={incidentPage.limit}
+                        offset={incidentOffset}
+                        total={data.incidents.length}
+                        pageSizeOptions={distributionPageSizes}
+                        noun='incidents'
+                        onChange={setIncidentPage}
+                      />
+                    </Box>
+                  </>
                 )}
               </DashboardPanel>
               <DashboardPanel
@@ -2112,7 +2184,8 @@ function Management({
                 />
                 <Text mb={3} fontSize='sm' color={dashboard.text.secondary}>
                   All entries are read-only configuration observations; served
-                  certificates are unverified.
+                  certificates are unverified. Showing up to 1,000 recent
+                  observations.
                 </Text>
                 {!data.discoveries.length ? (
                   <Box>
@@ -2125,61 +2198,89 @@ function Management({
                     </Text>
                   </Box>
                 ) : (
-                  <Stack
-                    as='ul'
-                    listStyleType='none'
-                    m={0}
-                    spacing={0}
-                    borderTop='1px solid'
-                    borderColor={dashboard.border.subtle}
-                  >
-                    {data.discoveries.map(service => (
-                      <Box
-                        as='li'
-                        key={service.id}
-                        py={3}
-                        borderBottom='1px solid'
-                        borderColor={dashboard.border.subtle}
+                  <>
+                    <TableContainer {...tableStyles.tableContainerProps}>
+                      <Table
+                        {...tableStyles.tableProps}
+                        aria-label='Discovery coverage'
                       >
-                        <SimpleGrid
-                          columns={{ base: 1, md: 3 }}
-                          spacing={2}
-                          alignItems='center'
-                        >
-                          <Box minW={0}>
-                            <Text
-                              fontSize='sm'
-                              fontWeight='semibold'
-                              overflowWrap='anywhere'
-                            >
-                              {service.service_identity}
-                            </Text>
-                            <Text
-                              fontSize='xs'
-                              color={dashboard.text.secondary}
-                            >
-                              Source: {label(service.source_kind)}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <CertOpsBadge
-                              colorScheme={
-                                service.confidence === 'stale'
-                                  ? 'orange'
-                                  : 'gray'
-                              }
-                            >
-                              {label(service.confidence)}
-                            </CertOpsBadge>
-                          </Box>
-                          <Text fontSize='sm' color={dashboard.text.secondary}>
-                            Last observed{' '}
-                            {formatDateTime(service.last_observed_at)}
-                          </Text>
-                        </SimpleGrid>
-                      </Box>
-                    ))}
-                  </Stack>
+                        <Thead {...tableStyles.theadProps}>
+                          <Tr>
+                            <Th>Service</Th>
+                            <Th>Source</Th>
+                            <Th>Confidence</Th>
+                            <Th>Last observed</Th>
+                          </Tr>
+                        </Thead>
+                        <Tbody {...tableStyles.tbodyProps}>
+                          {data.discoveries
+                            .slice(
+                              discoveryOffset,
+                              discoveryOffset + discoveryPage.limit
+                            )
+                            .map(service => (
+                              <Tr key={service.id} {...tableStyles.rowProps}>
+                                <Td
+                                  {...tableStyles.primaryCellProps}
+                                  whiteSpace='normal'
+                                  overflowWrap='anywhere'
+                                >
+                                  <Text fontSize='sm' fontWeight='medium'>
+                                    {service.service_identity}
+                                  </Text>
+                                </Td>
+                                <Td
+                                  {...tableStyles.cellProps}
+                                  whiteSpace='normal'
+                                >
+                                  <CertOpsMobileFieldLabel color={muted}>
+                                    Source
+                                  </CertOpsMobileFieldLabel>
+                                  <Text fontSize='xs' color={muted}>
+                                    {label(service.source_kind)}
+                                  </Text>
+                                </Td>
+                                <Td {...tableStyles.cellProps}>
+                                  <CertOpsMobileFieldLabel color={muted}>
+                                    Confidence
+                                  </CertOpsMobileFieldLabel>
+                                  <CertOpsBadge
+                                    colorScheme={
+                                      service.confidence === 'stale'
+                                        ? 'orange'
+                                        : 'gray'
+                                    }
+                                  >
+                                    {label(service.confidence)}
+                                  </CertOpsBadge>
+                                </Td>
+                                <Td
+                                  {...tableStyles.cellProps}
+                                  whiteSpace='normal'
+                                >
+                                  <CertOpsMobileFieldLabel color={muted}>
+                                    Last observed
+                                  </CertOpsMobileFieldLabel>
+                                  <Text fontSize='xs' color={muted}>
+                                    {formatDateTime(service.last_observed_at)}
+                                  </Text>
+                                </Td>
+                              </Tr>
+                            ))}
+                        </Tbody>
+                      </Table>
+                    </TableContainer>
+                    <Box mt={3}>
+                      <DashboardPagination
+                        limit={discoveryPage.limit}
+                        offset={discoveryOffset}
+                        total={data.discoveries.length}
+                        pageSizeOptions={distributionPageSizes}
+                        noun='discovered services'
+                        onChange={setDiscoveryPage}
+                      />
+                    </Box>
+                  </>
                 )}
               </DashboardPanel>
             </Stack>
@@ -2460,7 +2561,11 @@ export default function CertOpsDistribution() {
           action={
             <DashboardActionButton
               as={RouterLink}
-              to={onboardingPath({ workspaceId, area: 'certops' })}
+              to={onboardingPath({
+                workspaceId,
+                area: 'certops',
+                goal: 'certops_vault',
+              })}
               variant='outline'
               size='sm'
             >

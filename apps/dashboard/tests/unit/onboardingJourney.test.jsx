@@ -265,11 +265,11 @@ function freshServer() {
   return state;
 }
 
-function mount() {
+function mount(initialEntries = ['/']) {
   return render(
     <ChakraProvider>
       <DashboardThemeProvider>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={initialEntries}>
           <OnboardingPage
             session={{ email: 'ana@example.com', name: 'Ana Lopez' }}
             onLogout={() => {}}
@@ -296,6 +296,18 @@ describe('first-value onboarding journey', () => {
       dispatchEvent: vi.fn(),
     }));
     freshServer();
+  });
+
+  it('opens the distribution goal picker without changing an existing journey', async () => {
+    server.state.session.intent = { goal: 'monitor_https' };
+    server.state.session.progress = { imported: ['existing'] };
+    mount(['/onboarding?workspace=ws-1&area=certops&goal=certops_vault']);
+    const choice = await screen.findByRole('radio', {
+      name: /Share one certificate across servers/,
+    });
+    expect(choice).toBeChecked();
+    expect(server.state.session.intent.goal).toBe('monitor_https');
+    expect(server.state.session.progress.imported).toEqual(['existing']);
   });
 
   it('takes a new user from a goal to a verified monitor', async () => {

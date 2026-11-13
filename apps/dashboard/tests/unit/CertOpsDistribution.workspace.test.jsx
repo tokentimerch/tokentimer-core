@@ -340,15 +340,15 @@ describe('Distribution links retain explicit workspace across saved selections a
       firstPage.getByRole('link', {
         name: 'Open first-distribution setup guide',
       })
-    ).toHaveAttribute('href', '/onboarding?workspace=alpha&area=certops');
+    ).toHaveAttribute('href', '/onboarding?workspace=alpha&area=certops&goal=certops_vault');
     expect(secondLink).toHaveAttribute(
       'href',
-      '/onboarding?workspace=beta&area=certops'
+      '/onboarding?workspace=beta&area=certops&goal=certops_vault'
     );
     fireEvent.click(secondLink);
     await waitFor(() =>
       expect(secondPage.getByTestId('destination')).toHaveTextContent(
-        'beta|/onboarding?workspace=beta&area=certops'
+        'beta|/onboarding?workspace=beta&area=certops&goal=certops_vault'
       )
     );
     fireEvent.click(
@@ -358,7 +358,7 @@ describe('Distribution links retain explicit workspace across saved selections a
     );
     await waitFor(() =>
       expect(firstPage.getByTestId('destination')).toHaveTextContent(
-        'alpha|/onboarding?workspace=alpha&area=certops'
+        'alpha|/onboarding?workspace=alpha&area=certops&goal=certops_vault'
       )
     );
   });

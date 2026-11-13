@@ -58,7 +58,12 @@ export function GoalStep({ ctx, returnTo = null }) {
     goals.some(g => g.area === area.id && isCandidate(g))
   );
   const current = ctx.session.intent?.goal || '';
-  const [choice, setChoice] = useState(current);
+  const requestedGoal = params.get('goal');
+  const suggested = goals.find(
+    goal =>
+      goal.id === requestedGoal && goal.area === areaFilter && !goal.blocker
+  );
+  const [choice, setChoice] = useState(() => suggested?.id || current);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 

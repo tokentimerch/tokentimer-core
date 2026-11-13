@@ -23,6 +23,25 @@ beforeEach(()=>{vi.clearAllMocks();manage.mockReturnValue(true);admin.mockReturn
   api.preflight.mockResolvedValue({consumers:[{bindingId:'binding',diagnostics:[{code:'CERTOPS_AGENT_OFFLINE'},{code:'CERTOPS_CUSTOMER_LOCAL_PREFLIGHT_REQUIRED'}]}]});
   api.retention.mockResolvedValue({versions:[{id:latest,provider_version:2,retainedReasons:['desired_consumer_version']}]});});
 describe('Distribution Management',()=>{
+  it('pages incidents and discoveries independently and resets a changed page size',async()=>{
+    data.incidents=Array.from({length:50},(_,i)=>({id:`incident-${i}`,code:`incident_${i}`,resolved_at:null}));
+    data.discoveries=Array.from({length:50},(_,i)=>({id:`service-${i}`,service_identity:`service-${i}`,confidence:'observed'}));
+    page();await openView('Issues');
+    expect(screen.getByText('incident 0')).toBeInTheDocument();
+    expect(screen.queryByText('incident 5')).not.toBeInTheDocument();
+    expect(screen.getByText('service-0')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Next page of incidents'}));
+    expect(screen.getByText('incident 5')).toBeInTheDocument();
+    expect(screen.queryByText('incident 0')).not.toBeInTheDocument();
+    expect(screen.getByText('service-0')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Next page of discovered services'}));
+    expect(screen.getByText('service-5')).toBeInTheDocument();
+    expect(screen.getByText('incident 5')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('incidents per page'),{target:{value:'20'}});
+    expect(screen.getByText('incident 0')).toBeInTheDocument();
+    expect(screen.getByText('incident 19')).toBeInTheDocument();
+    expect(screen.queryByText('incident 20')).not.toBeInTheDocument();
+  });
   it('requests a reviewed read-only inspection of a rejected uncertain original job',async()=>{
     data.consumers[0].latest_deployment={jobId:'original-job',jobStatus:'rejected',needsOperatorReconciliation:true};
     api.reconcile.mockResolvedValue({job:{id:'inspection-job'}});
@@ -138,14 +157,14 @@ describe('Distribution Management',()=>{
       {id:'two',source_kind:'other_source',service_identity:'db/listener',confidence:'unknown',last_observed_at:null},
     ];
     page();await openView('Issues');
-    const first=within(screen.getByText('edge/frontend').closest('li'));
-    expect(first.getByText('Source: custom service')).toBeInTheDocument();
+    const first=within(screen.getByText('edge/frontend').closest('tr'));
+    expect(first.getByText('custom service')).toBeInTheDocument();
     expect(first.getByText('stale')).toBeInTheDocument();
-    expect(first.getByText(/Last observed/)).toBeInTheDocument();
+    expect(first.getByText(/2026/)).toBeInTheDocument();
     expect(screen.getByText(/All entries are read-only configuration observations; served certificates are unverified/)).toBeInTheDocument();
-    const second=within(screen.getByText('db/listener').closest('li'));
+    const second=within(screen.getByText('db/listener').closest('tr'));
     expect(second.getByText('unknown')).toBeInTheDocument();
-    expect(second.getByText('Source: other source')).toBeInTheDocument();
+    expect(second.getByText('other source')).toBeInTheDocument();
   });
   it('keeps the empty discovery state and coverage limitation explicit',async()=>{
     page();await openView('Issues');
@@ -166,13 +185,13 @@ describe('Distribution Management',()=>{
       {id:'offline-two',binding_id:'historical-binding',code:'required_consumer_offline',severity:'critical',resolved_at:'2026-01-01',evidence:{bindingId:'historical-binding',agentId:'former-agent',rolloutId:'rollout-old',observedVersionId:'version-b'}},
     ];
     page();await openView('Issues');
-    const first=within(screen.getByText('Binding: binding').closest('li'));
+    const first=within(screen.getByText('Binding: binding').closest('tr'));
     expect(first.getByText('Agent: agent')).toBeInTheDocument();
     expect(first.getByText('Current profile: nginx')).toBeInTheDocument();
     expect(first.getByText('Desired version: version-a')).toBeInTheDocument();
     expect(first.getByRole('link',{name:'View consumer'})).toHaveAttribute('href','/?workspace=workspace&group=group#distribution-consumers');
     expect(first.queryByRole('link',{name:'View affected job'})).not.toBeInTheDocument();
-    const historical=within(screen.getByText('Binding: historical-binding').closest('li'));
+    const historical=within(screen.getByText('Binding: historical-binding').closest('tr'));
     expect(historical.getByText('Agent: former-agent')).toBeInTheDocument();
     expect(historical.getByText('Observed version: version-b')).toBeInTheDocument();
     expect(historical.getByText('Rollout: rollout-old')).toBeInTheDocument();
