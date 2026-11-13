@@ -468,7 +468,9 @@ async function collectWindowsDiscoveryObservations({
         observations.push({
           ...base,
           locationKind: "iis_binding",
-          locationSlot: `${siteName}:${parsed.port}${sniHost ? `#${sniHost}` : `@${parsed.address}`}`,
+          // Keep the original identity of the common IPv4 wildcard binding so
+          // existing management registrations survive an agent upgrade.
+          locationSlot: `${siteName}:${parsed.port}${sniHost ? `#${sniHost}` : parsed.address === "0.0.0.0" ? "" : `@${parsed.address}`}`,
           siteName,
           port: parsed.port,
           sniHost,
