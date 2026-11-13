@@ -171,3 +171,31 @@ it('allows date sorting for readers without exposing topology sorting', async ()
     })
   );
 });
+
+it('keeps long observation values and expanded details available', async () => {
+  const source = 'observer-' + 'a'.repeat(100);
+  const location = 'host-' + 'b'.repeat(100);
+  const detail = 'evidence-' + 'c'.repeat(100);
+  apiClient.get.mockResolvedValue({
+    data: {
+      items: [
+        {
+          id: '1',
+          metadata: {
+            source,
+            targetHost: location,
+            observedRevocationDetail: detail,
+          },
+        },
+      ],
+    },
+  });
+  render(view());
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Observation history' })
+  );
+  expect(screen.getByText(source)).toBeTruthy();
+  expect(screen.getByText(location)).toBeTruthy();
+  fireEvent.click(screen.getByText('View details'));
+  expect(screen.getByText(detail)).toBeTruthy();
+});

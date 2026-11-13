@@ -162,6 +162,7 @@ export default function CertificateObservationHistory({
         sortKey={field}
         sort={{ key: sortBy, direction: sortDirection }}
         onSort={changeSort}
+        compact
       />
     ) : (
       <Th scope='col'>{label}</Th>
@@ -182,7 +183,10 @@ export default function CertificateObservationHistory({
         isCentered
       >
         <ModalOverlay {...overlayProps} />
-        <DashboardModalFrame>
+        <DashboardModalFrame
+          w={{ base: 'calc(100vw - 24px)', lg: 'calc(100vw - 48px)' }}
+          maxW='1100px'
+        >
           <ModalHeader {...headerProps}>
             <DashboardModalTitle>Observation history</DashboardModalTitle>
           </ModalHeader>
@@ -255,8 +259,29 @@ export default function CertificateObservationHistory({
                 {!items.length ? (
                   <Text>No more observations.</Text>
                 ) : (
-                  <Box {...tableStyles.tableContainerProps}>
-                    <Table {...tableStyles.tableProps}>
+                  <Box
+                    {...tableStyles.tableContainerProps}
+                    overflowX='visible'
+                    whiteSpace='normal'
+                  >
+                    <Table
+                      {...tableStyles.tableProps}
+                      sx={{
+                        ...tableStyles.tableProps.sx,
+                        tableLayout: { lg: 'fixed' },
+                        'th, td': {
+                          overflowWrap: 'anywhere',
+                          whiteSpace: 'normal',
+                        },
+                      }}
+                    >
+                      <colgroup>
+                        <col style={{ width: '19%' }} />
+                        <col style={{ width: '18%' }} />
+                        <col style={{ width: '23%' }} />
+                        <col style={{ width: '20%' }} />
+                        <col style={{ width: '20%' }} />
+                      </colgroup>
                       <Thead {...tableStyles.theadProps}>
                         <Tr>
                           {sortHeader(
@@ -322,6 +347,8 @@ export default function CertificateObservationHistory({
                                   Revocation
                                 </CertOpsMobileFieldLabel>
                                 <CertOpsBadge
+                                  whiteSpace='normal'
+                                  overflowWrap='anywhere'
                                   colorScheme={
                                     ['revoked', 'issuer_revoked'].includes(
                                       verdict

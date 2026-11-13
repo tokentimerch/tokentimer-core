@@ -79,14 +79,12 @@ periods, deleted registrations, and previous certificate associations. Their
 history is preserved even when hidden. A registration that has rotated to a
 different fingerprint cannot restart the old certificate from this view.
 
-For confirmed Windows dependencies, configure renewal once on **LocalMachine\My**.
-Expand **IIS deployment settings** and explicitly enable **Update after renewal**
-for each binding; discovery alone grants no update permission. Dependent bindings
-inherit renewal settings and cannot start an independent renewal once Store
-ownership is established. Existing IIS profiles require explicit consolidation.
-Removed or changed bindings are left alone; an offline agent means unknown
-presence. Replacing management requires enabling IIS updates again. These controls
-require a qualified agent build; disabled controls explain what is missing.
+For confirmed Windows dependencies, Store renewal can update explicitly authorized
+IIS bindings; discovery alone grants no update permission. The certificate details
+page no longer provides a control for Store-to-IIS authorization. Use **Start
+managing again** below for eligible stopped registrations. Existing IIS profiles
+require explicit consolidation, and replacing Store management requires IIS
+updates to be authorized again.
 
 ## Lifecycle is separate
 

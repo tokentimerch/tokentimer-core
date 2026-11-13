@@ -102,7 +102,7 @@ beforeEach(() => {
   getContactsMock.mockResolvedValue({ data: { items: [] } });
 });
 
-it('updates IIS consent from the identity modal and reloads the server state', async () => {
+it('does not show Windows Store or IIS controls in the identity modal', async () => {
   const identity = {
     identityId: 'identity-1',
     commonName: 'example.test',
@@ -143,20 +143,14 @@ it('updates IIS consent from the identity modal and reloads the server state', a
       />
     </ChakraProvider>
   );
-  const checkbox = await screen.findByRole('checkbox', {
-    name: /Automatically update Site:443/,
-  });
-  expect(checkbox).not.toBeChecked();
-  fireEvent.click(checkbox);
-  await waitFor(() =>
-    expect(toggleWindowsMock).toHaveBeenCalledWith(
-      'ws',
-      'period',
-      'target',
-      true
-    )
-  );
-  await waitFor(() => expect(checkbox).toBeChecked());
+  await waitFor(() => expect(windowsMock).toHaveBeenCalled());
+  expect(screen.queryByText('IIS bindings')).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole('checkbox', { name: /Automatically update Site:443/ })
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', { name: 'Renewal settings' })
+  ).not.toBeInTheDocument();
 });
 
 it('does not request Windows renewal details for a reader', async () => {
@@ -179,58 +173,6 @@ it('does not request Windows renewal details for a reader', async () => {
   );
   await waitFor(() => expect(getIdentityMock).toHaveBeenCalled());
   expect(windowsMock).not.toHaveBeenCalled();
-});
-
-it('replaces Store renewal settings using the current management period', async () => {
-  const identity = {
-    identityId: 'identity-1',
-    commonName: 'example.test',
-    sources: [],
-    locations: [],
-  };
-  const group = {
-    periodId: 'period',
-    managedCertificateId: 'store',
-    host: 'server',
-    store: 'LocalMachine\\My',
-    bindings: [],
-  };
-  getIdentityMock.mockResolvedValue(identity);
-  windowsMock.mockResolvedValue({ groups: [group] });
-  listProfilesMock.mockResolvedValue([
-    {
-      id: 'profile',
-      name: 'Store profile',
-      renewalProfile: { target: { type: 'windows-cert-store', store: 'My' } },
-    },
-  ]);
-  render(
-    <ChakraProvider>
-      <CertificateIdentityDetailModal
-        workspaceId='ws'
-        certificate={identity}
-        isOpen
-        canManage
-      />
-    </ChakraProvider>
-  );
-  fireEvent.click(
-    await screen.findByRole('button', { name: 'Renewal settings' })
-  );
-  fireEvent.change(
-    screen.getByRole('combobox', { name: 'Windows Store renewal profile' }),
-    { target: { value: 'profile' } }
-  );
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Save renewal settings' })
-  );
-  await waitFor(() =>
-    expect(replaceMock).toHaveBeenCalledWith('ws', 'store', {
-      periodId: 'period',
-      renewalProfileId: 'profile',
-      automationEnabled: true,
-    })
-  );
 });
 
 it('labels the current Windows store and hides a stopped registration until requested', async () => {
@@ -426,11 +368,10 @@ it('shows registration details and flags an existing dependent IIS profile', asy
   expect(
     screen.queryByText('Choose a Store renewal profile')
   ).not.toBeInTheDocument();
-  expect(screen.getByText('IIS bindings')).toBeInTheDocument();
-  expect(screen.getByText(/Existing IIS renewal profile/)).toBeInTheDocument();
+  expect(screen.queryByText('IIS bindings')).not.toBeInTheDocument();
   expect(
-    screen.getByRole('checkbox', { name: /Automatically update Site:443/ })
-  ).toBeDisabled();
+    screen.queryByRole('checkbox', { name: /Automatically update Site:443/ })
+  ).not.toBeInTheDocument();
 });
 
 it('shows one linked token together with all certificate sources and locations', async () => {
@@ -1285,78 +1226,6 @@ it.each(['active', 'revoked', 'decommissioned'])(
   }
 );
 
-it('does not show a previous workspace after a delayed consent change', async () => {
-  const identityA = {
-    identityId: 'identity-a',
-    commonName: 'private-a.example',
-    sources: [],
-    locations: [],
-  };
-  const identityB = {
-    identityId: 'identity-b',
-    commonName: 'public-b.example',
-    sources: [],
-    locations: [],
-  };
-  const group = {
-    periodId: 'period',
-    managedCertificateId: 'store',
-    host: 'server',
-    store: 'LocalMachine\\My',
-    bindings: [
-      {
-        targetId: 'target',
-        site: 'Site',
-        port: 443,
-        canEnable: true,
-        automaticUpdate: false,
-      },
-    ],
-  };
-  let finish;
-  toggleWindowsMock.mockReturnValue(
-    new Promise(resolve => {
-      finish = resolve;
-    })
-  );
-  getIdentityMock.mockImplementation(async ws =>
-    ws === 'a' ? identityA : identityB
-  );
-  windowsMock.mockImplementation(async ws => ({
-    groups: ws === 'a' ? [group] : [],
-  }));
-  const view = render(
-    <ChakraProvider>
-      <CertificateIdentityDetailModal
-        workspaceId='a'
-        certificate={identityA}
-        isOpen
-        canManage
-      />
-    </ChakraProvider>
-  );
-  fireEvent.click(
-    await screen.findByRole('checkbox', {
-      name: /Automatically update Site:443/,
-    })
-  );
-  view.rerender(
-    <ChakraProvider>
-      <CertificateIdentityDetailModal
-        workspaceId='b'
-        certificate={identityB}
-        isOpen
-        canManage={false}
-      />
-    </ChakraProvider>
-  );
-  await screen.findByText('public-b.example');
-  await act(async () => {
-    finish({});
-  });
-  expect(screen.queryByText('private-a.example')).not.toBeInTheDocument();
-});
-
 it('does not offer a v2 store copy as a separate renewal choice when IIS matches its host', async () => {
   const identity = {
     identityId: 'identity-1',
@@ -1401,67 +1270,6 @@ it('does not offer a v2 store copy as a separate renewal choice when IIS matches
   ).not.toBeInTheDocument();
 });
 
-it('ignores a delayed consent rejection after access is reduced', async () => {
-  const identity = {
-    identityId: 'identity-a',
-    commonName: 'example.test',
-    sources: [],
-    locations: [],
-  };
-  const group = {
-    periodId: 'period',
-    managedCertificateId: 'store',
-    host: 'server',
-    store: 'LocalMachine\\My',
-    bindings: [
-      {
-        targetId: 'target',
-        site: 'Site',
-        port: 443,
-        canEnable: true,
-        automaticUpdate: false,
-      },
-    ],
-  };
-  let reject;
-  toggleWindowsMock.mockReturnValue(
-    new Promise((_, fail) => {
-      reject = fail;
-    })
-  );
-  getIdentityMock.mockResolvedValue(identity);
-  windowsMock.mockResolvedValue({ groups: [group] });
-  const view = render(
-    <ChakraProvider>
-      <CertificateIdentityDetailModal
-        workspaceId='a'
-        certificate={identity}
-        isOpen
-        canManage
-      />
-    </ChakraProvider>
-  );
-  fireEvent.click(
-    await screen.findByRole('checkbox', {
-      name: /Automatically update Site:443/,
-    })
-  );
-  view.rerender(
-    <ChakraProvider>
-      <CertificateIdentityDetailModal
-        workspaceId='a'
-        certificate={identity}
-        isOpen
-        canManage={false}
-      />
-    </ChakraProvider>
-  );
-  await act(async () => {
-    reject(new Error('private failure'));
-  });
-  expect(screen.queryByText('private failure')).not.toBeInTheDocument();
-});
-
 it('keeps a v2 store renewal choice when its hostname is unavailable', async () => {
   const identity = {
     identityId: 'identity-1',
@@ -1502,69 +1310,4 @@ it('keeps a v2 store renewal choice when its hostname is unavailable', async () 
   expect(
     screen.getByRole('option', { name: /Windows store copy/ })
   ).toBeInTheDocument();
-});
-
-it('ignores a delayed consent result after the modal is closed', async () => {
-  const identity = {
-    identityId: 'identity-a',
-    commonName: 'example.test',
-    sources: [],
-    locations: [],
-  };
-  const group = {
-    periodId: 'period',
-    managedCertificateId: 'store',
-    host: 'server',
-    store: 'LocalMachine\\My',
-    bindings: [
-      {
-        targetId: 'target',
-        site: 'Site',
-        port: 443,
-        canEnable: true,
-        automaticUpdate: false,
-      },
-    ],
-  };
-  let finish;
-  toggleWindowsMock.mockReturnValue(
-    new Promise(resolve => {
-      finish = resolve;
-    })
-  );
-  getIdentityMock.mockResolvedValue(identity);
-  windowsMock.mockResolvedValue({ groups: [group] });
-  const onChanged = vi.fn();
-  const view = render(
-    <ChakraProvider>
-      <CertificateIdentityDetailModal
-        workspaceId='a'
-        certificate={identity}
-        isOpen
-        canManage
-        onChanged={onChanged}
-      />
-    </ChakraProvider>
-  );
-  fireEvent.click(
-    await screen.findByRole('checkbox', {
-      name: /Automatically update Site:443/,
-    })
-  );
-  view.rerender(
-    <ChakraProvider>
-      <CertificateIdentityDetailModal
-        workspaceId='a'
-        certificate={identity}
-        isOpen={false}
-        canManage
-        onChanged={onChanged}
-      />
-    </ChakraProvider>
-  );
-  await act(async () => {
-    finish({});
-  });
-  expect(onChanged).not.toHaveBeenCalled();
-  expect(getIdentityMock).toHaveBeenCalledTimes(1);
 });

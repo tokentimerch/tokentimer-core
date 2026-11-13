@@ -34,7 +34,6 @@ import CopyableId from '../CopyableId.jsx';
 import CertificateDetailsModal from './CertificateDetailsModal.jsx';
 import CertificateObservationHistory from './CertificateObservationHistory.jsx';
 import IisReassociation from './IisReassociation.jsx';
-import WindowsCertificateUsage from './WindowsCertificateUsage.jsx';
 import {
   getCertificate,
   getCertificateIdentity,
@@ -43,7 +42,6 @@ import {
   listCertOpsRenewalProfiles,
   readdManagingSource,
   replaceManagingSource,
-  setWindowsIisConsumer,
   stopManagingSource,
 } from './certopsApi';
 import {
@@ -501,47 +499,6 @@ export default function CertificateIdentityDetailModal({
     if (isCurrent(version)) onChanged?.();
   };
 
-  const updateWindowsConsumer = async (group, binding, enabled) => {
-    const version = session.current.version;
-    setBusy(true);
-    setError('');
-    try {
-      await setWindowsIisConsumer(
-        workspaceId,
-        group.periodId,
-        binding.targetId,
-        enabled
-      );
-      await refresh(version);
-    } catch (err) {
-      if (isCurrent(version))
-        setError(err?.response?.data?.error || err.message);
-    } finally {
-      if (isCurrent(version)) setBusy(false);
-    }
-  };
-
-  const updateWindowsProfile = async (group, renewalProfileId) => {
-    const version = session.current.version;
-    setBusy(true);
-    setError('');
-    try {
-      await replaceManagingSource(workspaceId, group.managedCertificateId, {
-        periodId: group.periodId,
-        renewalProfileId,
-        automationEnabled: true,
-      });
-      await refresh(version);
-      return isCurrent(version);
-    } catch (err) {
-      if (isCurrent(version))
-        setError(err?.response?.data?.error || err.message);
-      return false;
-    } finally {
-      if (isCurrent(version)) setBusy(false);
-    }
-  };
-
   const stop = async periodId => {
     const version = session.current.version;
     setBusy(true);
@@ -953,16 +910,6 @@ export default function CertificateIdentityDetailModal({
               <AlertDescription>{windowsError}</AlertDescription>
             </Alert>
           ) : null}
-          <WindowsCertificateUsage
-            groups={windowsGroups}
-            certificateName={displayToken.name}
-            workspaceId={workspaceId}
-            profiles={profiles}
-            canManage={canManage}
-            busy={busy}
-            onToggle={updateWindowsConsumer}
-            onProfile={updateWindowsProfile}
-          />
           {canManage
             ? sourceOptions
                 .filter(
