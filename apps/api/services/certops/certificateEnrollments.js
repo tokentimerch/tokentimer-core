@@ -73,6 +73,52 @@ async function findOpenEnrollment(db, workspaceId, certificateId) {
   return result.rows[0] || null;
 }
 
+// This refusal is emitted before the agent creates a key or submits to AD CS.
+// Other failures may have unknown effects and must never use this retry path.
+const LOCAL_DRY_RUN_REFUSAL = 'refusing mode:"real" job because local execution.dryRun is true; set execution.dryRun to false to perform real side effects, or ask the control plane for a mode:"dry_run" job';
+
+function retryDryRunBlockedRenewal({ client, workspaceId, enrollmentId, eligibleAgentIds, env }) {
+  if (!CERTIFICATE_ID_UUID.test(String(enrollmentId || ""))) return null;
+  return withTransaction(dbOf(client), async (tx) => {
+    const workspace = await lockWorkspaceForCertOpsSideEffect({ client: tx, workspaceId, env });
+    const row = await loadEnrollment(tx, workspaceId, enrollmentId, { lock: true });
+    if (!row || row.state !== "requested" || row.request_id != null ||
+        row.operator_request_id != null || !eligibleAgentIds.includes(String(row.agent_id))) return null;
+    const prior = await tx.query(`SELECT id, status, operation, source, mode, assigned_agent_id, error_code, error_message, updated_at
+      FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 AND enrollment_id=$3 FOR UPDATE`,
+    [workspaceId, row.current_job_id, row.id]);
+    const job = prior.rows[0];
+    if (!job || job.status !== "blocked" || job.operation !== "renew" || job.source !== "automation" ||
+        job.mode !== "real" || String(job.assigned_agent_id) !== String(row.agent_id) || job.error_code !== "AGENT_RESULT_BLOCKED" ||
+        job.error_message !== LOCAL_DRY_RUN_REFUSAL ||
+        Date.now() - new Date(job.updated_at).getTime() < 15 * 60 * 1000) return null;
+    if (await identityRetired(tx, workspaceId, row.certificate_id) || !validAdcsTarget(row.deploy_target)) return null;
+    const currentIssuer = await tx.query(`SELECT i.id FROM certificate_enrollments e
+      JOIN managed_certificates mc ON mc.workspace_id=e.workspace_id AND mc.id=e.certificate_id
+      JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id AND cp.issuer_id=e.issuer_id
+      JOIN certificate_issuers i ON i.workspace_id=e.workspace_id AND i.id=e.issuer_id
+      WHERE e.workspace_id=$1 AND e.id=$2 AND i.current_version=e.issuer_version
+        AND i.revalidation_required=false
+        AND cp.public_metadata->'renewalProfile'->'target'=e.deploy_target
+        AND cp.public_metadata->'renewalProfile'->'sanPolicy'->'sans'=(convert_from(e.snapshot_bytes,'UTF8')::jsonb)->'authorizedDnsNames'
+        AND cp.public_metadata->'renewalProfile'->'keyAlgorithm'=(convert_from(e.snapshot_bytes,'UTF8')::jsonb)->'keyAlgorithm'
+        AND cp.public_metadata->'renewalProfile'->'keySize'=(convert_from(e.snapshot_bytes,'UTF8')::jsonb)->'keySize'
+      FOR SHARE OF i, cp`, [workspaceId, row.id]);
+    if (!currentIssuer.rows[0]) return null;
+    const next = await createCertificateJob({ client: tx, workspaceId, operation: "renew", source: "automation",
+      mode: "real", subjectType: "managed_certificate", subjectId: row.certificate_id,
+      assignedAgentId: row.agent_id, payload: storedAdcsPayload({ certificateId: row.certificate_id, target: row.deploy_target }),
+      enrollmentId: row.id, capacityBucket: adcsCaBucket(currentIssuer.rows[0].id), env,
+      workspaceRequiresApprovalAlways: workspace.certops_require_approval_always === true });
+    await tx.query(`UPDATE certificate_enrollments SET attempt=attempt+1, current_job_id=$3, updated_at=NOW()
+      WHERE workspace_id=$1 AND id=$2`, [workspaceId, row.id, next.id]);
+    await writeAudit({ client: tx, workspaceId, actorUserId: null, subjectUserId: null,
+      action: "CERTOPS_JOB_CREATED_AUTOMATIC", targetType: "certificate_job", targetId: null,
+      metadata: { jobId: String(next.id), enrollmentId: String(row.id), operation: "renew", reason: "retry_local_dry_run_refusal" } });
+    return next;
+  });
+}
+
 // Lock and compare the IIS destination, not the registration: a store copy
 // and an IIS observation can both point to the same certificate and binding.
 async function assertIisTargetAvailable(tx, { workspaceId, certificateId, agentId, target, source }) {
@@ -1435,5 +1481,6 @@ module.exports = {
   recordPreflightResult,
   scheduleDueEnrollments,
   retryEnrollmentInstallation,
+  retryDryRunBlockedRenewal,
   recoverOrphanedEnrollment,
 };

@@ -222,6 +222,8 @@ The CA database is not readable by the computer account unless you grant CA Read
 
 ## Installation recovery
 
+If an automatic renewal is blocked because `execution.dryRun` is enabled on the agent, enable real execution in the agent configuration and restart the service. TokenTimer retries the same unsubmitted enrollment after at least 15 minutes, subject to the usual CA checks and approval policy. Other blocked or uncertain requests are not automatically resubmitted; investigate their job and enrollment details first.
+
 Before investigating a stalled approval or recovery, verify the API and the production CertOps worker are both running. With the Core Compose deployment, use the same Compose files and environment as the installation: `docker compose ps api worker-certops` and `docker compose logs --since 15m worker-certops`. Start the complete stack with `docker compose up -d`; do not launch a second scheduler with a manual Node command. The default sweep runs once a minute, while CA polling follows the enrollment's frozen `pollInterval`. Kubernetes deployments use the CertOps CronJob instead; see [maintenance sweeps](../../CONFIGURATION.md#certops-maintenance-sweeps-worker).
 
 An interrupted enrollment reported as `installing` remains eligible for a signed continuation after its active job ends. The original agent inspects the certificate and key, and the IIS binding when applicable, then resumes the first incomplete installation step; it does not generate another key or submit another CA request.

@@ -56,7 +56,7 @@ const {
   resolveRenewalPerCaCap,
 } = require("./renewalCapacity");
 const { writeAudit } = require("../audit");
-const { createEnrollment, findOpenEnrollment, dispatchPreflight } = require("./certificateEnrollments");
+const { createEnrollment, findOpenEnrollment, dispatchPreflight, retryDryRunBlockedRenewal } = require("./certificateEnrollments");
 const { validateAdcsRenewalProfile } = require("./adcsRenewalRules");
 const {
   loadCurrentAdcsIssuerVersion,
@@ -499,7 +499,11 @@ async function createAutomaticAdcsRenewal({
     throw error;
   }
   const open = await findOpenEnrollment(dbPool, certificate.workspace_id, certificate.id);
-  if (open) return { job: { id: null, operation: "renew" }, created: false };
+  if (open) {
+    const retry = await retryDryRunBlockedRenewal({ client: dbPool, workspaceId: certificate.workspace_id,
+      enrollmentId: open.id, eligibleAgentIds: eligibleAgents.map(candidate => String(candidate.id)), env });
+    return { job: retry || { id: null, operation: "renew" }, created: Boolean(retry) };
+  }
 
   const idempotencyKey = renewalIdempotencyKey(
     certificate.id,

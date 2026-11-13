@@ -162,6 +162,54 @@ test("manual and automatic admissions share the same transaction exclusion", asy
   assert.equal(Number((await pool.query("SELECT count(*) FROM certificate_jobs WHERE workspace_id=$1 AND operation='renew'", [f.workspaceId])).rows[0].count), 1);
 });
 
+test("automatic renewal retries a dry-run refusal on the same unsubmitted enrollment only once", async () => {
+  const f = await fixture();
+  const first = await automatic(f);
+  const jobId = first.job.id;
+  const refusal = 'refusing mode:"real" job because local execution.dryRun is true; set execution.dryRun to false to perform real side effects, or ask the control plane for a mode:"dry_run" job';
+  await pool.query("UPDATE certificate_jobs SET status='blocked', error_code='AGENT_RESULT_BLOCKED', error_message=$2, updated_at=NOW()-interval '20 minutes' WHERE id=$1", [jobId, refusal]);
+  const results = await Promise.all([automatic(f), automatic(f)]);
+  assert.equal(results.filter(result => result.created).length, 1);
+  assert.equal(await count(f), 1);
+  const jobs = (await pool.query("SELECT id, status, enrollment_id FROM certificate_jobs WHERE workspace_id=$1 AND operation='renew' ORDER BY created_at", [f.workspaceId])).rows;
+  assert.equal(jobs.length, 2);
+  assert.equal(jobs[0].enrollment_id, jobs[1].enrollment_id);
+  assert.equal(jobs[1].status, 'pending');
+});
+
+test("automatic renewal never retries uncertain submissions or other failures", async () => {
+  const refusal = 'refusing mode:"real" job because local execution.dryRun is true; set execution.dryRun to false to perform real side effects, or ask the control plane for a mode:"dry_run" job';
+  for (const scenario of [
+    { state: 'submission_uncertain', message: refusal, age: '20 minutes' },
+    { state: 'requested', message: 'AD CS request outcome is unknown', age: '20 minutes' },
+    { state: 'requested', message: refusal, age: '1 minute' },
+  ]) {
+    const f = await fixture(), first = await automatic(f);
+    await pool.query("UPDATE certificate_jobs SET status='blocked', error_code='AGENT_RESULT_BLOCKED', error_message=$2, updated_at=NOW()-$3::interval WHERE id=$1", [first.job.id, scenario.message, scenario.age]);
+    await pool.query("UPDATE certificate_enrollments SET state=$2 WHERE current_job_id=$1", [first.job.id, scenario.state]);
+    assert.equal((await automatic(f)).created, false, JSON.stringify(scenario));
+    assert.equal(Number((await pool.query("SELECT count(*) FROM certificate_jobs WHERE workspace_id=$1 AND operation='renew'", [f.workspaceId])).rows[0].count), 1);
+  }
+});
+
+test("dry-run retry respects a newly enabled workspace approval policy", async () => {
+  const f = await fixture(), first = await automatic(f);
+  const refusal = 'refusing mode:"real" job because local execution.dryRun is true; set execution.dryRun to false to perform real side effects, or ask the control plane for a mode:"dry_run" job';
+  await pool.query("UPDATE certificate_jobs SET status='blocked', error_code='AGENT_RESULT_BLOCKED', error_message=$2, updated_at=NOW()-interval '20 minutes' WHERE id=$1", [first.job.id, refusal]);
+  await pool.query("UPDATE workspaces SET certops_require_approval_always=true WHERE id=$1", [f.workspaceId]);
+  const retry = await automatic(f);
+  assert.equal(retry.created, true);
+  assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [retry.job.id])).rows[0].status, 'pending_approval');
+});
+
+test("dry-run retry refuses a changed renewal profile", async () => {
+  const f = await fixture(), first = await automatic(f);
+  const refusal = 'refusing mode:"real" job because local execution.dryRun is true; set execution.dryRun to false to perform real side effects, or ask the control plane for a mode:"dry_run" job';
+  await pool.query("UPDATE certificate_jobs SET status='blocked', error_code='AGENT_RESULT_BLOCKED', error_message=$2, updated_at=NOW()-interval '20 minutes' WHERE id=$1", [first.job.id, refusal]);
+  await pool.query("UPDATE certificate_profiles SET public_metadata=jsonb_set(public_metadata, '{renewalProfile,keySize}', '4096'::jsonb) WHERE id=$1", [f.profile.id]);
+  assert.equal((await automatic(f)).created, false);
+});
+
 test("a terminal awaiting_issuer job does not reopen a pending enrollment; cancellation frees admission", async () => {
   const f = await fixture(), first = await manual(f);
   await pool.query("UPDATE certificate_enrollments SET state='pending_issuance' WHERE id=$1", [first.enrollmentId]);
