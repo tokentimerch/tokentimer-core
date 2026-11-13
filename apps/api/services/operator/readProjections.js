@@ -311,6 +311,7 @@ const PENDING_WORDING = Object.freeze({
   dns_provider_unsupported: "The assigned agent does not offer the DNS provider this job needs.",
   target_selector_unsupported: "The assigned agent does not cover the target this job needs.",
   material_capability_unavailable: "The assigned agent has not declared support for the certificate material this job needs.",
+  material_reconciliation_scope_missing: "This reconciliation request is missing the original deployment details required for a safe inspection.",
   executor_lane_mismatch: "This job needs a different kind of executor than the assigned agent.",
   claim_bound_evidence_unavailable: "The assigned agent cannot yet provide the evidence this job needs.",
 });

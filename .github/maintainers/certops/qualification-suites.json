@@ -1996,7 +1996,8 @@
         "membership removal cannot commit concurrently with a locked rollout authorization",
         "an otherwise valid pre-upgrade approval cannot authorize a new deployment",
         "restored human authority and workspace policy never revive a rollout at claim, renewal or retry",
-        "retrying a degraded optional deployment pauses for explicit resume and preserves siblings",
+        "a degraded optional deployment retries its original job and waits for explicit resume",
+        "degraded optional retry retains current binding and independent-review authority fences",
         "an optional destination failure never blocks the rollout, a required one does"
       ],
       "environmentGroup": "job-decisions-api-environment"

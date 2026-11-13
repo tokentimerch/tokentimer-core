@@ -1160,6 +1160,7 @@ async function claimJobs({
         WHERE workspace_id = $1
           AND executor_kind = 'agent'
           AND NOT (payload ? 'distributionRollout')
+          AND NOT (payload ? 'distributionPolicyApproval')
           -- Exclude contained/superseded distribution work before LIMIT.
           -- Otherwise maxJobs=1 repeatedly selects an unclaimable older job
           -- and starves a freshly approved rollout for the same consumer.
@@ -1346,13 +1347,21 @@ async function claimJobs({
           // Routing above is persisted and authoritative. Pass only the
           // material intent for capability checks, so an AD CS target cannot
           // introduce a new selector through the payload fallback.
-          payload: { publication: row.payload?.publication, materialDeployment: row.payload?.materialDeployment },
+          payload: { publication: row.payload?.publication, materialDeployment: row.payload?.materialDeployment,materialCleanup:row.payload?.materialCleanup,materialReconciliation:row.payload?.materialReconciliation },
           issuerKind: row.enrollment_id ? "adcs" : null,
         },
         compatibility,
         env,
       });
       if (!eligibility.eligible) continue;
+      if(row.payload?.materialCleanup){
+        try{await require("./materialCleanup").resolveCleanupDefaults({client,workspaceId:row.workspace_id,operation:row.operation,subjectId:row.subject_id,payload:row.payload,assignedAgentId:row.assigned_agent_id,jobId:row.id,forClaim:true});}
+        catch(error){if(!String(error.code || "").startsWith("CERTOPS_"))throw error;continue;}
+      }
+      if(row.payload?.materialReconciliation){
+        try{await require("./materialReconciliation").assertClaimable({client,workspaceId:row.workspace_id,job:row,agentId:agent.id});}
+        catch(error){if(!String(error.code || "").startsWith("CERTOPS_"))throw error;continue;}
+      }
       if (row.payload?.publication || row.payload?.materialDeployment) {
         try {
           await require("./materialDistribution").resolveDistributionJobDefaults({ client,
@@ -1743,6 +1752,14 @@ async function renewJobLease({
       await require("./materialDistribution").resolveDistributionJobDefaults({ client,
         workspaceId: agent.workspaceId, operation: job.operation, subjectId: job.subject_id,
         payload: job.payload, assignedAgentId: job.assigned_agent_id, jobId: job.id });
+    }
+    if(job.payload?.materialCleanup){
+      if(new Date(job.lease_expires_at).getTime()<=Date.now())throw serviceError("Material claim expired",CERTOPS_AGENT_LEASE_INVALID);
+      await require("./materialCleanup").resolveCleanupDefaults({client,workspaceId:agent.workspaceId,operation:job.operation,subjectId:job.subject_id,payload:job.payload,assignedAgentId:job.assigned_agent_id,jobId:job.id});
+    }
+    if(job.payload?.materialReconciliation){
+      if(new Date(job.lease_expires_at).getTime()<=Date.now())throw serviceError("Material claim expired",CERTOPS_AGENT_LEASE_INVALID);
+      await require("./materialReconciliation").assertClaimable({client,workspaceId:agent.workspaceId,job,agentId:agent.id});
     }
 
     const updated = await client.query(
@@ -2396,7 +2413,7 @@ async function ingestResult({
 
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
-              subject_type, subject_id, error_code, completed_at, mode,
+              subject_type, subject_id, error_code, completed_at, mode, result_metadata,
               source, payload, assigned_agent_id, management_period_id, certificate_identity_id,
               enrollment_id
          FROM certificate_jobs
@@ -2499,6 +2516,14 @@ async function ingestResult({
         job.status === jobStatus &&
         job.completed_at
       ) {
+        if(job.payload?.materialCleanup && jobStatus==="succeeded"){
+          await require("./materialCleanup").assertCommittedCleanupReceipt({client,workspaceId:agent.workspaceId,job,receipt:body.cleanupReceipt});
+        }
+        if(job.payload?.materialReconciliation && jobStatus==="succeeded"){
+          if(!body.reconciliationReceipt || !job.result_metadata?.reconciliationReceiptHash ||
+            require("./materialDistribution").hashIntent(body.reconciliationReceipt)!==job.result_metadata.reconciliationReceiptHash)
+            throw serviceError("Replayed reconciliation receipt differs from committed proof","CERTOPS_RECONCILIATION_RECEIPT_MISMATCH");
+        }
         return {
           ok: true,
           jobId: String(job.id),
@@ -2531,16 +2556,28 @@ async function ingestResult({
       );
     }
 
-    const materialJob = job.payload?.publication || job.payload?.materialDeployment;
+    const materialJob = job.payload?.publication || job.payload?.materialDeployment || job.payload?.materialCleanup;
     if (!job.payload?.publication && (body.publicationReceipt || body.publicationCertificatePem) ||
-        !job.payload?.materialDeployment && body.deploymentReceipt) {
+        !job.payload?.materialDeployment && body.deploymentReceipt || !job.payload?.materialCleanup && body.cleanupReceipt ||
+        !job.payload?.materialReconciliation && body.reconciliationReceipt) {
       throw serviceError("Unexpected material receipt", "CERTOPS_MATERIAL_RECEIPT_UNEXPECTED");
+    }
+    if(job.payload?.materialReconciliation){
+      if(job.operation!=="reconcile-from-store")throw serviceError("Unexpected reconciliation payload","CERTOPS_MATERIAL_RECEIPT_UNEXPECTED");
+      if(jobStatus==="succeeded"){
+        if(!body.reconciliationReceipt)throw serviceError("Missing reconciliation receipt","CERTOPS_MATERIAL_RECEIPT_REQUIRED");
+        await require("./materialReconciliation").acceptReceipt({client,workspaceId:agent.workspaceId,agentId:agent.id,job,receipt:body.reconciliationReceipt});
+      }else if(body.reconciliationReceipt)throw serviceError("Unexpected reconciliation receipt","CERTOPS_MATERIAL_RECEIPT_UNEXPECTED");
     }
     if (jobStatus === "succeeded" && job.payload?.publication) {
       await require("./materialDistribution").acceptPublicationReceipt({ client, workspaceId: agent.workspaceId,
         agentId: agent.id, job, receipt: body.publicationReceipt, certificatePem: body.publicationCertificatePem });
     }
     let acceptedDeployment = null;
+    let acceptedCleanup=false;
+    if(jobStatus==="succeeded" && job.payload?.materialCleanup){
+      await require("./materialCleanup").acceptCleanupReceipt({client,workspaceId:agent.workspaceId,agentId:agent.id,job,receipt:body.cleanupReceipt});acceptedCleanup=true;
+    }else if(body.cleanupReceipt)throw serviceError("Unexpected cleanup receipt","CERTOPS_MATERIAL_RECEIPT_UNEXPECTED");
     if (body.deploymentReceipt) {
       acceptedDeployment = await require("./materialDistribution").acceptDeploymentReceipt({ client, workspaceId: agent.workspaceId,
         agentId: agent.id, job, receipt: body.deploymentReceipt, jobStatus, errorMessage: body.errorMessage });
@@ -2549,7 +2586,7 @@ async function ingestResult({
     } else if (job.payload?.materialDeployment && !["succeeded","dry_run_complete"].includes(jobStatus)) {
       const intent = job.payload.materialDeployment;
       await client.query(`UPDATE certops_consumer_deployments SET stage=$3,failure_code=$4
-        WHERE workspace_id=$1 AND job_id=$2`, [agent.workspaceId,job.id,
+        WHERE workspace_id=$1 AND (job_id=$2 OR staging_job_id=$2)`, [agent.workspaceId,job.id,
         jobStatus === "orphaned_unknown_effect" ? jobStatus : "failed", require("./materialDistribution").publicFailureCode(body.errorMessage,jobStatus)]);
       await require("./materialDistribution").enqueueDistributionEvent(client,agent.workspaceId,
         "distribution_rollout_requested",`${intent.rolloutId}:${job.id}:${job.claim_id}`,
@@ -2580,7 +2617,7 @@ async function ingestResult({
     // effect. Historical deployment evidence and other job families retain
     // their reconciliation fence.
     const clearMaterialReconciliation = jobStatus === "succeeded" &&
-      (Boolean(job.payload?.publication) || acceptedDeployment?.historicalOnly === false);
+      (Boolean(job.payload?.publication) || acceptedDeployment?.historicalOnly === false || acceptedCleanup);
     let setNeedsReconciliation = acceptedDeployment?.retirementConflict === true;
     let reconciliationReason = setNeedsReconciliation ? "certificate_retirement_overlapped_execution" : null;
     if (jobStatus === "orphaned_unknown_effect") {
@@ -2604,6 +2641,7 @@ async function ingestResult({
     const trustResult = body?.trustResult || null;
     const enrollmentResult = body?.enrollmentResult || null;
     const resultMetadata = {
+      ...(body.reconciliationReceipt ? {reconciliationReceiptHash:require("./materialDistribution").hashIntent(body.reconciliationReceipt)} : {}),
       ...(body.rejectionReason != null
         ? { rejectionReason: body.rejectionReason }
         : {}),

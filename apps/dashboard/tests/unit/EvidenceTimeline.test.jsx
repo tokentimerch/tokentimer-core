@@ -128,6 +128,55 @@ describe('EvidenceTimeline', () => {
     expect(screen.getByText('Loading...')).toBeInTheDocument();
   });
 
+  it('shows frozen distribution destinations in a linked job even before execution has produced events', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({
+        operation: 'noop',
+        status: 'pending_approval',
+        payload: {
+          distributionRollout: {
+            materialVersionId: 'frozen-material-version',
+            materialStoreRef: 'customer-vault',
+            providerVersion: 1,
+            verificationOnly: true,
+            bindings: [
+              {
+                bindingId: 'frozen-binding',
+                agentId: 'approved-agent',
+                profileRef: 'approved-profile',
+                profileRevision: 2,
+                authorizationRevision: 3,
+                required: false,
+                wave: 0,
+                verificationPolicy: 'installed',
+              },
+            ],
+          },
+        },
+      }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+    expect(
+      screen.getByRole('region', { name: 'Immutable approval scope' })
+    ).toBeInTheDocument();
+    for (const value of [
+      'frozen-material-version',
+      'frozen-binding',
+      'approved-agent',
+      'approved-profile',
+      'Verification only',
+    ]) {
+      expect(screen.getByText(value, { exact: true })).toBeInTheDocument();
+    }
+    expect(
+      screen.getByText('No timeline events recorded yet.')
+    ).toBeInTheDocument();
+  });
+
   it('shows an error message distinct from loading/empty states', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: null,

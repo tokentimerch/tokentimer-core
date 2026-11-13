@@ -55,6 +55,16 @@ afterEach(() => {
 });
 
 describe('before you start', () => {
+  it('accepts OpenBao and keeps web servers optional for file delivery', () => {
+    mount(<ObjectiveStep ctx={makeCtx('certops_vault')} />);
+    expect(screen.getByTestId('before-you-start').textContent).toMatch(
+      /HTTPS Vault or OpenBao.*KV v2/
+    );
+    expect(
+      screen.getByText(/web server only for service activation/)
+    ).toBeInTheDocument();
+  });
+
   it('lists what ACME needs before the first step', () => {
     mount(<ObjectiveStep ctx={makeCtx('certops_automate')} />);
     const text = screen.getByTestId('before-you-start').textContent;

@@ -983,34 +983,13 @@ async function scanGitLab({
               return userCache.get(userId);
             };
 
-            // Now fetch all PATs with pagination
-            let page = 1;
-            const perPage = 100;
-            let hasMore = true;
-
-            while (hasMore && patsFound < maxItems) {
-              // Use GitLab's state parameter to only fetch active tokens unless includeRevoked is on
-              const patParams = {
-                page,
-                per_page: perPage,
-              };
-              if (!filters.includeRevoked) {
-                patParams.state = "active";
-              }
-              const pats = await gitlabRequest({
-                baseUrl: normalizedUrl,
-                token,
-                method: "GET",
-                path: "/api/v4/personal_access_tokens",
-                params: patParams,
-              });
-
-              if (!Array.isArray(pats) || pats.length === 0) {
-                hasMore = false;
-                break;
-              }
-
-              logger.info(`Fetched ${pats.length} PATs from page ${page}`, {
+            // Use the same fail-closed pagination checks as the user-scoped scan.
+            adminPatPages: for await (const pats of listPersonalAccessTokens({
+              baseUrl: normalizedUrl,
+              token,
+              state: filters.includeRevoked ? undefined : "active",
+            })) {
+              logger.info(`Fetched ${pats.length} PATs`, {
                 samplePat: pats[0]
                   ? {
                       id: pats[0].id,
@@ -1024,7 +1003,10 @@ async function scanGitLab({
 
               // Process PATs using cached user info
               for (const pat of pats) {
-                if (items.length >= maxItems) break;
+                if (items.length >= maxItems) {
+                  patsTruncated = true;
+                  break adminPatPages;
+                }
 
                 // Skip PATs that belong to bot users (group/project token bot accounts)
                 // This prevents double counting the same token as both group/project token and PAT
@@ -1105,17 +1087,8 @@ async function scanGitLab({
                 // page or later pages -- this sub-scope did not see the
                 // whole instance.
                 patsTruncated = true;
+                break adminPatPages;
               }
-
-              if (pats.length < perPage) {
-                hasMore = false;
-              }
-              page++;
-            }
-            if (hasMore && patsFound >= maxItems) {
-              // Loop exited because we hit the maxItems cap, not because
-              // pagination was exhausted.
-              patsTruncated = true;
             }
           } catch (e) {
             logger.warn("Admin PAT scanning failed", {

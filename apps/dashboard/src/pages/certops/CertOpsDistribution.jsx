@@ -1,0 +1,2738 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Link as RouterLink,
+  useLocation,
+  useNavigate,
+  useOutletContext,
+  useSearchParams,
+} from 'react-router';
+import {
+  Alert,
+  AlertIcon,
+  AlertDialog,
+  AlertDialogOverlay,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogBody,
+  AlertDialogFooter,
+  Badge,
+  Box,
+  Button,
+  Checkbox,
+  FormControl,
+  FormLabel,
+  HStack,
+  IconButton,
+  Input,
+  Link,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
+  Modal,
+  ModalBody,
+  ModalCloseButton,
+  ModalHeader,
+  ModalOverlay,
+  Portal,
+  Select,
+  SimpleGrid,
+  Stack,
+  Table,
+  TableContainer,
+  Tab,
+  TabList,
+  TabPanel,
+  TabPanels,
+  Tabs,
+  Tbody,
+  Td,
+  Text,
+  Th,
+  Thead,
+  Tr,
+} from '@chakra-ui/react';
+import { FiMoreHorizontal } from 'react-icons/fi';
+import {
+  DashboardActionButton,
+  DashboardPanel,
+  DashboardPanelHeader,
+  DashboardState,
+} from '../../components/DashboardPrimitives';
+import DashboardPagination from '../../components/DashboardPagination.jsx';
+import {
+  DashboardModalFrame,
+  DashboardModalTitle,
+} from '../../components/DashboardModalFrame.jsx';
+import {
+  CertOpsMobileFieldLabel,
+  useCertOpsResponsiveTableStyles,
+} from '../../components/certops/CertOpsResponsiveTable.jsx';
+import { useDashboardTheme } from '../../hooks/useDashboardTheme';
+import { CERTOPS_PAGE_SIZE_OPTIONS } from '../../hooks/useCertOpsUrlState.js';
+import CertOpsBadge from '../../components/certops/CertOpsBadge.jsx';
+import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
+import { onboardingPath } from '../../utils/onboardingPath.js';
+import {
+  useCertOpsCanManage,
+  useCertOpsIsWorkspaceAdmin,
+} from '../../components/certops/useCertOps.js';
+import useDistributionRead, {
+  serverClockOffset,
+} from '../../components/certops/useDistributionRead.js';
+import { verificationDeadline } from '../../components/certops/distributionFormat.js';
+import { distributionApi } from '../../components/certops/distributionApi.js';
+import { diagnosticExplanation } from '../../components/certops/distributionDiagnostics.js';
+import { formatDateTime } from '../../components/certops/certopsFormat.js';
+
+const label = value => String(value || 'Unknown').replaceAll('_', ' ');
+const distributionPageSizes = [5, ...CERTOPS_PAGE_SIZE_OPTIONS];
+const jobsLink = (workspaceId, id) =>
+  `/certops/jobs?workspace=${encodeURIComponent(workspaceId)}&job=${encodeURIComponent(id)}`;
+const distributionViews = {
+  '#distribution-publication': 0,
+  '#distribution-consumers': 1,
+  '#distribution-rollouts': 2,
+  '#distribution-incidents': 3,
+  '#distribution-discovery': 3,
+  '#distribution-policy': 4,
+  '#distribution-retention': 4,
+};
+const viewFragments = [
+  '#distribution-publication',
+  '#distribution-consumers',
+  '#distribution-rollouts',
+  '#distribution-incidents',
+  '#distribution-policy',
+];
+function OverviewMetric({ name, value, detail }) {
+  const { dashboard } = useDashboardTheme();
+  return (
+    <Box
+      minW={0}
+      borderWidth='1px'
+      borderColor={dashboard.border.subtle}
+      borderRadius='md'
+      bg={dashboard.bg.panel}
+      p={{ base: 3, md: 4 }}
+    >
+      <Text
+        color={dashboard.text.muted}
+        fontSize='xs'
+        fontWeight='bold'
+        textTransform='uppercase'
+        letterSpacing='wide'
+      >
+        {name}
+      </Text>
+      <Text mt={1} fontSize='lg' fontWeight='bold' overflowWrap='anywhere'>
+        {value}
+      </Text>
+      <Text mt={1} color={dashboard.text.secondary} fontSize='xs'>
+        {detail}
+      </Text>
+    </Box>
+  );
+}
+
+function Field({ name, children }) {
+  return (
+    <FormControl>
+      <FormLabel fontSize='sm'>{name}</FormLabel>
+      {children}
+    </FormControl>
+  );
+}
+function NumberField({ name, value, onChange, min = 1, max = 604800 }) {
+  return (
+    <Field name={name}>
+      <Input
+        aria-label={name}
+        type='number'
+        min={min}
+        max={max}
+        value={value}
+        onChange={event => onChange(Number(event.target.value))}
+      />
+    </Field>
+  );
+}
+function JobLink({ workspaceId, id, children }) {
+  return id ? (
+    <Link
+      as={RouterLink}
+      to={jobsLink(workspaceId, id)}
+      color='blue.400'
+      fontSize='xs'
+    >
+      {children || 'View job'}
+    </Link>
+  ) : null;
+}
+
+function RowActions({ name, onTrigger, children }) {
+  return (
+    <Menu placement='bottom-end' isLazy>
+      <MenuButton
+        as={IconButton}
+        aria-label={name}
+        icon={<FiMoreHorizontal />}
+        size='sm'
+        variant='outline'
+        onClick={event => onTrigger?.(event.currentTarget)}
+      />
+      <Portal>
+        <MenuList>{children}</MenuList>
+      </Portal>
+    </Menu>
+  );
+}
+
+function PolicyForm({ data, disabled, onSave }) {
+  const { dashboard } = useDashboardTheme();
+  const [policy, setPolicy] = useState(() =>
+    structuredClone(data.policy?.policy || data.defaults)
+  );
+  const set = (section, key, value) =>
+    setPolicy(previous =>
+      section
+        ? { ...previous, [section]: { ...previous[section], [key]: value } }
+        : { ...previous, [key]: value }
+    );
+  return (
+    <Box
+      as='form'
+      onSubmit={event => {
+        event.preventDefault();
+        onSave(policy, data.policy?.revision || 0);
+      }}
+    >
+      <Stack spacing={4}>
+        <Text as='h3' fontSize='sm' fontWeight='semibold'>
+          Rollout authority
+        </Text>
+        <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing={3}>
+          <Field name='After publication'>
+            <Select
+              aria-label='After publication'
+              value={policy.mode}
+              onChange={event => set(null, 'mode', event.target.value)}
+            >
+              <option value='manual'>Manual rollout (default)</option>
+              <option value='approval_request'>
+                Request approval automatically
+              </option>
+              <option value='preauthorized'>Reviewed automatic rollout</option>
+            </Select>
+          </Field>
+          <NumberField
+            name='Maximum parallel deployments'
+            value={policy.maxParallel}
+            max={16}
+            onChange={value => set(null, 'maxParallel', value)}
+          />
+          <Field name='Standing authorization expires (ISO time, maximum 30 days)'>
+            <Input
+              aria-label='Standing authorization expires'
+              placeholder='2026-11-01T18:00:00Z'
+              value={policy.authorizationExpiresAt || ''}
+              onChange={event =>
+                set(null, 'authorizationExpiresAt', event.target.value || null)
+              }
+            />
+          </Field>
+        </SimpleGrid>
+        <Text fontSize='sm'>
+          Reviewed automatic rollout creates a policy approval in Jobs. Changes
+          to destinations, revisions, activation policy or workspace
+          authorization invalidate that approval. Mandatory workspace approval
+          still applies.
+        </Text>
+        <Text
+          as='h3'
+          fontSize='sm'
+          fontWeight='semibold'
+          pt={4}
+          borderTop='1px solid'
+          borderColor={dashboard.border.subtle}
+        >
+          Verification
+        </Text>
+        <Checkbox
+          isChecked={policy.verification.enabled}
+          onChange={event =>
+            set('verification', 'enabled', event.target.checked)
+          }
+        >
+          Recurring verification
+        </Checkbox>
+        <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing={3}>
+          <NumberField
+            name='Verification interval (seconds)'
+            value={policy.verification.intervalSeconds}
+            min={300}
+            onChange={value => set('verification', 'intervalSeconds', value)}
+          />
+          <NumberField
+            name='Maximum verification backoff (seconds)'
+            value={policy.verification.maxBackoffSeconds}
+            min={300}
+            onChange={value => set('verification', 'maxBackoffSeconds', value)}
+          />
+          <NumberField
+            name='Failure escalation threshold'
+            value={policy.verification.failureThreshold}
+            max={20}
+            onChange={value => set('verification', 'failureThreshold', value)}
+          />
+          <NumberField
+            name='Stale verification job threshold (seconds)'
+            value={policy.verification.staleJobSeconds}
+            min={300}
+            max={86400}
+            onChange={value => set('verification', 'staleJobSeconds', value)}
+          />
+        </SimpleGrid>
+        <Text
+          as='h3'
+          fontSize='sm'
+          fontWeight='semibold'
+          pt={4}
+          borderTop='1px solid'
+          borderColor={dashboard.border.subtle}
+        >
+          Incident notifications
+        </Text>
+        <Checkbox
+          isChecked={policy.alerts.enabled}
+          onChange={event => set('alerts', 'enabled', event.target.checked)}
+        >
+          Distribution incidents and notifications
+        </Checkbox>
+        <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing={3}>
+          <NumberField
+            name='Offline threshold (seconds)'
+            value={policy.alerts.offlineSeconds}
+            min={60}
+            onChange={value => set('alerts', 'offlineSeconds', value)}
+          />
+          <NumberField
+            name='Stuck rollout threshold (seconds)'
+            value={policy.alerts.stuckSeconds}
+            min={60}
+            onChange={value => set('alerts', 'stuckSeconds', value)}
+          />
+          <NumberField
+            name='Convergence deadline (seconds)'
+            value={policy.alerts.convergenceSeconds}
+            min={60}
+            onChange={value => set('alerts', 'convergenceSeconds', value)}
+          />
+          <NumberField
+            name='Deployed expiry warning (days)'
+            value={policy.alerts.expiryWarningDays}
+            min={0}
+            max={90}
+            onChange={value => set('alerts', 'expiryWarningDays', value)}
+          />
+          <NumberField
+            name='Incident reminder interval (seconds)'
+            value={policy.alerts.repeatSeconds}
+            min={3600}
+            onChange={value => set('alerts', 'repeatSeconds', value)}
+          />
+        </SimpleGrid>
+        <Field name='Notification contact groups (workspace default when none selected)'>
+          <Stack>
+            {!data.contactGroups?.length ? (
+              <Text fontSize='sm' color={dashboard.text.secondary}>
+                No contact groups available. Configure an eligible workspace
+                contact group for notifications.
+              </Text>
+            ) : null}
+            {data.contactGroups?.map(group => (
+              <Checkbox
+                key={group.id}
+                isChecked={policy.alerts.contactGroupIds.includes(group.id)}
+                onChange={event =>
+                  set(
+                    'alerts',
+                    'contactGroupIds',
+                    event.target.checked
+                      ? [...policy.alerts.contactGroupIds, group.id]
+                      : policy.alerts.contactGroupIds.filter(
+                          id => id !== group.id
+                        )
+                  )
+                }
+              >
+                {group.name || group.id}
+              </Checkbox>
+            ))}
+          </Stack>
+        </Field>
+        <Text fontSize='sm'>
+          Email, webhooks and configured WhatsApp templates use existing channel
+          delivery rules. Incidents resolve only after fresh consumer
+          verification.
+        </Text>
+        <Text
+          as='h3'
+          fontSize='sm'
+          fontWeight='semibold'
+          pt={4}
+          borderTop='1px solid'
+          borderColor={dashboard.border.subtle}
+        >
+          Retention and cleanup
+        </Text>
+        <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing={3}>
+          <NumberField
+            name='Minimum retention (seconds)'
+            value={policy.retention.minimumSeconds}
+            min={0}
+            max={315360000}
+            onChange={value => set('retention', 'minimumSeconds', value)}
+          />
+          <NumberField
+            name='Minimum retained versions'
+            value={policy.retention.minimumVersions}
+            min={2}
+            max={1000}
+            onChange={value => set('retention', 'minimumVersions', value)}
+          />
+          <NumberField
+            name='Rollback preservation (seconds)'
+            value={policy.retention.rollbackSeconds}
+            min={0}
+            max={31536000}
+            onChange={value => set('retention', 'rollbackSeconds', value)}
+          />
+        </SimpleGrid>
+        <Text fontSize='sm'>
+          Retention and rollback periods are measured from publication (or
+          creation if publication time is unavailable), not from the last use or
+          replacement of a version. Active references remain protected.
+        </Text>
+        <Checkbox
+          isChecked={policy.retention.cleanupEnabled}
+          onChange={event =>
+            set('retention', 'cleanupEnabled', event.target.checked)
+          }
+        >
+          Enable cleanup approval requests
+        </Checkbox>
+        <Checkbox
+          isChecked={policy.retention.reportOnly}
+          onChange={event =>
+            set('retention', 'reportOnly', event.target.checked)
+          }
+        >
+          Report only
+        </Checkbox>
+        <Text fontSize='sm'>
+          Cleanup requires a qualified customer agent, customer-local opt-in and
+          independent approval for each exact version. Referenced material stays
+          protected. Destructive approval is always required.
+        </Text>
+        <DashboardActionButton
+          alignSelf='start'
+          type='submit'
+          colorScheme='blue'
+          isDisabled={disabled}
+        >
+          Save distribution policy
+        </DashboardActionButton>
+      </Stack>
+    </Box>
+  );
+}
+
+function ConsumerForm({ consumer, agents, disabled, onSave, onCancel }) {
+  const [binding, setBinding] = useState(() =>
+    consumer
+      ? {
+          agentId: consumer.assigned_agent_id,
+          deploymentProfileRef: consumer.deployment_profile_ref,
+          profileRevision: consumer.profile_revision,
+          required: consumer.required,
+          wave: consumer.wave,
+          verificationPolicy: consumer.verification_policy,
+          freshnessSeconds: consumer.freshness_seconds,
+          state: consumer.binding_state,
+        }
+      : {
+          agentId: '',
+          deploymentProfileRef: '',
+          profileRevision: 1,
+          required: true,
+          wave: 0,
+          verificationPolicy: 'served',
+          freshnessSeconds: 3600,
+          state: 'active',
+        }
+  );
+  const set = (key, value) =>
+    setBinding(previous => ({ ...previous, [key]: value }));
+  return (
+    <Box
+      as='form'
+      onSubmit={event => {
+        event.preventDefault();
+        onSave(consumer?.binding_id || crypto.randomUUID(), binding);
+      }}
+    >
+      <Stack spacing={3}>
+        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
+          <Field name='Registered agent'>
+            <Select
+              aria-label='Registered agent'
+              value={binding.agentId}
+              onChange={event => set('agentId', event.target.value)}
+              isRequired
+            >
+              <option value=''>Select agent</option>
+              {agents.map(agent => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name || agent.hostname || agent.id} ({agent.status})
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field name='Customer-local deployment profile'>
+            <Input
+              aria-label='Customer-local deployment profile'
+              value={binding.deploymentProfileRef}
+              pattern='[A-Za-z0-9_-]{1,64}'
+              isRequired
+              onChange={event =>
+                set('deploymentProfileRef', event.target.value)
+              }
+            />
+          </Field>
+          <NumberField
+            name='Local profile revision'
+            value={binding.profileRevision}
+            max={2147483647}
+            onChange={value => set('profileRevision', value)}
+          />
+          <NumberField
+            name='Rollout wave (0 is canary)'
+            value={binding.wave}
+            min={0}
+            max={1000}
+            onChange={value => set('wave', value)}
+          />
+          <Field name='Verification assurance'>
+            <Select
+              aria-label='Verification assurance'
+              value={binding.verificationPolicy}
+              onChange={event => set('verificationPolicy', event.target.value)}
+            >
+              <option value='installed'>Installed files only</option>
+              <option value='served'>Served certificate</option>
+              <option value='trust'>Served and trusted</option>
+            </Select>
+          </Field>
+          <NumberField
+            name='Proof freshness (seconds)'
+            value={binding.freshnessSeconds}
+            min={60}
+            onChange={value => set('freshnessSeconds', value)}
+          />
+        </SimpleGrid>
+        <Checkbox
+          isChecked={binding.required}
+          onChange={event => set('required', event.target.checked)}
+        >
+          Required destination
+        </Checkbox>
+        <Checkbox
+          isChecked={binding.state === 'active'}
+          onChange={event =>
+            set('state', event.target.checked ? 'active' : 'removed')
+          }
+        >
+          Consumer enabled
+        </Checkbox>
+        <Text fontSize='sm'>
+          The agent resolves paths, credentials, reload commands and probes from
+          its approved local configuration. Reassignment is blocked while the
+          previous agent has live or uncertain work.
+        </Text>
+        <HStack>
+          <Button type='submit' isDisabled={disabled}>
+            Save consumer
+          </Button>
+          <Button variant='ghost' onClick={onCancel}>
+            Cancel
+          </Button>
+        </HStack>
+      </Stack>
+    </Box>
+  );
+}
+
+function MaintenanceForm({
+  consumer,
+  disabled,
+  onSave,
+  onCancel,
+  onEmergency,
+}) {
+  const [emergencyReference, setEmergencyReference] = useState(''),
+    [emergencyHours, setEmergencyHours] = useState(1);
+  const [policy, setPolicy] = useState(() =>
+    structuredClone(
+      consumer.activation_policy || {
+        method:
+          consumer.agent_platform === 'win32'
+            ? 'rebind'
+            : consumer.verification_policy === 'installed'
+              ? 'none'
+              : 'reload',
+        disruptive: false,
+        requiresApproval: false,
+        timezone: 'UTC',
+        windows: [],
+        blackouts: [],
+        validUntil: null,
+        emergency: null,
+      }
+    )
+  );
+  const set = (key, value) =>
+    setPolicy(previous => ({ ...previous, [key]: value }));
+  const windowChange = (index, key, value) =>
+    set(
+      'windows',
+      policy.windows.map((window, i) =>
+        i === index ? { ...window, [key]: value } : window
+      )
+    );
+  return (
+    <Box
+      as='form'
+      onSubmit={event => {
+        event.preventDefault();
+        onSave(consumer, policy);
+      }}
+    >
+      <Stack spacing={3}>
+        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
+          <Field name='Activation method'>
+            <Select
+              aria-label='Activation method'
+              value={policy.method}
+              onChange={event => set('method', event.target.value)}
+            >
+              <option
+                value='none'
+                disabled={consumer.agent_platform === 'win32'}
+              >
+                None (installed files only)
+              </option>
+              <option
+                value='reload'
+                disabled={consumer.agent_platform === 'win32'}
+              >
+                Reload (Linux connector)
+              </option>
+              <option value='manual'>Manual activation</option>
+              <option
+                value='rebind'
+                disabled={consumer.agent_platform !== 'win32'}
+              >
+                Rebind (IIS; qualified agent required)
+              </option>
+              <option value='no-restart-refresh' disabled>
+                No-restart refresh (unavailable)
+              </option>
+              <option value='controlled-restart' disabled>
+                Controlled restart (unavailable)
+              </option>
+            </Select>
+          </Field>
+          <Field name='IANA time zone'>
+            <Input
+              aria-label='IANA time zone'
+              value={policy.timezone}
+              onChange={event => set('timezone', event.target.value)}
+            />
+          </Field>
+          <Field name='Activation authorization expires (ISO time)'>
+            <Input
+              aria-label='Activation authorization expires'
+              value={policy.validUntil || ''}
+              onChange={event => set('validUntil', event.target.value || null)}
+            />
+          </Field>
+        </SimpleGrid>
+        <Checkbox
+          isChecked={policy.independentStaging === true}
+          isDisabled={consumer.agent_platform !== 'linux'}
+          onChange={event => set('independentStaging', event.target.checked)}
+        >
+          Stage material before the activation window (Linux; qualified agent
+          required)
+        </Checkbox>
+        <Text fontSize='sm'>
+          Staging stores a protected copy on the customer agent. It proves
+          neither installation nor service use. The agent must also explicitly
+          allow independent staging locally. Activation still requires current
+          approval and an open window.
+        </Text>
+        <Checkbox
+          isChecked={policy.disruptive}
+          onChange={event => set('disruptive', event.target.checked)}
+        >
+          Disruptive activation
+        </Checkbox>
+        <Checkbox
+          isChecked={policy.requiresApproval}
+          onChange={event => set('requiresApproval', event.target.checked)}
+        >
+          Require explicit rollout approval
+        </Checkbox>
+        {policy.windows.map((window, index) => (
+          <Box key={index} borderWidth='1px' p={3} borderRadius='md'>
+            <HStack flexWrap='wrap'>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(
+                (day, number) => (
+                  <Checkbox
+                    key={day}
+                    isChecked={window.days.includes(number)}
+                    onChange={event =>
+                      windowChange(
+                        index,
+                        'days',
+                        event.target.checked
+                          ? [...window.days, number]
+                          : window.days.filter(value => value !== number)
+                      )
+                    }
+                  >
+                    {day}
+                  </Checkbox>
+                )
+              )}
+            </HStack>
+            <HStack mt={2}>
+              <Input
+                aria-label={`Window ${index + 1} start`}
+                type='time'
+                value={window.start}
+                onChange={event =>
+                  windowChange(index, 'start', event.target.value)
+                }
+              />
+              <Input
+                aria-label={`Window ${index + 1} end`}
+                type='time'
+                value={window.end}
+                onChange={event =>
+                  windowChange(index, 'end', event.target.value)
+                }
+              />
+              <Button
+                onClick={() =>
+                  set(
+                    'windows',
+                    policy.windows.filter((_, i) => i !== index)
+                  )
+                }
+              >
+                Remove
+              </Button>
+            </HStack>
+          </Box>
+        ))}
+        <Button
+          alignSelf='start'
+          onClick={() =>
+            set('windows', [
+              ...policy.windows,
+              { days: [0], start: '01:00', end: '02:00' },
+            ])
+          }
+        >
+          Add allowed window
+        </Button>
+        {policy.blackouts.map((period, index) => (
+          <HStack key={index}>
+            <Input
+              aria-label={`Blackout ${index + 1} start ISO`}
+              placeholder='Start: 2026-11-01T00:00:00Z'
+              value={period.start}
+              onChange={event =>
+                set(
+                  'blackouts',
+                  policy.blackouts.map((value, i) =>
+                    i === index
+                      ? { ...value, start: event.target.value }
+                      : value
+                  )
+                )
+              }
+            />
+            <Input
+              aria-label={`Blackout ${index + 1} end ISO`}
+              placeholder='End: 2026-11-02T00:00:00Z'
+              value={period.end}
+              onChange={event =>
+                set(
+                  'blackouts',
+                  policy.blackouts.map((value, i) =>
+                    i === index ? { ...value, end: event.target.value } : value
+                  )
+                )
+              }
+            />
+            <Button
+              onClick={() =>
+                set(
+                  'blackouts',
+                  policy.blackouts.filter((_, i) => i !== index)
+                )
+              }
+            >
+              Remove
+            </Button>
+          </HStack>
+        ))}
+        <Button
+          alignSelf='start'
+          onClick={() =>
+            set('blackouts', [...policy.blackouts, { start: '', end: '' }])
+          }
+        >
+          Add blackout
+        </Button>
+        <Text fontSize='sm'>
+          Blackouts take precedence. Disruptive activation needs an allowed
+          window. Saving changes the authorization revision and requires a new
+          rollout request. Publication can finish before activation is allowed.
+        </Text>
+        {policy.emergency ? (
+          <Alert
+            status='warning'
+            variant='warning'
+            borderRadius='md'
+            borderWidth='1px'
+            alignItems='flex-start'
+          >
+            <AlertIcon />
+            An administrator emergency authorization exists. Review its scope in
+            audit evidence before replacing this policy.
+          </Alert>
+        ) : null}
+        {policy.emergency ? (
+          <Button alignSelf='start' onClick={() => set('emergency', null)}>
+            Remove emergency exception from this policy
+          </Button>
+        ) : null}
+        {onEmergency ? (
+          <Box borderWidth='1px' borderRadius='md' p={3}>
+            <Text fontWeight='semibold'>Administrator emergency exception</Text>
+            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mt={2}>
+              <Field name='Change or incident reference'>
+                <Input
+                  aria-label='Emergency audit reference'
+                  value={emergencyReference}
+                  maxLength={64}
+                  onChange={event => setEmergencyReference(event.target.value)}
+                />
+              </Field>
+              <NumberField
+                name='Emergency duration (hours)'
+                value={emergencyHours}
+                min={1}
+                max={4}
+                onChange={setEmergencyHours}
+              />
+            </SimpleGrid>
+            <Text fontSize='sm' my={2}>
+              Blackouts and authorization expiry still apply. A new exact
+              rollout approval is required.
+            </Text>
+            <Button
+              isDisabled={
+                disabled ||
+                !/^[A-Za-z0-9_-]{1,64}$/.test(emergencyReference) ||
+                !Number.isInteger(emergencyHours) ||
+                emergencyHours < 1 ||
+                emergencyHours > 4
+              }
+              onClick={() => {
+                const start = new Date();
+                onEmergency(consumer, {
+                  ...policy,
+                  requiresApproval: true,
+                  emergency: {
+                    start: start.toISOString(),
+                    end: new Date(
+                      start.getTime() + emergencyHours * 3600000
+                    ).toISOString(),
+                    reference: emergencyReference,
+                  },
+                });
+              }}
+            >
+              Review emergency exception
+            </Button>
+          </Box>
+        ) : null}
+        <HStack>
+          <Button type='submit' isDisabled={disabled}>
+            Save activation policy
+          </Button>
+          <Button variant='ghost' onClick={onCancel}>
+            Cancel
+          </Button>
+        </HStack>
+      </Stack>
+    </Box>
+  );
+}
+
+function Management({
+  workspaceId,
+  groupId,
+  canManage,
+  canAdmin,
+  paused,
+  pauseUnresolved,
+}) {
+  const read = useCallback(
+    async (signal, startedAt) => {
+      const data = await distributionApi.management(
+        workspaceId,
+        groupId,
+        signal
+      );
+      const clockOffset = serverClockOffset(data, startedAt);
+      return {
+        ...data,
+        clockOffset,
+        deadlines: data.consumers
+          .map(verificationDeadline)
+          .filter(value => value !== null)
+          .map(value => value + clockOffset),
+      };
+    },
+    [workspaceId, groupId]
+  );
+  const { dashboard, muted } = useDashboardTheme();
+  const tableStyles = useCertOpsResponsiveTableStyles();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [activeView, setActiveView] = useState(
+    () => distributionViews[location.hash] ?? 0
+  );
+  const [policyOpen, setPolicyOpen] = useState(false);
+  const [incidentPage, setIncidentPage] = useState({ limit: 5, offset: 0 });
+  const [discoveryPage, setDiscoveryPage] = useState({ limit: 5, offset: 0 });
+  const activeViewRef = useRef(activeView);
+  useEffect(() => {
+    if (!location.hash || Object.hasOwn(distributionViews, location.hash)) {
+      const view = distributionViews[location.hash] ?? 0;
+      activeViewRef.current = view;
+      setActiveView(view);
+    }
+  }, [location.hash]);
+  const state = useDistributionRead(`${workspaceId}/${groupId}`, read);
+  useEffect(() => {
+    const view = distributionViews[location.hash];
+    if (
+      state.loading ||
+      !['#distribution-discovery', '#distribution-retention'].includes(
+        location.hash
+      ) ||
+      view !== activeView
+    )
+      return;
+    const frame = requestAnimationFrame(() => {
+      const section = document.getElementById(location.hash.slice(1));
+      section?.scrollIntoView?.({ block: 'start' });
+      section?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [location.hash, activeView, state.loading]);
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState(''),
+    [notice, setNotice] = useState('');
+  const [editor, setEditor] = useState(null),
+    [maintenance, setMaintenance] = useState(null),
+    [version, setVersion] = useState('');
+  const [preflight, setPreflight] = useState(null),
+    [retention, setRetention] = useState(null),
+    [confirmation, setConfirmation] = useState(null);
+  const cancelRef = useRef(null),
+    keys = useRef(new Map()),
+    modalReturnFocusRef = useRef(null);
+  const { data } = state,
+    disabled =
+      busy ||
+      Boolean(state.error) ||
+      paused ||
+      pauseUnresolved ||
+      !canManage ||
+      data?.group.state !== 'active' ||
+      Boolean(data?.group.ended_at);
+  const run = async (task, success) => {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await task();
+      setNotice(typeof success === 'function' ? success(result) : success);
+      state.refresh();
+      return result;
+    } catch (failure) {
+      setError(
+        `${failure.response?.data?.error || 'Operation failed. Refresh the page, inspect the job and check customer-local policy.'}${failure.response?.data?.code ? ` (${failure.response.data.code})` : ''}`
+      );
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (state.loading)
+    return (
+      <DashboardState type='loading' title='Loading distribution management' />
+    );
+  if (!data)
+    return (
+      <DashboardState
+        type='error'
+        title='Distribution unavailable'
+        description={state.error}
+        action={<Button onClick={state.refresh}>Retry</Button>}
+      />
+    );
+  // The management response is already bounded; these controls page only the
+  // returned rows. Clamp after refresh if the selected page no longer exists.
+  const incidentOffset = Math.min(
+    incidentPage.offset,
+    Math.max(0, Math.ceil(data.incidents.length / incidentPage.limit) - 1) *
+      incidentPage.limit
+  );
+  const discoveryOffset = Math.min(
+    discoveryPage.offset,
+    Math.max(0, Math.ceil(data.discoveries.length / discoveryPage.limit) - 1) *
+      discoveryPage.limit
+  );
+  const selectedVersion =
+    version || data.group.latest_material_version_id || '';
+  const latestPublishedVersion = data.versions.find(
+    item =>
+      item.id === data.group.latest_material_version_id &&
+      item.state === 'published'
+  );
+  const publicationState = latestPublishedVersion
+    ? 'published'
+    : data.group.latest_material_version_id
+      ? 'current published version unavailable'
+      : 'not published';
+  const retained = selectedVersion !== data.group.latest_material_version_id;
+  const activeConsumers = data.consumers.filter(
+    value => value.binding_state === 'active'
+  ).length;
+  const pendingApprovals = data.approvals.filter(
+    job => job.status === 'pending_approval'
+  ).length;
+  const openIncidents = data.incidents.filter(
+    incident => !incident.resolved_at
+  ).length;
+  const currentPolicy = data.policy?.policy || data.defaults;
+  const verificationEnabled = currentPolicy?.verification?.enabled;
+  const alertsEnabled = currentPolicy?.alerts?.enabled;
+  const cleanupPolicy = currentPolicy?.retention;
+  const activeRollouts = data.rollouts.filter(rollout =>
+    ['pending', 'deploying', 'paused'].includes(rollout.state)
+  ).length;
+  const selectedPublishedVersion = data.versions.some(
+    item =>
+      item.id === selectedVersion &&
+      item.state === 'published' &&
+      !['fenced', 'soft_deleted'].includes(item.cleanup_state)
+  );
+  const hasPublishedVersion = data.versions.some(
+    item =>
+      item.state === 'published' &&
+      !['fenced', 'soft_deleted'].includes(item.cleanup_state)
+  );
+  const nextStep = state.error
+    ? 'Refresh this source before making changes.'
+    : pauseUnresolved
+      ? 'Wait for workspace pause status before requesting changes.'
+      : paused
+        ? 'Workspace operations are paused. A workspace administrator must resume them before requesting a rollout.'
+        : !canManage
+          ? 'A workspace manager can configure destinations and request a rollout.'
+          : data.group.state !== 'active' || data.group.ended_at
+            ? 'This source is inactive. Review its state before requesting a rollout.'
+            : !activeConsumers
+              ? 'Add and authorize an active destination before requesting a rollout.'
+              : !selectedPublishedVersion
+                ? hasPublishedVersion
+                  ? 'Choose an available published version before requesting a rollout.'
+                  : 'Publish a certificate before requesting a rollout. You can run a safe preflight now.'
+                : 'Review the exact version and destinations, then request a rollout or verify what is already installed.';
+  const requestRollout = verificationOnly => {
+    const signature = `${groupId}:${selectedVersion}:${verificationOnly}:${data.group.generation}`;
+    if (!keys.current.has(signature))
+      keys.current.set(signature, crypto.randomUUID());
+    const key = keys.current.get(signature);
+    return run(
+      async () => {
+        const result = await distributionApi.rollout(
+          workspaceId,
+          groupId,
+          {
+            materialVersionId: selectedVersion,
+            maxParallel: data.policy?.policy.maxParallel || 1,
+            verificationOnly,
+            requiresApproval: !verificationOnly && retained,
+          },
+          key
+        );
+        // Keep the key after an uncertain failure so the operator can retry
+        // safely. A confirmed response completes this intent; a later request
+        // for the same version must create a fresh job.
+        if (keys.current.get(signature) === key) keys.current.delete(signature);
+        return result;
+      },
+      result =>
+        result.status === 'pending_approval'
+          ? 'Request created. Review and approve the exact version in Jobs.'
+          : 'Rollout requested. Consumer job evidence will confirm installation and verification.'
+    );
+  };
+  const confirm = (title, description, action) =>
+    setConfirmation({ title, description, action });
+  return (
+    <Stack spacing={4}>
+      {state.error ? (
+        <Alert
+          status='warning'
+          variant='warning'
+          borderRadius='md'
+          borderWidth='1px'
+          alignItems='flex-start'
+        >
+          <AlertIcon />
+          Cached distribution data may be stale. Refresh before making changes.{' '}
+          <Button size='sm' ml={2} onClick={state.refresh}>
+            Retry
+          </Button>
+        </Alert>
+      ) : null}
+      {pauseUnresolved ? (
+        <Alert
+          status='info'
+          variant='info'
+          borderRadius='md'
+          borderWidth='1px'
+          alignItems='flex-start'
+        >
+          <AlertIcon />
+          Waiting for workspace pause status before allowing distribution
+          changes.
+        </Alert>
+      ) : paused ? (
+        <Alert
+          status='warning'
+          variant='warning'
+          borderRadius='md'
+          borderWidth='1px'
+          alignItems='flex-start'
+        >
+          <AlertIcon />
+          Certificate operations are paused for this workspace.
+        </Alert>
+      ) : null}
+      {error ? (
+        <Alert
+          status='error'
+          variant='error'
+          borderRadius='md'
+          borderWidth='1px'
+          alignItems='flex-start'
+        >
+          <AlertIcon />
+          {error}
+        </Alert>
+      ) : null}
+      {notice ? (
+        <Alert
+          status='info'
+          variant='info'
+          borderRadius='md'
+          borderWidth='1px'
+          alignItems='flex-start'
+        >
+          <AlertIcon />
+          {notice}
+        </Alert>
+      ) : null}
+      <Tabs
+        index={activeView}
+        onChange={index => {
+          if (index === activeViewRef.current) return;
+          activeViewRef.current = index;
+          setActiveView(index);
+          navigate({
+            pathname: location.pathname,
+            search: location.search,
+            hash: viewFragments[index],
+          });
+        }}
+        isLazy={false}
+        variant='unstyled'
+        colorScheme='blue'
+      >
+        <Box
+          bg={dashboard.bg.panel}
+          border='1px solid'
+          borderColor={dashboard.border.subtle}
+          borderRadius='md'
+          overflowX='auto'
+          w={{ base: '100%', md: 'fit-content' }}
+        >
+          <TabList
+            aria-label='Distribution views'
+            minW='max-content'
+            p={0}
+            gap={0}
+          >
+            {[
+              ['Overview', null],
+              ['Destinations', null],
+              [
+                'Deployments',
+                pendingApprovals
+                  ? `${pendingApprovals} recent pending approval${pendingApprovals === 1 ? '' : 's'}`
+                  : null,
+              ],
+              [
+                'Issues',
+                openIncidents
+                  ? `${openIncidents} recent open incident${openIncidents === 1 ? '' : 's'}`
+                  : null,
+              ],
+              ['Policy & retention', null],
+            ].map(([name, attention], index) => (
+              <Tab
+                key={name}
+                aria-label={attention ? `${name}: ${attention}` : name}
+                px={{ base: 2, sm: 3 }}
+                py={1.5}
+                fontSize='sm'
+                fontWeight='medium'
+                color={dashboard.text.secondary}
+                borderLeftWidth={index === 0 ? 0 : '1px'}
+                borderColor={dashboard.border.subtle}
+                _hover={{ bg: dashboard.bg.panelHover }}
+                _focusVisible={{ boxShadow: 'outline', zIndex: 1 }}
+                _selected={{
+                  color: dashboard.accent.navActive,
+                  bg: dashboard.accent.interactiveSurface,
+                }}
+              >
+                {name}
+                {attention ? (
+                  <Badge ml={2} colorScheme='gray' aria-hidden='true'>
+                    {name === 'Issues' ? openIncidents : pendingApprovals}
+                  </Badge>
+                ) : null}
+              </Tab>
+            ))}
+          </TabList>
+        </Box>
+        <TabPanels mt={4}>
+          <TabPanel p={0}>
+            <Stack spacing={4}>
+              <DashboardPanel
+                id='distribution-publication'
+                scrollMarginTop='80px'
+                borderRadius='md'
+              >
+                <DashboardPanelHeader
+                  title='Publication and rollout'
+                  description={`Customer-local store: ${data.group.material_store_ref}. Publication does not prove service activation.`}
+                  action={
+                    <DashboardActionButton
+                      variant='outline'
+                      onClick={state.refresh}
+                      isLoading={state.refreshing}
+                    >
+                      Refresh
+                    </DashboardActionButton>
+                  }
+                />
+                <Stack spacing={2} mt={3}>
+                  <Box bg={dashboard.bg.nested} borderRadius='lg' p={2}>
+                    <Text fontWeight='semibold' fontSize='sm'>
+                      Next step
+                    </Text>
+                    <Text color={dashboard.text.secondary} fontSize='sm'>
+                      {nextStep}
+                    </Text>
+                  </Box>
+                  <Text fontSize='sm'>
+                    Latest publication: {publicationState} · Evaluated{' '}
+                    {formatDateTime(data.evaluated_at)}
+                  </Text>
+                  <Field name='Exact published version'>
+                    <Select
+                      aria-label='Exact published version'
+                      value={selectedVersion}
+                      onChange={event => setVersion(event.target.value)}
+                    >
+                      <option value=''>Select version</option>
+                      {data.versions
+                        .filter(
+                          value =>
+                            value.state === 'published' &&
+                            !['fenced', 'soft_deleted'].includes(
+                              value.cleanup_state
+                            )
+                        )
+                        .map(value => (
+                          <option key={value.id} value={value.id}>
+                            {value.provider_version ?? 'Version unavailable'} ·{' '}
+                            {value.id} · expires{' '}
+                            {formatDateTime(value.valid_to)}
+                            {value.id !== data.group.latest_material_version_id
+                              ? ' (retained rollback version)'
+                              : ''}
+                          </option>
+                        ))}
+                    </Select>
+                  </Field>
+                  <Text fontSize='sm'>
+                    Destinations:{' '}
+                    {
+                      data.consumers.filter(
+                        value => value.binding_state === 'active'
+                      ).length
+                    }
+                    . Canary waves and required destinations gate progression;
+                    maximum parallel deployments:{' '}
+                    {data.policy?.policy.maxParallel || 1}.
+                  </Text>
+                  <HStack flexWrap='wrap' spacing={2} rowGap={2}>
+                    {canManage ? (
+                      <>
+                        <DashboardActionButton
+                          isDisabled={disabled || !selectedPublishedVersion}
+                          colorScheme='blue'
+                          onClick={() =>
+                            confirm(
+                              retained
+                                ? 'Request retained-version rollback'
+                                : 'Request certificate rollout',
+                              `Authorize exact version ${selectedVersion} for the listed destinations. Disruptive activation follows its approved maintenance policy. Retained versions require explicit approval.`,
+                              () => requestRollout(false)
+                            )
+                          }
+                        >
+                          {retained
+                            ? 'Request rollback approval'
+                            : 'Request rollout'}
+                        </DashboardActionButton>
+                        <DashboardActionButton
+                          variant='outline'
+                          isDisabled={disabled || !selectedPublishedVersion}
+                          onClick={() => requestRollout(true)}
+                        >
+                          Verify only
+                        </DashboardActionButton>
+                      </>
+                    ) : null}
+                    <DashboardActionButton
+                      variant='outline'
+                      isDisabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          const result = await distributionApi.preflight(
+                            workspaceId,
+                            groupId,
+                            selectedVersion
+                          );
+                          setPreflight(result);
+                        }, 'Preflight checks loaded. Customer-local checks remain necessary.')
+                      }
+                    >
+                      Run safe preflight
+                    </DashboardActionButton>
+                  </HStack>
+                  <SimpleGrid
+                    columns={{ base: 1, sm: 3 }}
+                    spacing={3}
+                    borderTop='1px solid'
+                    borderColor={dashboard.border.subtle}
+                    pt={3}
+                    mt={2}
+                  >
+                    <OverviewMetric
+                      name='Destinations'
+                      value={activeConsumers}
+                      detail='Active consumers'
+                    />
+                    <OverviewMetric
+                      name='Recent ongoing rollouts'
+                      value={activeRollouts}
+                      detail={`${pendingApprovals} recent pending approval${pendingApprovals === 1 ? '' : 's'} · includes paused rollouts`}
+                    />
+                    <OverviewMetric
+                      name='Recent open incidents'
+                      value={openIncidents}
+                      detail='From the latest 100 incidents'
+                    />
+                  </SimpleGrid>
+                  {preflight ? (
+                    <Box>
+                      <Text fontWeight='semibold'>Non-mutating preflight</Text>
+                      <Text fontSize='sm'>
+                        These checks cover control-plane metadata. Run the
+                        customer-local dry run to check store authorization,
+                        pinned material, filesystem permissions, service targets
+                        and probes.
+                      </Text>
+                      {preflight.consumers.map(value => (
+                        <Box key={value.bindingId}>
+                          <Text fontSize='sm'>
+                            {value.bindingId}:{' '}
+                            {value.diagnostics
+                              .map(item => diagnosticExplanation(item.code))
+                              .join('; ')}
+                          </Text>
+                          {value.publicIntent ? (
+                            <Button
+                              size='sm'
+                              mt={2}
+                              onClick={() => {
+                                const url = URL.createObjectURL(
+                                  new Blob(
+                                    [
+                                      JSON.stringify(
+                                        value.publicIntent,
+                                        null,
+                                        2
+                                      ),
+                                    ],
+                                    { type: 'application/json' }
+                                  )
+                                );
+                                const anchor = document.createElement('a');
+                                anchor.href = url;
+                                anchor.download = `${value.bindingId}.preflight.json`;
+                                anchor.click();
+                                URL.revokeObjectURL(url);
+                              }}
+                            >
+                              Download public preflight intent
+                            </Button>
+                          ) : null}
+                        </Box>
+                      ))}
+                    </Box>
+                  ) : null}
+                </Stack>
+              </DashboardPanel>
+            </Stack>
+          </TabPanel>
+          <TabPanel p={0}>
+            <Stack spacing={4}>
+              <DashboardPanel
+                id='distribution-consumers'
+                scrollMarginTop='80px'
+                borderRadius='md'
+              >
+                <DashboardPanelHeader
+                  title='Consumers'
+                  description='Installed files, served identity, trust and proof freshness are separate evidence.'
+                  action={
+                    canManage ? (
+                      <DashboardActionButton
+                        isDisabled={disabled}
+                        onClick={event => {
+                          modalReturnFocusRef.current = event.currentTarget;
+                          setError('');
+                          setEditor({});
+                        }}
+                      >
+                        Add consumer
+                      </DashboardActionButton>
+                    ) : null
+                  }
+                />
+                {!data.consumers.length ? (
+                  <Text>
+                    No consumers configured. Add an agent destination after
+                    completing customer-local setup.
+                  </Text>
+                ) : (
+                  <TableContainer
+                    whiteSpace='normal'
+                    overflowX={{ base: 'visible', lg: 'auto' }}
+                  >
+                    <Table
+                      aria-label='Distribution consumers'
+                      size='sm'
+                      display={{ base: 'block', lg: 'table' }}
+                      tableLayout={{ lg: 'fixed' }}
+                      sx={{
+                        'th, td': {
+                          borderColor: 'dashboard.modal.border',
+                          verticalAlign: 'top',
+                          whiteSpace: 'normal',
+                          overflowWrap: 'anywhere',
+                        },
+                        th: { color: 'dashboard.modal.muted' },
+                      }}
+                    >
+                      <Thead
+                        display={{ base: 'none', lg: 'table-header-group' }}
+                      >
+                        <Tr>
+                          <Th w='19%' px={2}>
+                            Consumer / agent
+                          </Th>
+                          <Th w='16%' px={2}>
+                            Status / versions
+                          </Th>
+                          <Th w='26%' px={2}>
+                            Proof / deployed expiry
+                          </Th>
+                          <Th w='23%' px={2}>
+                            Policy
+                          </Th>
+                          <Th w='16%' px={2}>
+                            Actions
+                          </Th>
+                        </Tr>
+                      </Thead>
+                      <Tbody display={{ base: 'block', lg: 'table-row-group' }}>
+                        {data.consumers.map(consumer => (
+                          <Tr
+                            key={consumer.binding_id}
+                            display={{ base: 'block', lg: 'table-row' }}
+                            borderWidth={{ base: '1px', lg: 0 }}
+                            borderColor={dashboard.border.subtle}
+                            borderRadius={{ base: 'lg', lg: 0 }}
+                            mb={{ base: 3, lg: 0 }}
+                          >
+                            <Td
+                              display={{ base: 'block', lg: 'table-cell' }}
+                              px={2}
+                              whiteSpace='normal'
+                              overflowWrap='anywhere'
+                              borderBottomWidth={{ base: 0, lg: '1px' }}
+                              py={{ base: 2, lg: 3 }}
+                            >
+                              <Text
+                                display={{ base: 'block', lg: 'none' }}
+                                fontSize='xs'
+                                fontWeight='bold'
+                                color={dashboard.text.muted}
+                                textTransform='uppercase'
+                                letterSpacing='wide'
+                                mb={1}
+                              >
+                                Consumer / agent
+                              </Text>
+                              <Text fontSize='sm' fontWeight='medium'>
+                                {consumer.deployment_profile_ref}
+                              </Text>
+                              <Text fontSize='xs' color={muted}>
+                                {consumer.agent_name} · {consumer.agent_status}
+                              </Text>
+                              <Text fontSize='xs' color={muted}>
+                                {consumer.binding_state}
+                              </Text>
+                            </Td>
+                            <Td
+                              display={{ base: 'block', lg: 'table-cell' }}
+                              px={2}
+                              whiteSpace='normal'
+                              overflowWrap='anywhere'
+                              borderBottomWidth={{ base: 0, lg: '1px' }}
+                              py={{ base: 2, lg: 3 }}
+                            >
+                              <Text
+                                display={{ base: 'block', lg: 'none' }}
+                                fontSize='xs'
+                                fontWeight='bold'
+                                color={dashboard.text.muted}
+                                textTransform='uppercase'
+                                letterSpacing='wide'
+                                mb={1}
+                              >
+                                Status / versions
+                              </Text>
+                              <Badge>
+                                {label(
+                                  state.error
+                                    ? 'stale_data'
+                                    : [
+                                          'up_to_date_fresh',
+                                          'installed_not_proven_served',
+                                        ].includes(consumer.health_status) &&
+                                        (verificationDeadline(consumer) ===
+                                          null ||
+                                          verificationDeadline(consumer) +
+                                            data.clockOffset <=
+                                            state.now)
+                                      ? 'verification_overdue'
+                                      : consumer.health_status
+                                )}
+                              </Badge>
+                              {consumer.latest_deployment?.jobStatus ===
+                              'pending_approval' ? (
+                                <Badge colorScheme='gray' ml={1}>
+                                  Approval pending
+                                </Badge>
+                              ) : null}
+                              <Text fontSize='xs' color={muted}>
+                                Desired {consumer.desired_version || 'Unknown'}{' '}
+                                / observed{' '}
+                                {consumer.observed_version || 'Unknown'}
+                              </Text>
+                              {consumer.latest_deployment?.stagingReceipt
+                                ?.staged ? (
+                                <Text fontSize='xs' color={muted}>
+                                  Material staged{' '}
+                                  {formatDateTime(
+                                    consumer.latest_deployment.stagingReceipt
+                                      .observedAt
+                                  )}
+                                  ; activation and verification remain separate.
+                                </Text>
+                              ) : null}
+                            </Td>
+                            <Td
+                              display={{ base: 'block', lg: 'table-cell' }}
+                              px={2}
+                              whiteSpace='normal'
+                              overflowWrap='anywhere'
+                              borderBottomWidth={{ base: 0, lg: '1px' }}
+                              py={{ base: 2, lg: 3 }}
+                            >
+                              <Text
+                                display={{ base: 'block', lg: 'none' }}
+                                fontSize='xs'
+                                fontWeight='bold'
+                                color={dashboard.text.muted}
+                                textTransform='uppercase'
+                                letterSpacing='wide'
+                                mb={1}
+                              >
+                                Proof / deployed expiry
+                              </Text>
+                              <Text fontSize='sm' fontWeight='medium'>
+                                {label(consumer.verification_method)}
+                              </Text>
+                              <Text fontSize='xs' color={muted} mt={1}>
+                                Proof {formatDateTime(consumer.observed_at)}
+                              </Text>
+                              <Text fontSize='xs' color={muted}>
+                                Deployed expiry{' '}
+                                {formatDateTime(consumer.observed_valid_to)}
+                              </Text>
+                            </Td>
+                            <Td
+                              display={{ base: 'block', lg: 'table-cell' }}
+                              px={2}
+                              whiteSpace='normal'
+                              overflowWrap='anywhere'
+                              borderBottomWidth={{ base: 0, lg: '1px' }}
+                              py={{ base: 2, lg: 3 }}
+                            >
+                              <Text
+                                display={{ base: 'block', lg: 'none' }}
+                                fontSize='xs'
+                                fontWeight='bold'
+                                color={dashboard.text.muted}
+                                textTransform='uppercase'
+                                letterSpacing='wide'
+                                mb={1}
+                              >
+                                Policy
+                              </Text>
+                              <Text fontSize='sm' fontWeight='medium'>
+                                {consumer.required ? 'Required' : 'Optional'} ·
+                                wave {consumer.wave}
+                              </Text>
+                              <Text fontSize='xs' color={muted} mt={1}>
+                                Authorization revision{' '}
+                                {consumer.authorization_revision}
+                              </Text>
+                              <Text fontSize='xs' color={muted}>
+                                Local profile {consumer.profile_revision}
+                              </Text>
+                            </Td>
+                            <Td
+                              display={{ base: 'block', lg: 'table-cell' }}
+                              px={2}
+                              whiteSpace='normal'
+                              overflowWrap='anywhere'
+                              borderBottomWidth={{ base: 0, lg: '1px' }}
+                              py={{ base: 2, lg: 3 }}
+                            >
+                              <Text
+                                display={{ base: 'block', lg: 'none' }}
+                                fontSize='xs'
+                                fontWeight='bold'
+                                color={dashboard.text.muted}
+                                textTransform='uppercase'
+                                letterSpacing='wide'
+                                mb={1}
+                              >
+                                Actions
+                              </Text>
+                              {canManage ||
+                              consumer.latest_deployment?.jobId ? (
+                                <RowActions
+                                  name={`Actions for destination ${consumer.deployment_profile_ref}`}
+                                  onTrigger={element => {
+                                    modalReturnFocusRef.current = element;
+                                  }}
+                                >
+                                  {consumer.latest_deployment?.jobId ? (
+                                    <MenuItem
+                                      as={RouterLink}
+                                      to={jobsLink(
+                                        workspaceId,
+                                        consumer.latest_deployment.jobId
+                                      )}
+                                    >
+                                      View job
+                                    </MenuItem>
+                                  ) : null}
+                                  {canManage ? (
+                                    <>
+                                      <MenuItem
+                                        isDisabled={disabled}
+                                        onClick={() => {
+                                          setError('');
+                                          setEditor(consumer);
+                                        }}
+                                      >
+                                        Edit consumer
+                                      </MenuItem>
+                                      <MenuItem
+                                        isDisabled={disabled}
+                                        onClick={() => {
+                                          setError('');
+                                          setMaintenance(consumer);
+                                        }}
+                                      >
+                                        Maintenance
+                                      </MenuItem>
+                                      {[
+                                        'failed',
+                                        'blocked',
+                                        'orphaned_unknown_effect',
+                                      ].includes(
+                                        consumer.latest_deployment?.jobStatus
+                                      ) ? (
+                                        <MenuItem
+                                          isDisabled={disabled}
+                                          onClick={() =>
+                                            confirm(
+                                              'Retry original signed job',
+                                              'Inspect job evidence and run preflight. Reconcile on the customer host before retrying an uncertain operation. The original version, generation and approval stay pinned.',
+                                              () =>
+                                                run(
+                                                  () =>
+                                                    distributionApi.retry(
+                                                      workspaceId,
+                                                      consumer.latest_deployment
+                                                        .jobId
+                                                    ),
+                                                  'Original job retry requested. Resume the rollout after reconciliation, then obtain fresh verification.'
+                                                )
+                                            )
+                                          }
+                                        >
+                                          Retry original job
+                                        </MenuItem>
+                                      ) : null}
+                                      {consumer.latest_deployment
+                                        ?.needsOperatorReconciliation &&
+                                      [
+                                        'failed',
+                                        'blocked',
+                                        'rejected',
+                                        'orphaned_unknown_effect',
+                                      ].includes(
+                                        consumer.latest_deployment?.jobStatus
+                                      ) ? (
+                                        <MenuItem
+                                          isDisabled={disabled}
+                                          onClick={() =>
+                                            confirm(
+                                              'Request read-only reconciliation',
+                                              'Request a fresh inspection of the original deployment on its assigned agent. A different authorized operator must approve it. The inspection does not install material, reload services or treat newer deployment evidence as proof of the original operation.',
+                                              () =>
+                                                run(
+                                                  () =>
+                                                    distributionApi.reconcile(
+                                                      workspaceId,
+                                                      consumer.latest_deployment
+                                                        .jobId
+                                                    ),
+                                                  result => (
+                                                    <Text as='span'>
+                                                      Read-only reconciliation
+                                                      requested.{' '}
+                                                      <JobLink
+                                                        workspaceId={
+                                                          workspaceId
+                                                        }
+                                                        id={
+                                                          result.job?.id ||
+                                                          result.id
+                                                        }
+                                                      >
+                                                        Review the inspection in
+                                                        Jobs
+                                                      </JobLink>
+                                                    </Text>
+                                                  )
+                                                )
+                                            )
+                                          }
+                                        >
+                                          Request read-only reconciliation
+                                        </MenuItem>
+                                      ) : null}
+                                    </>
+                                  ) : null}
+                                </RowActions>
+                              ) : (
+                                <Text fontSize='xs' color={muted}>
+                                  --
+                                </Text>
+                              )}
+                            </Td>
+                          </Tr>
+                        ))}
+                      </Tbody>
+                    </Table>
+                  </TableContainer>
+                )}
+                {editor ? (
+                  <Modal
+                    isOpen
+                    onClose={() => setEditor(null)}
+                    finalFocusRef={modalReturnFocusRef}
+                    isCentered
+                    scrollBehavior='inside'
+                  >
+                    <ModalOverlay />
+                    <DashboardModalFrame
+                      type='workflow'
+                      maxW={{ base: 'calc(100vw - 24px)', md: '900px' }}
+                    >
+                      <ModalHeader>
+                        <DashboardModalTitle>
+                          {editor.binding_id ? 'Edit consumer' : 'Add consumer'}
+                        </DashboardModalTitle>
+                      </ModalHeader>
+                      <ModalCloseButton />
+                      <ModalBody pb={6}>
+                        {error ? (
+                          <Alert status='error' mb={4}>
+                            <AlertIcon />
+                            {error}
+                          </Alert>
+                        ) : null}
+                        <ConsumerForm
+                          key={editor.binding_id || 'new'}
+                          consumer={editor.binding_id ? editor : null}
+                          agents={data.agents || []}
+                          disabled={disabled}
+                          onCancel={() => setEditor(null)}
+                          onSave={(id, binding) =>
+                            run(async () => {
+                              await distributionApi.consumer(
+                                workspaceId,
+                                groupId,
+                                id,
+                                binding
+                              );
+                              setEditor(null);
+                            }, 'Consumer saved. Approvals and customer-local authorization must use the new revision.')
+                          }
+                        />
+                      </ModalBody>
+                    </DashboardModalFrame>
+                  </Modal>
+                ) : null}
+                {maintenance ? (
+                  <Modal
+                    isOpen
+                    onClose={() => setMaintenance(null)}
+                    finalFocusRef={modalReturnFocusRef}
+                    isCentered
+                    scrollBehavior='inside'
+                  >
+                    <ModalOverlay />
+                    <DashboardModalFrame
+                      type='workflow'
+                      maxW={{ base: 'calc(100vw - 24px)', md: '900px' }}
+                    >
+                      <ModalHeader>
+                        <DashboardModalTitle>
+                          Activation and maintenance:{' '}
+                          {maintenance.deployment_profile_ref}
+                        </DashboardModalTitle>
+                      </ModalHeader>
+                      <ModalCloseButton />
+                      <ModalBody pb={6}>
+                        {error ? (
+                          <Alert status='error' mb={4}>
+                            <AlertIcon />
+                            {error}
+                          </Alert>
+                        ) : null}
+                        <MaintenanceForm
+                          key={`${maintenance.binding_id}/${maintenance.authorization_revision}`}
+                          consumer={maintenance}
+                          disabled={disabled}
+                          onCancel={() => setMaintenance(null)}
+                          onEmergency={
+                            canAdmin
+                              ? (consumer, policy) =>
+                                  confirm(
+                                    'Authorize emergency exception',
+                                    `Authorize this consumer for a bounded emergency period (${policy.emergency.reference}). Blackouts still apply and a separate rollout approval is required.`,
+                                    () =>
+                                      run(async () => {
+                                        await distributionApi.emergency(
+                                          workspaceId,
+                                          groupId,
+                                          consumer.binding_id,
+                                          {
+                                            policy,
+                                            expectedAuthorizationRevision:
+                                              consumer.authorization_revision,
+                                          }
+                                        );
+                                        setMaintenance(null);
+                                      }, 'Emergency authorization saved. Request a fresh rollout approval.')
+                                  )
+                              : undefined
+                          }
+                          onSave={(consumer, policy) =>
+                            run(async () => {
+                              await distributionApi.activation(
+                                workspaceId,
+                                groupId,
+                                consumer.binding_id,
+                                policy,
+                                consumer.authorization_revision
+                              );
+                              setMaintenance(null);
+                            }, 'Activation policy saved. Request a fresh rollout approval.')
+                          }
+                        />
+                      </ModalBody>
+                    </DashboardModalFrame>
+                  </Modal>
+                ) : null}
+              </DashboardPanel>
+            </Stack>
+          </TabPanel>
+          <TabPanel p={0}>
+            <Stack spacing={4}>
+              <DashboardPanel
+                id='distribution-rollouts'
+                scrollMarginTop='80px'
+                borderRadius='md'
+              >
+                <DashboardPanelHeader
+                  title='Rollouts and approvals'
+                  description='A request or approval is distinct from completed consumer verification.'
+                />
+                {!data.rollouts.length ? (
+                  <Text fontSize='sm'>No rollouts in the recent history.</Text>
+                ) : (
+                  <Stack
+                    as='ul'
+                    listStyleType='none'
+                    m={0}
+                    spacing={0}
+                    borderTop='1px solid'
+                    borderColor={dashboard.border.subtle}
+                  >
+                    {data.rollouts.map(rollout => (
+                      <Box
+                        as='li'
+                        key={rollout.id}
+                        py={3}
+                        borderBottom='1px solid'
+                        borderColor={dashboard.border.subtle}
+                      >
+                        <Stack
+                          direction={{ base: 'column', md: 'row' }}
+                          align={{ base: 'start', md: 'center' }}
+                          justify='space-between'
+                          spacing={2}
+                        >
+                          <HStack flexWrap='wrap' spacing={2}>
+                            <CertOpsBadge
+                              colorScheme={
+                                rollout.state === 'paused' ? 'orange' : 'gray'
+                              }
+                            >
+                              {label(rollout.state)}
+                            </CertOpsBadge>
+                            <Text fontSize='sm' fontWeight='semibold'>
+                              Generation {rollout.generation} ·{' '}
+                              {rollout.verification_only
+                                ? 'Verification only'
+                                : 'Deployment'}
+                            </Text>
+                          </HStack>
+                          <HStack spacing={3} flexWrap='wrap'>
+                            <JobLink
+                              workspaceId={workspaceId}
+                              id={rollout.approval_job_id}
+                            />
+                            {canManage &&
+                            ['pending', 'deploying', 'paused'].includes(
+                              rollout.state
+                            ) ? (
+                              <Button
+                                size='sm'
+                                variant='outline'
+                                isDisabled={
+                                  busy ||
+                                  Boolean(state.error) ||
+                                  (rollout.state === 'paused' &&
+                                    (paused || pauseUnresolved))
+                                }
+                                onClick={() =>
+                                  confirm(
+                                    rollout.state === 'paused'
+                                      ? 'Resume rollout'
+                                      : 'Pause rollout',
+                                    'Resuming revalidates current revisions, generation, policy and maintenance authorization.',
+                                    () =>
+                                      run(
+                                        () =>
+                                          distributionApi.state(
+                                            workspaceId,
+                                            groupId,
+                                            rollout.id,
+                                            rollout.state === 'paused'
+                                              ? 'deploying'
+                                              : 'paused'
+                                          ),
+                                        'Rollout state updated.'
+                                      )
+                                  )
+                                }
+                              >
+                                {rollout.state === 'paused'
+                                  ? 'Resume'
+                                  : 'Pause'}
+                              </Button>
+                            ) : null}
+                          </HStack>
+                        </Stack>
+                      </Box>
+                    ))}
+                  </Stack>
+                )}
+                {data.approvals
+                  .filter(job => job.status === 'pending_approval')
+                  .map(job => (
+                    <Text key={job.id} fontSize='sm' mt={2}>
+                      Pending approval:{' '}
+                      <JobLink workspaceId={workspaceId} id={job.id}>
+                        Review exact intent in Jobs
+                      </JobLink>
+                    </Text>
+                  ))}
+              </DashboardPanel>
+            </Stack>
+          </TabPanel>
+          <TabPanel p={0}>
+            <Stack spacing={4}>
+              <DashboardPanel
+                id='distribution-incidents'
+                scrollMarginTop='80px'
+                borderRadius='md'
+              >
+                <DashboardPanelHeader
+                  title='Incidents and recovery'
+                  description='Showing up to 100 recent incidents. Fresh consumer evidence must prove the relevant condition cleared.'
+                />
+                {!data.incidents.length ? (
+                  <Text fontSize='sm'>No incidents in the recent history.</Text>
+                ) : (
+                  <>
+                    <TableContainer {...tableStyles.tableContainerProps}>
+                      <Table
+                        {...tableStyles.tableProps}
+                        aria-label='Incidents and recovery'
+                      >
+                        <Thead {...tableStyles.theadProps}>
+                          <Tr>
+                            <Th>Incident</Th>
+                            <Th>Destination and evidence</Th>
+                            <Th>Activity</Th>
+                            <Th>Actions</Th>
+                          </Tr>
+                        </Thead>
+                        <Tbody {...tableStyles.tbodyProps}>
+                          {data.incidents
+                            .slice(
+                              incidentOffset,
+                              incidentOffset + incidentPage.limit
+                            )
+                            .map(incident => {
+                              const bindingId =
+                                incident.binding_id ||
+                                incident.evidence?.bindingId;
+                              const consumer = data.consumers.find(
+                                item => item.binding_id === bindingId
+                              );
+                              const agentId = incident.evidence?.agentId;
+                              const consumerParams = new URLSearchParams(
+                                location.search
+                              );
+                              consumerParams.set('workspace', workspaceId);
+                              consumerParams.set('group', groupId);
+                              return (
+                                <Tr key={incident.id} {...tableStyles.rowProps}>
+                                  <Td
+                                    {...tableStyles.primaryCellProps}
+                                    whiteSpace='normal'
+                                    verticalAlign='top'
+                                  >
+                                    <Text
+                                      fontSize='sm'
+                                      fontWeight='medium'
+                                      overflowWrap='anywhere'
+                                    >
+                                      {label(incident.code)}
+                                    </Text>
+                                    <CertOpsBadge
+                                      mt={1}
+                                      colorScheme={
+                                        incident.resolved_at
+                                          ? 'green'
+                                          : 'orange'
+                                      }
+                                    >
+                                      {incident.resolved_at
+                                        ? 'Resolved'
+                                        : 'Open'}
+                                    </CertOpsBadge>
+                                    {incident.severity ? (
+                                      <Text fontSize='xs' color={muted} mt={1}>
+                                        Severity: {label(incident.severity)}
+                                      </Text>
+                                    ) : null}
+                                  </Td>
+                                  <Td
+                                    {...tableStyles.cellProps}
+                                    whiteSpace='normal'
+                                    overflowWrap='anywhere'
+                                    verticalAlign='top'
+                                  >
+                                    <CertOpsMobileFieldLabel color={muted}>
+                                      Destination and evidence
+                                    </CertOpsMobileFieldLabel>
+                                    {consumer ? (
+                                      <Text fontSize='sm'>
+                                        Current profile:{' '}
+                                        {consumer.deployment_profile_ref}
+                                      </Text>
+                                    ) : null}
+                                    <Box color={muted} fontSize='xs'>
+                                      {bindingId ? (
+                                        <Text>Binding: {bindingId}</Text>
+                                      ) : null}
+                                      {agentId ? (
+                                        <Text>Agent: {agentId}</Text>
+                                      ) : null}
+                                      {incident.evidence?.desiredVersionId ? (
+                                        <Text>
+                                          Desired version:{' '}
+                                          {incident.evidence.desiredVersionId}
+                                        </Text>
+                                      ) : null}
+                                      {incident.evidence?.observedVersionId ? (
+                                        <Text>
+                                          Observed version:{' '}
+                                          {incident.evidence.observedVersionId}
+                                        </Text>
+                                      ) : null}
+                                      {incident.evidence?.rolloutId ? (
+                                        <Text>
+                                          Rollout: {incident.evidence.rolloutId}
+                                        </Text>
+                                      ) : null}
+                                      {!bindingId &&
+                                      !agentId &&
+                                      !consumer &&
+                                      !incident.evidence?.desiredVersionId &&
+                                      !incident.evidence?.observedVersionId &&
+                                      !incident.evidence?.rolloutId ? (
+                                        <Text>--</Text>
+                                      ) : null}
+                                    </Box>
+                                  </Td>
+                                  <Td
+                                    {...tableStyles.cellProps}
+                                    whiteSpace='normal'
+                                    verticalAlign='top'
+                                  >
+                                    <CertOpsMobileFieldLabel color={muted}>
+                                      Activity
+                                    </CertOpsMobileFieldLabel>
+                                    <Box color={muted} fontSize='xs'>
+                                      <Text>
+                                        Opened{' '}
+                                        {formatDateTime(incident.opened_at)}
+                                      </Text>
+                                      <Text>
+                                        Updated{' '}
+                                        {formatDateTime(incident.updated_at)}
+                                      </Text>
+                                    </Box>
+                                  </Td>
+                                  <Td
+                                    {...tableStyles.actionCellProps}
+                                    whiteSpace='normal'
+                                    verticalAlign='top'
+                                  >
+                                    <CertOpsMobileFieldLabel color={muted}>
+                                      Actions
+                                    </CertOpsMobileFieldLabel>
+                                    {consumer || incident.evidence?.jobId ? (
+                                      <RowActions
+                                        name={`Actions for incident ${label(incident.code)} ${incident.id}`}
+                                      >
+                                        {consumer ? (
+                                          <MenuItem
+                                            as={RouterLink}
+                                            to={{
+                                              pathname: location.pathname,
+                                              search: `?${consumerParams}`,
+                                              hash: '#distribution-consumers',
+                                            }}
+                                          >
+                                            View consumer
+                                          </MenuItem>
+                                        ) : null}
+                                        {incident.evidence?.jobId ? (
+                                          <MenuItem
+                                            as={RouterLink}
+                                            to={jobsLink(
+                                              workspaceId,
+                                              incident.evidence.jobId
+                                            )}
+                                          >
+                                            View affected job
+                                          </MenuItem>
+                                        ) : null}
+                                      </RowActions>
+                                    ) : (
+                                      <Text fontSize='xs' color={muted}>
+                                        --
+                                      </Text>
+                                    )}
+                                  </Td>
+                                </Tr>
+                              );
+                            })}
+                        </Tbody>
+                      </Table>
+                    </TableContainer>
+                    <Box mt={3}>
+                      <DashboardPagination
+                        limit={incidentPage.limit}
+                        offset={incidentOffset}
+                        total={data.incidents.length}
+                        pageSizeOptions={distributionPageSizes}
+                        noun='incidents'
+                        onChange={setIncidentPage}
+                      />
+                    </Box>
+                  </>
+                )}
+              </DashboardPanel>
+              <DashboardPanel
+                id='distribution-discovery'
+                tabIndex={-1}
+                scrollMarginTop='80px'
+                borderRadius='md'
+              >
+                <DashboardPanelHeader
+                  title='Discovery coverage'
+                  description='Observed relationships may not include every service using the certificate.'
+                />
+                <Text mb={3} fontSize='sm' color={dashboard.text.secondary}>
+                  All entries are read-only configuration observations; served
+                  certificates are unverified. Showing up to 1,000 recent
+                  observations.
+                </Text>
+                {!data.discoveries.length ? (
+                  <Box>
+                    <Text fontWeight='semibold' fontSize='sm'>
+                      No service relationships observed
+                    </Text>
+                    <Text mt={1} fontSize='sm' color={dashboard.text.secondary}>
+                      Configured consumers remain available in Destinations;
+                      unknown coverage is not healthy coverage.
+                    </Text>
+                  </Box>
+                ) : (
+                  <>
+                    <TableContainer {...tableStyles.tableContainerProps}>
+                      <Table
+                        {...tableStyles.tableProps}
+                        aria-label='Discovery coverage'
+                      >
+                        <Thead {...tableStyles.theadProps}>
+                          <Tr>
+                            <Th>Service</Th>
+                            <Th>Source</Th>
+                            <Th>Confidence</Th>
+                            <Th>Last observed</Th>
+                          </Tr>
+                        </Thead>
+                        <Tbody {...tableStyles.tbodyProps}>
+                          {data.discoveries
+                            .slice(
+                              discoveryOffset,
+                              discoveryOffset + discoveryPage.limit
+                            )
+                            .map(service => (
+                              <Tr key={service.id} {...tableStyles.rowProps}>
+                                <Td
+                                  {...tableStyles.primaryCellProps}
+                                  whiteSpace='normal'
+                                  overflowWrap='anywhere'
+                                >
+                                  <Text fontSize='sm' fontWeight='medium'>
+                                    {service.service_identity}
+                                  </Text>
+                                </Td>
+                                <Td
+                                  {...tableStyles.cellProps}
+                                  whiteSpace='normal'
+                                >
+                                  <CertOpsMobileFieldLabel color={muted}>
+                                    Source
+                                  </CertOpsMobileFieldLabel>
+                                  <Text fontSize='xs' color={muted}>
+                                    {label(service.source_kind)}
+                                  </Text>
+                                </Td>
+                                <Td {...tableStyles.cellProps}>
+                                  <CertOpsMobileFieldLabel color={muted}>
+                                    Confidence
+                                  </CertOpsMobileFieldLabel>
+                                  <CertOpsBadge
+                                    colorScheme={
+                                      service.confidence === 'stale'
+                                        ? 'orange'
+                                        : 'gray'
+                                    }
+                                  >
+                                    {label(service.confidence)}
+                                  </CertOpsBadge>
+                                </Td>
+                                <Td
+                                  {...tableStyles.cellProps}
+                                  whiteSpace='normal'
+                                >
+                                  <CertOpsMobileFieldLabel color={muted}>
+                                    Last observed
+                                  </CertOpsMobileFieldLabel>
+                                  <Text fontSize='xs' color={muted}>
+                                    {formatDateTime(service.last_observed_at)}
+                                  </Text>
+                                </Td>
+                              </Tr>
+                            ))}
+                        </Tbody>
+                      </Table>
+                    </TableContainer>
+                    <Box mt={3}>
+                      <DashboardPagination
+                        limit={discoveryPage.limit}
+                        offset={discoveryOffset}
+                        total={data.discoveries.length}
+                        pageSizeOptions={distributionPageSizes}
+                        noun='discovered services'
+                        onChange={setDiscoveryPage}
+                      />
+                    </Box>
+                  </>
+                )}
+              </DashboardPanel>
+            </Stack>
+          </TabPanel>
+          <TabPanel p={0}>
+            <Stack spacing={4}>
+              <DashboardPanel
+                id='distribution-policy'
+                scrollMarginTop='80px'
+                borderRadius='md'
+              >
+                <DashboardPanelHeader
+                  title='Automation, verification and alert policy'
+                  description={`Policy revision ${data.policy?.revision || 0}. Authority: ${label(data.authorization?.state || currentPolicy?.mode || 'manual')}. Recurring verification: ${verificationEnabled === true ? 'enabled' : verificationEnabled === false ? 'disabled' : 'unknown'}.`}
+                  action={
+                    canManage ? (
+                      <DashboardActionButton
+                        variant='outline'
+                        aria-expanded={policyOpen}
+                        aria-controls='distribution-policy-settings'
+                        onClick={() => setPolicyOpen(open => !open)}
+                      >
+                        {policyOpen
+                          ? 'Hide policy settings'
+                          : 'Edit policy settings'}
+                      </DashboardActionButton>
+                    ) : null
+                  }
+                />
+                <Text fontSize='sm' color={dashboard.text.secondary} mb={3}>
+                  Incident notifications:{' '}
+                  {alertsEnabled === true
+                    ? 'enabled'
+                    : alertsEnabled === false
+                      ? 'disabled'
+                      : 'unknown'}{' '}
+                  · Cleanup policy:{' '}
+                  {cleanupPolicy
+                    ? cleanupPolicy.reportOnly
+                      ? 'report-only'
+                      : cleanupPolicy.cleanupEnabled
+                        ? 'approval requests enabled'
+                        : 'disabled'
+                    : 'unknown'}{' '}
+                  · Last verification outcome:{' '}
+                  {label(data.schedule?.last_outcome || 'not reported')}.
+                </Text>
+                {data.policy?.approval_job_id ? (
+                  <Text mb={3}>
+                    Standing authorization:{' '}
+                    <JobLink
+                      workspaceId={workspaceId}
+                      id={data.policy.approval_job_id}
+                    >
+                      Review policy approval in Jobs
+                    </JobLink>
+                  </Text>
+                ) : null}
+                {canManage ? (
+                  <Box
+                    id='distribution-policy-settings'
+                    pt={2}
+                    hidden={!policyOpen}
+                  >
+                    <PolicyForm
+                      key={`${groupId}/${data.policy?.revision || 0}`}
+                      data={data}
+                      disabled={disabled}
+                      onSave={(policy, revision) =>
+                        run(
+                          () =>
+                            distributionApi.policy(
+                              workspaceId,
+                              groupId,
+                              policy,
+                              revision
+                            ),
+                          'Distribution policy saved. Review any pending policy approval in Jobs.'
+                        )
+                      }
+                    />
+                  </Box>
+                ) : (
+                  <Text>
+                    Mode: {label(data.policy?.policy.mode || 'manual')}. A
+                    workspace manager can configure automation and maintenance.
+                  </Text>
+                )}
+              </DashboardPanel>
+              <DashboardPanel
+                id='distribution-retention'
+                tabIndex={-1}
+                scrollMarginTop='80px'
+                borderRadius='md'
+              >
+                <DashboardPanelHeader
+                  title='Retention and cleanup preview'
+                  description='Referenced material, pending approvals, paused rollouts and uncertain operations remain protected.'
+                />
+                <DashboardActionButton
+                  variant='outline'
+                  isDisabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      setRetention(null);
+                      setRetention(
+                        await distributionApi.retention(workspaceId, groupId)
+                      );
+                    }, 'Retention preview loaded. No material was deleted.')
+                  }
+                >
+                  Preview retained versions
+                </DashboardActionButton>
+                {retention ? (
+                  <Stack mt={3} spacing={2}>
+                    <Text fontSize='sm'>
+                      {retention.cleanupAvailable
+                        ? 'Exact-version soft deletion requires an independent Jobs approval.'
+                        : `Cleanup unavailable or report-only. ${label(retention.diagnosticCode || 'customer agent qualification required')}`}
+                    </Text>
+                    {retention.versions.map(value => (
+                      <Box
+                        as='article'
+                        aria-label={`Material version ${value.id}`}
+                        key={value.id}
+                        borderWidth='1px'
+                        borderRadius='md'
+                        p={3}
+                      >
+                        <Text fontSize='sm' fontWeight='semibold'>
+                          Material version {value.id}
+                        </Text>
+                        {value.provider_version != null ? (
+                          <Text fontSize='xs'>
+                            Store version {value.provider_version}
+                          </Text>
+                        ) : null}
+                        <Text fontSize='sm'>
+                          {value.retainedReasons.length
+                            ? value.retainedReasons.map(label).join(', ')
+                            : 'Metadata eligible; cleanup authorization and provider qualification still required'}
+                        </Text>
+                        {value.cleanup_state ? (
+                          <Text fontSize='sm'>
+                            Cleanup: {label(value.cleanup_state)}
+                            {value.cleanup_job_status
+                              ? ` · ${label(value.cleanup_job_status)}`
+                              : ''}
+                          </Text>
+                        ) : null}
+                        {value.cleanup_job_id ? (
+                          <JobLink
+                            workspaceId={workspaceId}
+                            id={value.cleanup_job_id}
+                          >
+                            View cleanup job and approval
+                          </JobLink>
+                        ) : null}
+                        {canAdmin &&
+                        retention.cleanupAvailable &&
+                        (value.metadataEligible ||
+                          value.cleanup_state === 'planned' ||
+                          value.cleanup_state === 'fenced') ? (
+                          <Button
+                            size='sm'
+                            ml={2}
+                            isDisabled={
+                              disabled ||
+                              ['claimed', 'running'].includes(
+                                value.cleanup_job_status
+                              )
+                            }
+                            onClick={() =>
+                              confirm(
+                                'Request cleanup approval',
+                                `Request independent approval to soft delete only material version ${value.id} in the customer-controlled Vault. Protected versions cannot be deleted. A permanent fence prevents later rollout reuse once execution is authorized.`,
+                                () =>
+                                  run(
+                                    async () => {
+                                      const result =
+                                        await distributionApi.cleanup(
+                                          workspaceId,
+                                          groupId,
+                                          {
+                                            materialVersionId: value.id,
+                                            expectedRevision:
+                                              data.policy.revision,
+                                            reauthorize: Boolean(
+                                              value.cleanup_id
+                                            ),
+                                          }
+                                        );
+                                      setRetention(null);
+                                      return result;
+                                    },
+                                    result =>
+                                      result.requiresReauthorization
+                                        ? 'Authority changed. Refresh and request a new exact-version review.'
+                                        : result.status === 'pending_approval'
+                                          ? 'Cleanup approval requested in Jobs. Nothing has been deleted.'
+                                          : 'Cleanup request already exists. Inspect the original job evidence.'
+                                  )
+                              )
+                            }
+                          >
+                            {value.cleanup_id
+                              ? 'Request fresh cleanup review'
+                              : 'Request cleanup approval'}
+                          </Button>
+                        ) : null}
+                      </Box>
+                    ))}
+                  </Stack>
+                ) : null}
+              </DashboardPanel>
+            </Stack>
+          </TabPanel>
+        </TabPanels>
+      </Tabs>
+      <AlertDialog
+        isOpen={Boolean(confirmation)}
+        leastDestructiveRef={cancelRef}
+        onClose={() => setConfirmation(null)}
+      >
+        <AlertDialogOverlay />
+        <AlertDialogContent>
+          <AlertDialogHeader>{confirmation?.title}</AlertDialogHeader>
+          <AlertDialogBody>{confirmation?.description}</AlertDialogBody>
+          <AlertDialogFooter>
+            <Button ref={cancelRef} onClick={() => setConfirmation(null)}>
+              Cancel
+            </Button>
+            <Button
+              ml={3}
+              colorScheme='blue'
+              onClick={() => {
+                const { action } = confirmation;
+                setConfirmation(null);
+                action();
+              }}
+            >
+              Confirm
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Stack>
+  );
+}
+
+export default function CertOpsDistribution() {
+  const { workspaceId } = useWorkspace(),
+    canManage = useCertOpsCanManage(),
+    canAdmin = useCertOpsIsWorkspaceAdmin(),
+    { certOpsPaused, killSwitchResolved } = useOutletContext() || {};
+  const [params] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const read = useCallback(
+    signal => distributionApi.groups(workspaceId, signal),
+    [workspaceId]
+  );
+  const state = useDistributionRead(
+    workspaceId ? `distribution-groups/${workspaceId}` : null,
+    read
+  );
+  const groups = state.data?.groups || [],
+    groupId = groups.some(group => group.id === params.get('group'))
+      ? params.get('group')
+      : groups[0]?.id;
+  return (
+    <Stack spacing={4}>
+      <DashboardPanel>
+        <DashboardPanelHeader
+          title='Distribution Management'
+          description='Manage certificate destinations, rollouts and verification.'
+          mb={3}
+          action={
+            <DashboardActionButton
+              as={RouterLink}
+              to={onboardingPath({
+                workspaceId,
+                area: 'certops',
+                goal: 'certops_vault',
+              })}
+              variant='outline'
+              size='sm'
+            >
+              Open first-distribution setup guide
+            </DashboardActionButton>
+          }
+        />
+        <Stack
+          direction={{ base: 'column', md: 'row' }}
+          spacing={3}
+          align={{ base: 'stretch', md: 'end' }}
+        >
+          {groups.length ? (
+            <Box w={{ base: '100%', md: '420px' }} maxW='100%'>
+              <Field name='Distribution source'>
+                <Select
+                  aria-label='Distribution source'
+                  value={groupId}
+                  onChange={event => {
+                    const next = new URLSearchParams(params);
+                    next.set('group', event.target.value);
+                    navigate({
+                      pathname: location.pathname,
+                      search: `?${next}`,
+                      hash: location.hash,
+                    });
+                  }}
+                >
+                  {groups.map(group => (
+                    <option key={group.id} value={group.id}>
+                      {group.material_store_ref} · {group.id} ({group.state})
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </Box>
+          ) : null}
+          <Text fontSize='sm' flex='1' pb={{ base: 0, md: 1 }}>
+            Shared private keys require explicit opt-in. Store credentials
+            remain on customer agents; enter only store and deployment profile
+            aliases here.
+          </Text>
+        </Stack>
+      </DashboardPanel>
+      {state.loading ? (
+        <DashboardState type='loading' title='Loading distribution sources' />
+      ) : state.error ? (
+        <DashboardState
+          type='error'
+          title='Distribution sources unavailable'
+          action={<Button onClick={state.refresh}>Retry</Button>}
+        />
+      ) : !groups.length ? (
+        <DashboardState
+          title='No distribution sources configured'
+          description='Complete the first-distribution setup guide to publish into a customer-controlled store.'
+        />
+      ) : (
+        <Management
+          key={`${workspaceId}/${groupId}`}
+          workspaceId={workspaceId}
+          groupId={groupId}
+          canManage={canManage}
+          canAdmin={canAdmin}
+          paused={Boolean(certOpsPaused)}
+          pauseUnresolved={killSwitchResolved === false}
+        />
+      )}
+    </Stack>
+  );
+}

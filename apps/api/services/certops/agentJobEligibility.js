@@ -63,6 +63,7 @@ function hasFreshCapability({
 }
 
 function resolveAgentJobRoutingRequirements({
+  operation = null,
   executorKind = "agent",
   assignedAgentId = null,
   requiredTargetSelector = null,
@@ -79,7 +80,7 @@ function resolveAgentJobRoutingRequirements({
     requiredTargetSelector:
       requiredTargetSelector ??
       body.targetSelector ??
-      (body.target && typeof body.target === "object"
+      (operation !== "cleanup-from-store" && body.target && typeof body.target === "object"
         ? body.target.reference
         : null) ??
       null,
@@ -143,6 +144,23 @@ function evaluateAgentJobEligibility({
     ? [materialProviderCapability, "certificate-publication-v1", EVIDENCE_CLAIM_BINDING_CAPABILITY]
     : job.operation === "deploy-from-store" ? [materialProviderCapability, "deploy-from-store-v1", EVIDENCE_CLAIM_BINDING_CAPABILITY,
       ...(agent.platform === "win32" ? ["windows-material-iis-v1", "windows-cert-store-v1", "iis-binding-v1"] : [])] : [];
+  if(job.operation==="cleanup-from-store") {
+    const cleanupProvider=providerOf(job.payload?.materialCleanup);
+    materialCapabilities.push(providerCapability(cleanupProvider),
+      require("../../../../packages/contracts/certops/material-cleanup.cjs").cleanupCapability(cleanupProvider) || "material-cleanup-unsupported",EVIDENCE_CLAIM_BINDING_CAPABILITY);
+  }
+  if(job.operation==="reconcile-from-store") {
+    const intent=job.payload?.materialReconciliation?.intent;
+    if(!intent)return result(false,"material_reconciliation_scope_missing");
+    if(!["linux","win32"].includes(agent.platform))return result(false,"material_capability_unavailable");
+    materialCapabilities.push(providerCapability(providerOf(intent)),"deploy-from-store-v1",EVIDENCE_CLAIM_BINDING_CAPABILITY,
+      ...(agent.platform==="win32"?["windows-material-iis-v1","windows-cert-store-v1","iis-binding-v1"]:[]));
+    if(intent.activationPolicy)materialCapabilities.push("maintenance-calendar-v1");
+    if(intent.activationPolicy?.independentStaging===true || intent.preparationOnly===true)materialCapabilities.push("material-consumer-staging-v1");
+  }
+  if(job.payload?.materialDeployment?.activationPolicy)materialCapabilities.push("maintenance-calendar-v1");
+  if(job.payload?.materialDeployment?.activationPolicy?.independentStaging === true || job.payload?.materialDeployment?.preparationOnly === true)
+    materialCapabilities.push("material-consumer-staging-v1");
   if (materialCapabilities.length && (!routing.assignedAgentId || materialCapabilities.some((capability) =>
     !hasFreshCapability({ declaredCapabilities: agent.declaredCapabilities, capabilitiesUpdatedAt: agent.capabilitiesUpdatedAt, capability, env, now })))) {
     return result(false, "material_capability_unavailable");

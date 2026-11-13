@@ -40,6 +40,7 @@ import JobStatusBadge from './JobStatusBadge.jsx';
 import { useCertOpsJobTimeline } from './useCertOpsJobs.js';
 import AgentShellConsole from './AgentShellConsole.jsx';
 import { JobDetailsButton, JobExecutionSummary } from './JobDetailsButton.jsx';
+import JobApprovalScope from './JobApprovalScope.jsx';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
 import { indexAgentsByAnyId } from './certopsAgentLabel.js';
@@ -475,6 +476,7 @@ export default function EvidenceTimeline({
       ) : null}
 
       <JobExecutionSummary job={job} agentsById={agentsById} />
+      <JobApprovalScope job={job} />
 
       <Divider borderColor={border} opacity={0.85} />
       {timelineBody}

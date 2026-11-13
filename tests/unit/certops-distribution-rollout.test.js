@@ -32,6 +32,7 @@ test("rollout completion requires current authorization even for previously veri
       current_revision: 1,
       authorization_revision: 1,
       job_status: "succeeded",
+      observed_at:new Date(),observed_valid_to:new Date(Date.now()+86400000),freshness_seconds:3600,
       ...change,
     };
     const client = {
@@ -40,6 +41,8 @@ test("rollout completion requires current authorization even for previously veri
           return { rows: [{ id: "workspace", certops_paused: false }] };
         if (sql.includes("FROM system_settings"))
           return { rows: [{ certops_settings: { enabled: true } }] };
+        if (sql.includes("FROM certops_distribution_automations"))
+          return { rows: [] };
         if (sql.includes("SELECT r.*"))
           return {
             rows: [

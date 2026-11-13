@@ -59,6 +59,20 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe('Configure material store', () => {
+  it('shows missing agent capabilities in a warning panel', () => {
+    const ctx = materialContext('openbao-kv2');
+    ctx.summary.certops.agents.items.find(
+      agent => agent.id === ISSUER
+    ).declaredCapabilities = [];
+    show(ctx);
+    expect(screen.getByText('Agent requirements not met')).toBeVisible();
+    expect(
+      screen.getByText('Missing capability: material-store-openbao-kv2-v1')
+    ).toBeVisible();
+    expect(
+      screen.getByText('Missing capability: evidence-claim-binding-v1')
+    ).toBeVisible();
+  });
   it('keeps an unfinished publication visible after reopening the guide', async () => {
     const ctx = materialContext();
     ctx.session.progress.certops.vaultPublishJobId = 'publication-a';

@@ -227,8 +227,8 @@ matrix may work but are not covered by CI or release sign-off.
 | Node.js | `>= 22.0.0, < 25.0.0` | Even-numbered Active LTS lines only (22, 24); odd/Current releases are not release-tested. |
 | Certbot | `2.x` (tested against the latest `2.x` release at release time) | `--manual` + `--csr` mode only; snap and pip installs both exercised in CI. |
 | acme.sh | Latest tagged release at release time (pinned commit recorded in CI config) | Uses the shipped `dns_certops` dnsapi hook; requires acme.sh's own `dnsapi` loading support (stable across acme.sh releases). |
-| Operating system | Linux with systemd (Debian/Ubuntu LTS, RHEL/Rocky 9+) | The installer and hardened unit (`ProtectSystem=strict`) assume systemd; other init systems (e.g. Alpine/OpenRC) are not supported by `install-agent.sh` (confirmed: it fails at the `/etc/systemd/system` unit-install step, since that directory does not exist without systemd), though the agent binary itself runs fine on musl libc, and a manually-run, self-supervised process is a documented fallback for systemd-less hosts (see the self-hosted install runbook's systemd-less note). Real end-to-end verified on **Ubuntu 22.04, 24.04, and 26.04 LTS** and **AlmaLinux 9** (fresh WSL2 installs, full agent install -> issue -> auto-renew cycle against a real DNS-01 provider, `certbot` on Ubuntu and `acme.sh` on AlmaLinux). `install-agent.sh --dry-run` previews installer changes without applying them. The Linux installer has no dedicated CI dry-run job; the package smoke test covers its dependency-free tar-copy runtime, while service installation and host policy still require real-host verification. Other systemd-based Debian/Ubuntu LTS and RHEL/Rocky 9+ releases are expected to work (same systemd unit/`ReadWritePaths` model, and AlmaLinux 9's pass confirms the RHEL/Rocky family generally, not just Ubuntu) but are not independently verified. Ubuntu 22.04 is being phased out as a GitHub-hosted CI runner (deprecation announced 2026-09-17, unsupported from 2027-04-17). |
-| Operating system (Windows) | Windows Server, build >= 14393 (2016) or later | `install-agent.ps1` fails closed below build 14393, the first widely-deployed release with both WDAC and CNG non-exportable key custody generally available (see the [Windows build-number floor](windows-runtime.md)). Real end-to-end verified on **Windows Server 2025** (build 26100), **Windows Server 2022** (build 20348), and **Windows Server 2019**: full agent install, CNG-native issue with real IIS binding, unattended auto-renew, and the CNG/IIS/retention/discovery module-level real-host checks all produced identical results on all three, with no code path found to differ between them. Other Windows Server releases from build 14393 onward are expected to work the same way but are not independently verified; Windows 10/11 desktop SKUs are not verified as agent hosts at all. |
+| Operating system | Linux with systemd (Debian/Ubuntu LTS, RHEL/Rocky 9+) | `install-agent.sh` requires systemd; for other init systems use the documented self-supervised process. Use `install-agent.sh --dry-run` to preview changes. Ubuntu 22.04, 24.04 and 26.04 LTS and AlmaLinux 9 are verified; other distributions require independent verification. |
+| Operating system (Windows) | Windows Server, build >= 14393 (2016) or later | `install-agent.ps1` refuses older builds; see the [Windows build-number floor](windows-runtime.md). Server 2019, 2022 and 2025 are verified. Other eligible builds and Windows desktop editions require independent verification. |
 | DNS provider APIs | See `src/dns/providers/*.js`; each provider module documents the API version/date it was implemented against | Re-verified when a provider's upstream API has a breaking change. |
 | PostgreSQL (control plane) | `15+` | Several CertOps migrations use `ON DELETE SET NULL (column_list)` on composite foreign keys, native since PostgreSQL 15; `gen_random_uuid()` alone would only require 13+. The bundled local-dev compose (`deploy/compose/docker-compose.postgres.yml`) runs `postgres:17-alpine`. |
 
@@ -236,32 +236,19 @@ matrix may work but are not covered by CI or release sign-off.
 
 ### Wire-contract compatibility (upgrade ordering)
 
-For this release, use Core **0.18.0** with agent **0.18.0**. Upgrade the
-control plane first, confirm registration/heartbeats, then upgrade agents and
-verify a signed dry run. Check the fleet's compatibility result as well:
-deployment-configured protocol and version bounds can reject an otherwise
-matching package.
+Use matching supported control-plane and agent packages. Upgrade the control
+plane first, confirm agent registration and fresh heartbeats, then upgrade
+agents and verify a signed dry run. Check the deployment compatibility manifest
+and fleet compatibility result before dispatching real work.
 
-The table below explains historical contract transitions; its descriptions
-are not numeric minimum-version guarantees for mixed-version deployments.
-For an older deployment, use its target release notes and a matching package
-pair rather than inferring compatibility from an additive field.
-
-This stack changes the agent<->control-plane wire contract several times.
-Each change is additive and capability-gated, but the *order* you upgrade
-components in still matters:
-
-| Change | Minimum server version | Upgrade order | What happens if you get it backwards |
-| --- | --- | --- | --- |
-| `declaredCapabilities` on heartbeat (not just register) | the release that admits `declaredCapabilities` in `heartbeatBody` | Upgrade the server first. An older server's `heartbeatBody` schema is `additionalProperties: false` with no `declaredCapabilities`, so it rejects the field outright rather than ignoring it. | A heartbeat carrying capabilities fails schema validation against an un-upgraded server. |
-| Envelope v2 (`signed-payload-b64-v1`) | the release that ships dual-format dispatch | Either order; this is dispatch-time, not connection-time. An agent advertising the capability gets v2 once its capability declaration is fresh (`CERTOPS_CAPABILITY_FRESHNESS_MS`); every other agent gets v1. | None: an agent that never advertises the capability, or whose declaration goes stale, simply keeps getting v1. |
-| Required `agentId` in the signed payload | the release that starts emitting `agentId` unconditionally | Upgrade the server first, let it run until every agent you operate has re-registered or heartbeated at least once, *then* upgrade the agent (`CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID` now defaults to `true`, enforcing this automatically). If any agent still talks to a control plane that has not finished emitting `agentId`, set `CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID=false` on that agent first as a temporary rollback. | Upgrading the agent before the server emits `agentId` on every dispatch turns every not-yet-upgraded control plane's dispatch into a hard failure for that agent, unless the rollback override is set. |
-| `agent-id-binding-v1` capability (reference clients) | same release as required `agentId` above | Reference clients advertise this capability only once their local `agentId` enforcement is actually the effective behavior, not merely because the shipped code supports it. | A client advertising the capability while its own enforcement flag is still off would falsely promise a guarantee it is not enforcing. |
-| Downstream composition | The Core version supported by the deployment | Verify the deployment compatibility manifest before changing its Core pin. | Edition policy and contract tests may no longer describe the deployed Core runtime. |
-
+Agents require a matching signed agent ID by default. They reject jobs if the
+control plane does not send it; if rollback is necessary,
+CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID=false is a temporary agent-side override.
+Capability-gated dispatch requires a fresh declaration according to
+CERTOPS_CAPABILITY_FRESHNESS_MS.
 ## Upgrade and uninstall
 
-Upgrade the control plane before agents when the compatibility table requires it. Download and verify the new package, then re-run the platform installer using the same settings. The installer still asks for a bootstrap token on an upgrade: a registered agent keeps its credential and does not use it, so paste any value that starts with `ttboot_` (or set `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_unused`). Preserve config, credentials, signing pins, keys, and journals. Confirm a fresh heartbeat and compatibility before dispatching real work.
+Upgrade the control plane before agents. Download and verify the new package, then re-run the platform installer using the same settings. The installer still asks for a bootstrap token on an upgrade: a registered agent keeps its credential and does not use it, so paste any value that starts with `ttboot_` (or set `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_unused`). Preserve config, credentials, signing pins, keys, and journals. Confirm a fresh heartbeat and compatibility before dispatching real work.
 
 Retire the agent in the fleet panel after its jobs finish. `install-agent.sh --uninstall` or `install-agent.ps1 --uninstall` removes the service and app while preserving state. Review and back up custody and recovery state before any manual deletion.
 
