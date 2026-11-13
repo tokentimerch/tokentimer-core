@@ -4054,21 +4054,22 @@ router.patch(
   },
 );
 
-router.get(
-  "/api/v1/workspaces/:id/certops/certificates/:certId/observations",
-  getApiLimiter(),
-  requireCertOpsEnabled,
-  async (req, res) => {
+function createObservationHistoryHandler({ certificateReader = getManagedCertificate, evidenceReader = listCertificateEvidence } = {}) {
+  return async (req, res) => {
     if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
       return res.status(404).json({ error: "Certificate not found", code: "CERTOPS_CERTIFICATE_NOT_FOUND" });
     }
     try {
-      const certificate = await getManagedCertificate({ workspaceId: req.workspace.id, certId: req.params.certId });
+      const certificate = await certificateReader({ workspaceId: req.workspace.id, certId: req.params.certId });
       if (!certificate) return res.status(404).json({ error: "Certificate not found", code: "CERTOPS_CERTIFICATE_NOT_FOUND" });
       if (req.query.fingerprint && String(req.query.fingerprint).toLowerCase() !== String(certificate.fingerprintSha256 || "").toLowerCase()) {
         return res.status(409).json({ error: "Certificate changed. Reload its details.", code: "CERTOPS_CERTIFICATE_CHANGED" });
       }
-      const result = await listCertificateEvidence({
+      const includeTopology = req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager");
+      if (!includeTopology && (req.query.sortBy === "source" || req.query.sortBy === "location")) {
+        return res.status(403).json({ error: "Insufficient permissions for observation sort", code: "FORBIDDEN" });
+      }
+      const result = await evidenceReader({
         workspaceId: req.workspace.id,
         subjectType: "managed_certificate",
         subjectId: req.params.certId,
@@ -4077,8 +4078,9 @@ router.get(
         expectedFingerprint: certificate.fingerprintSha256,
         limit: req.query.limit,
         offset: req.query.offset,
+        sortBy: req.query.sortBy,
+        sortDirection: req.query.sortDirection,
       });
-      const includeTopology = req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager");
       return res.json({ items: result.items.map((item) => observationHistoryItem(item, includeTopology)), pagination: result.pagination });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
@@ -4086,7 +4088,14 @@ router.get(
       logger.error("CertOps certificate observations list failed", { code: err.code || null, workspaceId: req.workspace?.id });
       return res.status(500).json({ error: "Failed to list certificate observations", code: "INTERNAL_ERROR" });
     }
-  },
+  };
+}
+
+router.get(
+  "/api/v1/workspaces/:id/certops/certificates/:certId/observations",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  createObservationHistoryHandler(),
 );
 
 router.get(
@@ -4552,6 +4561,7 @@ router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollout
 
 module.exports = router;
 module.exports._test = {
+  createObservationHistoryHandler,
   createManualCertificateJobHandler,
   createAgentJobLogReadHandler,
   bulkRenewCertificatesHandler,

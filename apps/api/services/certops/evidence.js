@@ -495,6 +495,19 @@ async function listCertificateEvidence(options) {
   const offset = normalizeOffset(options.offset);
   const params = [workspaceId];
   const conditions = ["workspace_id = $1"];
+  const sortExpressions = {
+    source: ["lower(coalesce(nullif(metadata->>'agentId', ''), nullif(metadata->>'source', ''), 'Unavailable'))"],
+    observedAt: ["coalesce(observed_at, created_at)"],
+    location: ["lower(coalesce(nullif(metadata->>'targetHost', ''), ''))", "lower(coalesce(nullif(metadata->>'locationSlot', ''), nullif(metadata->>'filePath', ''), ''))"],
+  };
+  let orderBy = "created_at DESC, id ASC";
+  if (options.sortBy !== undefined || options.sortDirection !== undefined) {
+    if (typeof options.sortBy !== "string" || !Object.hasOwn(sortExpressions, options.sortBy) || !["asc", "desc"].includes(options.sortDirection)) {
+      throw serviceError("observation sort is invalid", CERTOPS_EVIDENCE_INVALID);
+    }
+    const direction = options.sortDirection === "asc" ? "ASC" : "DESC";
+    orderBy = `${sortExpressions[options.sortBy].map((expression) => `${expression} ${direction}`).join(", ")}, id ASC`;
+  }
 
   if (options.jobId !== undefined && options.jobId !== null && options.jobId !== "") {
     const jobId = normalizeRequiredId(options.jobId, CERTOPS_JOB_INVALID);
@@ -542,7 +555,7 @@ async function listCertificateEvidence(options) {
     `SELECT ${SAFE_EVIDENCE_SELECT_FIELDS}
        FROM certificate_evidence
       WHERE ${conditions.join(" AND ")}
-      ORDER BY created_at DESC, id ASC
+      ORDER BY ${orderBy}
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );

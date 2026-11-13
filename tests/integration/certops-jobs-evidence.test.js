@@ -139,6 +139,39 @@ describe("CertOps jobs and evidence persistence", function () {
     await TestUtils.execQuery(JOBS_EVIDENCE_MIGRATION.sql);
   });
 
+  it("sorts observation history before pagination with stable ties", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair("observation-sort");
+    try {
+      const rows = [
+        { source: "zebra", targetHost: "host-b", locationSlot: "two", observed: "2026-01-02T00:00:00Z" },
+        { agentId: "Alpha", targetHost: "host-a", filePath: "one", observed: "2026-01-01T00:00:00Z" },
+        { agentId: "alpha", targetHost: "host-a", locationSlot: "one", observed: "2026-01-01T00:00:00Z" },
+      ];
+      const ids = [];
+      for (const row of rows) {
+        const result = await TestUtils.execQuery(
+          `INSERT INTO certificate_evidence (workspace_id, evidence_type, subject_type, subject_id, metadata, observed_at)
+           VALUES ($1, 'certificate.observed', 'managed_certificate', 'sort-test', $2::jsonb, $3) RETURNING id`,
+          [workspaceA, JSON.stringify(row), row.observed],
+        );
+        ids.push(result.rows[0].id);
+      }
+      const ties = ids.slice(1).sort();
+      for (const sortBy of ["source", "observedAt", "location"]) {
+        for (const [sortDirection, expected] of [["asc", [...ties, ids[0]]], ["desc", [ids[0], ...ties]]]) {
+          const actual = [];
+          for (let offset = 0; offset < 3; offset += 1) {
+            const page = await listCertificateEvidence({ workspaceId: workspaceA, subjectId: "sort-test", observationsOnly: true, sortBy, sortDirection, limit: 1, offset });
+            actual.push(...page.items.map((item) => item.id));
+          }
+          expect(actual).to.deep.equal(expected);
+        }
+      }
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("creates the job, log, and evidence tables with safe columns and indexes", async () => {
     const tables = await TestUtils.execQuery(
       `SELECT table_name

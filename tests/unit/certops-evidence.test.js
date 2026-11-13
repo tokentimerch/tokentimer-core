@@ -630,6 +630,21 @@ describe("CertOps evidence service", () => {
     assert.equal(client.queryLog.length, 0);
   });
 
+  it("validates observation sort parameters before querying", async () => {
+    for (const sort of [
+      { sortBy: "source" }, { sortDirection: "asc" },
+      { sortBy: ["source"], sortDirection: "asc" },
+      { sortBy: "source", sortDirection: ["asc"] },
+      { sortBy: "source; DROP TABLE certificate_evidence", sortDirection: "asc" },
+      { sortBy: "observedAt", sortDirection: "ASC" },
+    ]) {
+      const client = createMemoryClient();
+      await assert.rejects(() => listCertificateEvidence({ client, workspaceId: WORKSPACE_A, ...sort }),
+        (error) => error?.code === "CERTOPS_EVIDENCE_INVALID");
+      assert.equal(client.queryLog.length, 0);
+    }
+  });
+
   it("does not return private-key-looking fields", async () => {
     const client = createMemoryClient();
     const job = await createJob(client);
