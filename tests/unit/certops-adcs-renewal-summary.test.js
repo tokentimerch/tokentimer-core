@@ -109,6 +109,8 @@ describe("AD CS inventory renewal summary", () => {
           calls += 1;
           assert.match(sql, /cp\.issuer_id AS profile_issuer_id/);
           assert.match(sql, /ci\.kind AS profile_issuer_kind/);
+          assert.match(sql, /period\.automation_enabled = TRUE/);
+          assert.match(sql, /AS management_automation_enabled/);
           if (calls === 1) throw new Error("schedule enrichment unavailable");
           return { rows: [certificateRow()] };
         },

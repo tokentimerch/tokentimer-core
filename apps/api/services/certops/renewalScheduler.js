@@ -938,7 +938,14 @@ async function loadCertificateRenewalRows({
             cp.public_metadata AS profile_public_metadata,
             cp.renew_before_days AS profile_renew_before_days,
             cp.issuer_id AS profile_issuer_id,
-            ci.kind AS profile_issuer_kind`;
+            ci.kind AS profile_issuer_kind,
+            EXISTS (
+              SELECT 1 FROM certops_management_periods period
+               WHERE period.workspace_id = mc.workspace_id
+                 AND period.managed_certificate_id = mc.id
+                 AND period.ended_at IS NULL
+                 AND period.automation_enabled = TRUE
+            ) AS management_automation_enabled`;
   const scheduleColumns = `,
             ${leadTime} AS effective_renew_before_days,
             mc.not_after

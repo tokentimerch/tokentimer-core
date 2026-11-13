@@ -835,6 +835,12 @@ describe("CertOps upcoming renewals coverage", () => {
     assert.equal(item.blockedReason, "auto_renew_disabled");
   });
 
+  it("reports a tracking-only management period as switched off", async () => {
+    const { item } = await listOne({ management_automation_enabled: false });
+    assert.equal(item.autoRenewEnabled, false);
+    assert.equal(item.blockedReason, "auto_renew_disabled");
+  });
+
   it("reports a certificate with no expiry rather than implying a schedule", async () => {
     const { item } = await listOne({ not_after: null, renews_from: null });
 

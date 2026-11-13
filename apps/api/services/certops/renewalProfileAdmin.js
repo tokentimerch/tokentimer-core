@@ -951,6 +951,9 @@ const RENEWAL_BLOCKED_NOT_AGENT_DEPLOYABLE = "not_agent_deployable";
  * false all-clear this view exists to prevent, one layer further in.
  */
 function classifyRenewalBlock(row) {
+  if (row.management_automation_enabled === false && row.profile_id) {
+    return RENEWAL_BLOCKED_AUTO_RENEW_DISABLED;
+  }
   if (
     AUTO_RENEW_DISABLED_PROFILE_STATUSES.includes(
       String(row.profile_status || "").toLowerCase(),
@@ -1111,7 +1114,14 @@ async function listUpcomingRenewals({
               ''
             ) AS profile_ca_endpoint,
             cp.issuer_id AS profile_issuer_id,
-            ci.kind AS profile_issuer_kind
+            ci.kind AS profile_issuer_kind,
+            EXISTS (
+              SELECT 1 FROM certops_management_periods period
+               WHERE period.workspace_id = mc.workspace_id
+                 AND period.managed_certificate_id = mc.id
+                 AND period.ended_at IS NULL
+                 AND period.automation_enabled = TRUE
+            ) AS management_automation_enabled
        FROM managed_certificates mc
        LEFT JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id

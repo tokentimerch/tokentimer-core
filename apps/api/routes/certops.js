@@ -3262,9 +3262,9 @@ function renewalWindowStart(notAfter, renewBeforeDays) {
  * is when the sweep starts picking the certificate up (not_after minus the effective lead
  * time), not a promise of the exact renewal moment.
  *
- * `workspacePaused` answers a different question than `state`: `state` is
- * "is this profile switched on", `workspacePaused` is "will this workspace's
- * scheduler actually act right now". A paused workspace still derives `auto`
+ * `workspacePaused` answers a different question than `state`: `state` also
+ * considers the management registration, while `workspacePaused` asks whether
+ * the workspace's scheduler can act now. A paused workspace still derives `auto`
  * here (the profile itself is not disabled), but with `workspacePaused: true`
  * so the badge can say so instead of promising a renewal that will not run
  * until the workspace is resumed.
@@ -3310,6 +3310,17 @@ function deriveCertificateRenewalState(
   }
 
   const renewBeforeDays = resolveCertificateRenewalThresholdDays(row, env);
+
+  // The scheduler also requires an active management period with automation
+  // enabled. A complete profile alone must not promise a scheduled renewal.
+  if (row?.management_automation_enabled === false && row?.profile_id) {
+    return {
+      ...base,
+      state: CERTOPS_RENEWAL_STATE_DISABLED,
+      renewBeforeDays,
+      detail: "Automatic renewal is switched off for this certificate's management registration.",
+    };
+  }
 
   // Deliberate operator intent, so it is reported before profile completeness:
   // a switched-off certificate is not misconfigured and telling the operator to
