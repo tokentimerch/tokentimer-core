@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -29,7 +29,11 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import { listAgents } from './certopsAgentsApi';
-import { listCertificates, replaceManagingSource } from './certopsApi';
+import {
+  listCertificates,
+  replaceManagingSource,
+  getWindowsRenewal,
+} from './certopsApi';
 import { createAdcsRenewalProfile } from './certopsRenewalApi';
 import { sourceLabel } from './certopsFormat.js';
 import LearnMorePanel from '../LearnMorePanel.jsx';
@@ -216,10 +220,11 @@ export default function AdcsProfileWizard({
   const [issuerId, setIssuerId] = useState('');
   const [reference, setReference] = useState('');
   const [extraNames, setExtraNames] = useState('');
-  const [site, setSite] = useState('Default Web Site');
-  const [port, setPort] = useState('443');
+  const [site, setSite] = useState('');
+  const [port, setPort] = useState('');
   const [sniHost, setSniHost] = useState('');
   const [store, setStore] = useState('My');
+  const [destination, setDestination] = useState('windows-iis');
   const [keyAlgorithm, setKeyAlgorithm] = useState('rsa');
   const [keySize, setKeySize] = useState('2048');
   const [leadTime, setLeadTime] = useState('');
@@ -233,32 +238,40 @@ export default function AdcsProfileWizard({
   const [lookupFailed, setLookupFailed] = useState(false);
   const [attached, setAttached] = useState(null);
   const [openConflict, setOpenConflict] = useState(null);
+  const session = useRef({ version: 0 });
+  useLayoutEffect(() => {
+    const currentSession = session.current;
+    currentSession.version += 1;
+    return () => {
+      currentSession.version += 1;
+    };
+  }, [workspaceId, isOpen]);
 
   useEffect(() => {
-    if (!isOpen) {
-      setStep(0);
-      setName('');
-      setIssuerId('');
-      setReference('');
-      setExtraNames('');
-      setSite('Default Web Site');
-      setPort('443');
-      setSniHost('');
-      setStore('My');
-      setKeyAlgorithm('rsa');
-      setKeySize('2048');
-      setLeadTime('');
-      setBusy(false);
-      setLocalError('');
-      setCreated(null);
-      setTargets([]);
-      setSelectedId('');
-      setMatchesLoading(false);
-      setLookupFailed(false);
-      setAttached(null);
-      setOpenConflict(null);
-    }
-  }, [isOpen]);
+    setStep(0);
+    setName('');
+    setIssuerId('');
+    setReference('');
+    setExtraNames('');
+    setSite('');
+    setPort('');
+    setSniHost('');
+    setStore('My');
+    setDestination('windows-iis');
+    setKeyAlgorithm('rsa');
+    setKeySize('2048');
+    setLeadTime('');
+    setBusy(false);
+    setLocalError('');
+    setCreated(null);
+    setTargets([]);
+    setSelectedId('');
+    setMatchesLoading(false);
+    setLookupFailed(false);
+    setAttached(null);
+    setOpenConflict(null);
+    setAgents([]);
+  }, [isOpen, workspaceId]);
 
   useEffect(() => {
     if (!isOpen || !workspaceId) return undefined;
@@ -286,9 +299,23 @@ export default function AdcsProfileWizard({
       limit: 100,
       excludeRetired: true,
     })
-      .then(page => {
+      .then(async page => {
         if (cancelled) return;
-        const next = targetsForName(page.items || [], reference.trim());
+        let next = targetsForName(page.items || [], reference.trim());
+        if (destination === 'windows-cert-store') {
+          const matches = await Promise.all(
+            (page.items || [])
+              .filter(item => item.identityId)
+              .map(item => getWindowsRenewal(workspaceId, item.identityId))
+          );
+          if (cancelled) return;
+          const ids = new Set(
+            matches.flatMap(item =>
+              (item.groups || []).map(group => group.managedCertificateId)
+            )
+          );
+          next = next.filter(item => ids.has(item.managedCertificateId));
+        }
         setTargets(next);
         setSelectedId(
           next.find(target => target.canAttach)?.managedCertificateId || ''
@@ -305,7 +332,7 @@ export default function AdcsProfileWizard({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, step, created?.id, workspaceId, reference]);
+  }, [isOpen, step, created?.id, workspaceId, reference, destination]);
 
   const declaringAgents = agents.filter(
     agent =>
@@ -321,6 +348,7 @@ export default function AdcsProfileWizard({
   const dnsName = reference.trim();
 
   async function handleCreate() {
+    const { version } = session.current;
     setBusy(true);
     setLocalError('');
     const dnsNames = extraDnsNames(extraNames, reference.trim());
@@ -328,35 +356,46 @@ export default function AdcsProfileWizard({
       const profile = await createAdcsRenewalProfile(workspaceId, {
         name: name.trim(),
         issuerId,
-        target: {
-          type: 'windows-iis',
-          reference: reference.trim(),
-          store: store.trim(),
-          binding: {
-            site: site.trim(),
-            port: Number(port),
-            ...(sniHost.trim() ? { sniHost: sniHost.trim() } : {}),
-          },
-        },
+        target:
+          destination === 'windows-cert-store'
+            ? {
+                type: 'windows-cert-store',
+                reference: reference.trim(),
+                store: 'My',
+              }
+            : {
+                type: 'windows-iis',
+                reference: reference.trim(),
+                store: store.trim(),
+                binding: {
+                  site: site.trim(),
+                  port: Number(port),
+                  ...(sniHost.trim() ? { sniHost: sniHost.trim() } : {}),
+                },
+              },
         dnsNames,
         keyAlgorithm,
         keySize: Number(keySize),
         renewBeforeDays: leadTime.trim() ? Number(leadTime) : null,
       });
+      if (session.current.version !== version) return;
       setCreated(profile);
       showSuccess('Renewal profile created.');
       if (onCreated) await onCreated();
+      if (session.current.version !== version) return;
       setMatchesLoading(true);
       setStep(3);
     } catch (err) {
-      setLocalError(errorText(err, 'Could not create the renewal profile.'));
+      if (session.current.version === version)
+        setLocalError(errorText(err, 'Could not create the renewal profile.'));
     } finally {
-      setBusy(false);
+      if (session.current.version === version) setBusy(false);
     }
   }
 
   async function handleAttach(openPeriodId = null) {
     if (!selected || !created?.id) return;
+    const { version } = session.current;
     setBusy(true);
     setLocalError('');
     setOpenConflict(null);
@@ -368,9 +407,11 @@ export default function AdcsProfileWizard({
         renewalProfileId: created.id,
         automationEnabled: true,
       });
+      if (session.current.version !== version) return;
       setAttached(selected);
       showSuccess('Automatic renewal is on for this certificate.');
     } catch (err) {
+      if (session.current.version !== version) return;
       const data = err?.response?.data;
       const current = data?.currentPeriod?.periodId;
       if (
@@ -396,16 +437,15 @@ export default function AdcsProfileWizard({
         );
       }
     } finally {
-      setBusy(false);
+      if (session.current.version === version) setBusy(false);
     }
   }
 
   const extraNameCount = extraDnsNames(extraNames, reference.trim()).length;
   const deploymentReady =
     reference.trim() &&
-    site.trim() &&
-    store.trim() &&
-    wholeInRange(port, 1, 65535) &&
+    (destination === 'windows-cert-store' ||
+      (site.trim() && store.trim() && wholeInRange(port, 1, 65535))) &&
     (!leadTime.trim() || wholeInRange(leadTime, 1, 365)) &&
     extraNameCount <= 15;
 
@@ -539,46 +579,74 @@ export default function AdcsProfileWizard({
                     onChange={event => setExtraNames(event.target.value)}
                   />
                 </FormControl>
-                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
-                  <FormControl isRequired>
-                    <FormLabel {...modal.labelProps}>IIS site</FormLabel>
-                    <Input
-                      {...modal.fieldProps}
-                      aria-label='IIS site'
-                      value={site}
-                      onChange={event => setSite(event.target.value)}
-                    />
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel {...modal.labelProps}>Port</FormLabel>
-                    <Input
-                      {...modal.fieldProps}
-                      aria-label='IIS port'
-                      value={port}
-                      onChange={event => setPort(event.target.value)}
-                    />
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel {...modal.labelProps}>SNI hostname</FormLabel>
-                    <Input
-                      {...modal.fieldProps}
-                      aria-label='SNI hostname'
-                      value={sniHost}
-                      onChange={event => setSniHost(event.target.value)}
-                    />
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel {...modal.labelProps}>
-                      Certificate store
-                    </FormLabel>
-                    <Input
-                      {...modal.fieldProps}
-                      aria-label='Certificate store'
-                      value={store}
-                      onChange={event => setStore(event.target.value)}
-                    />
-                  </FormControl>
-                </SimpleGrid>
+                <FormControl>
+                  <FormLabel {...modal.labelProps}>
+                    Renewal destination
+                  </FormLabel>
+                  <Select
+                    {...modal.fieldProps}
+                    aria-label='Renewal destination'
+                    value={destination}
+                    onChange={event => setDestination(event.target.value)}
+                  >
+                    <option value='windows-iis'>IIS binding</option>
+                    <option value='windows-cert-store'>
+                      Windows Store · LocalMachine\My
+                    </option>
+                  </Select>
+                  <FormHelperText>
+                    Store renewal is configured once. Dependent IIS bindings
+                    receive updates only after explicit opt-in on the
+                    certificate.
+                  </FormHelperText>
+                </FormControl>
+                {destination === 'windows-iis' ? (
+                  <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+                    <FormControl isRequired>
+                      <FormLabel {...modal.labelProps}>IIS site</FormLabel>
+                      <Input
+                        {...modal.fieldProps}
+                        aria-label='IIS site'
+                        value={site}
+                        onChange={event => setSite(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormControl isRequired>
+                      <FormLabel {...modal.labelProps}>Port</FormLabel>
+                      <Input
+                        {...modal.fieldProps}
+                        aria-label='IIS port'
+                        value={port}
+                        onChange={event => setPort(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormControl>
+                      <FormLabel {...modal.labelProps}>SNI hostname</FormLabel>
+                      <Input
+                        {...modal.fieldProps}
+                        aria-label='SNI hostname'
+                        value={sniHost}
+                        onChange={event => setSniHost(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormControl isRequired>
+                      <FormLabel {...modal.labelProps}>
+                        Certificate store
+                      </FormLabel>
+                      <Input
+                        {...modal.fieldProps}
+                        aria-label='Certificate store'
+                        value={store}
+                        onChange={event => setStore(event.target.value)}
+                      />
+                    </FormControl>
+                  </SimpleGrid>
+                ) : (
+                  <Text fontSize='sm'>
+                    Installs into LocalMachine\My. A qualified Store-only agent
+                    is required; IIS is optional.
+                  </Text>
+                )}
                 <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
                   <FormControl>
                     <FormLabel {...modal.labelProps}>Key</FormLabel>
@@ -639,9 +707,11 @@ export default function AdcsProfileWizard({
               <Stack spacing={3}>
                 <Text fontSize='sm'>
                   {name.trim()} enrolls {dnsName} from the selected issuer into{' '}
-                  {site.trim()} on port {port}, store {store.trim()}. The next
-                  step attaches this profile to a certificate already in
-                  inventory and turns automation on.
+                  {destination === 'windows-cert-store'
+                    ? 'LocalMachine\\My'
+                    : `${site.trim()} on port ${port}, store ${store.trim()}`}
+                  . The next step attaches this profile to a certificate already
+                  in inventory and turns automation on.
                 </Text>
                 {declaringAgents.length === 0 ? (
                   <Alert status='warning' borderRadius='md'>

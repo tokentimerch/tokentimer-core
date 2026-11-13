@@ -20,7 +20,11 @@ describe("Core distribution and lifecycle migration histories", function () {
     'operator_connections', 'operator_enrollment_grants', 'operator_action_requests', 'operator_oauth',
     'operator_connection_lifetimes', 'operator_inventory', 'operator_oauth_retention', 'operator_issuance',
     'certops_issuance_job_identity', 'certops_issuance_identity_transfer',
-    'certops_period_creator_delete', 'recipient_member_verification', 'auto_sync_owner_username', 'certops_retirement_dossiers', 'certops_material_reconciliation',
+    'certops_period_creator_delete', 'recipient_member_verification', 'auto_sync_owner_username',
+    'certops_retirement_dossiers', 'certops_material_reconciliation',
+    'certops_observed_revocation',
+    'store_issuance_explicit_renewal_consent', 'certops_acme_store_enrollment_identity',
+    'certops_adcs_expected_identity_receipts', 'certops_windows_iis_consent', 'certops_material_adcs_operation_union',
   ];
   const migrations = require('../../apps/api/migrations/migrate').migrations;
   const companions = companionNames.filter(name => migrations.some(m => m.name === name));

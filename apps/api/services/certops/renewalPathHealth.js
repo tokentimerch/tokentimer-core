@@ -90,6 +90,7 @@ const RENEWAL_PATH_REASONS = Object.freeze({
   NOT_AGENT_DEPLOYABLE: "not_agent_deployable",
   NO_PROFILE: "no_profile",
   CERTIFICATE_RETIRED: "certificate_retired",
+  WINDOWS_STORE_REASSOCIATION: "windows_store_reassociation",
 });
 
 // Certificate lifecycle statuses for which "will this renew automatically"
@@ -460,7 +461,7 @@ function classifyExecutors({
     return {
       renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
       renewalPathReason: RENEWAL_PATH_REASONS.WAITING_FOR_FRESH_PREFLIGHT,
-      renewalPathSummary: `The AD CS renewal for this certificate is waiting for a fresh CA check. No agent that renews it has run adcs-preflight against its CA in the last ${ADCS_PREFLIGHT_WINDOW_HOURS} hours, so the renewal starts once an agent passes the check.`,
+      renewalPathSummary: `The AD CS renewal needs a fresh CA check. No eligible agent has a matching safe result from the last ${ADCS_PREFLIGHT_WINDOW_HOURS} hours. TokenTimer requests a new check when renewal is due and waits for a safe result.`,
     };
   }
   if (onlineCount === total) {
@@ -591,6 +592,17 @@ function resolveRenewalPathForRow({
   adcsPreflightIndex = null,
 }) {
   const offlineAfterMs = resolveAgentOfflineAfterMs(env);
+
+  if (certificateRow.windows_store_reassociation || certificateRow.reconciliation_reason === "windows_store_identity_conflict") {
+    return {
+      renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
+      renewalPathReason: RENEWAL_PATH_REASONS.WINDOWS_STORE_REASSOCIATION,
+      renewalPathSummary: certificateRow.reconciliation_reason === "windows_store_identity_conflict"
+        ? "Automatic renewal is paused because the renewed certificate is already represented by another Windows store record. Verify both entries and associate the renewal profile with the correct certificate."
+        : "Automatic renewal is paused because this older Windows store record may identify more than one certificate. Verify the certificate and associate its renewal profile with the correct current entry.",
+      dependencies: [],
+    };
+  }
 
   if (
     RENEWAL_PATH_NOT_APPLICABLE_CERT_STATUSES.has(
@@ -735,6 +747,10 @@ const CERTIFICATE_ROW_SELECT = `
          mc.source,
          mc.common_name,
          mc.profile_id,
+         mc.reconciliation_reason,
+         (mc.source = 'agent_windows' AND
+           POSITION('/windows_store/' IN COALESCE(mc.source_ref, '')) > 0)
+           AS windows_store_reassociation,
          mc.deployed_agent_id,
          mc.public_metadata->'controllerObservation'->>'agentId' AS discovery_agent_id,
          mc.public_metadata AS certificate_public_metadata,

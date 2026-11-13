@@ -158,6 +158,9 @@ const ALL_ACTION_TYPES = [
   'CERTOPS_RENEWAL_PROFILE_DERIVATION_DECLINED',
   'CERTOPS_RENEWAL_PROFILE_UPDATED',
   'CERTOPS_RENEWAL_PROFILE_DETACHED',
+  'CERTOPS_MANAGEMENT_STARTED',
+  'CERTOPS_MANAGEMENT_STOPPED',
+  'CERTOPS_WINDOWS_STORE_REASSOCIATED',
   'CERTOPS_WORKSPACE_PAUSED',
   'CERTOPS_WORKSPACE_RESUMED',
   'CERTOPS_CONTROLLER_PROVISION_INTENT_CREATED',
@@ -971,6 +974,20 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       const parts = [];
       if (md.profileName) parts.push(`Profile: ${md.profileName}`);
       if (md.profileId) parts.push(`ID: ${md.profileId}`);
+      if (md.issuerName) parts.push(`Issuer: ${md.issuerName}`);
+      if (md.issuerId) parts.push(`Issuer ID: ${md.issuerId}`);
+      if (md.changes?.issuerId) {
+        const previous =
+          md.previousIssuerName || md.changes.issuerId.from || 'none';
+        const next = md.issuerName || md.changes.issuerId.to || 'none';
+        parts.push(`Issuer changed: ${previous} → ${next}`);
+        if (md.changes.issuerId.from)
+          parts.push(`Previous issuer ID: ${md.changes.issuerId.from}`);
+      }
+      if (md.changes?.status?.from && md.changes?.status?.to)
+        parts.push(
+          `Status changed: ${md.changes.status.from} → ${md.changes.status.to}`
+        );
       if (md.managedCertificateId)
         parts.push(`Certificate: ${md.managedCertificateId}`);
       if (md.commonName) parts.push(`CN: ${md.commonName}`);
@@ -1611,6 +1628,40 @@ export default function Audit({ session, onLogout, onAccountClick }) {
   function getRecentCertOpsMetadataEntries(ev) {
     const action = String(ev?.action || '');
     if (
+      [
+        'CERTOPS_MANAGEMENT_STARTED',
+        'CERTOPS_MANAGEMENT_STOPPED',
+        'CERTOPS_WINDOWS_STORE_REASSOCIATED',
+      ].includes(action)
+    ) {
+      const md = ev?.metadata || {};
+      return [
+        ['Certificate', md.commonName || md.dnsName],
+        ['Certificate ID', md.managedCertificateId],
+        ['Previous registration ID', md.legacyId],
+        ['New registration ID', md.currentId],
+        ['Management period ID', md.periodId],
+        ['Previous period ID', md.legacyPeriodId],
+        ['Replaced period ID', md.currentPeriodId],
+        ['New period ID', md.newPeriodId],
+        ['Renewal profile ID', md.renewalProfileId || md.profileId],
+        ['Agent ID', md.agentId],
+        ['Fingerprint', md.fingerprintSha256],
+        [
+          'Automatic renewal',
+          md.automationEnabled == null
+            ? null
+            : md.automationEnabled
+              ? 'enabled'
+              : 'disabled',
+        ],
+      ]
+        .filter(
+          ([, value]) => value !== undefined && value !== null && value !== ''
+        )
+        .map(([label, value]) => ({ label, value: String(value) }));
+    }
+    if (
       action.startsWith('CERTOPS_ISSUER_') ||
       action.startsWith('CERTOPS_ENROLLMENT_') ||
       action === 'CERTOPS_AGENT_LOG_REJECTED' ||
@@ -1623,10 +1674,13 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     ) {
       const md = ev?.metadata || {};
       return [
-        ['Issuer', md.issuerId],
+        ['Issuer', md.issuerName || md.issuerId],
+        ['Issuer ID', md.issuerName ? md.issuerId : null],
         ['Kind', md.kind],
         ['Version', md.version],
         ['CA key SHA-256', md.caKeySha256],
+        ['CA', md.caConfig],
+        ['Template', md.template],
         ['Enrollment', md.enrollmentId],
         ['Job', md.jobId],
         ['Agent', md.agentId],

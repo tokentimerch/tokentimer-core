@@ -14,7 +14,7 @@ const { migrations, runMigrations } = require("../../apps/api/migrations/migrate
 test("released Core through 108 upgrades to the distribution lifecycle without rewriting its ledger", async () => {
   const original = migrations.slice();
   const lifecycle = new Set([86, 87, 88, 89, 90, 91, 96, 97]);
-  const pending = new Set([...lifecycle, 109, 110, 111, 112, 113]);
+  const pending = new Set([...lifecycle, ...original.filter(({ version }) => version >= 109).map(({ version }) => version)]);
   try {
     assert.equal(
       (await pool.query("SELECT to_regclass('public.migrations') AS name")).rows[0].name,

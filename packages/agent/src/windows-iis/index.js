@@ -1191,6 +1191,10 @@ function splitIpPortLiteral(ipPort) {
  *   already be present (imported) in binding.store — this function binds
  *   and verifies, it does not import (see ../windows-cert-store for CNG
  *   enrollment / a future PFX-import fallback for that step).
+ * @param {string} [input.expectedExistingThumbprint] when supplied, refuse
+ *   an absent binding or one using a different certificate. An already-bound
+ *   replacement is verified for idempotent retry. This precondition is not an
+ *   atomic comparison against changes by external processes.
  * @param {Function} [input.execFileImpl] injection point for tests.
  * @param {string} [input.netshPath]
  * @param {string} [input.powershellPath] runs the http.sys binding query.
@@ -1243,6 +1247,7 @@ function splitIpPortLiteral(ipPort) {
 async function deployIisBinding({
   binding,
   certificatePem,
+  expectedExistingThumbprint,
   execFileImpl = childProcess.execFile,
   netshPath = "netsh.exe",
   powershellPath = "powershell.exe",
@@ -1259,6 +1264,9 @@ async function deployIisBinding({
 
   const newThumbprint = computeSha1ThumbprintFromPem(certificatePem);
   const expectedFingerprintSha256 = computeCertificateFingerprint(certificatePem);
+  const expectedExisting = expectedExistingThumbprint === undefined
+    ? undefined
+    : normalizeThumbprint(expectedExistingThumbprint);
 
   const currentBindingResult = await queryCurrentBinding({
     binding,
@@ -1277,6 +1285,21 @@ async function deployIisBinding({
     });
   }
   const outgoingThumbprint = currentBindingResult.thumbprint;
+  // Opt-in precondition for dependent deployments: never recreate an absent
+  // binding or intentionally replace a certificate changed by an operator.
+  // The caller still needs coordination against concurrent external changes;
+  // the underlying netsh delete/add operation is not an atomic compare-and-set.
+  if (expectedExisting !== undefined && outgoingThumbprint !== expectedExisting && outgoingThumbprint !== newThumbprint) {
+    return guardReturnValue({
+      ok: false,
+      code: outgoingThumbprint === null ? "EXPECTED_BINDING_MISSING" : "EXPECTED_BINDING_CHANGED",
+      detail: outgoingThumbprint === null
+        ? "The expected IIS binding is absent; it was not recreated."
+        : "The IIS binding no longer uses the expected certificate; it was left unchanged.",
+      outgoingThumbprint,
+      rolledBack: false,
+    });
+  }
   // No parameters when nothing is bound yet: nothing to carry over.
   const outgoingParameters = currentBindingResult.parameters || {};
   const alreadyBound = outgoingThumbprint === newThumbprint;
@@ -1317,6 +1340,27 @@ async function deployIisBinding({
         outgoingThumbprint,
         rolledBack: false,
       });
+    }
+
+    // Capability probing above can take time. When a predecessor was supplied,
+    // re-read immediately before mutation and fail closed if it changed. This
+    // narrows, but cannot eliminate, the race with external IIS administrators:
+    // netsh exposes no atomic compare-and-set for delete followed by add.
+    if (expectedExisting !== undefined) {
+      const beforeMutation = await queryCurrentBinding({
+        binding, execFileImpl, powershellPath, timeoutMs, signal,
+      });
+      if (!beforeMutation.ok || beforeMutation.thumbprint !== expectedExisting) {
+        return guardReturnValue({
+          ok: false,
+          code: beforeMutation.ok ? "EXPECTED_BINDING_CHANGED" : "QUERY_FAILED",
+          detail: beforeMutation.ok
+            ? "The IIS binding changed during preparation; it was left unchanged."
+            : "The IIS binding could not be rechecked; it was left unchanged.",
+          outgoingThumbprint,
+          rolledBack: false,
+        });
+      }
     }
 
     const bindResult = await bindCertificate({

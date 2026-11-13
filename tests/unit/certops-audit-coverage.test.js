@@ -25,9 +25,11 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
-const dispatch = require(
+const rawDispatch = require(
   path.resolve(__dirname, "../../apps/api/services/certops/agentDispatch.js"),
 );
+const dispatch = { ...rawDispatch, ingestResult: options => rawDispatch.ingestResult({ ...options,
+  deps: { assertCurrentAgentCredential: async () => {}, ...options.deps } }) };
 const { ensureDerivedRenewalProfile } = require(
   path.resolve(
     __dirname,
@@ -276,6 +278,7 @@ function refreshClient({ metadata = VERIFY_METADATA, tokenId = 77 } = {}) {
         });
         return { rows: [] };
       }
+      if (sql.includes("SELECT source, source_ref FROM managed_certificates")) return { rows: [{ source: "agent_issuance", source_ref: "test" }] };
       if (sql.includes("FROM managed_certificates") && sql.includes("FOR UPDATE")) {
         return {
           rows: [

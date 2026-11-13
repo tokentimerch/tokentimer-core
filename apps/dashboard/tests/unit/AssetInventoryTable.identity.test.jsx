@@ -76,25 +76,34 @@ describe('ambiguous certificate inventory actions', () => {
     expect(handlers.onOpenTokenModal).toHaveBeenCalledWith(token);
   });
 
-  it('shows aggregate retirement rather than expiry health when every linked identity is retired', () => {
-    show({ ...token, __managedCertificatesRetired: true });
-    expect(screen.getAllByText('Retired').length).toBeGreaterThan(0);
-    expect(screen.queryAllByText('Healthy')).toHaveLength(0);
+  it('keeps the asset status when multiple linked certificates are retired', () => {
+    show({
+      ...token,
+      __managedCertificatesRetired: true,
+      cert_lifecycle_status: 'revoked',
+    });
+    expect(screen.queryAllByText('Retired')).toHaveLength(0);
+    expect(screen.queryAllByText('Revoked')).toHaveLength(0);
+    expect(screen.getAllByText('Healthy').length).toBeGreaterThan(0);
   });
 
-  it.each(['revoked', 'decommissioned'])(
-    'uses persisted %s lifecycle when CertOps enrichment is unavailable',
+  it.each(['revoked', 'decommissioned', 'renewing'])(
+    'shows only the asset status for a single linked certificate with %s lifecycle',
     status => {
       show({
         ...token,
         __certificateLinkAmbiguous: false,
         cert_lifecycle_status: status,
+        __managedCert: {
+          id: 'managed-1',
+          lifecycleStatus: status,
+          observedRevocation: { status: 'revoked' },
+        },
       });
-      expect(screen.queryAllByText('Healthy')).toHaveLength(0);
+      expect(screen.getAllByText('Healthy').length).toBeGreaterThan(0);
       expect(
-        screen.getAllByText(status === 'revoked' ? 'Revoked' : 'Decommissioned')
-          .length
-      ).toBeGreaterThan(0);
+        screen.queryAllByText(/^(Revoked|Decommissioned|Renewing)$/)
+      ).toHaveLength(0);
     }
   );
 });

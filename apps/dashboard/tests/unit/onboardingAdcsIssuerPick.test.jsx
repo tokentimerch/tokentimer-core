@@ -133,6 +133,18 @@ describe('issuers a session may use', () => {
 });
 
 describe('Connect your Microsoft CA in the planner', () => {
+  it('keeps a requested store issuance open until its own installation is verified', () => {
+    const selection = saved({ chosenIssuerId: ISSUER_B, chosenIssuerConfirmed: ISSUER_B, chosenAgentId: 'ag1', storeIssueJobId: 'j1' });
+    const issue = { jobId: 'j1', agentId: 'ag1', issuerId: ISSUER_B, requested: true, installed: false };
+    const check = (i, s = selection) => isStepSatisfied('certops_adcs', { reality: { ...reality([fresh()]),
+      certops: { ...reality([fresh()]).certops, adcs: { ...reality([fresh()]).certops.adcs, storeIssuance: i } } },
+      progress: { certops: s }, objective: 'adcs', goal: 'certops_adcs' });
+    expect(check(issue)).toBe(false);
+    expect(check({ ...issue, installed: true })).toBe(true);
+    expect(check({ ...issue, installed: true, agentId: 'different' })).toBe(false);
+    expect(check({ ...issue, installed: true, issuerId: ISSUER_A })).toBe(false);
+    expect(check(null)).toBe(false);
+  });
   it('stays open when the only issuer was there before the session', () => {
     expect(done([old()])).toBe(false);
   });
@@ -212,6 +224,25 @@ describe('the issuer choice', () => {
     ).toBe(ISSUER_A);
     expect(
       chooseIssuer(confirmed, 'adcs', ISSUER_B).chosenIssuerConfirmed
+    ).toBeUndefined();
+  });
+
+  it('drops a store issue when its issuer, agent or platform changes', () => {
+    const picked = {
+      ...saved(),
+      chosenIssuerId: ISSUER_A,
+      chosenAgentId: 'a',
+      storeIssueJobId: 'job',
+    };
+    expect(chooseIssuer(picked, 'adcs', ISSUER_A).storeIssueJobId).toBe('job');
+    expect(
+      chooseIssuer(picked, 'adcs', ISSUER_B).storeIssueJobId
+    ).toBeUndefined();
+    expect(
+      chooseInfrastructure(picked, 'adcs', 'windows', 'b').storeIssueJobId
+    ).toBeUndefined();
+    expect(
+      chooseInfrastructure(picked, 'adcs', 'linux').storeIssueJobId
     ).toBeUndefined();
   });
 
@@ -430,7 +461,7 @@ describe('Connect your Microsoft CA merged instructions', () => {
   it('shows the profile as a state that follows reality', () => {
     const first = show(ctxFor([fresh({ attachedCertificates: 0 })]));
     const row = screen.getByRole('region', {
-      name: '4. Profile attached to the site certificate',
+      name: '4. Profile attached to a certificate',
     });
     expect(row).toHaveTextContent('To do');
     expect(
@@ -456,7 +487,7 @@ describe('Connect your Microsoft CA merged instructions', () => {
     );
     expect(
       screen.queryByRole('region', {
-        name: '4. Profile attached to the site certificate',
+        name: '4. Profile attached to a certificate',
       })
     ).toBeNull();
   });

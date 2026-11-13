@@ -1,4 +1,8 @@
-import { CertificateLifecycleBadge } from './CertOpsBadge.jsx';
+import {
+  CertificateLifecycleBadge,
+  ObservedRevocationBadge,
+  hasObservedRevocationContext,
+} from './CertOpsBadge.jsx';
 import Section from '../DashboardDetailsSection.jsx';
 import AutoSyncProvenance from '../AutoSyncProvenance.jsx';
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
@@ -47,11 +51,13 @@ import {
 import CertificateDeployments from './CertificateDeployments.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
 import CertificateTimeline from './CertificateTimeline.jsx';
+import CertificateObservationHistory from './CertificateObservationHistory.jsx';
 import KeyLocalityBadge from './KeyLocalityBadge.jsx';
 import KeyLocalityList from './KeyLocalityList.jsx';
 import RenewalBadge from './RenewalBadge.jsx';
 import RenewalScheduleFacts from './RenewalScheduleFacts.jsx';
 import RenewalPathBadge from './RenewalPathBadge.jsx';
+import { jobSubjectHref } from './certopsResourceLinks.js';
 import {
   expiryDescriptor,
   AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
@@ -179,10 +185,16 @@ function DetailRow({
 // Collapsed by default; lives at the end of Certificate operations.
 function CertificateDiagnostics({
   certificate,
+  workspaceId,
   tableStyle,
   propertyValueStyle,
 }) {
   const rowProps = { tableStyle, propertyValueStyle };
+  const certificateHref = jobSubjectHref(
+    'managed_certificate',
+    certificate?.id,
+    workspaceId
+  );
   return (
     <Box as='details' data-testid='certificate-diagnostics'>
       <Box
@@ -211,6 +223,11 @@ function CertificateDiagnostics({
               size='sm'
               color='dashboard.modal.text'
             />
+            {certificateHref ? (
+              <Link as={RouterLink} to={certificateHref} color='blue.500'>
+                Open managed certificate
+              </Link>
+            ) : null}
           </DetailRow>
         ) : null}
       </Box>
@@ -248,6 +265,7 @@ export default function CertificateDetailsModal({
   } = useDashboardModalProps();
   const editFieldId = useId();
   const [saving, setSaving] = useState(false);
+  const [hasObservationHistory, setHasObservationHistory] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState(() => createTokenEditData(token));
@@ -514,6 +532,11 @@ export default function CertificateDetailsModal({
                 <>
                   {certificate ? (
                     <CertificateLifecycleBadge certificate={certificate} />
+                  ) : null}
+                  {hasObservedRevocationContext(certificate) ? (
+                    <ObservedRevocationBadge
+                      result={certificate.observedRevocation}
+                    />
                   ) : null}
                   {hasKeyLocality ? (
                     <KeyLocalityBadge
@@ -899,6 +922,7 @@ export default function CertificateDetailsModal({
                   hasDiagnostics ? (
                     <CertificateDiagnostics
                       certificate={certificate}
+                      workspaceId={workspaceId || token?.workspace_id}
                       tableStyle={compactTableSections}
                       propertyValueStyle={propertyValueRows}
                     />
@@ -1020,22 +1044,43 @@ export default function CertificateDetailsModal({
               />
             ) : null}
             {identityPanel || null}
-            {showObservedLocations && hasObservedLocations ? (
-              <Section
-                title='Observed locations'
-                enclosed
-                icon={MapPin}
-                description='Where this certificate has most recently been observed.'
-                contentBorder={false}
+            {showObservedLocations &&
+            !identityPanel &&
+            (hasObservedLocations || certificate?.id) ? (
+              <Box
+                display={
+                  hasObservedLocations || hasObservationHistory
+                    ? undefined
+                    : 'none'
+                }
               >
-                <Box data-detail-row>
-                  <CertificateInstances
-                    instances={instances}
-                    available={instancesAvailable}
-                    error={instancesError}
-                  />
-                </Box>
-              </Section>
+                <Section
+                  title='Observed locations'
+                  enclosed
+                  icon={MapPin}
+                  headerAction={
+                    <CertificateObservationHistory
+                      workspaceId={
+                        workspaceId || certOps.workspaceId || token.workspace_id
+                      }
+                      certificateId={certificate?.id}
+                      fingerprintSha256={certificate?.fingerprintSha256}
+                      enabled={isOpen}
+                      onAvailabilityChange={setHasObservationHistory}
+                    />
+                  }
+                  description='Where this certificate has most recently been observed.'
+                  contentBorder={false}
+                >
+                  <Box data-detail-row>
+                    <CertificateInstances
+                      instances={instances}
+                      available={instancesAvailable}
+                      error={instancesError}
+                    />
+                  </Box>
+                </Section>
+              </Box>
             ) : null}
 
             {certificate?.id ? (

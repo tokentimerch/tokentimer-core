@@ -110,6 +110,8 @@ function identifiersDigest(identifiers) {
 }
 function createOrderObserver({ authority, upstreamDirectory }) {
   const orders = new Map();
+  const orderPaths = new Map();
+  const certificatePaths = new Map();
   const nativePath = (value) => {
     const url = new URL(value);
     assert.equal(url.origin, `https://${authority}`);
@@ -124,7 +126,11 @@ function createOrderObserver({ authority, upstreamDirectory }) {
     return url.pathname;
   };
   return {
-    observe(selected, status, parsed) {
+    observe(selected, status, parsed, { location, bytes } = {}) {
+      // A forwarded new-order response other than 201 cannot prove that the
+      // CA created no order. Fail the observation instead of undercounting.
+      if (selected.stage === "new-order")
+        assert.equal(status, 201, "Forwarded new-order outcome is uncertain");
       if (selected.stage === "new-order" && status === 201) {
         assert.ok(orders.size < 64);
         const finalize = nativePath(parsed.finalize);
@@ -140,10 +146,20 @@ function createOrderObserver({ authority, upstreamDirectory }) {
             new Set(paths).size === paths.length,
         );
         assert.ok(!orders.has(finalize));
+        const orderPath = location ? nativePath(location) : null;
+        if (orderPath) {
+          assert.ok(orderPath.startsWith("/my-order/"));
+          assert.ok(!orderPaths.has(orderPath));
+          orderPaths.set(orderPath, finalize);
+        }
         orders.set(finalize, {
           authorizations: new Set(paths),
           valid: new Set(),
           identifiersSha256: identifiersDigest(parsed.identifiers),
+          identifiers: new Set(parsed.identifiers.map((item) => item.value.toLowerCase())),
+          orderPath,
+          certificatePath: null,
+          fingerprintSha256: null,
         });
       }
       if (
@@ -154,6 +170,37 @@ function createOrderObserver({ authority, upstreamDirectory }) {
         for (const order of orders.values())
           if (order.authorizations.has(selected.path))
             order.valid.add(selected.path);
+      if (status === 200 && parsed?.status === "valid" && parsed.certificate) {
+        const finalize = selected.stage === "finalize" ? selected.path : orderPaths.get(selected.path);
+        if (finalize) {
+          const certificatePath = nativePath(parsed.certificate);
+          assert.ok(certificatePath.startsWith("/certZ/"));
+          const order = orders.get(finalize);
+          assert.ok(!certificatePaths.has(certificatePath) || certificatePaths.get(certificatePath) === finalize);
+          assert.ok(!order.certificatePath || order.certificatePath === certificatePath);
+          order.certificatePath = certificatePath;
+          certificatePaths.set(certificatePath, finalize);
+        }
+      }
+      if (status === 200 && selected.path.startsWith("/certZ/") && certificatePaths.has(selected.path)) {
+        assert.ok(Buffer.isBuffer(bytes) && bytes.length > 0);
+        const leaf = new crypto.X509Certificate(bytes);
+        const fingerprintSha256 = crypto.createHash("sha256").update(leaf.raw).digest("hex");
+        const order = orders.get(certificatePaths.get(selected.path));
+        assert.ok(!order.fingerprintSha256 || order.fingerprintSha256 === fingerprintSha256);
+        order.fingerprintSha256 = fingerprintSha256;
+      }
+    },
+    // This counts orders containing the DNS name even if they contain extra
+    // SANs. It is exhaustive only when the caller independently proves the
+    // candidate can reach the CA solely through this continuously live proxy.
+    ordersForDns(dnsName) {
+      assert.match(dnsName, /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/);
+      return [...orders.entries()].filter(([, order]) => order.identifiers.has(dnsName)).map(([finalize, order]) => ({
+        orderId: crypto.createHash("sha256").update(finalize).digest("hex"),
+        finalized: Boolean(order.certificatePath && order.fingerprintSha256),
+        fingerprintSha256: order.fingerprintSha256,
+      }));
     },
     refusal(finalizePath) {
       const order = orders.get(finalizePath);
@@ -237,15 +284,19 @@ async function startOwnedAcmeProxy({
     failure = null,
     badNonceArmed = false,
     closed = false,
-    failed = false;
+    failed = false,
+    activeRequests = 0;
   const server = https.createServer(
     { cert: certificatePem, key: privateKeyPem },
     (request, response) => {
-      handle(request, response).catch(() => {
-        failed = true;
-        if (!response.headersSent) response.writeHead(502);
-        response.end();
-      });
+      activeRequests++;
+      handle(request, response)
+        .catch(() => {
+          failed = true;
+          if (!response.headersSent) response.writeHead(502);
+          response.end();
+        })
+        .finally(() => { activeRequests--; });
     },
   );
   server.on("connection", (socket) => {
@@ -393,7 +444,7 @@ async function startOwnedAcmeProxy({
                 counters.readyOrders++;
               if (status === 200 && selected.path.startsWith("/certZ/"))
                 counters.issuedResponses++;
-              orderObserver.observe(selected, status, parsed);
+              orderObserver.observe(selected, status, parsed, { location: reply.headers.location, bytes });
               if (
                 selected.stage === "directory" &&
                 status === 200 &&
@@ -482,8 +533,16 @@ async function startOwnedAcmeProxy({
           perStage,
           lastRefusedFinalize,
           transportFailed: failed,
+          activeRequests,
+          activeConnections: sockets.size,
+          activeUpstreamRequests: upstreamRequests.size,
         }),
       );
+    },
+    ordersForDns(dnsName) {
+      assert.equal(closed, false);
+      assert.equal(failed, false, "ACME proxy transport failed");
+      return orderObserver.ordersForDns(dnsName);
     },
     async close() {
       assert.equal(closed, false);

@@ -8,6 +8,7 @@ const {
 } = require("./parser");
 const { containsPrivateKeyMaterial, containsGenericSecretMaterial } = require("../../utils/secretMaterial");
 const { resolveListSort } = require("./listSorting");
+const { classifyCertificateSecurity, observedRevocationPrioritySql } = require("./certificateSecurity");
 const {
   CERT_RENEWAL_FAILED_ALERT_PREFIX,
   RETIRED_CERT_UNSENT_ALERT_STATUSES,
@@ -370,6 +371,11 @@ function toInventoryRecord(row) {
     workspaceId: row.workspace_id,
     identityId: row.identity_id || null,
     lifecycleStatus: row.lifecycle_status || null,
+    observedRevocation: row.observed_revocation || null,
+    securityStatus: classifyCertificateSecurity({
+      observedRevocation: row.observed_revocation,
+      lifecycleStatus: row.lifecycle_status,
+    }),
     tokenId: row.token_id,
     profileId: row.profile_id,
     status: row.status,
@@ -432,6 +438,7 @@ function toInstanceRecord(row) {
     observedNotAfter: dateToIso(row.observed_not_after),
     deploymentReference: row.deployment_reference,
     observedAt: dateToIso(row.observed_at),
+    observedRevocation: row.public_metadata?.observedRevocation || null,
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
     // Present only when the query joined certificate_targets (both list
@@ -773,11 +780,11 @@ async function ensureManagedCertificateToken(
   options,
   existingManagedCertificate = null,
 ) {
-  if (options.tokenId) return options.tokenId;
+  if (!options.forceNewToken && options.tokenId) return options.tokenId;
   // Discovery has already resolved this source inside its workspace. Reusing
   // its linked token allocates nothing; unchanged or stopped-source captures
   // must remain writable while another transaction holds quota admission.
-  if (existingManagedCertificate?.token_id) return existingManagedCertificate.token_id;
+  if (!options.forceNewToken && existingManagedCertificate?.token_id) return existingManagedCertificate.token_id;
 
   // Allocation must share the inventory admission lock: two concurrent
   // imports otherwise both find no token, insert separate tokens, and only
@@ -786,13 +793,13 @@ async function ensureManagedCertificateToken(
   // the same lock ordering instead of introducing an inverse lock pair.
   await acquireManagedCertificateImportLock(client, options.workspaceId);
 
-  const existing =
+  const existing = options.forceNewToken ? null :
     existingManagedCertificate ||
     (await existingManagedCertificateForToken(client, certificate, options));
   if (existing?.token_id) return existing.token_id;
 
   const domains = certificateDomainsFor(certificate);
-  const existingToken = await existingCertOpsToken(
+  const existingToken = options.forceNewToken ? null : await existingCertOpsToken(
     client,
     certificate,
     options,
@@ -1329,7 +1336,36 @@ async function upsertAgentFilesystemInstance(client, options) {
        observed_not_before = EXCLUDED.observed_not_before, observed_not_after = EXCLUDED.observed_not_after,
        deployment_reference = EXCLUDED.deployment_reference, observed_at = EXCLUDED.observed_at,
        location_kind = EXCLUDED.location_kind,
-       public_metadata = EXCLUDED.public_metadata, updated_at = NOW()
+       public_metadata = (EXCLUDED.public_metadata - 'observedRevocation') || CASE
+         WHEN NOT (EXCLUDED.public_metadata ? 'observedRevocation')
+           THEN CASE WHEN certificate_instances.public_metadata ? 'observedRevocation'
+             THEN jsonb_build_object('observedRevocation', certificate_instances.public_metadata->'observedRevocation') ELSE '{}'::jsonb END
+         WHEN certificate_instances.public_metadata ? 'observedRevocation'
+          AND (
+            ( certificate_instances.public_metadata->'observedRevocation' ? 'revision' AND EXCLUDED.public_metadata->'observedRevocation' ? 'revision'
+              AND (certificate_instances.public_metadata->'observedRevocation'->>'revision')::numeric >= (EXCLUDED.public_metadata->'observedRevocation'->>'revision')::numeric
+              AND EXCLUDED.public_metadata->'observedRevocation'->>'verdict' NOT IN ('disabled', 'not_configured', 'invalid_observation') )
+            OR ( certificate_instances.public_metadata->'observedRevocation' ? 'revision' AND NOT (EXCLUDED.public_metadata->'observedRevocation' ? 'revision')
+              AND EXCLUDED.public_metadata->'observedRevocation'->>'verdict' = 'good' )
+            OR ( NOT (certificate_instances.public_metadata->'observedRevocation' ? 'revision') AND NOT (EXCLUDED.public_metadata->'observedRevocation' ? 'revision')
+              AND EXCLUDED.public_metadata->'observedRevocation'->>'verdict' NOT IN ('disabled', 'not_configured', 'invalid_observation')
+              AND ( ( certificate_instances.public_metadata->'observedRevocation'->>'verdict' IN ('disabled', 'not_configured', 'invalid_observation') AND EXCLUDED.public_metadata->'observedRevocation'->>'verdict' = 'good' )
+                OR certificate_instances.public_metadata->'observedRevocation'->>'checkedAt' >= EXCLUDED.public_metadata->'observedRevocation'->>'checkedAt' ) )
+          )
+           THEN jsonb_build_object('observedRevocation', certificate_instances.public_metadata->'observedRevocation')
+         WHEN certificate_instances.public_metadata->'observedRevocation' ? 'revision' AND NOT (EXCLUDED.public_metadata->'observedRevocation' ? 'revision')
+          AND EXCLUDED.public_metadata->'observedRevocation'->>'verdict' IN ('revoked', 'issuer_revoked')
+           THEN jsonb_build_object('observedRevocation', EXCLUDED.public_metadata->'observedRevocation' || jsonb_build_object('revision', certificate_instances.public_metadata->'observedRevocation'->'revision'))
+         WHEN EXCLUDED.public_metadata->'observedRevocation'->>'verdict' IN ('unknown', 'not_configured', 'disabled', 'invalid_observation')
+          AND certificate_instances.public_metadata ? 'observedRevocation'
+           THEN jsonb_build_object('observedRevocation', (EXCLUDED.public_metadata->'observedRevocation') || CASE
+             WHEN certificate_instances.public_metadata->'observedRevocation'->>'verdict' NOT IN ('unknown', 'not_configured', 'disabled', 'invalid_observation')
+               THEN jsonb_build_object('lastVerified', (certificate_instances.public_metadata->'observedRevocation') - 'lastVerified')
+             WHEN certificate_instances.public_metadata->'observedRevocation' ? 'lastVerified'
+               THEN jsonb_build_object('lastVerified', certificate_instances.public_metadata->'observedRevocation'->'lastVerified')
+             ELSE '{}'::jsonb END || CASE WHEN certificate_instances.public_metadata->'observedRevocation' ? 'revision' AND (NOT (EXCLUDED.public_metadata->'observedRevocation' ? 'revision') OR (certificate_instances.public_metadata->'observedRevocation'->>'revision')::numeric > (EXCLUDED.public_metadata->'observedRevocation'->>'revision')::numeric) THEN jsonb_build_object('revision', certificate_instances.public_metadata->'observedRevocation'->'revision') ELSE '{}'::jsonb END)
+         ELSE jsonb_build_object('observedRevocation', EXCLUDED.public_metadata->'observedRevocation') END,
+       updated_at = NOW()
      RETURNING *`,
     [
       options.workspaceId,
@@ -1464,6 +1500,20 @@ const MANAGED_CERTIFICATE_STATUS_SQL = `CASE
   WHEN identity.lifecycle_status IN ('revoked', 'decommissioned') THEN identity.lifecycle_status
   ELSE mc.status END`;
 
+// Select the most concerning current agent location for the same certificate.
+// Presence and lifecycle remain independent facts; a newer good observation
+// at another location must not hide a revoked, unavailable or stale location.
+const OBSERVED_REVOCATION_SQL = `(SELECT ci.public_metadata->'observedRevocation'
+  FROM certificate_instances ci
+  WHERE ci.workspace_id = mc.workspace_id AND ci.managed_certificate_id = mc.id
+    AND ci.observed_fingerprint_sha256 = mc.fingerprint_sha256
+    AND ci.source IN ('agent_filesystem', 'agent_windows')
+    AND ci.presence_state IS DISTINCT FROM 'confirmed_absent'
+  ORDER BY ${observedRevocationPrioritySql("ci.public_metadata->'observedRevocation'")},
+    ci.public_metadata->'observedRevocation'->>'validUntil' ASC NULLS FIRST,
+    ci.observed_at DESC NULLS LAST, ci.id ASC
+  LIMIT 1)`;
+
 const MANAGED_CERTIFICATE_LIST_FROM = `
        FROM managed_certificates mc
        LEFT JOIN certops_certificate_identities identity
@@ -1534,7 +1584,7 @@ async function listManagedCertificates(options = {}) {
 
   const pageParams = [...params, normalizedLimit, normalizedOffset];
   const result = await db.query(
-    `SELECT mc.*, identity.id AS identity_id, identity.lifecycle_status,
+    `SELECT mc.*, identity.id AS identity_id, identity.lifecycle_status, ${OBSERVED_REVOCATION_SQL} AS observed_revocation,
             ${MANAGED_CERTIFICATE_STATUS_SQL} AS status${MANAGED_CERTIFICATE_LIST_FROM}
       WHERE ${where}
       ORDER BY ${orderBy}
@@ -1554,7 +1604,7 @@ async function listManagedCertificates(options = {}) {
 
 async function getManagedCertificate({ workspaceId, certId }) {
   const result = await pool.query(
-    `SELECT mc.*, identity.id AS identity_id, identity.lifecycle_status,
+    `SELECT mc.*, identity.id AS identity_id, identity.lifecycle_status, ${OBSERVED_REVOCATION_SQL} AS observed_revocation,
             ${MANAGED_CERTIFICATE_STATUS_SQL} AS status${MANAGED_CERTIFICATE_LIST_FROM}
       WHERE mc.workspace_id = $1
         AND mc.id = $2
@@ -1923,8 +1973,10 @@ async function linkReconciledCertificateToken({
   certificate,
   existingTokenId = null,
   createdBy = null,
+  isolateFromEndpoint = false,
 }) {
-  const tokenId =
+  if (isolateFromEndpoint) await acquireManagedCertificateImportLock(client, workspaceId);
+  let tokenId =
     existingTokenId ||
     (await ensureManagedCertificateToken(
       client,
@@ -1936,6 +1988,23 @@ async function linkReconciledCertificateToken({
       },
       null,
     ));
+
+  if (isolateFromEndpoint) {
+    // Serialize against concurrent monitor references before deciding whether
+    // updating this token would rewrite endpoint expiry and its alert queue.
+    await client.query("SELECT id FROM tokens WHERE workspace_id=$1 AND id=$2 FOR UPDATE", [workspaceId, tokenId]);
+    const shared = await client.query(
+      `SELECT 1 WHERE EXISTS (SELECT 1 FROM domain_monitors WHERE workspace_id=$1 AND token_id=$2)
+        OR EXISTS (SELECT 1 FROM certificate_targets WHERE workspace_id=$1 AND token_id=$2)
+        OR EXISTS (SELECT 1 FROM certificate_instances WHERE workspace_id=$1 AND token_id=$2)
+        OR EXISTS (SELECT 1 FROM managed_certificates WHERE workspace_id=$1 AND token_id=$2 AND id<>$3::uuid)`,
+      [workspaceId, tokenId, certificateId],
+    );
+    if (shared.rows.length) {
+      tokenId = await ensureManagedCertificateToken(client, certificate,
+        { workspaceId, createdBy, tokenNotesSourceLabel: "agent issuance", forceNewToken: true }, null);
+    }
+  }
 
   await updateCertificateTokenFacts({ client, workspaceId, tokenId, certificate });
 

@@ -182,11 +182,29 @@ import { useWorkspace } from './utils/WorkspaceContext.jsx';
 import { onboardingPath } from './utils/onboardingPath.js';
 import { ContactGroupWorkspaceProvider } from './utils/ContactGroupCreationContext.jsx';
 import {
+  AdcsStoreIssueAttemptsProvider,
+  useAdcsStoreIssueAttemptStore,
+} from './components/certops/AdcsStoreIssueAttempts.jsx';
+import {
   pickAccessibleWorkspace,
   readLastWorkspaceId,
   readSessionLastWorkspaceId,
   writeLastWorkspaceId,
 } from './utils/lastWorkspacePreference.js';
+
+function AccountWorkspaceProvider({
+  accountId,
+  adcsStoreIssueAttempts,
+  children,
+}) {
+  return (
+    <ContactGroupWorkspaceProvider accountId={accountId}>
+      <AdcsStoreIssueAttemptsProvider attempts={adcsStoreIssueAttempts}>
+        {children}
+      </AdcsStoreIssueAttemptsProvider>
+    </ContactGroupWorkspaceProvider>
+  );
+}
 
 // VerifyEmailWrapper component to handle session-based redirects
 function VerifyEmailWrapper({ session }) {
@@ -592,6 +610,7 @@ function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const [session, setSession] = useState(null);
+  const adcsStoreIssueAttempts = useAdcsStoreIssueAttemptStore(session?.id);
   const isPublicPath = useCallback(p => {
     try {
       const PUBLIC = ['/'];
@@ -1465,6 +1484,7 @@ function App() {
    * Handle user logout
    */
   const handleLogout = async () => {
+    if (!adcsStoreIssueAttempts.confirmSignOut()) return;
     try {
       await authAPI.logout();
       setSession(null);
@@ -2465,7 +2485,10 @@ function App() {
                       />
                     </div>
                   ) : (
-                    <ContactGroupWorkspaceProvider accountId={session?.id}>
+                    <AccountWorkspaceProvider
+                      accountId={session?.id}
+                      adcsStoreIssueAttempts={adcsStoreIssueAttempts}
+                    >
                       <Suspense
                         fallback={
                           <Flex align='center' justify='center' minH='60vh'>
@@ -2849,7 +2872,7 @@ function App() {
                           <Route path='*' element={<NotFound />} />
                         </Routes>
                       </Suspense>
-                    </ContactGroupWorkspaceProvider>
+                    </AccountWorkspaceProvider>
                   )}
                 </Box>
                 <Footer />

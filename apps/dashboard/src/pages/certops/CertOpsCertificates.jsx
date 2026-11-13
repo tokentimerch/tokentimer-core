@@ -1,5 +1,7 @@
 import CertOpsBadge, {
   CertificateLifecycleBadge,
+  ObservedRevocationBadge,
+  hasObservedRevocationContext,
 } from '../../components/certops/CertOpsBadge.jsx';
 import { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
@@ -98,6 +100,33 @@ function certificateDisplayName(certificate) {
     : [];
   if (sans.length > 0) return sans[0];
   return certificate?.sourceRef || certificate?.id || 'Unnamed certificate';
+}
+
+function observedUsage(certificate) {
+  const labels = (certificate.locations || [])
+    .filter(location => location.presenceState === 'confirmed_present')
+    .map(location => {
+      const reference = location.deploymentReference || '';
+      if (
+        location.locationKind === 'iis_binding' &&
+        reference.startsWith('iis://')
+      ) {
+        return `IIS · ${reference.slice(6)}`;
+      }
+      if (
+        location.locationKind === 'windows_store' &&
+        reference.startsWith('winstore://')
+      ) {
+        return 'Windows certificate store';
+      }
+      return null;
+    })
+    .filter(Boolean);
+  return [...new Set(labels)].sort((a, b) => {
+    if (a.startsWith('IIS') !== b.startsWith('IIS'))
+      return a.startsWith('IIS') ? -1 : 1;
+    return a.localeCompare(b);
+  });
 }
 
 const CERTIFICATE_TABLE_COLUMNS = [
@@ -355,7 +384,8 @@ export default function CertOpsCertificates() {
       source: filters.source || undefined,
       excludeRetired,
       includeObservedRetired: retiredStatusSelected,
-      unmanaged: showUnmanaged ? undefined : false,
+      unmanaged:
+        showUnmanaged || filters.status === 'revoked' ? undefined : false,
       q: filters.q || undefined,
       sort: sort.key,
       direction: sort.direction,
@@ -365,6 +395,7 @@ export default function CertOpsCertificates() {
     if (!retiredStatusSelected && isRetiredCertificate(item)) return false;
     if (
       !showUnmanaged &&
+      filters.status !== 'revoked' &&
       item.managed === false &&
       !(isRetiredCertificate(item) && item.stillObserved)
     )
@@ -936,6 +967,18 @@ export default function CertOpsCertificates() {
                           fontSize='sm'
                           fontWeight='medium'
                         />
+                        {certificate.fingerprintSha256 ? (
+                          <Tooltip label={certificate.fingerprintSha256}>
+                            <Text fontSize='xs' color={muted} mt={1}>
+                              {certificate.fingerprintSha256.slice(0, 12)}…
+                            </Text>
+                          </Tooltip>
+                        ) : null}
+                        {observedUsage(certificate).map(usage => (
+                          <Text key={usage} fontSize='xs' color={muted} mt={1}>
+                            Observed: {usage}
+                          </Text>
+                        ))}
                         <HStack spacing={2}>
                           {extraSans > 0 ? (
                             <CertOpsBadge
@@ -968,6 +1011,12 @@ export default function CertOpsCertificates() {
                             certificate={certificate}
                           />
                         )}
+                        {hasObservedRevocationContext(certificate) ? (
+                          <ObservedRevocationBadge
+                            result={certificate.observedRevocation}
+                            ml={2}
+                          />
+                        ) : null}
                         {certificate.reconciliationReason ? (
                           <Tooltip
                             label={`Facts on this certificate may be stale: ${certificate.reconciliationReason}`}

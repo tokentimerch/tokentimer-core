@@ -42,6 +42,7 @@ const {
 const {
   computeCanonicalIntentHash,
   computeJobPayloadApprovalHash,
+  loadStoreApprovalBinding,
   invalidateApprovalForClaim,
 } = require("./jobApprovals");
 const {
@@ -54,6 +55,7 @@ const {
   enqueueOutboxEvent,
 } = require("./outbox");
 const {
+  acquireManagedCertificateImportLock,
   linkReconciledCertificateToken,
 } = require("./inventory");
 const {
@@ -118,6 +120,7 @@ const CERTOPS_AGENT_RESULT_STATUS_INVALID =
   "CERTOPS_AGENT_RESULT_STATUS_INVALID";
 const CERTOPS_AGENT_SEQUENCE_REGRESSION = "CERTOPS_AGENT_SEQUENCE_REGRESSION";
 const CERTOPS_AGENT_LEASE_INVALID = "CERTOPS_AGENT_LEASE_INVALID";
+const CERTOPS_AGENT_CERTIFICATE_REVOKED = "CERTOPS_AGENT_CERTIFICATE_REVOKED";
 const CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE =
   "CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE";
 
@@ -717,6 +720,7 @@ async function recordHeartbeat({
     : null;
 
   return await withTransaction(dbPool, async (client) => {
+    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
     // Sequence enforcement runs after auth (route middleware) and before
     // the heartbeat write; a regression rejects the message with no
     // last_seen_at (or any other) update.
@@ -996,6 +1000,7 @@ async function claimJobs({
   const nonceTtlSeconds = dispatchNonceTtlSeconds(env);
 
   return await withTransaction(dbPool, async (client) => {
+    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
     // Sequence enforcement first (post-auth, pre-dispatch): a regression
     // rejects the poll before any workspace lock or job selection. Inside
     // the transaction, so a claim that later fails rolls the counter back
@@ -1147,6 +1152,10 @@ async function claimJobs({
               mode, executor_kind,
               assigned_agent_id, required_target_selector,
               required_dns_provider, required_command_profile, enrollment_id,
+              EXISTS (SELECT 1 FROM certops_acme_store_enrollments acme
+                WHERE acme.workspace_id=cj.workspace_id AND acme.current_job_id=cj.id
+                  AND acme.agent_id=cj.assigned_agent_id
+                  AND (acme.original_job_id=cj.id OR cj.operation='continue-enrollment')) AS acme_store_bound,
               EXISTS (
                 SELECT 1
                   FROM managed_certificates mc
@@ -1159,6 +1168,13 @@ async function claimJobs({
          FROM certificate_jobs cj
         WHERE workspace_id = $1
           AND executor_kind = 'agent'
+          AND NOT (cj.operation = 'renew' AND cj.subject_type = 'managed_certificate' AND EXISTS (
+            SELECT 1 FROM managed_certificates mc
+             WHERE mc.workspace_id = cj.workspace_id AND mc.id::text = cj.subject_id
+               AND mc.source = 'agent_windows'
+               AND (POSITION('/windows_store/' IN COALESCE(mc.source_ref, '')) > 0
+                    OR mc.reconciliation_reason = 'windows_store_identity_conflict')
+          ))
           AND NOT (payload ? 'distributionRollout')
           AND NOT (payload ? 'distributionPolicyApproval')
           -- Exclude contained/superseded distribution work before LIMIT.
@@ -1347,8 +1363,14 @@ async function claimJobs({
           // Routing above is persisted and authoritative. Pass only the
           // material intent for capability checks, so an AD CS target cannot
           // introduce a new selector through the payload fallback.
-          payload: { publication: row.payload?.publication, materialDeployment: row.payload?.materialDeployment,materialCleanup:row.payload?.materialCleanup,materialReconciliation:row.payload?.materialReconciliation },
-          issuerKind: row.enrollment_id ? "adcs" : null,
+          payload: {
+            publication: row.payload?.publication,
+            materialDeployment: row.payload?.materialDeployment,
+            materialCleanup: row.payload?.materialCleanup,
+            materialReconciliation: row.payload?.materialReconciliation,
+            target: row.payload?.target ? { type: row.payload.target.type } : undefined,
+          },
+          issuerKind: row.enrollment_id ? "adcs" : row.acme_store_bound ? "acme" : null,
         },
         compatibility,
         env,
@@ -1416,6 +1438,16 @@ async function claimJobs({
             ? row.payload
             : safeParseJson(row.payload);
         const currentHash = computeJobPayloadApprovalHash(rowPayload);
+        let adcsApprovalBinding;
+        if (rowPayload?.target?.type === "windows-cert-store") {
+          adcsApprovalBinding = await loadStoreApprovalBinding(client, {
+            id: row.id, workspaceId: row.workspace_id, enrollmentId: row.enrollment_id,
+            operation: row.operation,
+            assignedAgentId: row.assigned_agent_id, subjectType: row.subject_type,
+            subjectId: row.subject_id, payload: rowPayload,
+          });
+          if (adcsApprovalBinding === undefined) continue;
+        }
         const currentIntentHash = computeCanonicalIntentHash({
           operation: row.operation,
           subjectType: row.subject_type,
@@ -1426,8 +1458,10 @@ async function claimJobs({
           requiredDnsProvider: row.required_dns_provider,
           requiredCommandProfile: row.required_command_profile,
           payload: rowPayload,
+          adcsApprovalBinding,
         });
         const intentMismatch =
+          (rowPayload?.target?.type === "windows-cert-store" && (!adcsApprovalBinding || !row.approved_canonical_intent_hash)) ||
           row.approved_canonical_intent_hash &&
           currentIntentHash !== row.approved_canonical_intent_hash;
         if (currentHash !== row.approved_payload_hash || intentMismatch) {
@@ -1598,7 +1632,23 @@ async function claimJobs({
         basePayload.requestedAt = dateToIso(job.created_at);
       }
 
-      if (job.enrollment_id) {
+      if (job.operation === "adcs-installation-proof") {
+        const binding = await require("./adcsProofRecovery").loadAdcsProofJobBindingTx({
+          client, workspaceId: agent.workspaceId, jobId: String(job.id), agentId: String(agent.id),
+        });
+        if (!binding) throw serviceError("proof recovery binding changed", CERTOPS_AGENT_JOB_NOT_FOUND);
+        const original = (await client.query(
+          `SELECT snapshot_bytes, snapshot_sha256, attempt FROM certificate_enrollments
+            WHERE workspace_id = $1 AND id = $2::uuid`, [agent.workspaceId, job.enrollment_id],
+        )).rows[0];
+        if (!original || original.snapshot_sha256 !== binding.snapshotSha256) {
+          throw serviceError("proof recovery snapshot changed", CERTOPS_AGENT_JOB_NOT_FOUND);
+        }
+        basePayload.issuerKind = "adcs";
+        basePayload.enrollment = { enrollmentId: String(job.enrollment_id), attempt: Math.max(1, original.attempt),
+          snapshotB64: Buffer.from(original.snapshot_bytes).toString("base64"), snapshotSha256: original.snapshot_sha256 };
+        basePayload.adcsProof = binding;
+      } else if (job.enrollment_id) {
         const { loadDispatchEnrollment, attachEnrollmentDispatch } = require("./certificateEnrollments");
         const enrollment = await loadDispatchEnrollment(client, agent.workspaceId, job.enrollment_id);
         if (!enrollment) {
@@ -1608,6 +1658,16 @@ async function claimJobs({
           );
         }
         Object.assign(basePayload, attachEnrollmentDispatch(payload, enrollment));
+      } else if (basePayload.target?.type === "windows-cert-store") {
+        // Store ACME remains ineligible at the claim gate. If that gate is
+        // qualified later, construct this server-owned binding from the
+        // original job and its persisted agent, never from operator payload.
+        const { loadAcmeStoreBindingTx } = require("./acmeStorePersistence");
+        basePayload.schemaVersion = 1;
+        basePayload.issuerKind = "acme";
+        basePayload.acmeStoreEnrollment = await loadAcmeStoreBindingTx({
+          client, workspaceId: agent.workspaceId, jobId: String(job.id), agentId: String(agent.id),
+        });
       }
 
       const signedJob = await signJob({
@@ -1713,6 +1773,7 @@ async function renewJobLease({
   }
 
   return await withTransaction(dbPool, async (client) => {
+    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
     await enforceSequence({ client, agentRowId: agent.id, envelope });
 
     const locked = await client.query(
@@ -1745,6 +1806,11 @@ async function renewJobLease({
         "Certificate job is not in a renewable lease state",
         CERTOPS_AGENT_LEASE_INVALID,
       );
+    }
+
+    if (job.operation === "distribute-trust" && typeof job.payload?.fingerprintSha256 === "string" &&
+        await require("./certificateSecurity").isObservedCertificateCompromised(client, agent.workspaceId, job.payload.fingerprintSha256)) {
+      throw serviceError("The CA certificate is observed as revoked", CERTOPS_AGENT_CERTIFICATE_REVOKED);
     }
 
     if (job.payload?.publication || job.payload?.materialDeployment) {
@@ -1866,6 +1932,128 @@ async function preserveIssuedJobIdentity({ client, workspaceId, job, fingerprint
 
 }
 
+// Recovery jobs can promote a first issuance, but the immutable issuance
+// identity belongs to the original issue job, never to its continuation.
+async function preserveRecoveredIssuanceIdentity({ client, workspaceId, job, fingerprint }) {
+  if (job.payload?.target?.type !== "windows-cert-store") return;
+  let result;
+  if (job.operation === "adcs-installation-proof") {
+    result = await client.query(`SELECT original.id, original.operation, original.certificate_identity_id
+      FROM certops_adcs_proof_recovery_intents i
+      JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id
+      JOIN certificate_enrollments e ON e.workspace_id=i.workspace_id AND e.id=i.enrollment_id
+      JOIN certificate_jobs original ON original.workspace_id=r.workspace_id AND original.id=r.original_job_id
+      WHERE i.workspace_id=$1 AND i.proof_job_id=$2::uuid AND i.agent_id=$3::uuid
+        AND r.enrollment_id=e.id AND r.agent_id=i.agent_id AND e.agent_id=i.agent_id
+        AND e.certificate_id=$4::uuid AND e.id=$5::uuid AND e.current_job_id=original.id
+        AND r.original_job_id=original.id AND r.fingerprint_sha256=$6
+        AND original.enrollment_id=e.id AND original.assigned_agent_id=i.agent_id
+        AND original.subject_type='managed_certificate' AND original.subject_id=$4::text
+        AND original.operation IN ('issue','renew')`,
+    [workspaceId, job.id, job.assigned_agent_id, job.subject_id, job.enrollment_id, fingerprint.toLowerCase()]);
+  } else if (job.operation === "continue-enrollment" && !job.enrollment_id) {
+    result = await client.query(`SELECT original.id, original.operation, original.certificate_identity_id
+      FROM certops_acme_store_enrollments e
+      JOIN certificate_jobs original ON original.workspace_id=e.workspace_id AND original.id=e.original_job_id
+      WHERE e.workspace_id=$1 AND e.current_job_id=$2::uuid AND e.agent_id=$3::uuid
+        AND e.certificate_id=$4::uuid AND e.state='installed' AND e.fingerprint_sha256=$5
+        AND original.assigned_agent_id=e.agent_id AND original.subject_type='managed_certificate'
+        AND original.subject_id=$4::text AND original.operation IN ('issue','renew')`,
+    [workspaceId, job.id, job.assigned_agent_id, job.subject_id, fingerprint.toLowerCase()]);
+  } else return;
+  if (result.rows.length !== 1) throw new Error("Original store enrollment job is unavailable or ambiguous for identity preservation");
+  const original = result.rows[0];
+  await preserveIssuedJobIdentity({ client, workspaceId, job: original, fingerprint });
+}
+
+async function loadReconciliationEvidence(client, workspaceId, job, agent) {
+  if (job.operation === "adcs-installation-proof") {
+    if (!agent?.id || String(job.claimed_by_agent_id) !== String(agent.id) || String(job.assigned_agent_id) !== String(agent.id)) return null;
+    const binding = await require("./adcsProofRecovery").loadAdcsProofJobBindingTx({ client, workspaceId, jobId: String(job.id), agentId: String(agent.id) });
+    if (!binding) return null;
+    const row = (await client.query(`SELECT metadata FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2
+      AND claim_id=$3::uuid AND attempt_count=$4 AND created_by_agent_id=$5::uuid
+      AND evidence_type='validation.passed' AND metadata->>'step'='adcs-proof-only'
+      ORDER BY created_at DESC LIMIT 1`, [workspaceId, job.id, job.claim_id, job.attempt_count, agent.id])).rows[0];
+    const m = row?.metadata;
+    if (!m || m.ownerAgentId !== binding.agentId || m.store !== "LocalMachine\\My" ||
+        m.destinationType !== "windows-cert-store" || m.keyPossessionVerified !== true || m.machineKey !== true || m.nonExportable !== true ||
+        !Number.isFinite(Date.parse(m.validTo)) ||
+        ["receiptId", "enrollmentId", "originalJobId", "originalClaimId", "originalAttempt", "snapshotSha256", "destinationSha256", "fingerprintSha256", "csrSpkiSha256"]
+          .some(key => m[key] !== binding[key])) return null;
+    return m;
+  }
+  const storeOnly = job.payload?.target?.type === "windows-cert-store";
+  const acmeStore = storeOnly && !job.enrollment_id;
+  const evidence = await client.query(
+    `SELECT metadata FROM certificate_evidence
+      WHERE workspace_id = $1 AND job_id = $2 AND evidence_type = 'validation.passed'
+        AND claim_id = $3::uuid AND metadata->>'step' = '${acmeStore ? "acme-store-receipt" : storeOnly ? "store-verify" : "verify"}'
+        ${acmeStore ? "AND metadata->>'state' = 'installed'" : ""}
+      ORDER BY created_at DESC LIMIT 1`,
+    [workspaceId, job.id, job.claim_id],
+  );
+  const metadata = evidence.rows[0]?.metadata || null;
+  if (!storeOnly || !metadata) return metadata;
+
+  if (acmeStore) {
+    if (!agent?.id || String(job.claimed_by_agent_id) !== String(agent.id) || String(job.assigned_agent_id) !== String(agent.id) ||
+        metadata.store !== "LocalMachine\\My" || metadata.keyPossessionVerified !== true ||
+        metadata.machineKey !== true || metadata.nonExportable !== true || !/^[a-f0-9]{64}$/.test(metadata.fingerprintSha256 || "")) return null;
+    const row = (await client.query(`SELECT id,agent_id,certificate_id,original_job_id,current_job_id,container_name,
+      request_bytes,request_sha256,state,csr_sha256,csr_spki_sha256,fingerprint_sha256
+      FROM certops_acme_store_enrollments WHERE workspace_id=$1::uuid AND current_job_id=$2::uuid`, [workspaceId, job.id])).rows[0];
+    if (!row || row.state !== "installed" || String(row.agent_id) !== String(agent.id) ||
+        String(row.certificate_id) !== String(job.subject_id) || String(row.current_job_id) !== String(job.id) ||
+        metadata.enrollmentId !== String(row.id) || metadata.requestSha256 !== row.request_sha256 ||
+        metadata.containerName !== row.container_name || metadata.csrSha256 !== row.csr_sha256 ||
+        metadata.csrSpkiSha256 !== row.csr_spki_sha256 || metadata.fingerprintSha256 !== row.fingerprint_sha256 ||
+        !/^[a-f0-9]{64}$/.test(row.csr_sha256 || "") || !/^[a-f0-9]{64}$/.test(row.csr_spki_sha256 || "")) return null;
+    const bytes = Buffer.from(row.request_bytes);
+    if (require("crypto").createHash("sha256").update(bytes).digest("hex") !== row.request_sha256) return null;
+    let snapshot;
+    try { snapshot = JSON.parse(bytes.toString("utf8")); } catch { return null; }
+    if (snapshot.workspaceId !== workspaceId || snapshot.certificateId !== String(job.subject_id) ||
+        snapshot.agentId !== String(agent.id) || snapshot.jobId !== String(row.original_job_id) ||
+        snapshot.target?.type !== "windows-cert-store" || snapshot.target.store !== "My" ||
+        snapshot.target.reference !== job.payload.target.reference || job.payload.target.store !== "My") return null;
+    return metadata;
+  }
+
+  // A store receipt is useful only for the same agent, enrollment and frozen
+  // destination as this claim. It does not prove that a service serves it.
+  if (!job.enrollment_id || !agent?.id ||
+      String(job.claimed_by_agent_id) !== String(agent.id) ||
+      String(job.assigned_agent_id) !== String(agent.id) ||
+      metadata.enrollmentId !== String(job.enrollment_id) ||
+      metadata.destinationType !== "windows-cert-store" ||
+      metadata.store !== "LocalMachine\\My" || metadata.keyPossessionVerified !== true ||
+      metadata.machineKey !== true || metadata.nonExportable !== true ||
+      !/^[a-fA-F0-9]{64}$/.test(metadata.fingerprintSha256 || "")) return null;
+  const result = await client.query(
+    `SELECT agent_id, certificate_id, snapshot_bytes, snapshot_sha256, deploy_target
+       FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2::uuid`,
+    [workspaceId, job.enrollment_id],
+  );
+  const enrollment = result.rows[0];
+  if (!enrollment || String(enrollment.agent_id) !== String(agent.id) ||
+      String(enrollment.certificate_id) !== String(job.subject_id)) return null;
+  const bytes = Buffer.from(enrollment.snapshot_bytes);
+  const crypto = require("crypto");
+  if (crypto.createHash("sha256").update(bytes).digest("hex") !== enrollment.snapshot_sha256) return null;
+  let snapshot;
+  try { snapshot = JSON.parse(bytes.toString("utf8")); } catch { return null; }
+  const target = enrollment.deploy_target;
+  if (!target || target.type !== "windows-cert-store" || target.store !== "My" ||
+      target.reference !== job.payload.target.reference || job.payload.target.store !== "My") return null;
+  const destination = crypto.createHash("sha256").update(JSON.stringify({
+    type: "windows-cert-store", reference: target.reference, store: "My",
+  })).digest("hex");
+  return snapshot.destinationType === "windows-cert-store" &&
+    snapshot.destinationSha256 === destination && metadata.destinationSha256 === destination
+    ? metadata : null;
+}
+
 async function reconcileProvisionedCertificate({
   client,
   workspaceId,
@@ -1877,6 +2065,10 @@ async function reconcileProvisionedCertificate({
   auditWriter = writeAudit,
 }) {
   if (job.subject_type !== "managed_certificate" || !job.subject_id) return null;
+
+  if (job.payload?.target?.type === "windows-cert-store") {
+    await acquireManagedCertificateImportLock(client, workspaceId);
+  }
 
   const locked = await client.query(
     `SELECT id, source, common_name, deployed_cert_path, deployed_agent_id, token_id
@@ -1895,19 +2087,7 @@ async function reconcileProvisionedCertificate({
   const certificate = locked.rows[0];
   if (!certificate) return null;
 
-  const evidence = await client.query(
-    `SELECT metadata
-       FROM certificate_evidence
-      WHERE workspace_id = $1
-        AND job_id = $2
-        AND evidence_type = 'validation.passed'
-        AND claim_id = $3::uuid
-        AND metadata->>'step' = 'verify'
-      ORDER BY created_at DESC
-      LIMIT 1`,
-    [workspaceId, job.id, job.claim_id],
-  );
-  const metadata = evidence.rows[0]?.metadata || null;
+  const metadata = await loadReconciliationEvidence(client, workspaceId, job, agent);
 
   const text = (value) =>
     typeof value === "string" && value.trim() !== "" ? value.trim() : null;
@@ -1999,6 +2179,7 @@ async function reconcileProvisionedCertificate({
   );
 
   await preserveIssuedJobIdentity({ client, workspaceId, job, fingerprint });
+  await preserveRecoveredIssuanceIdentity({ client, workspaceId, job, fingerprint });
 
   // Token linking waits until here on purpose. tokens.expiration is DATE NOT
   // NULL, so a certificate that does not exist yet cannot have a legitimate
@@ -2025,6 +2206,7 @@ async function reconcileProvisionedCertificate({
       notAfter,
     },
     existingTokenId: certificate.token_id || null,
+    ...(job.payload?.target?.type === "windows-cert-store" ? { isolateFromEndpoint: true } : {}),
   });
 
   // A certificate with no renewal profile is never picked up by the renewal
@@ -2039,6 +2221,8 @@ async function reconcileProvisionedCertificate({
     workspaceId,
     certificateId: String(job.subject_id),
     payload: job.payload || {},
+    jobId: String(job.id),
+    enrollmentId: job.enrollment_id || null,
     operation: job.operation || null,
     certificate: {
       commonName: text(certificate.common_name),
@@ -2191,8 +2375,22 @@ async function refreshRenewedCertificateEvidence({
 }) {
   if (job.subject_type !== "managed_certificate" || !job.subject_id) return null;
 
+  const sourceLookup = await client.query(
+    `SELECT source, source_ref FROM managed_certificates WHERE workspace_id = $1 AND id = $2::uuid`,
+    [workspaceId, job.subject_id],
+  );
+  const source = sourceLookup.rows[0];
+  const storeMatch = source?.source === "agent_windows" &&
+    /^(.*\/windows_store_v2\/[^/]+\/[^/]+)\/sha256-[a-f0-9]{64}$/.exec(source.source_ref || "");
+  if (storeMatch || job.payload?.target?.type === "windows-cert-store") {
+    await acquireManagedCertificateImportLock(client, workspaceId);
+  }
+  if (storeMatch) {
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`${workspaceId}/${storeMatch[1]}`]);
+  }
+
   const locked = await client.query(
-    `SELECT id, common_name, token_id
+    `SELECT id, common_name, token_id, source, source_ref
        FROM managed_certificates
       WHERE workspace_id = $1
         AND id = $2::uuid
@@ -2208,19 +2406,7 @@ async function refreshRenewedCertificateEvidence({
   const certificate = locked.rows[0];
   if (!certificate) return null;
 
-  const evidence = await client.query(
-    `SELECT metadata
-       FROM certificate_evidence
-      WHERE workspace_id = $1
-        AND job_id = $2
-        AND evidence_type = 'validation.passed'
-        AND claim_id = $3::uuid
-        AND metadata->>'step' = 'verify'
-      ORDER BY created_at DESC
-      LIMIT 1`,
-    [workspaceId, job.id, job.claim_id],
-  );
-  const metadata = evidence.rows[0]?.metadata || null;
+  const metadata = await loadReconciliationEvidence(client, workspaceId, job, agent);
 
   const text = (value) =>
     typeof value === "string" && value.trim() !== "" ? value.trim() : null;
@@ -2288,6 +2474,28 @@ async function refreshRenewedCertificateEvidence({
 
   const sans = text(metadata.subjectAltNames);
 
+  if (storeMatch) {
+    if (certificate.source !== source.source || certificate.source_ref !== source.source_ref ||
+        !/^[a-f0-9]{64}$/.test(fingerprint)) {
+      throw new Error("Windows store identity changed during renewal reconciliation");
+    }
+    const nextRef = `${storeMatch[1]}/sha256-${fingerprint}`;
+    const conflict = await client.query(
+      `SELECT id FROM managed_certificates WHERE workspace_id = $1 AND source = 'agent_windows' AND source_ref = $2 AND id <> $3::uuid LIMIT 1`,
+      [workspaceId, nextRef, job.subject_id],
+    );
+    if (conflict.rows.length) {
+      await client.query(`UPDATE managed_certificates SET reconciliation_reason = 'windows_store_identity_conflict', updated_at = NOW() WHERE workspace_id = $1 AND id = $2::uuid`, [workspaceId, job.subject_id]);
+      await auditWriter({ client, actorUserId: null, subjectUserId: null,
+        action: "CERTOPS_CERTIFICATE_RENEWAL_UNRECONCILED", targetType: "managed_certificate",
+        targetId: null, workspaceId, metadata: { managedCertificateId: String(job.subject_id),
+          jobId: String(job.id), claimId: job.claim_id ? String(job.claim_id) : null,
+          reconciliationReason: "windows_store_identity_conflict" } });
+      return { certificateId: String(job.subject_id), refreshed: false, reason: "windows_store_identity_conflict" };
+    }
+    await client.query(`UPDATE managed_certificates SET source_ref = $3 WHERE workspace_id = $1 AND id = $2::uuid`, [workspaceId, job.subject_id, nextRef]);
+  }
+
   await client.query(
     `UPDATE managed_certificates
         SET fingerprint_sha256 = $3, identity_observed_at = clock_timestamp(),
@@ -2341,7 +2549,7 @@ async function refreshRenewedCertificateEvidence({
   // token_expiry alerts, and every other consumer of "when does this expire"
   // actually reads) stays frozen at the pre-renewal date, so the fleet looks
   // like it is silently approaching an expiry that already moved.
-  if (certificate.token_id) {
+  if (certificate.token_id || job.payload?.target?.type === "windows-cert-store") {
     await linkToken({
       client,
       workspaceId,
@@ -2358,6 +2566,7 @@ async function refreshRenewedCertificateEvidence({
         notAfter,
       },
       existingTokenId: certificate.token_id,
+      ...(job.payload?.target?.type === "windows-cert-store" ? { isolateFromEndpoint: true } : {}),
     });
   }
 
@@ -2406,16 +2615,14 @@ async function ingestResult({
     // hanging, but acquiring the lock in the same order here removes the
     // possibility entirely; enforceSequence's own lock on this row later
     // in the transaction is then a no-op re-entrant lock.
-    await client.query(
-      `SELECT id FROM certops_agents WHERE id = $1 FOR UPDATE`,
-      [agent.id],
-    );
+    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
 
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
               subject_type, subject_id, error_code, completed_at, mode, result_metadata,
               source, payload, assigned_agent_id, management_period_id, certificate_identity_id,
-              enrollment_id
+              enrollment_id, attempt_count,
+              (lease_expires_at > clock_timestamp()) AS lease_live
          FROM certificate_jobs
         WHERE id = $1
           AND workspace_id = $2
@@ -2439,6 +2646,15 @@ async function ingestResult({
         "Result does not match the current claim for this job",
         CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
       );
+    }
+
+    // A store installation is reconciled only from a live claim. Once the
+    // lease expires, recovery must obtain its own claim and re-prove the same
+    // installation; a late result cannot race the orphan reaper. Preserve the
+    // normal idempotent replay of a terminal result already committed.
+    if (job.payload?.target?.type === "windows-cert-store" &&
+        ["claimed", "running"].includes(job.status) && job.lease_live !== true) {
+      throw serviceError("Store installation claim has expired", CERTOPS_AGENT_LEASE_INVALID);
     }
 
     // B4: dry_run jobs must never terminate as succeeded; real jobs must
@@ -2469,6 +2685,9 @@ async function ingestResult({
         CERTOPS_AGENT_RESULT_STATUS_INVALID,
       );
     }
+    if (job.operation === "adcs-installation-proof" && (jobStatus === "awaiting_issuer" || body.enrollmentResult != null)) {
+      throw serviceError("Proof-only jobs cannot update an enrollment", CERTOPS_AGENT_RESULT_STATUS_INVALID);
+    }
     if (jobStatus === "awaiting_issuer" || body.enrollmentResult != null) {
       if (!job.enrollment_id) {
         throw serviceError(
@@ -2478,23 +2697,6 @@ async function ingestResult({
           CERTOPS_AGENT_RESULT_STATUS_INVALID,
         );
       }
-      if (body.enrollmentResult != null) {
-        const { recordEnrollmentResult } = require("./certificateEnrollments");
-        await recordEnrollmentResult(client, {
-          workspaceId: agent.workspaceId,
-          job,
-          enrollmentResult: body.enrollmentResult,
-        });
-      }
-    }
-    if (body.preflightResult != null && job.operation === "adcs-preflight") {
-      const { recordPreflightResult } = require("./certificateEnrollments");
-      await recordPreflightResult(client, {
-        workspaceId: agent.workspaceId,
-        job,
-        preflightResult: body.preflightResult,
-        resultStatus: jobStatus,
-      });
     }
 
     // Single-use nonce consumption (replay ledger), bound to the workspace
@@ -2554,6 +2756,22 @@ async function ingestResult({
         "Certificate job is not in a claimable-result state",
         CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
       );
+    }
+
+    // Apply issuer state only after nonce consumption and replay handling.
+    // A duplicate terminal result must never mutate enrollment or preflight
+    // facts with a different body under an already-consumed nonce.
+    if (body.enrollmentResult != null) {
+      const { recordEnrollmentResult } = require("./certificateEnrollments");
+      await recordEnrollmentResult(client, {
+        workspaceId: agent.workspaceId, job, enrollmentResult: body.enrollmentResult,
+      });
+    }
+    if (body.preflightResult != null && job.operation === "adcs-preflight") {
+      const { recordPreflightResult } = require("./certificateEnrollments");
+      await recordPreflightResult(client, {
+        workspaceId: agent.workspaceId, job, preflightResult: body.preflightResult, resultStatus: jobStatus,
+      });
     }
 
     const materialJob = job.payload?.publication || job.payload?.materialDeployment || job.payload?.materialCleanup;
@@ -2845,6 +3063,9 @@ async function ingestResult({
     // transaction, so the job's terminal status and the certificate becoming
     // active are never observable apart.
     if (jobStatus === "succeeded" && !materialJob) {
+      if (job.operation === "adcs-installation-proof" && !await loadReconciliationEvidence(client, agent.workspaceId, job, agent)) {
+        throw serviceError("Proof-only result lacks matching claim-bound installation evidence", CERTOPS_AGENT_RESULT_STATUS_INVALID);
+      }
       const provisioned = await reconcileProvisionedCertificate({
         client,
         workspaceId: agent.workspaceId,
@@ -2859,13 +3080,32 @@ async function ingestResult({
       // advances its stored fingerprint/not_after. See
       // refreshRenewedCertificateEvidence for why this is required, not
       // optional.
+      let refreshed = null;
       if (!provisioned) {
-        await refreshRenewedCertificateEvidence({
+        refreshed = await refreshRenewedCertificateEvidence({
           client,
           workspaceId: agent.workspaceId,
           job,
           agent,
         });
+      }
+      if (job.operation === "adcs-installation-proof") {
+        if (!provisioned?.promoted && !refreshed?.refreshed) {
+          throw serviceError("Proof-only result could not reconcile the certificate", CERTOPS_AGENT_RESULT_STATUS_INVALID);
+        }
+        const original = (await client.query(`SELECT old.id FROM certops_adcs_proof_recovery_intents i
+          JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id
+          JOIN certificate_jobs old ON old.workspace_id=r.workspace_id AND old.id=r.original_job_id
+          WHERE i.workspace_id=$1 AND i.proof_job_id=$2 AND old.status='orphaned_unknown_effect'
+            AND old.needs_operator_reconciliation=TRUE FOR UPDATE OF old SKIP LOCKED`, [agent.workspaceId, job.id])).rows[0];
+        if (!original) throw serviceError("Original job is busy or no longer uncertain", CERTOPS_AGENT_RESULT_STATUS_INVALID);
+        await client.query(`UPDATE certificate_jobs SET needs_operator_reconciliation=FALSE,
+          reconciliation_reason='installation_verified_by_proof',updated_at=NOW() WHERE workspace_id=$1 AND id=$2`, [agent.workspaceId, original.id]);
+        await client.query(`UPDATE certificate_enrollments SET state='installed',updated_at=NOW()
+          WHERE workspace_id=$1 AND id=$2::uuid AND agent_id=$3::uuid`, [agent.workspaceId, job.enrollment_id, agent.id]);
+        await auditWriter({ client, workspaceId: agent.workspaceId, actorUserId: null, subjectUserId: null,
+          action: "CERTOPS_ADCS_INSTALLATION_PROOF_RECONCILED", targetType: "certificate_enrollment", targetId: null,
+          metadata: { enrollmentId: String(job.enrollment_id), originalJobId: String(original.id), proofJobId: String(job.id) } });
       }
     }
 
@@ -3009,7 +3249,8 @@ async function assertEvidenceClaimOwnership({
   claimId = null,
 } = {}) {
   const result = await dbPool.query(
-    `SELECT claimed_by_agent_id, claim_id, attempt_count
+    `SELECT claimed_by_agent_id, claim_id, attempt_count, operation, payload, status,
+            (lease_expires_at > clock_timestamp()) AS lease_live
        FROM certificate_jobs
       WHERE id = $1
         AND workspace_id = $2
@@ -3036,6 +3277,14 @@ async function assertEvidenceClaimOwnership({
       CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
     );
   }
+  if (row.payload?.target?.type === "windows-cert-store") {
+    if (!claimId || !row.claim_id) {
+      throw serviceError("Store installation evidence requires the current claim", CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH);
+    }
+    if (!["claimed", "running"].includes(row.status) || row.lease_live !== true) {
+      throw serviceError("Store installation claim has expired", CERTOPS_AGENT_LEASE_INVALID);
+    }
+  }
   return {
     claimId: row.claim_id || null,
     attemptCount: Number.isSafeInteger(row.attempt_count)
@@ -3050,6 +3299,7 @@ module.exports = {
   CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
   CERTOPS_AGENT_JOB_NOT_FOUND,
   CERTOPS_AGENT_LEASE_INVALID,
+  CERTOPS_AGENT_CERTIFICATE_REVOKED,
   CERTOPS_AGENT_MESSAGE_INVALID,
   CERTOPS_AGENT_REGISTRATION_CONFLICT,
   CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
@@ -3078,6 +3328,8 @@ module.exports = {
     envelopeSequence,
     evaluateAgentJobEligibility,
     findRegistrationReplay,
+    loadReconciliationEvidence,
+    preserveRecoveredIssuanceIdentity,
     normalizeStringList,
     parseReconciliationFromErrorMessage,
     reconcileProvisionedCertificate,

@@ -93,6 +93,38 @@ describe('before you start', () => {
   });
 });
 
+describe('revocation monitoring setup', () => {
+  it('starts with checks requested but no network origin, and validates explicit origins', () => {
+    const { container } = mount(
+      <ConfigStep
+        ctx={makeCtx('certops_observe', {
+          objective: 'observe',
+          infrastructure: 'linux',
+        })}
+      />
+    );
+    const input = screen.getByLabelText(/Permitted CRL\/OCSP origins/);
+    expect(container.textContent).toMatch(
+      /Until you add them, revocation is not checked/
+    );
+    expect(container.textContent).toMatch(/"observedRevocation"/);
+    expect(container.textContent).toMatch(/"allowedOrigins"/);
+    fireEvent.change(input, {
+      target: { value: 'http://pki.example.test/path' },
+    });
+    expect(
+      screen.getByRole('button', { name: 'I saved this file' })
+    ).toBeDisabled();
+    fireEvent.change(input, {
+      target: { value: 'http://pki.example.test\nhttps://ocsp.example.test' },
+    });
+    expect(
+      screen.getByRole('button', { name: 'I saved this file' })
+    ).not.toBeDisabled();
+    expect(container.textContent).toMatch(/http:\/\/pki\.example\.test/);
+  });
+});
+
 describe('ACME configuration form', () => {
   it('has no pre-filled certificate path and explains the field', () => {
     mount(<ConfigStep ctx={makeCtx('certops_automate', linuxAcme)} />);
@@ -300,7 +332,8 @@ describe('AD CS field helpers', () => {
     expect(screen.getByTestId('template-helper').textContent).toMatch(
       /common name from the CA console/
     );
-    expect(screen.getByTestId('iis-site-helper')).toBeInTheDocument();
+    expect(screen.queryByTestId('iis-site-helper')).toBeNull();
+    expect(screen.getByTestId('adcs-preparation-note')).toBeInTheDocument();
   });
 });
 

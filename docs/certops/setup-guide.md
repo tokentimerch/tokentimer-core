@@ -19,12 +19,14 @@ Core and Enterprise share the host workflow. Cloud 0.18 uses the wizard with hos
 
 1. Prepare the existing service and local policy. Install/register an agent or choose **My agent is already set up**. Merge into existing config and preserve its enrolled identity, credentials and custody state.
 2. Run the signed no-op smoke check with execution enabled and local dry-run protection on. It checks dispatch/reporting, not later issuance permissions or external effects.
-3. Complete the issuer-specific prerequisites. AD CS needs a real read-only CA/template check, independent CA-key confirmation, pinning and a fresh post-pin check on the same agent.
+3. Complete the issuer-specific prerequisites. AD CS needs a real read-only CA/template check, independent CA-key confirmation, pinning and a fresh post-pin check on the same agent. A qualified agent can [issue to the Windows store without IIS](agent/adcs.md#operator-sequence).
 4. Deliberately allow real mutating execution only when ready for issuance/enrollment/deployment. Restart only the agent, then continue the same saved guide.
-5. Follow the operation's evidence and verify the [certificate actually served](verify-live-service.md). A completed form or job is not proof that a listener uses the replacement.
+5. Follow the operation's evidence. If a service uses the certificate, verify the [certificate actually served](verify-live-service.md); a completed form or job is not proof that a listener uses it.
 
 Continue with [Linux](agent/install-linux.md), [Windows/IIS](agent/install-windows.md), [Microsoft AD CS](agent/adcs.md#operator-sequence) or [Vault distribution](vault-first-distribution.md). The guide runs the AD CS post-pin check inline. Vault offers signed tests, consumer assignment, configuration revisions and exact-version rollout in the guide. Choose **Distribute certificate files only** or **Distribute and reload a service** at consumer preparation; the first needs no web service or live TLS listener. Its completion confirms installation, not live use. Use hosts for configuration and independent verification, rather than terminal TokenTimer API commands. Trust anchors use **Agents → Trust anchors**, not a separate onboarding goal.
 
 ## Start again
 
 **Preferences → Setup guide → Start over** resets progress, not inventory or job history. For a new distribution, leave existing-distribution reuse off. Reusing an earlier verified distribution is a separate explicit choice; an idempotent replay can return an older job rather than create fresh work.
+
+To distribute public CA trust to domain clients, see [Distribute AD CS trust with Group Policy](./adcs-gpo-trust.md).

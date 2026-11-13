@@ -36,8 +36,18 @@ are reservations, not no-op migrations. They do not install another feature.
 | 104 | operator_inventory | MCP inventory metadata import (#406) |
 | 105 | operator_oauth_retention | MCP token retention (#406) |
 | 106 | operator_issuance | MCP certificate issuance (#406) |
+| 107 | certops_issuance_job_identity | Main; unchanged |
+| 108 | certops_issuance_identity_transfer | Main; unchanged |
 | 109 | certops_period_creator_delete | Main; unchanged |
 | 110 | recipient_member_verification | Reuse exact verified workspace-member email proof |
+| 112 | certops_retirement_dossiers | Distribution lifecycle on main |
+| 113 | certops_material_reconciliation | Distribution lifecycle on main |
+| 114 | certops_observed_revocation | Observed certificate revocation (#589) |
+| 115 | store_issuance_explicit_renewal_consent | Windows store issuance consent |
+| 116 | certops_acme_store_enrollment_identity | Windows store ACME enrollment identity |
+| 117 | certops_adcs_expected_identity_receipts | Windows store AD CS identity receipts |
+| 118 | certops_windows_iis_consent | Windows IIS reassociation consent |
+| 119 | certops_material_adcs_operation_union | Preserve both material and AD CS job operations |
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.
@@ -75,6 +85,10 @@ and PagerDuty schemas without reapplying MCP SQL. The later preview with MCP at
 are appended after that tail. The later draft with MCP at 96–103 also keeps its
 applied identities and appends missing authority work. Fresh installs use MCP 99–106. Do not manually
 renumber an existing preview database.
+
+An unrecognized Windows store preview with store migrations at 109–111
+conflicts with released identities and is rejected before DDL. Preserve its
+ledger and use a separately reviewed recovery; do not manually relabel it.
 
 A ledger containing another PR's former 81 is not a provider alias. Unknown or conflicting histories fail before migration DDL. Do not manually edit them.
 In particular #496's earlier PagerDuty-at-79 preview requires its explicit

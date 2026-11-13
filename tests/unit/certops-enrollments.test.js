@@ -32,7 +32,8 @@ const {
 const { PREFLIGHT_PER_HOUR } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const { validateSignedJob } = require("../../packages/contracts/certops/validate-signed-job.cjs");
 const { migrations } = require("../../apps/api/migrations/migrate");
-const { claimJobs } = require("../../apps/api/services/certops/agentDispatch");
+const { claimJobs: claimJobsImpl } = require("../../apps/api/services/certops/agentDispatch");
+const claimJobs = options => claimJobsImpl({ ...options, deps: { assertCurrentAgentCredential: async () => {}, ...options.deps } });
 const Ajv = require("ajv");
 const addFormats = require("ajv-formats");
 const jobPayloadSchema = require("../../packages/contracts/certops/job-payload.schema.json");
@@ -60,6 +61,12 @@ function snapshotInput() {
 }
 
 describe("AD CS enrollment lifecycle", () => {
+  it("freezes the destination and exact predecessor, including null for first issue", () => {
+    const store = { destinationType: "windows-cert-store", destinationSha256: "cd".repeat(32), predecessorFingerprintSha256: null };
+    assert.equal(freezeSnapshot({ ...snapshotInput(), ...store }).snapshot.predecessorFingerprintSha256, null);
+    assert.equal(freezeSnapshot({ ...snapshotInput(), ...store, predecessorFingerprintSha256: "ef".repeat(32) }).snapshot.predecessorFingerprintSha256, "ef".repeat(32));
+    assert.throws(() => freezeSnapshot({ ...snapshotInput(), destinationType: "windows-cert-store", predecessorFingerprintSha256: null }));
+  });
   it("fails closed on an unknown issuer kind", () => {
     assert.equal(assertIssuerKind("acme"), "acme");
     assert.equal(assertIssuerKind("adcs"), "adcs");
@@ -275,7 +282,7 @@ const WEBHOSTING = {
 function profileEnrollmentDb(versionRow) {
   return {
     async query(sql) {
-      if (sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
+      if (sql.includes("SELECT 1 FROM certificate_enrollments e") || sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
       if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: ISSUER }] };
       if (sql.includes("FROM certificate_issuer_versions")) {
@@ -365,7 +372,7 @@ function rowDb() {
         checkpoint = null;
         return { rows: [] };
       }
-      if (text.includes("pg_advisory_xact_lock")) return { rows: [] };
+      if (text.includes("SELECT 1 FROM certificate_enrollments e") || text.includes("pg_advisory_xact_lock")) return { rows: [] };
       if (text.startsWith("SELECT id FROM certificate_enrollments") && text.includes("state = ANY")) {
         return { rows: [...enrollments.values()].filter(row => row.workspace_id === params[0] && row.certificate_id === params[1] && params[2].includes(row.state)).slice(0, 1) };
       }
@@ -1310,7 +1317,7 @@ describe("enrollment rows", () => {
   it("keeps ACME profiles off the AD CS enrollment path", async () => {
     const db = {
       async query(sql) {
-        if (sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
+        if (sql.includes("SELECT 1 FROM certificate_enrollments e") || sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
         if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
         if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: null }] };
         throw new Error(sql);
@@ -1339,7 +1346,7 @@ describe("enrollment rows", () => {
     const other = "99999999-9999-4999-8999-999999999999";
     const db = {
       async query(sql) {
-        if (sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
+        if (sql.includes("SELECT 1 FROM certificate_enrollments e") || sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
         if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
         if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: other }] };
         throw new Error(sql);
@@ -1413,6 +1420,64 @@ describe("enrollment rows", () => {
       }),
       (error) => error.code === "CERTOPS_PREFLIGHT_RATE_LIMITED",
     );
+  });
+
+  it("deduplicates automatic preflight requests inside the workspace lock", async () => {
+    let created = false;
+    const queries = [];
+    const db = { async query(sql) {
+      queries.push(sql);
+      if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: false }] };
+      if (sql.includes("SELECT id FROM certificate_jobs")) return { rows: [{ id: JOB_ID }] };
+      return { rows: [] };
+    } };
+    const result = await dispatchPreflight({
+      client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
+      agentId: "22222222-2222-4222-8222-222222222222",
+      caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt: new Date(),
+      createJob: async () => { created = true; },
+    });
+    assert.equal(result, null);
+    assert.equal(created, false);
+    assert.ok(queries.some((sql) => sql.includes("pg_advisory_xact_lock")));
+    assert.ok(queries.some((sql) => sql.includes("FOR SHARE")));
+  });
+
+  it("does not schedule automatic preflight in a paused workspace", async () => {
+    const db = { async query(sql) {
+      if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: true }] };
+      return { rows: [] };
+    } };
+    await assert.rejects(dispatchPreflight({
+      client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
+      agentId: "22222222-2222-4222-8222-222222222222",
+      caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt: new Date(),
+    }), { code: "CERTOPS_WORKSPACE_PAUSED" });
+  });
+
+  it("schedules one automatic read-only preflight using the existing issuer path", async () => {
+    const db = { async query(sql) {
+      if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: false }] };
+      if (sql.includes("SELECT id FROM certificate_jobs")) return { rows: [] };
+      if (sql.includes("SELECT count(*)")) return { rows: [{ n: 0 }] };
+      if (sql.includes("RETURNING preflight_seq")) return { rows: [{ preflight_seq: 1 }] };
+      return { rows: [] };
+    } };
+    let request;
+    const job = await dispatchPreflight({
+      client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
+      agentId: "22222222-2222-4222-8222-222222222222",
+      caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt: new Date(), audit: async () => {},
+      createJob: async (options) => { request = options; return { id: JOB_ID }; },
+    });
+    assert.equal(job.id, JOB_ID);
+    assert.equal(request.source, "automation");
+    assert.equal(request.payload.action, "adcs-preflight");
+    assert.equal(request.payload.mode, "real");
+    assert.equal(request.assignedAgentId, "22222222-2222-4222-8222-222222222222");
   });
 
   it("stores a preflight result only for the succeeded job's CA and template", async () => {

@@ -90,7 +90,10 @@ function runPowerShellJson(assignOutScript, { spawn = spawnSync, onWarning = () 
     return [];
   }
   const stdout = String(result.stdout || "").trim();
-  if (!stdout) return [];
+  if (!stdout) {
+    onWarning("windows discovery (fingerprint completion): powershell returned no JSON output");
+    return [];
+  }
   let parsed;
   try {
     parsed = JSON.parse(stdout);
@@ -99,7 +102,10 @@ function runPowerShellJson(assignOutScript, { spawn = spawnSync, onWarning = () 
     return [];
   }
   const items = parsed && parsed.items;
-  if (items === null || items === undefined) return [];
+  if (items === null || items === undefined) {
+    onWarning("windows discovery (fingerprint completion): powershell response has no items field");
+    return [];
+  }
   return Array.isArray(items) ? items : [items];
 }
 
@@ -285,6 +291,7 @@ async function collectWindowsDiscoveryObservations({
   execFileImpl,
   spawn = spawnSync,
   onWarning = () => {},
+  includePublicCertificate = false,
 } = {}) {
   const storeLocation = "LocalMachine";
   const execOpts = execFileImpl ? { execFileImpl } : {};
@@ -380,6 +387,7 @@ async function collectWindowsDiscoveryObservations({
       thumbprint;
     observations.push({
       locationKind: "windows_store",
+      ...(includePublicCertificate ? { certificatePem: new X509Certificate(Buffer.from(rawCertificateBase64, "base64")).toString() } : {}),
       locationSlot: `${storeLocation}/${storeName}/${slotIdentity}`,
       fingerprintSha256,
       // Empty DN (SAN-only) is null, never "".
@@ -434,6 +442,7 @@ async function collectWindowsDiscoveryObservations({
 
     const subjectAltNames = resolveSubjectAltNames(cert, rawCertificateBase64, onWarning);
     const base = {
+      ...(includePublicCertificate ? { certificatePem: new X509Certificate(Buffer.from(rawCertificateBase64, "base64")).toString() } : {}),
       fingerprintSha256,
       subject: cert.subject || null,
       issuer: cert.issuer || null,
@@ -459,7 +468,9 @@ async function collectWindowsDiscoveryObservations({
         observations.push({
           ...base,
           locationKind: "iis_binding",
-          locationSlot: `${siteName}:${parsed.port}${sniHost ? `#${sniHost}` : `@${parsed.address}`}`,
+          // Keep the original identity of the common IPv4 wildcard binding so
+          // existing management registrations survive an agent upgrade.
+          locationSlot: `${siteName}:${parsed.port}${sniHost ? `#${sniHost}` : parsed.address === "0.0.0.0" ? "" : `@${parsed.address}`}`,
           siteName,
           port: parsed.port,
           sniHost,

@@ -45,6 +45,7 @@ const {
   CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
   CERTOPS_AGENT_JOB_NOT_FOUND,
   CERTOPS_AGENT_LEASE_INVALID,
+  CERTOPS_AGENT_CERTIFICATE_REVOKED,
   CERTOPS_AGENT_REGISTRATION_CONFLICT,
   CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
   CERTOPS_AGENT_RESULT_NONCE_REJECTED,
@@ -350,6 +351,8 @@ function agentRateLimitIdentity(req, _res, next) {
 
 function handleAgentRouteError(res, error) {
   switch (error?.code) {
+    case "CERTOPS_AGENT_CREDENTIAL_INVALID":
+      return res.status(401).json({ error: "CertOps agent authentication required", code: "CERTOPS_AGENT_UNAUTHORIZED" });
     case CERTOPS_AGENT_MESSAGE_INVALID:
       return res.status(400).json({
         error: error.message,
@@ -398,6 +401,10 @@ function handleAgentRouteError(res, error) {
         error: error.message || "Lease renew request is invalid",
         code: CERTOPS_AGENT_LEASE_INVALID,
       });
+    case CERTOPS_AGENT_CERTIFICATE_REVOKED:
+      return res.status(409).json({ error: error.message, code: CERTOPS_AGENT_CERTIFICATE_REVOKED });
+    case "CERTOPS_ROLLOUT_VERSION_INVALID":
+      return res.status(409).json({ error: "The selected certificate version is no longer eligible for deployment", code: error.code });
     case CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE:
       return res.status(409).json({
         error: error.message || "Deploy public certificate is unavailable",
@@ -563,6 +570,23 @@ async function leaseHandler(req, res, options = {}) {
   }
 }
 
+async function iisConsentHandler(req, res, options = {}) {
+  try {
+    const jobId = req.params?.jobId;
+    const body = req.body;
+    if (typeof jobId !== "string" || !JOB_ID_PATTERN.test(jobId) ||
+        !body || typeof body !== "object" || Array.isArray(body) ||
+        Object.keys(body).some((key) => !["claimId", "consumerId", "authorizationRevision", "sequence"].includes(key)) ||
+        typeof body.claimId !== "string" || !CLAIM_ID_PATTERN.test(body.claimId) ||
+        typeof body.consumerId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(body.consumerId) ||
+        !Number.isSafeInteger(body.authorizationRevision) || body.authorizationRevision < 1 ||
+        !Number.isSafeInteger(body.sequence) || body.sequence < 1) throw messageError("IIS consent request is invalid");
+    const check = options.checkWindowsIisConsumerForAgent || require("../services/certops/windowsIisConsent").checkWindowsIisConsumerForAgent;
+    const result = await check({ dbPool: options.dbPool, agent: req.certopsAgent, jobId,
+      claimId: body.claimId, consumerId: body.consumerId, authorizationRevision: body.authorizationRevision, sequence: body.sequence });
+    return res.status(200).json(result);
+  } catch (error) { return handleAgentRouteError(res, error); }
+}
 async function resultsHandler(req, res, options = {}) {
   try {
     const messageType = req.body?.messageType;
@@ -709,6 +733,12 @@ function createCertOpsAgentRouter(options = {}) {
     (req, res) => leaseHandler(req, res, options),
   );
 
+  certOpsAgentRouter.post(
+    "/api/v1/certops/agent/jobs/:jobId/iis-consent",
+    ...credentialChain,
+    requireNonRetiredAgent,
+    (req, res) => iisConsentHandler(req, res, options),
+  );
   // Results keep the retired 410 consistent with heartbeat/claim: the agent
   // client's postJson treats any non-2xx as terminal for the request, and
   // only heartbeat special-cases 410 into { retired: true } -- a retired
@@ -758,6 +788,7 @@ module.exports._test = {
   handleAgentRouteError,
   heartbeatHandler,
   leaseHandler,
+  iisConsentHandler,
   logRateBuckets,
   registerHandler,
   rejectAgentPrivateMaterial,

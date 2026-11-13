@@ -23,28 +23,76 @@
 //
 //	tokentimer-agent-host.exe <node.exe path> <agent entrypoint .js path>
 //
-// Everything after the host's own argv[0] is passed through to the child
-// unchanged; this host has no flags of its own beyond that, on purpose -
-// it must never need its own separate configuration surface distinct from
-// the agent's.
+// A service prepared from restored state also carries --prepared-server-url
+// before the child path. The host applies the validated origin to the child's
+// environment before starting Node.
 package main
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/windows/svc"
 )
 
+const preparedServerFlag = "--prepared-server-url"
+const serverURLEnv = "TOKENTIMER_AGENT_SERVER_URL"
+const insecureLocalHTTPEnv = "TOKENTIMER_AGENT_ALLOW_INSECURE_LOCAL_HTTP"
+
+func parseHostLaunch(args, env []string) ([]string, []string, error) {
+	if len(args) == 0 {
+		return nil, nil, fmt.Errorf("missing child executable")
+	}
+	if args[0] != preparedServerFlag {
+		return args, env, nil
+	}
+	if len(args) < 3 || args[2] == "" {
+		return nil, nil, fmt.Errorf("prepared server origin and child executable are required")
+	}
+	origin := args[1]
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil ||
+		(parsed.Scheme != "https" && parsed.Scheme != "http") ||
+		parsed.Path != "" || parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		strings.ContainsAny(origin, "\"#") {
+		return nil, nil, fmt.Errorf("invalid prepared server origin")
+	}
+	// The installer emits HTTP only when loopback HTTP was explicitly allowed.
+	allowLoopbackHTTP := parsed.Scheme == "http"
+	if allowLoopbackHTTP {
+		hostname := strings.ToLower(parsed.Hostname())
+		if hostname != "localhost" && !strings.HasSuffix(hostname, ".localhost") &&
+			hostname != "::1" && !(strings.HasPrefix(hostname, "127.") && net.ParseIP(hostname) != nil) {
+			return nil, nil, fmt.Errorf("prepared HTTP origin must be loopback")
+		}
+	}
+	childEnv := make([]string, 0, len(env)+2)
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(name, serverURLEnv) ||
+			(allowLoopbackHTTP && strings.EqualFold(name, insecureLocalHTTPEnv)) {
+			continue
+		}
+		childEnv = append(childEnv, entry)
+	}
+	childEnv = append(childEnv, serverURLEnv+"="+origin)
+	if allowLoopbackHTTP {
+		childEnv = append(childEnv, insecureLocalHTTPEnv+"=true")
+	}
+	return args[2:], childEnv, nil
+}
+
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "tokentimer-agent-host: usage: tokentimer-agent-host.exe <child-exe> [child-args...]")
+	childArgs, env, err := parseHostLaunch(os.Args[1:], os.Environ())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tokentimer-agent-host: %v; usage: tokentimer-agent-host.exe [%s <origin>] <child-exe> [child-args...]\n", err, preparedServerFlag)
 		os.Exit(2)
 	}
-	childExe := os.Args[1]
-	childArgs := os.Args[2:]
 
 	isService, err := svc.IsWindowsService()
 	if err != nil {
@@ -55,7 +103,7 @@ func main() {
 	log := newHostLogger(os.Getenv("TOKENTIMER_AGENT_CONFIG_DIR"))
 	defer log.Close()
 	stopTimeout := resolveStopTimeout(os.Getenv)
-	host := newAgentHost(childExe, childArgs, os.Environ(), log)
+	host := newAgentHost(childArgs[0], childArgs[1:], env, log)
 
 	if isService {
 		runAsService(host, stopTimeout, log)

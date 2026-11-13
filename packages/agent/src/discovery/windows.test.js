@@ -476,6 +476,38 @@ describe("collectWindowsDiscoveryObservations", () => {
     assert.equal(observations.filter(value => value.locationKind === "windows_store").length, 1);
   });
 
+  it("keeps the legacy IIS identity for an IPv4 wildcard binding", async () => {
+    const certificate = new (require("node:crypto").X509Certificate)(fs.readFileSync(path.join(__dirname, "../verify/fixtures/leaf.crt.pem")));
+    const thumbprint = "1122334455667788990011223344556677889900";
+    const execFileImpl = makeExecFileImplRouter({
+      ...storeFixtureFor(thumbprint, "wildcard.example.test", { hasPrivateKey: true }),
+      bindingsJson: httpSysJson([{ ipPort: "0.0.0.0:443", thumbprint, storeName: "My" }]),
+      appcmdStdout: 'SITE "Default Web Site" (id:1,bindings:https/*:443:,state:Started)',
+    });
+    const observations = await collectWindowsDiscoveryObservations({ execFileImpl,
+      spawn: () => fakeSpawnResult({ stdout: rawDataJson(thumbprint, certificate.raw.toString("base64")) }) });
+    const binding = observations.find(value => value.locationKind === "iis_binding");
+    assert.ok(binding);
+    assert.equal(binding.locationSlot, "Default Web Site:443");
+  });
+
+  it("does not merge a wildcard binding with an IP-specific binding", async () => {
+    const certificate = new (require("node:crypto").X509Certificate)(fs.readFileSync(path.join(__dirname, "../verify/fixtures/leaf.crt.pem")));
+    const thumbprint = "1122334455667788990011223344556677889900";
+    const execFileImpl = makeExecFileImplRouter({
+      ...storeFixtureFor(thumbprint, "bindings.example.test", { hasPrivateKey: true }),
+      bindingsJson: httpSysJson([
+        { ipPort: "0.0.0.0:443", thumbprint, storeName: "My" },
+        { ipPort: "10.0.0.5:443", thumbprint, storeName: "My" },
+      ]),
+      appcmdStdout: 'SITE "Default Web Site" (id:1,bindings:https/*:443:,https/10.0.0.5:443:,state:Started)',
+    });
+    const observations = await collectWindowsDiscoveryObservations({ execFileImpl,
+      spawn: () => fakeSpawnResult({ stdout: rawDataJson(thumbprint, certificate.raw.toString("base64")) }) });
+    assert.deepEqual(observations.filter(value => value.locationKind === "iis_binding").map(value => value.locationSlot).sort(),
+      ["Default Web Site:443", "Default Web Site:443@10.0.0.5"]);
+  });
+
   it(
     "unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store",
     // skip-reason: prerequisite - needs a real openssl binary on PATH.
@@ -639,6 +671,11 @@ describe("collectWindowsDiscoveryObservations", () => {
         "san-e2e.example.com",
         "alt.san-e2e.example.com",
       ]);
+      assert.equal(obs.certificatePem, undefined);
+      const withPublicCertificate = await collectWindowsDiscoveryObservations({ execFileImpl, spawn, includePublicCertificate: true });
+      const publicCert = new (require("node:crypto").X509Certificate)(withPublicCertificate[0].certificatePem);
+      assert.equal(publicCert.fingerprint256.replace(/:/g, "").toLowerCase(), obs.fingerprintSha256);
+      assert.doesNotMatch(withPublicCertificate[0].certificatePem, /PRIVATE KEY/);
     },
   );
 });

@@ -135,12 +135,16 @@ describe("CertOps route hardening", () => {
     const redact = new Function("hasAtLeastRole", `return (${definition[0]});`)(
       (role) => role === "workspace_manager",
     );
-    const items = [{ sources: [], locations: [], restartableSources: [{
-      managedCertificateId: "registration", source: "agent_filesystem", sourceRef: "/private/host/certificate.pem",
+    const items = [{ sources: [{ sourceRef: "private-source", targetHostname: "private-host" }], locations: [{ deploymentReference: "private-deployment", targetHostname: "private-host" }], restartableSources: [{
+      managedCertificateId: "registration", source: "agent_filesystem", sourceRef: "/private/host/certificate.pem", targetHostname: "private-host",
     }] }];
     const viewer = redact({ authz: { workspaceRole: "viewer" } }, items);
     assert.equal(viewer[0].restartableSources[0].managedCertificateId, "registration");
     assert.equal(viewer[0].restartableSources[0].sourceRef, undefined);
+    assert.equal(viewer[0].sources[0].targetHostname, undefined);
+    assert.equal(viewer[0].locations[0].targetHostname, undefined);
+    assert.equal(viewer[0].restartableSources[0].targetHostname, undefined);
+    assert.equal(items[0].locations[0].targetHostname, "private-host");
     assert.equal(JSON.stringify(viewer).includes("/private/host"), false);
     assert.equal(redact({ authz: { workspaceRole: "workspace_manager" } }, items), items);
     assert.equal(redact({ isWorkerCall: true }, items), items);
@@ -167,9 +171,11 @@ describe("CertOps route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/agents/:agentId/agent-log",
       "GET /api/v1/workspaces/:id/certops/certificate-identities",
       "GET /api/v1/workspaces/:id/certops/certificate-identities/:identityId",
+      "GET /api/v1/workspaces/:id/certops/certificate-identities/:identityId/windows-renewal",
       "GET /api/v1/workspaces/:id/certops/certificates",
       "GET /api/v1/workspaces/:id/certops/certificates/:certId",
       "GET /api/v1/workspaces/:id/certops/certificates/:certId/instances",
+      "GET /api/v1/workspaces/:id/certops/certificates/:certId/observations",
       "GET /api/v1/workspaces/:id/certops/csrs",
       "GET /api/v1/workspaces/:id/certops/csrs/:csrId",
       "GET /api/v1/workspaces/:id/certops/instances",
@@ -184,6 +190,7 @@ describe("CertOps route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/renewals/upcoming",
       "GET /api/v1/workspaces/:id/certops/tokens",
       "GET /api/v1/workspaces/:id/certops/settings",
+      "GET /api/v1/workspaces/:id/certops/sources/:managedCertificateId/reassociate-windows-store/candidates",
       "GET /api/v1/workspaces/:id/certops/targets",
       "GET /api/v1/workspaces/:id/certops/trust-anchors",
       "GET /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/installations",
@@ -212,12 +219,14 @@ describe("CertOps route hardening", () => {
       "POST /api/v1/workspaces/:id/certops/provision-intents",
       "POST /api/v1/workspaces/:id/certops/renewal-setup-intents/:outboxId/retry",
       "POST /api/v1/workspaces/:id/certops/sources/:managedCertificateId/readd",
+      "POST /api/v1/workspaces/:id/certops/sources/:managedCertificateId/reassociate-windows-store",
       "POST /api/v1/workspaces/:id/certops/sources/:managedCertificateId/replace-management",
       "POST /api/v1/workspaces/:id/certops/tokens",
       "POST /api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
       "POST /api/v1/workspaces/:id/certops/trust-anchors",
       "POST /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/retire",
       "PUT /api/v1/workspaces/:id/certops/settings",
+      "PUT /api/v1/workspaces/:id/certops/management-periods/:periodId/iis-consumers/:targetId",
     ].sort());
 
     assert.equal(routesSource.includes("/api/v1/certops/executor"), false);

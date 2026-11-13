@@ -368,6 +368,7 @@ export default function CreateManualJobModal({
   const isTrustOp = Boolean(trustOp?.anchorId);
   const isDistributeTrust = trustOp?.operation === 'distribute-trust';
   const [operation, setOperation] = useState('');
+  const [jobMode, setJobMode] = useState('real');
   const [executor, setExecutor] = useState('agent');
   const [subjectType, setSubjectType] = useState('');
   const [subjectId, setSubjectId] = useState('');
@@ -587,6 +588,7 @@ export default function CreateManualJobModal({
 
   const resetForm = () => {
     setOperation('');
+    setJobMode('real');
     setExecutor('agent');
     setSubjectType('');
     setSubjectId('');
@@ -876,6 +878,7 @@ export default function CreateManualJobModal({
         return;
       }
       const body = { operation };
+      if (operation === 'noop' && jobMode === 'dry_run') body.mode = 'dry_run';
       if (!isIssue && subjectType) body.subjectType = subjectType;
       if (!isIssue && subjectId.trim()) body.subjectId = subjectId.trim();
       if (idempotencyKey.trim()) body.idempotencyKey = idempotencyKey.trim();
@@ -1197,6 +1200,24 @@ export default function CreateManualJobModal({
                   </FormHelperText>
                 ) : null}
               </FormControl>
+              {!isControllerIssue && operation === 'noop' ? (
+                <FormControl>
+                  <FormLabel fontSize='sm'>Execution mode</FormLabel>
+                  <Select
+                    size='sm'
+                    value={jobMode}
+                    onChange={event => setJobMode(event.target.value)}
+                  >
+                    <option value='real'>Real</option>
+                    <option value='dry_run'>Simulation (dry run)</option>
+                  </Select>
+                  <FormHelperText>
+                    A simulation checks signed job dispatch without making
+                    changes on the agent. The expected result is Dry-run
+                    complete.
+                  </FormHelperText>
+                </FormControl>
+              ) : null}
               {isIssue ? (
                 <FormControl>
                   <FormLabel fontSize='sm'>Executor</FormLabel>

@@ -31,6 +31,7 @@
       {
         "file": "certops-adcs-readiness.test.js",
         "names": [
+          "queues only one preflight when a due renewal lacks fresh evidence",
           "qualifies an agent whose safe preflight matches the confirmed CA, template, and key",
           "does not qualify a preflight older than the 24-hour freshness bound",
           "qualifies a preflight 23 hours old, inside the freshness bound",
@@ -196,6 +197,11 @@
           "admits concurrent agent locations and a manual import sharing one fingerprint at quota",
           "does not deadlock token-first manual enrollment with an agent enriching the same certificate",
           "rejects malformed and fingerprint-mismatched public material before burning sequence",
+          "preserves the latest revocation and last verified result across late or older-agent observations",
+          "replaces a prior good result when policy is removed or disabled, while preserving history",
+          "fails closed on malformed observations and accepts revisionless revocations",
+          "retains unmanaged agent revocation and exposes it without topology access",
+          "does not hide an unchecked or revoked location behind a good location",
           "rolls back the sequence and retained observations on non-admission database failures"
         ]
       }
@@ -276,7 +282,8 @@
           "returns { items: [] } for an admin on an anchor with no installations",
           "returns 404 for an anchor id that does not exist in this workspace",
           "rejects a viewer and a workspace_manager with 403, and allows admin",
-          "omits requireWorkspaceCertOpsActive: a paused workspace can still be read"
+          "omits requireWorkspaceCertOpsActive: a paused workspace can still be read",
+          "prevents distributing an observed revoked CA at admission and dispatch"
         ]
       }
     ]
@@ -295,9 +302,9 @@
       {
         "file": "certops-identity-invariants.test.js",
         "names": [
+          "normalizes legacy audit reads without changing immutable metadata or timestamps",
           "preserves tracking mode when the outbox links an adopted renewal profile",
           "defers to a concurrent replace-management choice",
-          "normalizes legacy audit reads without changing immutable metadata or timestamps",
           "returns real AD CS metadata in every audit feed and JSON/CSV export",
           "upgrades representative pre-v62 history without guessing lifecycle or historical job identity",
           "v62 compatibility preserves erased-workspace audit metadata and rolls preparation back on failure",
@@ -411,7 +418,8 @@
           "isolates transferred token and source data in original-workspace HTTP history",
           "returns global visibility and full counts with only 20 HTTP locations",
           "retains stopped identity details with workspace authorization and never hydrates a moved token",
-          "projects current renewal facts for a rotated identity without a token and clears them when management stops"
+          "projects current renewal facts for a rotated identity without a token and clears them when management stops",
+          "shows the observed machine to managers but not viewers"
         ]
       },
       {
@@ -513,6 +521,8 @@
         "names": [
           "creates the job, log, and evidence tables with safe columns and indexes",
           "roundtrips job, log, and evidence data with workspace isolation",
+          "sorts observation history before pagination with stable ties",
+          "filters observation history before sorting and pagination within its workspace",
           "rejects dangerous payload and evidence metadata before persistence",
           "enforces monotonic status transitions and replay-safe idempotency",
           "cascades job logs and detaches evidence when a job is deleted",

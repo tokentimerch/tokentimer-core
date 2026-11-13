@@ -432,13 +432,13 @@ test("a real claim and nonce-bound result settle only the approved original obli
   const row = (
     await pool.query("SELECT * FROM certops_agents WHERE id=$1", [f.consumer])
   ).rows[0];
-  const agent = {
+  const agent = require("../../apps/api/services/certops/agentCredentialFence").bindAuthenticatedCredential({
     id: row.id,
     workspaceId: f.workspaceId,
     agentId: row.agent_id,
     agentVersion: row.agent_version,
     protocolVersion: row.protocol_version,
-  };
+  }, f.credentialForAgent(f.consumer));
   const dispatch = require("../../apps/api/services/certops/agentDispatch");
   const key =
     await require("../../apps/api/services/certops/jobSigning").ensureActiveSigningKey();

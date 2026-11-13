@@ -58,6 +58,8 @@ import {
   useUpdateRenewalProfile,
 } from './useCertOpsRenewals.js';
 import AdcsProfileWizard from './AdcsProfileWizard.jsx';
+import AdcsStoreIssueDialog from './AdcsStoreIssueDialog.jsx';
+import { useAdcsStoreIssueAttempts } from './AdcsStoreIssueAttempts.jsx';
 import RenewalProfileDetailsModal, {
   namesForProfile,
   useBoundCertificates,
@@ -435,9 +437,14 @@ export function LeadTimeEditor({ profile, onSave, saving, disabled }) {
   );
 }
 
-export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
+export default function RenewalProfilesPanel({
+  refreshSignal,
+  issuerRefreshSignal,
+  onChanged,
+}) {
   const canManage = useCertOpsCanManage();
   const { workspaceId } = useWorkspace();
+  const { attempt: storeIssueAttempt } = useAdcsStoreIssueAttempts(workspaceId);
   const {
     certificates: boundCertificates,
     loading: boundCertificatesLoading,
@@ -445,6 +452,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   } = useBoundCertificates(workspaceId);
   const [issuers, setIssuers] = useState([]);
   const [profileWizardOpen, setProfileWizardOpen] = useState(false);
+  const [storeIssueOpen, setStoreIssueOpen] = useState(false);
   // Both lists on this tab page independently, so each scopes its own search
   // params; sharing `offset` would move them together.
   const { limit, offset, setPage } = useCertOpsListUrlState({
@@ -471,7 +479,13 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
     return () => {
       cancelled = true;
     };
-  }, [canManage, workspaceId, profileWizardOpen]);
+  }, [
+    canManage,
+    workspaceId,
+    profileWizardOpen,
+    issuerRefreshSignal,
+    storeIssueOpen,
+  ]);
 
   const [disableTarget, setDisableTarget] = useState(null);
   const [detailsTarget, setDetailsTarget] = useState(null);
@@ -556,8 +570,24 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
         issuers={issuers}
         onCreated={refresh}
       />
+      {storeIssueOpen ? (
+        <AdcsStoreIssueDialog
+          isOpen
+          onClose={() => setStoreIssueOpen(false)}
+          workspaceId={workspaceId}
+          issuers={issuers}
+          onCreated={() => refresh()}
+        />
+      ) : null}
       {canManage || (!loading && profiles.length > 0 && pagination) ? (
         <Flex align='center' justify='flex-end' gap={3} mb={4} wrap='wrap'>
+          {canManage ? (
+            <Button size='sm' onClick={() => setStoreIssueOpen(true)}>
+              {storeIssueAttempt
+                ? 'Resume Microsoft CA request'
+                : 'Issue from Microsoft CA'}
+            </Button>
+          ) : null}
           {canManage ? (
             <Button
               size='sm'

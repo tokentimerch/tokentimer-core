@@ -95,6 +95,7 @@ if ($null -eq $script:BootstrapToken) { $script:BootstrapToken = "" }
 $script:CaBundle = ""
 $script:DryRun = $false
 $script:Uninstall = $false
+$script:PrepareOnly = $false
 $script:WritePaths = New-Object System.Collections.Generic.List[string]
 $script:ReloadServices = New-Object System.Collections.Generic.List[string]
 $script:WritePathsFile = ""
@@ -111,6 +112,270 @@ function Fail {
     param([string]$Message)
     [Console]::Error.WriteLine("install-agent: ERROR: $Message")
     exit 1
+}
+
+$script:SystemSid = 'S-1-5-18'
+$script:AdministratorsSid = 'S-1-5-32-544'
+$script:TrustedInstallerSid = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+$script:PackageFingerprintName = '.tokentimer-install-sha256'
+
+function Get-UnlinkedInstallItem {
+    param([Parameter(Mandatory)][string]$Path, [switch]$Directory)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        ($Directory -and -not $item.PSIsContainer)) {
+        throw "refusing linked or unexpected installation path: $Path"
+    }
+    return $item
+}
+
+function Assert-TrustedInstallAccess {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][int]$MutationMask, [switch]$PackageRoot)
+    $item = Get-UnlinkedInstallItem -Path $Path
+    # Read the native ACL directly so Windows PowerShell does not auto-load a
+    # different PowerShell edition's security module via inherited PSModulePath.
+    $acl = if ($PSVersionTable.PSEdition -eq 'Desktop') {
+        $item.GetAccessControl()
+    } else {
+        [IO.FileSystemAclExtensions]::GetAccessControl($item)
+    }
+    $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(), 0)
+    $trusted = @($script:SystemSid, $script:AdministratorsSid)
+    if (-not $PackageRoot) { $trusted += $script:TrustedInstallerSid }
+    if ($descriptor.Owner.Value -notin $trusted -or $null -eq $descriptor.DiscretionaryAcl -or
+        ($PackageRoot -and -not $acl.AreAccessRulesProtected)) {
+        throw "refusing an installation path without trusted ownership and access control: $Path"
+    }
+    $granted = @()
+    foreach ($ace in $descriptor.DiscretionaryAcl) {
+        if ($ace -isnot [Security.AccessControl.CommonAce] -or $ace.IsCallback) {
+            throw "refusing an unsupported installation path access rule: $Path"
+        }
+        if ($ace.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed) { continue }
+        if ($PackageRoot) {
+            $flags = [int][Security.AccessControl.AceFlags]::ObjectInherit -bor [int][Security.AccessControl.AceFlags]::ContainerInherit
+            if ($ace.SecurityIdentifier.Value -notin $trusted -or [int]$ace.AceFlags -ne $flags -or
+                $ace.AccessMask -ne [int][Security.AccessControl.FileSystemRights]::FullControl) {
+                throw "refusing an unexpected installation root access rule: $Path"
+            }
+            $granted += $ace.SecurityIdentifier.Value
+            continue
+        }
+        if (([int]$ace.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) -eq 0 -and
+            $ace.SecurityIdentifier.Value -notin $trusted -and ($ace.AccessMask -band $MutationMask) -ne 0) {
+            throw "refusing an installation path writable by an untrusted principal: $Path"
+        }
+    }
+    if ($PackageRoot -and ($script:SystemSid -notin $granted -or $script:AdministratorsSid -notin $granted -or
+        $descriptor.DiscretionaryAcl.Count -ne 2)) {
+        throw "installation root must grant inheritable full access to SYSTEM and Administrators: $Path"
+    }
+}
+
+function Assert-TrustedInstallAncestors {
+    param([Parameter(Mandatory)][string]$Path)
+    $parent = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))
+    while ($parent) {
+        $null = Get-UnlinkedInstallItem -Path $parent -Directory
+        # A writable parent can replace its child via FILE_DELETE_CHILD even
+        # when the child's own ACL denies DELETE. Include owner/DACL changes.
+        Assert-TrustedInstallAccess -Path $parent -MutationMask 0x500d0040
+        $parent = [IO.Path]::GetDirectoryName($parent)
+    }
+}
+
+function Initialize-ProtectedPackageRoot {
+    param([Parameter(Mandatory)][string]$Path)
+    Assert-TrustedInstallAncestors -Path $Path
+    if (-not (Test-Path -LiteralPath $Path)) {
+        $security = [Security.AccessControl.DirectorySecurity]::new()
+        $security.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
+        # Set the protected DACL during creation. Hardening a writable root
+        # after its creation would let another process populate it first.
+        if ($PSVersionTable.PSEdition -eq 'Desktop') {
+            $null = [IO.Directory]::CreateDirectory($Path, $security)
+        } else {
+            $null = [IO.FileSystemAclExtensions]::CreateDirectory($security, $Path)
+        }
+    }
+    $null = Get-UnlinkedInstallItem -Path $Path -Directory
+    Assert-TrustedInstallAccess -Path $Path -MutationMask 0 -PackageRoot
+}
+
+function Test-PackageCopyExclusion {
+    param([Parameter(Mandatory)]$Entry)
+    return $Entry.PSIsContainer -and $Entry.Name -in @('node_modules', '.git')
+}
+
+function Get-ProtectedPackageFingerprint {
+    param([Parameter(Mandatory)][string]$Directory, [switch]$Verify, [switch]$SourceTree)
+    # Child paths returned by the provider can use the expanded long path
+    # even when the caller supplied an 8.3 alias. Use one canonical spelling
+    # for relative paths and the fingerprint file comparison.
+    $Directory = (Get-UnlinkedInstallItem -Path $Directory -Directory).FullName.TrimEnd([IO.Path]::DirectorySeparatorChar)
+    Assert-TrustedInstallAccess -Path $Directory -MutationMask 0x500d0156
+    $records = [Collections.Generic.List[string]]::new()
+    $pending = [Collections.Generic.Stack[string]]::new()
+    $pending.Push($Directory)
+    $seal = Join-Path $Directory $script:PackageFingerprintName
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        while ($pending.Count) {
+            foreach ($entry in Get-ChildItem -LiteralPath $pending.Pop() -Force -ErrorAction Stop) {
+                if ($SourceTree -and (Test-PackageCopyExclusion -Entry $entry)) { continue }
+                Assert-TrustedInstallAccess -Path $entry.FullName -MutationMask 0x500d0156
+                $relative = $entry.FullName.Substring($Directory.Length + 1)
+                if ($entry.FullName -ieq $seal) {
+                    if (-not $Verify -or $entry.PSIsContainer) { throw 'unexpected package fingerprint file' }
+                    continue
+                }
+                if ($entry.PSIsContainer) {
+                    $pending.Push($entry.FullName)
+                    $records.Add("D" + [char]9 + $relative)
+                } else {
+                    $stream = [IO.File]::OpenRead($entry.FullName)
+                    try { $digest = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') }
+                    finally { $stream.Dispose() }
+                    $records.Add("F" + [char]9 + $relative + [char]9 + $digest)
+                }
+            }
+        }
+        $records.Sort([StringComparer]::Ordinal)
+        $fingerprint = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes(($records -join [char]10)))).Replace('-', '')
+    } finally { $sha.Dispose() }
+    if ($Verify -and (-not (Test-Path -LiteralPath $seal -PathType Leaf) -or
+        (Get-Content -LiteralPath $seal -Raw) -cne $fingerprint)) {
+        throw 'existing application has no matching protected installation fingerprint'
+    }
+    return $fingerprint
+}
+
+function Assert-NoExistingPreparedInstall {
+    param([string]$OwnStage)
+    if (Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop) {
+        throw 'preparation requires no existing agent service or application'
+    }
+    foreach ($item in Get-ChildItem -LiteralPath $InstallRoot -Force -ErrorAction Stop) {
+        if ($item.Name -ieq (Split-Path -Leaf $AppDir)) {
+            throw 'preparation requires no existing agent service or application'
+        }
+        if ($item.Name -match '^app\.(staging|previous)\.' -and $item.FullName -ine $OwnStage) {
+            throw 'an earlier application exchange is present and requires operator recovery'
+        }
+    }
+}
+
+function Read-RestoredPreparationConfig {
+    $null = Get-UnlinkedInstallItem -Path $StateDir -Directory
+    $pending = [Collections.Generic.Stack[string]]::new()
+    $pending.Push($StateDir)
+    while ($pending.Count) {
+        $item = Get-UnlinkedInstallItem -Path $pending.Pop()
+        Assert-TrustedInstallAccess -Path $item.FullName -MutationMask -1
+        if ($item.PSIsContainer) {
+            foreach ($child in Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction Stop) {
+                $pending.Push($child.FullName)
+            }
+        }
+    }
+    foreach ($registrationFile in @('bootstrap.env', 'registration.pending.json', 'registration-id.json')) {
+        if (Test-Path -LiteralPath (Join-Path $StateDir $registrationFile)) {
+            throw 'restored state contains incomplete bootstrap or registration data'
+        }
+    }
+    $credential = Get-UnlinkedInstallItem -Path (Join-Path $StateDir 'credential')
+    $configFile = Get-UnlinkedInstallItem -Path (Join-Path $StateDir 'config.json')
+    if ($credential.PSIsContainer -or $credential.Length -le 0 -or $configFile.PSIsContainer) {
+        throw 'restored state requires a stored credential and configuration file'
+    }
+    try {
+        $raw = [IO.File]::ReadAllText($configFile.FullName)
+        if (-not $raw.TrimStart().StartsWith('{')) { throw 'configuration is not an object' }
+        $config = $raw | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch { throw 'restored agent configuration is unreadable or invalid' }
+    if ($null -eq $config -or $config -isnot [pscustomobject] -or
+        $null -eq $config.PSObject.Properties['agentId'] -or $config.agentId -isnot [string] -or
+        $config.agentId -cnotmatch '^[A-Za-z0-9_.:-]{1,128}$' -or
+        $null -eq $config.PSObject.Properties['workspaceId'] -or $config.workspaceId -isnot [string] -or
+        $config.workspaceId -ine $script:WorkspaceId -or
+        $null -eq $config.PSObject.Properties['serverUrl'] -or $config.serverUrl -isnot [string] -or
+        [string]::IsNullOrEmpty($config.serverUrl)) {
+        throw 'restored agent configuration must identify the requested workspace, server and agent'
+    }
+    return $config
+}
+
+function Get-WindowsServiceBinPath {
+    param([string]$AppDirectory, [string]$NodeExecutable, [string]$Architecture, [string]$PreparedServerUrl)
+    $hostExe = Join-Path $AppDirectory "bin\tokentimer-agent-host-$($Architecture.ToLowerInvariant()).exe"
+    $entry = Join-Path $AppDirectory 'bin\tokentimer-agent.js'
+    if ($PreparedServerUrl) {
+        if ($PreparedServerUrl -cnotmatch '^https?://[^/?#@"\\\s]+$') {
+            throw 'the prepared server URL must be a bare origin'
+        }
+        return '"{0}" --prepared-server-url "{1}" "{2}" "{3}"' -f $hostExe, $PreparedServerUrl, $NodeExecutable, $entry
+    }
+    return '"{0}" "{1}" "{2}"' -f $hostExe, $NodeExecutable, $entry
+}
+
+# Preserve operator-supplied service variables on upgrades and rollback. The
+# explicit API caBundlePath remains authoritative when set by the operator.
+function Get-WindowsServiceEnvironmentValues {
+    param([string[]]$Existing, [string]$ConfigDir, [string]$Token, [version]$NodeVersion)
+    $values = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in $Existing) {
+        if ($entry -and $entry -notmatch '^(?i:TOKENTIMER_AGENT_CONFIG_DIR|TOKENTIMER_AGENT_BOOTSTRAP_TOKEN)=') { $values.Add($entry) }
+    }
+    $values.Add("TOKENTIMER_AGENT_CONFIG_DIR=$ConfigDir")
+    if (-not [string]::IsNullOrEmpty($Token)) { $values.Add("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=$Token") }
+    $systemCaOverride = @($values | Where-Object { $_ -match '^(?i:NODE_USE_SYSTEM_CA)=' }).Count -gt 0
+    $nodeOptions = @($values | Where-Object { $_ -match '^(?i:NODE_OPTIONS)=' } | Select-Object -First 1)
+    $explicitCaOption = $nodeOptions.Count -gt 0 -and $nodeOptions[0] -match '(?i)--(?:no-)?use-(?:system|bundled|openssl)-ca(?:\s|$)'
+    if (-not $systemCaOverride -and -not $explicitCaOption) {
+        if (($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.19.0') -or $NodeVersion -ge [version]'24.6.0') {
+            $values.Add('NODE_USE_SYSTEM_CA=1')
+        } elseif (($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.15.0') -or ($NodeVersion.Major -eq 23 -and $NodeVersion -ge [version]'23.8.0') -or ($NodeVersion.Major -eq 24 -and $NodeVersion -lt [version]'24.6.0')) {
+            if ($nodeOptions.Count -gt 0) {
+                [void]$values.Remove($nodeOptions[0])
+                $values.Add($nodeOptions[0] + ' --use-system-ca')
+            } else { $values.Add('NODE_OPTIONS=--use-system-ca') }
+        }
+    }
+    return $values.ToArray()
+}
+
+function Set-ServiceEnvironment {
+    param([string]$ConfigDir, [string]$Token)
+    $key = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
+    $existing = @(Get-ExistingServiceEnvironment -ServiceKey $key)
+    $values = @(Get-WindowsServiceEnvironmentValues -Existing $existing -ConfigDir $ConfigDir -Token $Token -NodeVersion $script:NodeVersion)
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" `
+        -Name "Environment" -PropertyType MultiString -Value $values -Force | Out-Null
+}
+
+function Complete-PreparedInstall {
+    param([Parameter(Mandatory)][string]$Stage, [Parameter(Mandatory)][string]$StagingIdentity,
+        [Parameter(Mandatory)][string]$BinaryPath)
+    Assert-NoExistingPreparedInstall -OwnStage $Stage
+    if ((Get-PackageDirectoryIdentity -Directory $Stage) -ne $StagingIdentity) {
+        throw 'prepared staging identity changed'
+    }
+    $null = Get-ProtectedPackageFingerprint -Directory $Stage -Verify
+    # Disabled at CreateService. A process interruption after this call
+    # cannot leave an automatically starting service or run the staged app.
+    New-Service -Name $ServiceName -BinaryPathName $BinaryPath -DisplayName $ServiceDisplayName `
+        -StartupType Disabled -ErrorAction Stop | Out-Null
+    Set-ServiceEnvironment -ConfigDir $StateDir -Token ''
+    $prepared = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
+    if (-not $prepared -or $prepared.StartMode -ne 'Disabled' -or $prepared.State -ne 'Stopped' -or
+        $prepared.ProcessId -ne 0 -or $prepared.PathName -cne $BinaryPath -or
+        $prepared.StartName -notin @('LocalSystem', 'NT AUTHORITY\SYSTEM')) {
+        throw 'the prepared service registration could not be verified'
+    }
+    # A direct rename refuses an occupied destination instead of treating it
+    # as a predecessor. Never enter the upgrade/rollback path in this mode.
+    Rename-Item -LiteralPath $Stage -NewName (Split-Path -Leaf $AppDir) -ErrorAction Stop
 }
 
 # Runs (or prints, under -DryRun) a non-secret action. Never pass the
@@ -193,6 +458,9 @@ Options:
                          production. Also writes allowInsecureLocalHttp=true
                          into config.json.
   --dry-run              Print every action without executing anything.
+  --prepare-only         Prepare a disabled service from a verified package
+                         and a protected, already enrolled state directory.
+                         Requires no existing agent app or service.
   --uninstall            Stop and remove the TokenTimerAgent service and
                          the app dir. The state dir (credential, keys) is
                          preserved; remove it manually once you are sure
@@ -270,6 +538,7 @@ function Parse-Arguments {
             }
             '^--allow-insecure-local-http$' { $script:AllowInsecureLocalHttp = $true; $i += 1; continue }
             '^--dry-run$' { $script:DryRun = $true; $i += 1; continue }
+            '^--prepare-only$' { $script:PrepareOnly = $true; $i += 1; continue }
             '^--uninstall$' { $script:Uninstall = $true; $i += 1; continue }
             '^(-h|--help)$' { Show-Usage; exit 0 }
             default { Fail "unknown argument: $arg (see --help)" }
@@ -278,6 +547,9 @@ function Parse-Arguments {
 }
 
 Parse-Arguments -Arguments $args
+if ($script:PrepareOnly -and ($script:DryRun -or $script:Uninstall -or $script:BootstrapToken -or $script:CaBundle)) {
+    Fail "--prepare-only requires restored state without --dry-run, --uninstall, a bootstrap token or --ca-bundle"
+}
 
 # ------------------------------------------------------------- OS/arch gate
 $arch = $env:PROCESSOR_ARCHITECTURE
@@ -340,7 +612,7 @@ if ([string]::IsNullOrEmpty($script:WorkspaceId)) { Fail "--workspace-id is requ
 # command carries no token; the operator pastes it here, with terminal echo
 # disabled (Read-Host -AsSecureString), so it never touches shell history or
 # process listings.
-if ([string]::IsNullOrEmpty($script:BootstrapToken) -and -not $script:DryRun) {
+if (-not $script:PrepareOnly -and [string]::IsNullOrEmpty($script:BootstrapToken) -and -not $script:DryRun) {
     if ([System.Environment]::UserInteractive) {
         $secure = Read-Host -Prompt "install-agent: paste the bootstrap token (input hidden)" -AsSecureString
         $bstr = [Runtime.InteropServices.Marshal]::SecureStringToGlobalAllocUnicode($secure)
@@ -351,7 +623,9 @@ if ([string]::IsNullOrEmpty($script:BootstrapToken) -and -not $script:DryRun) {
         }
     }
 }
-if ([string]::IsNullOrEmpty($script:BootstrapToken) -and $script:DryRun) {
+if ($script:PrepareOnly) {
+    Write-Log "Preparing an already enrolled state without a bootstrap token."
+} elseif ([string]::IsNullOrEmpty($script:BootstrapToken) -and $script:DryRun) {
     Write-Log "dry-run: no bootstrap token supplied; a real install prompts for it interactively."
 } else {
     if ([string]::IsNullOrEmpty($script:BootstrapToken)) {
@@ -376,16 +650,73 @@ if (($script:ApiUrl + $script:WorkspaceId) -match '[\x00-\x08\x0B\x0C\x0E-\x1F\x
     Fail "--api-url and --workspace-id must not contain control or non-printable characters"
 }
 
+$isElevated = Test-IsAdministrator
+if (-not $script:DryRun -and -not $isElevated) {
+    Fail "install must run from an elevated (Administrator) PowerShell session"
+}
+if ($isElevated) {
+    try {
+        # Even dry-run executes package JavaScript. Check the source before
+        # invoking Node or interpreting any other package input.
+        Assert-TrustedInstallAncestors -Path $PackageDir
+        $sourceFingerprint = Get-ProtectedPackageFingerprint -Directory $PackageDir -SourceTree
+    } catch {
+        Fail "use a verified package extracted into a protected directory ($($_.Exception.Message))"
+    }
+}
+if ($script:PrepareOnly) {
+    try {
+        $null = Get-UnlinkedInstallItem -Path $InstallRoot -Directory
+        Assert-TrustedInstallAncestors -Path $InstallRoot
+        Assert-TrustedInstallAccess -Path $InstallRoot -MutationMask 0 -PackageRoot
+        Assert-NoExistingPreparedInstall
+        $restoredConfig = Read-RestoredPreparationConfig
+    } catch { Fail "preparation refused ($($_.Exception.Message))" }
+}
+$nodeCommand = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $nodeCommand) { Fail "node.exe is not installed or not on PATH" }
+$script:NodeExe = $nodeCommand.Source
+if ($isElevated) {
+    try {
+        $null = Get-UnlinkedInstallItem -Path $script:NodeExe
+        Assert-TrustedInstallAncestors -Path $script:NodeExe
+        Assert-TrustedInstallAccess -Path ([IO.Path]::GetDirectoryName($script:NodeExe)) -MutationMask 0x500d0156
+        Assert-TrustedInstallAccess -Path $script:NodeExe -MutationMask 0x500d0156
+    } catch { Fail "select a Node installation protected from unprivileged changes ($($_.Exception.Message))" }
+}
+
+function Invoke-InstallerNode {
+    param([Parameter(Mandatory = $true)][string[]]$NodeArguments)
+    $priorOptions = [Environment]::GetEnvironmentVariable('NODE_OPTIONS', 'Process')
+    $priorPath = [Environment]::GetEnvironmentVariable('NODE_PATH', 'Process')
+    try {
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS', $null, 'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH', $null, 'Process')
+        & $script:NodeExe @NodeArguments
+    } finally {
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS', $priorOptions, 'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH', $priorPath, 'Process')
+    }
+}
+
 # Match the agent runtime serverUrl gate exactly (src/protocol parseServerUrl):
 # https always ok; plain http only for loopback when --allow-insecure-local-http.
 if (-not (Test-Path -LiteralPath $ValidateServerUrlJs)) { Fail "server URL validator not found: $ValidateServerUrlJs" }
 $validateArgs = @($script:ApiUrl)
 if ($script:AllowInsecureLocalHttp) { $validateArgs += "--allow-insecure-local-http" }
-$normalizedApiUrl = & node $ValidateServerUrlJs @validateArgs 2>$null
+$normalizedApiUrl = Invoke-InstallerNode -NodeArguments (@($ValidateServerUrlJs) + $validateArgs) 2>$null
 if ($LASTEXITCODE -ne 0) {
     Fail "--api-url was rejected by the same rule the agent runtime uses (https required; http only for loopback with --allow-insecure-local-http)"
 }
 $script:ApiUrl = $normalizedApiUrl.Trim()
+if ($script:PrepareOnly) {
+    $restoredArgs = @($ValidateServerUrlJs, $restoredConfig.serverUrl)
+    if ($script:AllowInsecureLocalHttp) { $restoredArgs += '--allow-insecure-local-http' }
+    $restoredOrigin = Invoke-InstallerNode -NodeArguments $restoredArgs 2>$null
+    if ($LASTEXITCODE -ne 0 -or ([string]$restoredOrigin).Trim() -cne $script:ApiUrl) {
+        Fail "restored agent server does not match --api-url"
+    }
+}
 
 if (-not [string]::IsNullOrEmpty($script:CaBundle)) {
     if (-not (Test-Path -LiteralPath $script:CaBundle -PathType Leaf)) { Fail "--ca-bundle file not found: $script:CaBundle" }
@@ -439,17 +770,32 @@ $script:WritePaths = $validatedWritePaths
 
 $validatedReloadServices = New-Object System.Collections.Generic.List[string]
 foreach ($reloadService in $script:ReloadServices) {
-    & node $HostSandboxJs map-reload-service $reloadService | Out-Null
+    Invoke-InstallerNode -NodeArguments @($HostSandboxJs, 'map-reload-service', $reloadService) | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "invalid --reload-service: $reloadService" }
     $validatedReloadServices.Add($reloadService)
 }
 $script:ReloadServices = $validatedReloadServices
 
-if (-not $script:DryRun -and -not (Test-IsAdministrator)) {
-    Fail "install must run from an elevated (Administrator) PowerShell session"
+# -------------------------------------------------------- node version gate
+function Get-ExistingServiceEnvironment {
+    param([string]$ServiceKey)
+    $item = Get-ItemProperty -Path $ServiceKey -Name Environment -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return @() }
+    $property = $item.PSObject.Properties['Environment']
+    if ($null -eq $property -or $null -eq $property.Value) { return @() }
+    return @($property.Value)
 }
 
-# -------------------------------------------------------- node version gate
+# A prior installation may have enabled the Node flag for system trust. Do
+# not replace files or start the service with an older runtime that rejects
+# that option; retain the operator's settings and report the problem instead.
+function Test-UnsupportedSystemCaOption {
+    param([string[]]$Existing, [version]$NodeVersion)
+    $supportsFlag = ($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.15.0') -or ($NodeVersion.Major -eq 23 -and $NodeVersion -ge [version]'23.8.0') -or $NodeVersion.Major -ge 24
+    if ($supportsFlag) { return $false }
+    return @($Existing | Where-Object { $_ -match '^(?i:NODE_OPTIONS)=' -and $_ -match '(?i)(?:^|[=\s])--use-system-ca(?:\s|$)' }).Count -gt 0
+}
+
 # engines.node is a single ">=x.y.z <a.b.c" range in this package; a plain
 # regex parse of the lower bound avoids needing node before the node check
 # itself, mirroring install-agent.sh's sed parse.
@@ -465,11 +811,7 @@ if (-not $requiredMajorMatch.Success) {
 }
 $requiredMajor = [int]$requiredMajorMatch.Value
 
-$nodeCommand = Get-Command node -ErrorAction SilentlyContinue
-if (-not $nodeCommand) {
-    Fail "node is not installed or not on PATH; the agent requires Node '$requiredRange'"
-}
-$nodeVersionRaw = (& node -v).Trim()
+$nodeVersionRaw = (Invoke-InstallerNode -NodeArguments @('-v')).Trim()
 $nodeMajorMatch = [regex]::Match($nodeVersionRaw, '^v([0-9]+)')
 if (-not $nodeMajorMatch.Success) {
     Fail "could not parse installed Node version from 'node -v' (got '$nodeVersionRaw')"
@@ -479,7 +821,16 @@ if ($nodeMajor -lt $requiredMajor) {
     Fail "Node $nodeVersionRaw is too old; the agent requires engines.node '$requiredRange'"
 }
 Write-Log "Node $nodeVersionRaw satisfies engines.node '$requiredRange'."
-$script:NodeExe = $nodeCommand.Source
+$nodeVersionMatch = [regex]::Match($nodeVersionRaw, '^v([0-9]+)\.([0-9]+)\.([0-9]+)')
+if (-not $nodeVersionMatch.Success) { Fail "could not parse installed Node version from 'node -v' (got '$nodeVersionRaw')" }
+$script:NodeVersion = [version]("{0}.{1}.{2}" -f $nodeVersionMatch.Groups[1].Value, $nodeVersionMatch.Groups[2].Value, $nodeVersionMatch.Groups[3].Value)
+$serviceEnvironment = @(Get-ExistingServiceEnvironment -ServiceKey "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName")
+if (Test-UnsupportedSystemCaOption -Existing @($serviceEnvironment) -NodeVersion $script:NodeVersion) {
+    Fail "Node $nodeVersionRaw does not support the existing service option --use-system-ca. Upgrade Node or remove that option and configure --ca-bundle before reinstalling."
+}
+if (($script:NodeVersion.Major -eq 22 -and $script:NodeVersion -lt [version]'22.15.0') -or ($script:NodeVersion.Major -eq 23 -and $script:NodeVersion -lt [version]'23.8.0')) {
+    Write-Log "Node $nodeVersionRaw cannot load Windows system CAs automatically. For a private control-plane CA, upgrade Node or configure --ca-bundle."
+}
 
 # --------------------------------------------------- platform module helper
 # Reuses the package's own src/platform module (already ACL-tested; see
@@ -489,7 +840,8 @@ $script:NodeExe = $nodeCommand.Source
 function Invoke-PlatformAcl {
     param(
         [Parameter(Mandatory = $true)][string]$TargetPath,
-        [Parameter(Mandatory = $true)][ValidateSet("file", "directory")][string]$Kind
+        [Parameter(Mandatory = $true)][ValidateSet("file", "directory")][string]$Kind,
+        [switch]$IncludeAdministrators
     )
     $platformModule = Join-Path $PackageDir "src\platform\index.js"
     # ConvertTo-Json (built into PowerShell 5.1+) is used rather than a
@@ -502,11 +854,12 @@ function Invoke-PlatformAcl {
     $modulePathJson = $platformModule | ConvertTo-Json -Compress
     $targetPathJson = $TargetPath | ConvertTo-Json -Compress
     $kindJson = $Kind | ConvertTo-Json -Compress
-    $jsSource = "require($modulePathJson).applyRestrictivePermissions($targetPathJson, { kind: $kindJson });"
-    $scriptPath = Join-Path ([System.IO.Path]::GetTempPath()) "tokentimer-acl-$PID-$([guid]::NewGuid().ToString('N')).js"
+    $adminJs = if ($IncludeAdministrators) { 'true' } else { 'false' }
+    $jsSource = "require($modulePathJson).applyRestrictivePermissions($targetPathJson, { kind: $kindJson, includeAdministrators: $adminJs });"
+    $scriptPath = Join-Path $InstallRoot "tokentimer-acl-$PID-$([guid]::NewGuid().ToString('N')).js"
     try {
         [System.IO.File]::WriteAllText($scriptPath, $jsSource, (New-Object System.Text.UTF8Encoding($false)))
-        & node $scriptPath
+        Invoke-InstallerNode -NodeArguments @($scriptPath)
         if ($LASTEXITCODE -ne 0) {
             Fail "failed to apply a restricted ACL to $TargetPath (kind=$Kind)"
         }
@@ -660,7 +1013,6 @@ function Copy-PackageTree {
         [Parameter(Mandatory = $true)][string]$Source,
         [Parameter(Mandatory = $true)][string]$Destination
     )
-    $excludedDirNames = @("node_modules", ".git")
     # Validate the whole candidate and any existing destination before creating
     # or copying a single destination entry. A later activation guard cannot
     # undo a staging copy that already followed a source/destination junction.
@@ -693,7 +1045,7 @@ function Copy-PackageTree {
         if (!$item) { if ($Required) { throw 'required package source directory is missing' }; return }
         if (!$item.PSIsContainer) { throw 'refusing non-directory package copy root' }
         foreach ($entry in Get-ChildItem -LiteralPath $LiteralPath -Force -ErrorAction Stop) {
-            if ($SkipExcluded -and $entry.PSIsContainer -and $excludedDirNames -contains $entry.Name) { continue }
+            if ($SkipExcluded -and (Test-PackageCopyExclusion -Entry $entry)) { continue }
             $null = Get-UnlinkedCopyItem -LiteralPath $entry.FullName
             if ($entry.PSIsContainer) { Assert-UnlinkedCopyTree -LiteralPath $entry.FullName -Required $true -SkipExcluded $SkipExcluded }
         }
@@ -705,7 +1057,7 @@ function Copy-PackageTree {
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
     Get-ChildItem -LiteralPath $Source -Force | ForEach-Object {
         if ($_.PSIsContainer) {
-            if ($excludedDirNames -contains $_.Name) { return }
+            if (Test-PackageCopyExclusion -Entry $_) { return }
             Copy-PackageTree -Source $_.FullName -Destination (Join-Path $Destination $_.Name)
         } else {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $Destination $_.Name) -Force
@@ -777,12 +1129,24 @@ if (-not $script:DryRun) {
 
 Write-Log "Installing agent package from $PackageDir to $AppDir"
 if (-not $script:DryRun) {
-    New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
+    try {
+        if (-not (Test-Path -LiteralPath $InstallRoot) -and (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+            throw 'existing service has no installation directory'
+        }
+        Initialize-ProtectedPackageRoot -Path $InstallRoot
+        if (Test-Path -LiteralPath $AppDir) { $null = Get-ProtectedPackageFingerprint -Directory $AppDir -Verify }
+        if (Test-Path -LiteralPath $StateDir) { $null = Get-UnlinkedInstallItem -Path $StateDir -Directory }
+        if ((Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath $AppDir)) {
+            throw 'existing service has no verified application directory'
+        }
+    } catch {
+        Fail "installation preflight refused; preserve the existing state and service for operator recovery ($($_.Exception.Message))"
+    }
 }
 
 $script:AppStaging = "$AppDir.staging.$PID"
 $script:AppPrevious = "$AppDir.previous.$PID"
-$script:IsUpgrade = (Test-Path -LiteralPath $AppDir)
+$script:IsUpgrade = -not $script:DryRun -and (Test-Path -LiteralPath $AppDir)
 
 if ($script:DryRun) {
     Write-Host "[dry-run] copy $PackageDir into $($script:AppStaging) (excluding node_modules, .git), then atomically swap into $AppDir"
@@ -793,6 +1157,12 @@ if ($script:DryRun) {
     try {
         Copy-PackageTree -Source $PackageDir -Destination $script:AppStaging
         Assert-WindowsPackageHelpers -PackageDirectory $script:AppStaging -Architecture $arch
+        $fingerprint = Get-ProtectedPackageFingerprint -Directory $script:AppStaging
+        if ($fingerprint -cne $sourceFingerprint) {
+            throw 'staged package differs from the protected source'
+        }
+        [IO.File]::WriteAllText((Join-Path $script:AppStaging $script:PackageFingerprintName), $fingerprint)
+        $null = Get-ProtectedPackageFingerprint -Directory $script:AppStaging -Verify
     } catch {
         $stagingError = $_.Exception.Message
         try {
@@ -801,6 +1171,15 @@ if ($script:DryRun) {
             Fail "failed to stage the agent package; staging cleanup refused; preserve $($script:AppStaging) for inspection; $AppDir was left untouched ($stagingError)"
         }
         Fail "failed to stage the agent package; $AppDir was left untouched ($stagingError)"
+    }
+    if ($script:PrepareOnly) {
+        try {
+            $binPath = Get-WindowsServiceBinPath -AppDirectory $AppDir -NodeExecutable $script:NodeExe -Architecture $arch `
+                -PreparedServerUrl $script:ApiUrl
+            Complete-PreparedInstall -Stage $script:AppStaging -StagingIdentity $stagingIdentity -BinaryPath $binPath
+        } catch { Fail "preparation incomplete; preserve the staged application and state ($($_.Exception.Message))" }
+        Write-Log "Prepared the disabled service. Verify the installed candidate before enabling it."
+        exit 0
     }
     try {
         Activate-StagedPackage -AppDirectory $AppDir -StagingDirectory $script:AppStaging -PreviousDirectory $script:AppPrevious -ExpectedStagingIdentity $stagingIdentity
@@ -812,7 +1191,7 @@ if ($script:DryRun) {
 if (-not $script:DryRun) {
     New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 }
-Invoke-Step "apply restricted ACL to $StateDir" { Invoke-PlatformAcl -TargetPath $StateDir -Kind "directory" }
+Invoke-Step "apply restricted ACL to $StateDir" { Invoke-PlatformAcl -TargetPath $StateDir -Kind "directory" -IncludeAdministrators }
 
 # ---------------------------------------------- acme.sh dnsapi hook (Windows)
 # install-agent.sh symlinks bin/dns_certops.sh into
@@ -849,7 +1228,7 @@ if (-not [string]::IsNullOrEmpty($script:CaBundle)) {
     Invoke-Step "copy $($script:CaBundle) to $caBundleDest" { Copy-Item -LiteralPath $script:CaBundle -Destination $caBundleDest -Force }
 }
 
-if ((Test-Path -LiteralPath $configPath) -and -not $script:DryRun) {
+if (-not $script:DryRun -and (Test-Path -LiteralPath $configPath)) {
     Write-Log "Existing $configPath found; leaving it untouched (delete it to re-generate)."
 } elseif ($script:DryRun) {
     $caNote = if ($caBundleDest) { " caBundlePath=$caBundleDest" } else { "" }
@@ -862,34 +1241,30 @@ if ((Test-Path -LiteralPath $configPath) -and -not $script:DryRun) {
     $lines = New-Object System.Collections.Generic.List[string]
     $lines.Add("{")
     $lines.Add("  `"serverUrl`": `"$($script:ApiUrl)`",")
-    if ($caBundleDest -or $script:AllowInsecureLocalHttp) {
-        $lines.Add("  `"workspaceId`": `"$($script:WorkspaceId)`",")
-    } else {
-        $lines.Add("  `"workspaceId`": `"$($script:WorkspaceId)`"")
-    }
+    $lines.Add("  `"workspaceId`": `"$($script:WorkspaceId)`",")
     if ($caBundleDest) {
         $caBundleDestJson = $caBundleDest.Replace('\', '\\')
-        if ($script:AllowInsecureLocalHttp) {
-            $lines.Add("  `"caBundlePath`": `"$caBundleDestJson`",")
-        } else {
-            $lines.Add("  `"caBundlePath`": `"$caBundleDestJson`"")
-        }
+        $lines.Add("  `"caBundlePath`": `"$caBundleDestJson`",")
     }
     if ($script:AllowInsecureLocalHttp) {
-        $lines.Add("  `"allowInsecureLocalHttp`": true")
+        $lines.Add("  `"allowInsecureLocalHttp`": true,")
     }
+    $lines.Add('  "observedRevocation": { "enabled": true, "allowedOrigins": [] }')
     $lines.Add("}")
     $configContent = ($lines -join "`n") + "`n"
     [System.IO.File]::WriteAllText($configTmp, $configContent, (New-Object System.Text.UTF8Encoding($false)))
     Move-Item -Force $configTmp $configPath
-    Invoke-PlatformAcl -TargetPath $configPath -Kind "file"
     # Sanity-parse the result with the node we already verified, so a bad
     # value can never install an unreadable config.
-    & node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" $configPath
+    Invoke-InstallerNode -NodeArguments @('-e', "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))", $configPath)
     if ($LASTEXITCODE -ne 0) {
         Fail "generated $configPath is not valid JSON (unexpected characters in --api-url/--workspace-id?)"
     }
 }
+
+# Repair legacy SYSTEM-only configuration ACLs on upgrade without rewriting
+# the operator's configuration or changing the credential's separate ACL.
+Invoke-Step "apply operator ACL to $configPath" { Invoke-PlatformAcl -TargetPath $configPath -Kind "file" -IncludeAdministrators }
 
 # --------------------------------------- bootstrap token env file
 # Written for parity with install-agent.sh (documentation, and a manual/dev
@@ -916,17 +1291,6 @@ if ($script:DryRun) {
 # ------------------------------------------------------------- Windows service
 # Native tooling only (sc.exe): no NSSM or other third-party service
 # wrapper. LocalSystem per ADR-0012 decision 11.
-function Set-ServiceEnvironment {
-    param([string]$ConfigDir, [string]$Token)
-    $values = New-Object System.Collections.Generic.List[string]
-    $values.Add("TOKENTIMER_AGENT_CONFIG_DIR=$ConfigDir")
-    if (-not [string]::IsNullOrEmpty($Token)) {
-        $values.Add("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=$Token")
-    }
-    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" `
-        -Name "Environment" -PropertyType MultiString -Value $values.ToArray() -Force | Out-Null
-}
-
 function Test-ServiceHealthy {
     param([int]$TimeoutSeconds = 20)
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -963,9 +1327,6 @@ function Set-ServiceBinaryPath {
     }
 }
 
-$quotedNode = '"' + $script:NodeExe + '"'
-$quotedEntry = '"' + (Join-Path $AppDir "bin\tokentimer-agent.js") + '"'
-
 # The service's binPath is the native host, not node.exe: node never calls
 # StartServiceCtrlDispatcher, so the SCM would otherwise fail the start
 # after 30s (error 1053) and, combined with the failure/restart policy
@@ -981,8 +1342,7 @@ if (-not $script:DryRun -and -not (Test-Path -LiteralPath $serviceHostExe)) {
         "or was not built with 'pnpm run build:windows-service-host' before packaging"
     )
 }
-$quotedServiceHost = '"' + $serviceHostExe + '"'
-$binPath = "$quotedServiceHost $quotedNode $quotedEntry"
+$binPath = Get-WindowsServiceBinPath -AppDirectory $AppDir -NodeExecutable $script:NodeExe -Architecture $arch
 
 # sc.exe's binPath= value here is three separately-quoted path segments
 # (host exe, node.exe, entry script). An earlier fix wrapped the whole
@@ -1064,8 +1424,14 @@ try {
 $healthy = Test-ServiceHealthy -TimeoutSeconds 20
 
 if (-not $healthy -and $script:IsUpgrade -and (Test-Path -LiteralPath $script:AppPrevious)) {
+    try {
+        $null = Get-ProtectedPackageFingerprint -Directory $script:AppPrevious -Verify
+        $null = Get-ProtectedPackageFingerprint -Directory $AppDir -Verify
+    } catch {
+        Fail "upgrade failed its health check; rollback verification failed and both application directories were preserved ($($_.Exception.Message))"
+    }
     Write-Log "Health check failed after upgrade; rolling back to the previous version."
-    Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+    Stop-Service -Name $ServiceName -Force -ErrorAction Stop
     Remove-Item -LiteralPath $AppDir -Recurse -Force
     Rename-Item -LiteralPath $script:AppPrevious -NewName (Split-Path -Leaf $AppDir)
     $rollbackBinPath = $binPath

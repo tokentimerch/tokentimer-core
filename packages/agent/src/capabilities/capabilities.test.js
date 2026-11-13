@@ -24,6 +24,10 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
         "iis-binding-v1",
         "trust-anchor-deploy-v1",
         "adcs-enroll-v1",
+        "windows-store-only-adcs-v1",
+        "windows-store-only-acme-v1",
+        "windows-store-iis-consumers-v1",
+        "adcs-store-proof-only-v1",
         "material-store-vault-kv2-v1",
         "certificate-publication-v1",
         "deploy-from-store-v1",
@@ -55,6 +59,9 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
     assert.deepEqual([...manifest.qualified].sort(), [...require("./qualified-capabilities.json").qualified].sort());
     assert.equal(manifest.qualified.includes("material-store-azure-key-vault-v1"),false);
     assert.equal(manifest.qualified.includes("windows-material-iis-v1"),false);
+    assert.equal(manifest.qualified.includes("windows-store-only-adcs-v1"), false);
+    assert.equal(manifest.qualified.includes("windows-store-only-acme-v1"), false);
+    assert.equal(manifest.qualified.includes("adcs-store-proof-only-v1"), false);
     assert.equal(manifest.qualified.includes("material-cleanup-vault-kv2-v1"),false);
     assert.equal(manifest.qualified.includes("material-cleanup-openbao-kv2-v1"),false);
     assert.equal(manifest.qualified.includes("material-consumer-staging-v1"),false);

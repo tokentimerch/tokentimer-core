@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -100,6 +101,151 @@ func TestResolveStopTimeout(t *testing.T) {
 				t.Fatalf("resolveStopTimeout() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestAgentHostPreservesOtherEnvironmentEntries(t *testing.T) {
+	want := []string{
+		`=C:=C:\Program Files`,
+		`Path=C:\Windows\System32`,
+		`NODE_EXTRA_CA_CERTS=C:\pinned\ca.pem`,
+		`NODE_PATH_SUFFIX=keep=literal`,
+		`TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=fixture`,
+	}
+	env := append(slices.Clone(want), "NODE_OPTIONS=first", "node_options=second", "NODE_PATH=", "nOdE_pAtH=third")
+	got := newAgentHost("node.exe", nil, env, nil).env
+	if !slices.Equal(got, want) {
+		t.Fatalf("child environment = %v, want %v", got, want)
+	}
+	if len(env) != len(want)+4 || env[len(want)] != "NODE_OPTIONS=first" {
+		t.Fatal("source environment was changed")
+	}
+}
+
+func TestAgentHostFiltersEffectiveNodeEnvironment(t *testing.T) {
+	node := nodeExe(t)
+	dir := t.TempDir()
+	entry := filepath.Join(dir, "inspect-env.js")
+	preload := filepath.Join(dir, "preload.js")
+	marker := filepath.Join(dir, "preload-executed")
+	if err := os.WriteFile(preload, []byte(`require("node:fs").writeFileSync(process.env.TT_HOST_TEST_PRELOAD_MARKER, "ran")`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := `
+const assert = require("node:assert/strict");
+const keys = Object.keys(process.env).map((key) => key.toUpperCase());
+assert.equal(keys.includes("NODE_OPTIONS"), false);
+assert.equal(keys.includes("NODE_PATH"), false);
+assert.equal(process.env.TOKENTIMER_AGENT_CONFIG_DIR, process.argv[2]);
+assert.equal(process.env.NODE_OPTIONS_SUFFIX, "keep=literal");
+assert.ok(process.env.SystemRoot);
+`
+	if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("nOdE_OpTiOnS", `--require "`+filepath.ToSlash(preload)+`"`)
+	t.Setenv("NoDe_PaTh", dir)
+	t.Setenv("TT_HOST_TEST_PRELOAD_MARKER", marker)
+	t.Setenv("TOKENTIMER_AGENT_CONFIG_DIR", dir)
+	t.Setenv("NODE_OPTIONS_SUFFIX", "keep=literal")
+	host := newAgentHost(node, []string{entry, dir}, nil, newTestLogger(t))
+	if err := host.start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		select {
+		case <-host.exited:
+		default:
+			_ = host.cmd.Process.Kill()
+		}
+	})
+	select {
+	case <-host.exited:
+		if err := host.wait(); err != nil {
+			t.Errorf("inspect Node environment: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Node environment fixture did not exit")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("Node preload marker exists or could not be inspected: %v", err)
+	}
+}
+
+func TestPreparedServiceUsesVerifiedOriginInNode(t *testing.T) {
+	node := nodeExe(t)
+	entry := filepath.Join(t.TempDir(), "origin.js")
+	const inherited = "https://inherited.invalid"
+	const prepared = "https://prepared.invalid:4443"
+	source := `
+const assert = require("node:assert/strict");
+assert.equal(process.argv.length, 4);
+assert.equal(process.env.TOKENTIMER_AGENT_SERVER_URL, process.argv[2]);
+assert.equal(process.env.TOKENTIMER_AGENT_ALLOW_INSECURE_LOCAL_HTTP, process.argv[3]);
+assert.equal(process.env.TOKENTIMER_AGENT_SERVER_URL_SUFFIX, "neighbor=value");
+assert.equal(process.env.TOKENTIMER_AGENT_CA_BUNDLE, "public fixture");
+assert.equal(Object.keys(process.env).filter(key => key.toUpperCase() === "TOKENTIMER_AGENT_SERVER_URL").length, 1);
+`
+	if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(), "tokentimer_agent_server_url="+inherited,
+		"tokentimer_agent_allow_insecure_local_http=false",
+		"TOKENTIMER_AGENT_SERVER_URL_SUFFIX=neighbor=value", "TOKENTIMER_AGENT_CA_BUNDLE=public fixture")
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"ordinary", []string{node, entry, inherited, "false"}},
+		{"prepared", []string{preparedServerFlag, prepared, node, entry, prepared, "false"}},
+		{"prepared IPv4 loopback", []string{preparedServerFlag, "http://127.0.0.2:4400", node, entry, "http://127.0.0.2:4400", "true"}},
+		{"prepared IPv6 loopback", []string{preparedServerFlag, "http://[::1]:4400", node, entry, "http://[::1]:4400", "true"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			childArgs, childEnv, err := parseHostLaunch(tc.args, env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			host := newAgentHost(childArgs[0], childArgs[1:], childEnv, newTestLogger(t))
+			if err := host.start(); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-host.exited:
+				if err := host.wait(); err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(15 * time.Second):
+				_ = host.cmd.Process.Kill()
+				t.Fatal("Node origin fixture did not exit")
+			}
+		})
+	}
+}
+
+func TestPreparedServiceRefusesInvalidOriginArgument(t *testing.T) {
+	for _, args := range [][]string{
+		{preparedServerFlag},
+		{preparedServerFlag, "https://prepared.invalid"},
+		{preparedServerFlag, "", "node.exe"},
+		{preparedServerFlag, "https://prepared.invalid/path", "node.exe"},
+		{preparedServerFlag, "https://user@prepared.invalid", "node.exe"},
+		{preparedServerFlag, "https://prepared.invalid?", "node.exe"},
+		{preparedServerFlag, "https://prepared.invalid#", "node.exe"},
+		{preparedServerFlag, "http://remote.invalid", "node.exe"},
+	} {
+		if _, _, err := parseHostLaunch(args, nil); err == nil {
+			t.Fatalf("accepted malformed prepared host arguments: %v", args)
+		}
+	}
+}
+
+func TestPreparedServerFlagIsReservedOnlyBeforeTheChild(t *testing.T) {
+	args := []string{"node.exe", "entry.js", preparedServerFlag, "https://child-argument.invalid"}
+	env := []string{serverURLEnv + "=https://ordinary.invalid"}
+	gotArgs, gotEnv, err := parseHostLaunch(args, env)
+	if err != nil || !slices.Equal(gotArgs, args) || !slices.Equal(gotEnv, env) {
+		t.Fatalf("ordinary child arguments or environment changed: %v, %v, %v", gotArgs, gotEnv, err)
 	}
 }
 

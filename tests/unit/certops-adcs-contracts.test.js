@@ -152,6 +152,16 @@ function assertInvalid(job, label) {
 }
 
 describe("AD CS issuer job payload", () => {
+  it("accepts only the read-only proof action with its complete server binding", () => {
+    const job = adcsJob({ action: "adcs-installation-proof", target: { type: "windows-cert-store", reference: "app.corp.example.com", store: "My" },
+      adcsProof: { receiptId: ENROLLMENT_ID, enrollmentId: ENROLLMENT_ID, agentId: AGENT_ID,
+        originalJobId: ENROLLMENT_ID, originalClaimId: ENROLLMENT_ID, originalAttempt: 1,
+        snapshotSha256: HEX64, destinationSha256: HEX64, fingerprintSha256: HEX64, csrSpkiSha256: HEX64 } });
+    assertValid(job);
+    assertInvalid({ ...job, caEndpoint: "https://example.test" }, "CA work on proof");
+    const { adcsProof, ...unbound } = job;
+    assertInvalid(unbound, "missing proof binding");
+  });
   it("accepts the first enrollment step and its continuations", () => {
     assertValid(adcsJob(), "first-step renew");
     assertValid(adcsJob({ action: "continue-enrollment" }), "continuation");

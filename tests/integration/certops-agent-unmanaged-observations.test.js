@@ -7,8 +7,9 @@ const { join } = require("node:path");
 const { Client, Pool } = require("pg");
 const { migrations } = require("../../apps/api/migrations/migrate");
 const { persistAgentDiscoveryEvidenceBatch } = require("../../apps/api/services/certops/agentObservations");
+const { bindAuthenticatedCredential } = require("../../apps/api/services/certops/agentCredentialFence");
 const { listCertificateIdentities, retireCertificateIdentity, stopManagingSource } = require("../../apps/api/services/certops/certificateIdentity");
-const { countActiveManagedCertificatesWithClient, importPublicCertificates } = require("../../apps/api/services/certops/inventory");
+const { countActiveManagedCertificatesWithClient, importPublicCertificates, listManagedCertificates } = require("../../apps/api/services/certops/inventory");
 
 const pem = readFileSync(join(__dirname, "../fixtures/certops-public-observation.txt"), "utf8");
 const certificate = new X509Certificate(pem);
@@ -49,7 +50,7 @@ describe("Quota-blocked agent observations on real PostgreSQL", function () {
       VALUES($1,$2,'test','1.0.0',$3,$4) RETURNING id`,
     [workspaceId, agentId, `ttagent_${randomUUID().replaceAll("-", "").slice(0, 16)}`,
       createHash("sha256").update(agentId).digest("hex")])).rows[0];
-    return { id: row.id, workspaceId, agentId, hostname: "observation.example.test" };
+    return bindAuthenticatedCredential({ id: row.id, workspaceId, agentId, hostname: "observation.example.test" }, agentId);
   }
   function observation(filePath, overrides = {}) {
     return {
@@ -264,6 +265,176 @@ describe("Quota-blocked agent observations on real PostgreSQL", function () {
     const row = (await db.query("SELECT last_sequence FROM certops_agents WHERE id=$1", [principal.id])).rows[0];
     assert.equal(Number(row.last_sequence), 0);
     assert.equal((await rows("certops_certificate_identities", principal.workspaceId)).length, 0);
+  });
+
+  it("preserves the latest revocation and last verified result across late or older-agent observations", async () => {
+    const principal = await agent(1);
+    const base = Date.now();
+    const report = (verdict, offset) => {
+      const item = observation("/etc/ssl/observed.pem");
+      if (verdict) {
+        item.metadata.push({ name: "observedRevocationVerdict", value: verdict });
+        item.metadata.push({ name: "observedChainStatus", value: verdict === "unknown" ? "unknown" : "valid" });
+        item.metadata.push({ name: "observedRevocationCheckedAt", value: new Date(base + offset).toISOString() });
+        if (verdict !== "unknown") item.metadata.push({ name: "observedRevocationValidUntil", value: new Date(base + 3600000).toISOString() });
+      }
+      return item;
+    };
+    const result = async () => (await rows("certificate_instances", principal.workspaceId))[0].public_metadata.observedRevocation;
+    await send(principal, 1, [report("good", -240000)]);
+    assert.equal((await result()).verdict, "good");
+    await send(principal, 2, [report("revoked", -180000)]);
+    assert.equal((await result()).verdict, "revoked");
+    const listed = await listManagedCertificates({ workspaceId: principal.workspaceId, client: db });
+    assert.equal(listed.items[0].observedRevocation.verdict, "revoked", "certificate list exposes the independent observed verdict");
+    const grouped = await listCertificateIdentities({ workspaceId: principal.workspaceId, client: db });
+    assert.equal(grouped.items[0].observedRevocation.verdict, "revoked", "grouped inventory exposes agent verification");
+    await send(principal, 3, [report("good", -300000)]);
+    assert.equal((await result()).verdict, "revoked", "a late good result must not erase revocation");
+    await send(principal, 4, [report("unknown", -120000)]);
+    assert.equal((await result()).verdict, "unknown");
+    assert.equal((await result()).lastVerified.verdict, "revoked");
+    await send(principal, 5, [report(null, 0)]);
+    assert.equal((await result()).lastVerified.verdict, "revoked", "older agents must not erase verification history");
+    const evidence = await rows("certificate_evidence", principal.workspaceId);
+    assert.equal(evidence.length, 5, "each distinct observation remains available for audit");
+    assert.deepEqual(evidence.map((entry) => entry.metadata.observedRevocationVerdict).filter(Boolean).sort(),
+      ["good", "good", "revoked", "unknown"]);
+    assert.ok(evidence.every((entry) => entry.created_by_agent_id === principal.id));
+  });
+
+  it("replaces a prior good result when policy is removed or disabled, while preserving history", async () => {
+    for (const limit of [0, 1]) {
+      const principal = await agent(limit);
+      const base = Date.now();
+      const report = (state, offset = -60000, revision = null) => {
+        const item = observation(`/etc/ssl/policy-${limit}.pem`);
+        if (revision !== null) item.metadata.push({ name: "observedRevocationRevision", value: String(revision) });
+        if (["good", "revoked"].includes(state)) item.metadata.push(
+          { name: "observedRevocationVerdict", value: state },
+          { name: "observedChainStatus", value: "valid" },
+          { name: "observedRevocationCheckedAt", value: new Date(base + offset).toISOString() },
+          { name: "observedRevocationValidUntil", value: new Date(base + 3600000).toISOString() },
+        );
+        else item.metadata.push({ name: "observedRevocationState", value: state });
+        return item;
+      };
+      const result = async () => limit
+        ? (await rows("certificate_instances", principal.workspaceId))[0].public_metadata.observedRevocation
+        : (await rows("certops_slot_observations", principal.workspaceId))[0].observed_revocation;
+      await send(principal, 1, [report("good", 240000, 10)]);
+      await send(principal, 2, [report("not_configured", -240000, 11)]);
+      assert.equal((await result()).verdict, "not_configured");
+      assert.equal((await result()).checkedAt, null);
+      assert.equal((await result()).lastVerified.verdict, "good");
+      await send(principal, 3, [report("disabled", -240000, 12)]);
+      assert.equal((await result()).verdict, "disabled");
+      assert.equal((await result()).checkedAt, null);
+      assert.equal((await result()).lastVerified.verdict, "good");
+      await send(principal, 4, [report("good", 240000, 10)]);
+      assert.equal((await result()).verdict, "disabled", "late good evidence must not override the policy state despite clock skew");
+      await send(principal, 5, [report("good", 240000)]);
+      assert.equal((await result()).verdict, "disabled", "revisionless old agents cannot clear the fence");
+      await send(principal, 6, [report("revoked", -240000, 13)]);
+      assert.equal((await result()).verdict, "revoked");
+      await send(principal, 7, [report("disabled", -240000, 1)]);
+      assert.equal((await result()).verdict, "disabled");
+      assert.equal((await result()).lastVerified.verdict, "revoked", "policy changes preserve the last verified revocation");
+      assert.equal((await result()).revision, 13, "a reset allocator must not weaken the fence");
+      await send(principal, 8, [report("good", 240000, 10)]);
+      assert.equal((await result()).verdict, "disabled", "old good stays fenced after allocator reset");
+      const grouped = await listCertificateIdentities({ workspaceId: principal.workspaceId, client: db, canReadTopology: false });
+      assert.equal(grouped.items[0].observedRevocation.verdict, "disabled");
+    }
+  });
+
+  it("fails closed on malformed observations and accepts revisionless revocations", async () => {
+    for (const limit of [0, 1]) {
+      const principal = await agent(limit);
+      const now = Date.now();
+      const item = (entries) => {
+        const value = observation(`/etc/ssl/invalid-${limit}.pem`);
+        value.metadata.push(...entries.map(([name, value]) => ({ name, value })));
+        return value;
+      };
+      const check = (verdict, offset = -1000, revision = null) => item([
+        ["observedRevocationVerdict", verdict], ["observedChainStatus", "valid"],
+        ["observedRevocationCheckedAt", new Date(now + offset).toISOString()],
+        ["observedRevocationValidUntil", new Date(now + 3600000).toISOString()],
+        ...(revision === null ? [] : [["observedRevocationRevision", revision]]),
+      ]);
+      const result = async () => limit
+        ? (await rows("certificate_instances", principal.workspaceId))[0].public_metadata.observedRevocation
+        : (await rows("certops_slot_observations", principal.workspaceId))[0].observed_revocation;
+      await send(principal, 1, [item([["observedRevocationState", "disabled"]])]);
+      await send(principal, 2, [check("revoked")]);
+      assert.equal((await result()).verdict, "revoked");
+      await send(principal, 3, [item([["observedRevocationState", "disabled"]])]);
+      await send(principal, 4, [check("issuer_revoked")]);
+      assert.equal((await result()).verdict, "issuer_revoked");
+      await send(principal, 5, [check("good", -1000, "50")]);
+      await send(principal, 6, [check("good", -1000, "broken")]);
+      assert.equal((await result()).verdict, "invalid_observation");
+      assert.equal((await result()).checkedAt, null);
+      assert.equal((await result()).revision, 50);
+      assert.equal((await result()).lastVerified.verdict, "good");
+      await send(principal, 7, [check("good", -1000, "49")]);
+      assert.equal((await result()).verdict, "invalid_observation");
+      await send(principal, 8, [check("revoked", -1000, "51")]);
+      await send(principal, 9, [check("good", 600000, "52")]);
+      assert.equal((await result()).verdict, "invalid_observation");
+      assert.equal((await result()).checkedAt, null);
+      assert.equal((await result()).lastVerified.verdict, "revoked");
+      assert.equal((await result()).revision, 52);
+    }
+  });
+
+  it("retains unmanaged agent revocation and exposes it without topology access", async () => {
+    const principal = await agent();
+    const now = Date.now();
+    const report = (verdict, offset) => {
+      const item = observation("/etc/ssl/unmanaged.pem");
+      if (verdict) item.metadata.push(
+        { name: "observedRevocationVerdict", value: verdict },
+        { name: "observedChainStatus", value: verdict === "unknown" ? "unknown" : "valid" },
+        { name: "observedRevocationCheckedAt", value: new Date(now + offset).toISOString() },
+        ...(verdict === "unknown" ? [] : [{ name: "observedRevocationValidUntil", value: new Date(now + 3600000).toISOString() }]),
+      );
+      return item;
+    };
+    await send(principal, 1, [report("revoked", -180000)]);
+    await send(principal, 2, [report("good", -240000)]);
+    await send(principal, 3, [report("unknown", -120000)]);
+    await send(principal, 4, [report(null, 0)]);
+    const slot = (await rows("certops_slot_observations", principal.workspaceId))[0];
+    assert.equal(slot.observed_revocation.verdict, "unknown");
+    assert.equal(slot.observed_revocation.lastVerified.verdict, "revoked");
+    const result = await listCertificateIdentities({ workspaceId: principal.workspaceId, client: db, canReadTopology: false });
+    assert.equal(result.items[0].managed, false);
+    assert.equal(result.items[0].revocationObservable, true);
+    assert.equal(result.items[0].observedRevocation.lastVerified.verdict, "revoked");
+  });
+
+  it("does not hide an unchecked or revoked location behind a good location", async () => {
+    const principal = await agent(1);
+    const base = Date.now();
+    const report = (file, verdict, offset) => {
+      const item = observation(file);
+      if (verdict) item.metadata.push(
+        { name: "observedRevocationVerdict", value: verdict },
+        { name: "observedChainStatus", value: "valid" },
+        { name: "observedRevocationCheckedAt", value: new Date(base + offset).toISOString() },
+        { name: "observedRevocationValidUntil", value: new Date(base + 3600000).toISOString() },
+      );
+      return item;
+    };
+    await send(principal, 1, [report("/first.pem", "good", -180000), report("/second.pem", null, 0)]);
+    let grouped = await listCertificateIdentities({ workspaceId: principal.workspaceId, client: db });
+    assert.equal(grouped.items[0].revocationObservable, true);
+    assert.equal(grouped.items[0].observedRevocation, null);
+    await send(principal, 2, [report("/second.pem", "revoked", -120000)]);
+    grouped = await listCertificateIdentities({ workspaceId: principal.workspaceId, client: db });
+    assert.equal(grouped.items[0].observedRevocation.verdict, "revoked");
   });
 
   it("rolls back the sequence and retained observations on non-admission database failures", async () => {

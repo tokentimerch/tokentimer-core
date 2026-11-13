@@ -12,7 +12,7 @@ Enable CertOps and provision the signing and registration encryption keys. In th
 
 ## Install
 
-Download the matching agent release, compare its checksum with the published checksum, and extract the package. From that directory:
+Download the matching agent release and verify its checksum before running the installer. Recent Windows versions include `tar.exe`; check with `Get-Command tar.exe` and use another trusted extractor if it is missing. Extract the `.tgz` with `tar -xzf <archive>` into a new protected directory, such as one under Program Files. Set the owner of the extracted tree to the Administrators group and allow only Administrators and SYSTEM to modify it. Use the protected directory for installation and elevated dry runs. From that directory:
 
 ```powershell
 $workspaceId = Read-Host 'Workspace ID'
@@ -23,15 +23,19 @@ Get-Service TokenTimerAgent
 
 The installer prompts privately for the bootstrap token. The service runs as LocalSystem through the bundled native service host. The app lives at `C:\ProgramData\TokenTimerAgent\app`; configuration and custody state live at `C:\ProgramData\TokenTimerAgent\state`.
 
-For a private API CA, set `caBundlePath` in any prewritten configuration. `--ca-bundle` copies the CA into the state directory but only adds that setting when creating a new config. API, material-store and issued-certificate trust are separate.
+For a private API CA, install its public chain in the Windows machine stores. The installer enables system CA trust for the service with Node 22.15–22.x, 23.8–23.x, or 24.x unless explicitly overridden. On Node 22.0–22.14 or 23.0–23.7, upgrade Node or use `--ca-bundle` for a new configuration. An existing `config.json` needs `caBundlePath` set explicitly; a reinstall does not add it. A configured bundle replaces the API's default CA trust. `--trust-store` does not configure API TLS trust. Restart the service after changing trust.
+
+Use a machine-wide Node.js installation on PATH in a protected directory such as `C:\Program Files\nodejs`. The installer rejects a Node path that uses a junction or allows unprivileged changes. If an older application has no verified installation record or uses an unsafe directory, the upgrade stops before changing the service or its state. Preserve the configuration, credentials, signing pins, custody keys and journals. Plan a controlled reinstall from a verified package in a clean protected directory and validate the preserved state before resuming jobs.
 
 Write your policy first, then run the installer: it keeps an existing `config.json` and only creates one when absent. Command profile names and target selectors are read when the agent starts, so prepare them before the first registration. With a loopback `http` API address, pass `--allow-insecure-local-http` and also add `"allowInsecureLocalHttp": true` to a hand-written `config.json`. On an upgrade the installer still asks for a token; a registered agent keeps its credential and does not use it, so paste any value that starts with `ttboot_` or set `$env:TOKENTIMER_AGENT_BOOTSTRAP_TOKEN = 'ttboot_unused'`.
 
 Save `config.json` and any DNS credentials file as UTF-8 without a byte order mark. Windows PowerShell 5.1 `Set-Content -Encoding utf8` adds one and the agent refuses the file. Use Notepad, or `[IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false)))`.
 
-Windows state is protected and checked with `icacls` ACLs. Only the agent identity and SYSTEM are granted access; Administrators are accepted if already present. A failed permission check stops the operation.
+Windows state is protected with `icacls` ACLs. Local Administrators can access and edit `config.json`; credential files remain restricted to the agent identity and SYSTEM. A failed permission check stops the operation.
 
 For a protected config that even an elevated editor cannot change, follow [Windows configuration maintenance](../windows-maintenance.md). Never delete enrolled identity or keys to get past an access error.
+
+For a controlled reinstall of an enrolled agent, use `--prepare-only` from the verified package extracted into a protected directory. This mode requires a verified state restore, matching API URL and workspace, and an empty application and service slot. It preserves the restored state and leaves the new LocalSystem service disabled for inspection. The prepared service uses the verified API origin at startup. After an interruption, preserve the staged files and inspect the disabled registration before recovery. Enable the service only after verifying the installed candidate and its state.
 
 ## Verify
 
@@ -39,7 +43,7 @@ Confirm the service is Running and the fleet panel shows registration and a fres
 
 The bundled ACME path uses DNS-01, including Windows/IIS targets. See [DNS and ACME](dns-and-acme.md) for providers and the external HTTP-01 alternative. A domain-joined member can enroll from an enterprise CA. See [Microsoft AD CS](adcs.md). The agent contacts a CA only when a local enrollment rule names it.
 
-For an API-created no-op smoke test, list `GET /api/v1/workspaces/{workspaceId}/certops/agents`, match `items[].agentId` to the local configuration's `agentId`, and use that row's `items[].id` as `assignedAgentId`. Send `POST /api/v1/workspaces/{workspaceId}/certops/jobs` with `{"operation":"noop","mode":"dry_run","assignedAgentId":"REPLACE_WITH_FLEET_AGENT_ROW_UUID"}`; approve it if required by workspace policy, then poll its job endpoint for `dry_run_complete`.
+In **Jobs → Create manual job**, choose **No-op**, select **Simulation (dry run)** and the agent, then create the job. Confirm **Dry-run complete**. Alternatively, list `GET /api/v1/workspaces/{workspaceId}/certops/agents`, match `items[].agentId` to the local configuration's `agentId`, and use that row's `items[].id` as `assignedAgentId`. Send `POST /api/v1/workspaces/{workspaceId}/certops/jobs` with `{"operation":"noop","mode":"dry_run","assignedAgentId":"REPLACE_WITH_FLEET_AGENT_ROW_UUID"}`; approve it if required, then poll for `dry_run_complete`.
 
 ## Continue
 

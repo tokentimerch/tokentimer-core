@@ -396,6 +396,31 @@ export function agentRestartCommandFor(os) {
  * Observe-only agent configuration: it registers and reports discovery, and
  * never claims jobs, because execution stays disabled.
  */
+export function parseRevocationOrigins(value = '') {
+  const origins = String(value)
+    .split(/[\s,]+/)
+    .filter(Boolean);
+  if (origins.length > 128) return { ok: false };
+  for (const origin of origins) {
+    if (origin.length > 2048) return { ok: false };
+    try {
+      const url = new URL(origin);
+      if (
+        !['http:', 'https:'].includes(url.protocol) ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash ||
+        url.pathname !== '/'
+      )
+        return { ok: false };
+    } catch {
+      return { ok: false };
+    }
+  }
+  return { ok: true, origins: [...new Set(origins)] };
+}
+
 export function buildObserveConfig({ os, directories = [] }) {
   const config = {
     execution: { enabled: false, dryRun: true },

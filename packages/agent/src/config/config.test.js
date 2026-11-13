@@ -1086,6 +1086,25 @@ describe("signing key pin round trip", () => {
 });
 
 describe("writeAgentIdentity / config.json round trip", () => {
+  // skip-reason: platform - verifies Windows ACL inheritance and actual files.
+  it("keeps administrator access on config but not on credential files after restart (win32)", { skip: !IS_WIN32 }, () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    const configPath = path.join(dir, "config.json");
+    fs.writeFileSync(configPath, JSON.stringify({ serverUrl: "https://control-plane.example.com" }));
+    writeAgentIdentity(dir, { agentId: "agent-acl-test" });
+    writeCredential(dir, "ttagent_agent-acl-test_0123456789abcdef");
+    // Model an installation with the old ACL before the service starts.
+    assert.equal(spawnSync("icacls", [dir, "/remove:g", "*S-1-5-32-544"], { encoding: "utf8" }).status, 0);
+    assert.equal(spawnSync("icacls", [configPath, "/remove:g", "*S-1-5-32-544"], { encoding: "utf8" }).status, 0);
+    loadAgentConfig({ configDir: dir });
+    const stateAcl = readWindowsSddl(dir);
+    const configAcl = readWindowsSddl(configPath);
+    const credentialAcl = readWindowsSddl(path.join(dir, "credential"));
+    assert.match(stateAcl, /\(A;;0x1200a9;;;BA\)/i);
+    assert.match(configAcl, /\(A;;FA;;;BA\)/i);
+    assert.doesNotMatch(credentialAcl, /;;;BA\)/i);
+  });
   it("writes agentId and merges with existing config.json content without clobbering other fields", () => {
     const dir = makeTempConfigDir();
     ensureConfigDir(dir);

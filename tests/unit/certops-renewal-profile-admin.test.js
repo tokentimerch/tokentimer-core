@@ -317,7 +317,7 @@ function createUpdatePool({
       if (normalized.startsWith("UPDATE certificate_profiles")) {
         return { rows: [{ id: row.id }] };
       }
-      if (normalized.startsWith("SELECT id FROM certificate_issuers")) {
+      if (normalized.startsWith("SELECT id, name FROM certificate_issuers")) {
         return { rows: issuers.includes(params[1]) ? [{ id: params[1] }] : [] };
       }
       if (normalized.startsWith("SELECT i.kind")) {
@@ -832,6 +832,12 @@ describe("CertOps upcoming renewals coverage", () => {
       profile_public_metadata: {},
     });
 
+    assert.equal(item.blockedReason, "auto_renew_disabled");
+  });
+
+  it("reports a tracking-only management period as switched off", async () => {
+    const { item } = await listOne({ management_automation_enabled: false });
+    assert.equal(item.autoRenewEnabled, false);
     assert.equal(item.blockedReason, "auto_renew_disabled");
   });
 

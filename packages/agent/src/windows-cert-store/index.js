@@ -1915,7 +1915,7 @@ async function removeAbandonedKeyContainer({
   const delkeyArgv = [certutilPath, "-csp", MICROSOFT_SOFTWARE_KSP, "-delkey", containerName];
   assertSafeArgvElements("delkeyArgv", delkeyArgv);
   const delkeyResult = await execWithoutShell(execFileImpl, delkeyArgv, timeoutMs, signal);
-  if (delkeyResult.execError && delkeyResult.execError.code === "ABORT_ERR") {
+  if (signal?.aborted || delkeyResult.execError?.code === "ABORT_ERR") {
     return guardReturnValue({
       ok: false,
       exitCode: null,
@@ -1925,6 +1925,12 @@ async function removeAbandonedKeyContainer({
     });
   }
   if (delkeyResult.exitCode !== 0) {
+    // An earlier interrupted cleanup may already have deleted this exact key.
+    // Only the native missing-key diagnostic counts as successful absence.
+    const output = `${delkeyResult.stdout || ""}\n${delkeyResult.stderr || ""}`;
+    if (Number.isInteger(delkeyResult.exitCode) && /\b0x80090016\b[^\r\n]*\bNTE_BAD_KEYSET\b/i.test(output)) {
+      return guardReturnValue({ ok: true, alreadyAbsent: true });
+    }
     return guardReturnValue({
       ok: false,
       exitCode: delkeyResult.exitCode,

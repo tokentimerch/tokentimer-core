@@ -22,7 +22,11 @@ import {
   viewerHasScope,
 } from './editionModules.js';
 import { recipientsSatisfied } from './groupAttachment.js';
-import { issuerNeedsRecheck, scopeAdcs } from './adcsModel.js';
+import {
+  issuerNeedsRecheck,
+  scopeAdcs,
+  scopeStoreIssuance,
+} from './adcsModel.js';
 import { scopeDistribution } from './distributionModel.js';
 import {
   materialStoreSatisfied,
@@ -265,11 +269,13 @@ function certopsDone(stepId, { reality, progress, objective }) {
       // chose and confirmed with Continue. Enrollment itself needs a real CA
       // and is not verified here.
       const adcs = scopeAdcs(certops?.adcs, saved.chosenIssuerId);
+      const storeIssue = scopeStoreIssuance(adcs, saved);
       return (
         (adcs?.issuers || []).some(
           i => i.confirmed && i.safe && !issuerNeedsRecheck(i)
         ) &&
         (adcs?.profiles || 0) > 0 &&
+        (!saved.storeIssueJobId || storeIssue?.installed === true) &&
         (!saved.chosenIssuerId ||
           saved.chosenIssuerConfirmed === saved.chosenIssuerId)
       );

@@ -606,19 +606,22 @@ function evaluateEligibility(row, {
  * @param {(row: object, work: Function) => Promise<void>} [input.withRowLock]
  *   Production holds its store mutex across the fresh row read, live facts,
  *   native deletion and final ledger write. Pure-data callers may omit this.
+ * @param {AbortSignal} [input.signal] stop before processing another row.
+ * @param {(row: object) => void} [input.afterRemoved] synchronous cleanup after committing a removed row.
  * @returns {Promise<{
  *   removed: string[],
  *   deferred: { oldThumbprint: string, reason: string }[],
  *   deferredCountByReason: Record<string, number>,
  * }>}
  */
-async function sweepLedger({ ledgerDir, retentionHours, gatherContext, performCleanup, now = () => new Date(), withRowLock }) {
+async function sweepLedger({ ledgerDir, retentionHours, gatherContext, performCleanup, now = () => new Date(), withRowLock, signal: shutdownSignal, afterRemoved }) {
   validateRetentionHours(retentionHours);
   const removed = [];
   const deferred = [];
   const deferredCountByReason = Object.fromEntries(DEFERRAL_REASONS.map((reason) => [reason, 0]));
 
   for (const oldThumbprint of listLedgerThumbprints(ledgerDir)) {
+    if (shutdownSignal?.aborted) break;
     const initialRow = readLedgerRow(ledgerDir, oldThumbprint);
     if (initialRow === null || initialRow.lifecycleState === "removed") continue;
 
@@ -652,7 +655,8 @@ async function sweepLedger({ ledgerDir, retentionHours, gatherContext, performCl
           return;
         }
         assertHeld();
-        writeLedgerRow(ledgerDir, { ...row, lifecycleState: "removed", deferralReason: null });
+        const committed = writeLedgerRow(ledgerDir, { ...row, lifecycleState: "removed", deferralReason: null });
+        afterRemoved?.(committed);
         removed.push(row.oldThumbprint);
         return;
       }

@@ -73,7 +73,7 @@ const WINDOWS_SNI_HOST_PATTERN =
 const WINDOWS_THUMBPRINT_SHA1_PATTERN = /^[A-Fa-f0-9]{40}$/;
 
 function keyModeForTargetType(targetType) {
-  return targetType === "windows-iis"
+  return ["windows-iis", "windows-cert-store"].includes(targetType)
     ? WINDOWS_IIS_ISSUANCE_KEY_MODE
     : ISSUANCE_KEY_MODE;
 }
@@ -252,6 +252,24 @@ function normalizeIssuanceRequest(options) {
   }
 
   const targetType = target.type;
+  if (targetType === "windows-cert-store") {
+    if (sans.length > 16) throw issuanceError("AD CS issuance accepts at most 16 DNS names");
+    if (Object.keys(target).some((key) => !["type", "reference", "store"].includes(key)) || target.store !== "My" ||
+        !options.assignedAgentId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(options.assignedAgentId)) ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(payload.issuerId || "")) ||
+        Object.keys(payload).some((key) => !["target", "issuerId", "sans", "keyAlgorithm", "keySize", "automationEnabled"].includes(key)) ||
+        ![undefined, false].includes(payload.automationEnabled)) {
+      throw issuanceError("AD CS store issuance requires an issuer, an assigned agent, a My store destination and automation disabled; enable automation explicitly after installation");
+    }
+    const keyAlgorithm = payload.keyAlgorithm === undefined ? "rsa" : payload.keyAlgorithm;
+    const keySize = payload.keySize === undefined ? 2048 : payload.keySize;
+    if (!((keyAlgorithm === "rsa" && [2048, 3072, 4096].includes(keySize)) || (keyAlgorithm === "ecdsa" && [256, 384].includes(keySize)))) {
+      throw issuanceError("unsupported AD CS key algorithm or size");
+    }
+    return { idempotencyKey, commonName, sans, targetType, certPath: null,
+      windowsTarget: { store: "My", reference: commonName }, issuerId: payload.issuerId,
+      keyAlgorithm, keySize };
+  }
   if (payload.publicationDestination) {
     const destination = payload.publicationDestination;
     if (targetType !== "domain" || !options.assignedAgentId || !isPlainObject(destination) ||
@@ -336,14 +354,14 @@ async function insertProvisioningCertificate(client, options) {
   // opaque store/binding pointer (never key material -- the CNG key never
   // leaves the machine key store, let alone this row).
   const keyReference = options.publicationDestination ? `vault:${options.publicationDestination.materialStoreRef}` : windowsTarget
-    ? `winstore://${windowsTarget.store}/${windowsTarget.binding.site}:${windowsTarget.binding.port}`
+    ? options.targetType === "windows-cert-store" ? `winstore://${windowsTarget.store}/${windowsTarget.reference}` : `winstore://${windowsTarget.store}/${windowsTarget.binding.site}:${windowsTarget.binding.port}`
     : `file://${options.certPath}`;
   const deployedCertPath = windowsTarget ? null : options.certPath;
   const publicMetadata = windowsTarget
     ? {
         issuance: {
           requestedAt: new Date().toISOString(),
-          target: {
+          target: options.targetType === "windows-cert-store" ? { type: "windows-cert-store", reference: windowsTarget.reference, store: "My" } : {
             type: "windows-iis",
             store: windowsTarget.store,
             binding: windowsTarget.binding,
@@ -351,6 +369,7 @@ async function insertProvisioningCertificate(client, options) {
               ? { thumbprintSha1: windowsTarget.thumbprintSha1 }
               : {}),
           },
+          ...(options.requestHash ? { requestHash: options.requestHash } : {}),
         },
       }
     : {
@@ -490,13 +509,18 @@ async function createCertificateIssuanceJob(options = {}) {
       "createCertificateIssuanceJob requires the kill-switch-locked client",
     );
   }
+  // The ordinary issue endpoint chooses the server-owned ACME admission;
+  // an operator cannot supply an internal creator or bypass its transaction.
+  if (options.payload?.target?.type === "windows-cert-store" && !options.payload?.issuerId) {
+    return require("./acmeStoreIssuance").createAcmeStoreIssueTx({ ...options, transactionOwned: true });
+  }
   // Injection point for tests, mirroring createManualCertificateJob's
   // jobCreator: the issuance contract is what matters here, not re-running the
   // job INSERT that jobs.js already covers.
   const { jobCreatorOverride, ...jobOptions } = options;
   const createJob = jobCreatorOverride || createCertificateJob;
   const workspaceId = options.workspaceId;
-  const { idempotencyKey, commonName, sans, targetType, certPath, windowsTarget, publicationDestination } =
+  const { idempotencyKey, commonName, sans, targetType, certPath, windowsTarget, publicationDestination, issuerId, keyAlgorithm, keySize } =
     normalizeIssuanceRequest(options);
 
   // Resolve the identity before touching certificate_jobs. A retried POST must
@@ -519,13 +543,67 @@ async function createCertificateIssuanceJob(options = {}) {
   ]);
 
   const existing = await client.query(
-    `SELECT id FROM managed_certificates
+    `SELECT id, public_metadata FROM managed_certificates
       WHERE workspace_id = $1 AND source = $2 AND source_ref = $3
       LIMIT 1`,
     [workspaceId, ISSUANCE_SOURCE, idempotencyKey],
   );
 
   let certificateId = existing.rows[0]?.id || null;
+  if (targetType === "windows-cert-store") {
+    const rawPolicy = options.adcsEnrollmentPolicy === undefined ? {} : options.adcsEnrollmentPolicy;
+    if (!isPlainObject(rawPolicy) || Object.keys(rawPolicy).some(key => !["pollInterval", "pendingTimeout"].includes(key))) {
+      throw issuanceError("invalid internal AD CS enrollment policy");
+    }
+    const { DEFAULT_POLL_INTERVAL_SECONDS, DEFAULT_PENDING_TIMEOUT_SECONDS } = require("./enrollmentLifecycle");
+    const pollInterval = rawPolicy.pollInterval === undefined ? DEFAULT_POLL_INTERVAL_SECONDS : rawPolicy.pollInterval;
+    const pendingTimeout = rawPolicy.pendingTimeout === undefined ? DEFAULT_PENDING_TIMEOUT_SECONDS : rawPolicy.pendingTimeout;
+    if (!Number.isInteger(pollInterval) || pollInterval < 60 || pollInterval > 86400 ||
+        !Number.isInteger(pendingTimeout) || pendingTimeout < 3600 || pendingTimeout > 7776000) {
+      throw issuanceError("invalid AD CS enrollment policy bounds");
+    }
+    const target = { type: targetType, reference: commonName, store: "My" };
+    const requestHash = crypto.createHash("sha256").update(JSON.stringify({ issuerId, target, sans, keyAlgorithm, keySize, pollInterval, pendingTimeout,
+      agentId: options.assignedAgentId, mode: options.mode, requestedByUserId: options.requestedByUserId, requestedByApiTokenId: options.requestedByApiTokenId,
+      requiresApproval: options.requiresApproval, workspaceRequiresApprovalAlways: options.workspaceRequiresApprovalAlways })).digest("hex");
+    if (certificateId) {
+      if (existing.rows[0].public_metadata?.issuance?.requestHash !== requestHash) {
+        const error = issuanceError("idempotency key was already used for a different issuance request");
+        error.code = "CERTOPS_JOB_IDEMPOTENCY_CONFLICT";
+        throw error;
+      }
+      const existingJob = await client.query(`SELECT id FROM certificate_jobs WHERE workspace_id = $1 AND idempotency_key = $2 AND subject_id = $3::text LIMIT 1`, [workspaceId, idempotencyKey, certificateId]);
+      if (!existingJob.rows[0]) throw issuanceError("issuance exists without its original job");
+      const job = await require("./jobs").getCertificateJobById({ client, workspaceId, jobId: existingJob.rows[0].id, env: options.env });
+      return { job, created: false };
+    }
+    const conflicting = await client.query(`SELECT 1 FROM certificate_jobs WHERE workspace_id = $1 AND idempotency_key = $2 LIMIT 1`, [workspaceId, idempotencyKey]);
+    if (conflicting.rows[0]) {
+      const error = issuanceError("idempotency key was already used"); error.code = "CERTOPS_JOB_IDEMPOTENCY_CONFLICT"; throw error;
+    }
+    const gate = require("./adcsPreflightGate");
+    const version = await gate.loadCurrentAdcsIssuerVersion({ db: client, workspaceId, issuerId });
+    const agents = await gate.loadQualifyingAdcsAgents({ db: client, workspaceId, issuerId, reference: commonName, version });
+    if (!agents.some((agent) => String(agent.id) === String(options.assignedAgentId))) {
+      throw issuanceError("selected agent requires a fresh safe AD CS preflight for this issuer and destination");
+    }
+    const agentRow = await client.query(`SELECT platform,declared_capabilities,capabilities_updated_at
+      FROM certops_agents WHERE workspace_id=$1 AND id=$2::uuid AND status='active' FOR SHARE`, [workspaceId, options.assignedAgentId]);
+    const agent = agentRow.rows[0];
+    const { hasFreshCapability } = require("./agentJobEligibility");
+    if (!agent || agent.platform !== "win32" || ["windows-store-only-adcs-v1", "adcs-enroll-v1", "evidence-claim-binding-v1"].some(capability =>
+      !hasFreshCapability({ declaredCapabilities: agent.declared_capabilities, capabilitiesUpdatedAt: agent.capabilities_updated_at, capability, env: options.env }))) {
+      throw issuanceError("selected agent requires fresh Windows store, AD CS enrollment and claim-bound evidence capabilities");
+    }
+    const certificate = await insertProvisioningCertificate(client, { workspaceId, idempotencyKey, commonName, sans,
+      targetType, windowsTarget, assignedAgentId: options.assignedAgentId, requestHash });
+    const enrollment = await require("./certificateEnrollments").createEnrollment({ client, transactionOwned: true,
+      initialOperation: "issue", workspaceId, issuerId, certificateId: certificate.id, agentId: options.assignedAgentId,
+      target, authorizedDnsNames: sans, keyAlgorithm, keySize, pollInterval, pendingTimeout, source: options.source, mode: options.mode,
+      env: options.env, idempotencyKey, actorUserId: options.requestedByUserId, requestedByApiTokenId: options.requestedByApiTokenId, createJob,
+      workspaceRequiresApprovalAlways: options.workspaceRequiresApprovalAlways, requiresApproval: options.requiresApproval });
+    return { job: enrollment.job, created: true };
+  }
   if (!certificateId) {
     // The key may still be taken by a non-issuance job (an operator reusing a
     // key across operations). Do not create an identity in that case: hand the

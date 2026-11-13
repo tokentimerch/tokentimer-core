@@ -334,9 +334,16 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     { version: 107, name: "certops_issuance_job_identity" },
     { version: 108, name: "certops_issuance_identity_transfer" },
     { version: 109, name: "certops_period_creator_delete" },
-    { version: 110, name: "recipient_member_verification" },    { version: 111, name: "auto_sync_owner_username" },
+    { version: 110, name: "recipient_member_verification" },
+    { version: 111, name: "auto_sync_owner_username" },
     { version: 112, name: "certops_retirement_dossiers" },
-    { version:113,name:"certops_material_reconciliation" },
+    { version: 113, name: "certops_material_reconciliation" },
+    { version: 114, name: "certops_observed_revocation" },
+    { version: 115, name: "store_issuance_explicit_renewal_consent" },
+    { version: 116, name: "certops_acme_store_enrollment_identity" },
+    { version: 117, name: "certops_adcs_expected_identity_receipts" },
+    { version: 118, name: "certops_windows_iis_consent" },
+    { version: 119, name: "certops_material_adcs_operation_union" },
   ]);
   assert.equal(
     (

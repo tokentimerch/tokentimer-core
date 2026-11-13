@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -67,7 +68,19 @@ type agentHost struct {
 }
 
 func newAgentHost(childExe string, childArgs []string, env []string, log *hostLogger) *agentHost {
-	return &agentHost{childExe: childExe, childArgs: childArgs, env: env, log: log}
+	if env == nil {
+		env = os.Environ()
+	}
+	childEnv := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		// Inherited preload settings can run code outside the installed agent.
+		if strings.EqualFold(name, "NODE_OPTIONS") || strings.EqualFold(name, "NODE_PATH") {
+			continue
+		}
+		childEnv = append(childEnv, entry)
+	}
+	return &agentHost{childExe: childExe, childArgs: childArgs, env: childEnv, log: log}
 }
 
 // start launches the child in its own console process group

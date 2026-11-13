@@ -622,6 +622,7 @@ else
     if [ "$ALLOW_INSECURE_LOCAL_HTTP" -eq 1 ]; then
       printf ',\n  "allowInsecureLocalHttp": true'
     fi
+    printf ',\n  "observedRevocation": { "enabled": true, "allowedOrigins": [] }'
     printf '\n}\n'
   } > "$CONFIG_TMP"
   umask 022

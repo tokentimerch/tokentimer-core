@@ -97,7 +97,10 @@ function composeMigrations(migrations, recorded = []) {
     const oldRows = recorded.filter((row) => row.version <= 109);
     const oldComposed = composeMigrations(oldRegistry, oldRows);
     const oldIdentity = new Map(oldComposed.map((entry) => [entry.name, entry.version]));
-    const appended = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation"];
+    const appended = [
+      "certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation",
+      ...extensions.filter((entry) => entry.version >= 114).map((entry) => entry.name),
+    ];
     recognizedRetirementPreview = oldRows.every((row) => row.version < 70 || oldIdentity.get(row.name) === row.version) &&
       rows.filter((row) => row.version > 109).every((row, index) => row.version === 110 + index && row.name === appended[index]);
     if (!recognizedRetirementPreview) throw new Error("Unsupported Core retirement preview migration history");
@@ -172,6 +175,28 @@ function composeMigrations(migrations, recorded = []) {
       "Unsupported Core migration history: unrecognized provider preview",
     );
   const contiguous = rows.every((row, index) => row.version === 78 + index);
+  // The observed-revocation candidate used 112–116 before main allocated
+  // 112–113. Preserve only that exact reviewed preview tail; new installs
+  // use the canonical sequence after main's migrations.
+  const observedPreviewTail = [
+    "certops_observed_revocation",
+    "store_issuance_explicit_renewal_consent",
+    "certops_acme_store_enrollment_identity",
+    "certops_adcs_expected_identity_receipts",
+    "certops_windows_iis_consent",
+  ];
+  const previewBase = rows.filter((row) => row.version < 112);
+  const previewTail = rows.filter((row) => row.version >= 112);
+  let previewLength = 0;
+  while (previewLength < observedPreviewTail.length &&
+    previewTail[previewLength]?.version === 112 + previewLength &&
+    previewTail[previewLength]?.name === observedPreviewTail[previewLength]) previewLength++;
+  const appendedRows = previewTail.slice(previewLength);
+  const previewNames = new Set([...previewBase.map((row) => row.name), ...observedPreviewTail.slice(0, previewLength)]);
+  const expectedAppend = extensions.filter((entry) => !previewNames.has(entry.name));
+  const recognizedObservedPreview = previewLength > 0 &&
+    previewBase.every((row) => row.version === byName.get(row.name).version) &&
+    appendedRows.every((row, index) => row.version === 112 + previewLength + index && row.name === expectedAppend[index]?.name);
   if (!contiguous) {
     const base = [
       "certops_installed_file_distribution",
@@ -183,7 +208,7 @@ function composeMigrations(migrations, recorded = []) {
       !base.every((name, index) =>
         rows.some((row) => row.version === 78 + index && row.name === name),
       ) ||
-      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp && !recognizedRetirementPreview)
+      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp && !recognizedRetirementPreview && !recognizedObservedPreview)
     )
       throw new Error("Unsupported Core migration history: noncanonical gap");
   }
@@ -228,6 +253,8 @@ function composeMigrations(migrations, recorded = []) {
       // lifecycle is integrated. Its committed append order remains immutable.
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason"],
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup"],
+      [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup",
+        "certops_manual_rollout_authority", "store_issuance_explicit_renewal_consent", "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts"],
     ];
     const laterCompanions = new Set([...lifecycle, Z, "certops_consumer_staging", "certops_review_authority_epochs"]);
     const integratedSeeds = seeds.flatMap((seed) =>
