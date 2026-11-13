@@ -1563,14 +1563,14 @@ function Management({
                                   Approval pending
                                 </Badge>
                               ) : null}
-                              <Text fontSize='xs'>
+                              <Text fontSize='xs' color={muted}>
                                 Desired {consumer.desired_version || 'Unknown'}{' '}
                                 / observed{' '}
                                 {consumer.observed_version || 'Unknown'}
                               </Text>
                               {consumer.latest_deployment?.stagingReceipt
                                 ?.staged ? (
-                                <Text fontSize='xs'>
+                                <Text fontSize='xs' color={muted}>
                                   Material staged{' '}
                                   {formatDateTime(
                                     consumer.latest_deployment.stagingReceipt
