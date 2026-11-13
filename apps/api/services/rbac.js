@@ -60,6 +60,8 @@ const actionPolicy = {
   // Workspace managers configure certificate issuance and renewal workflows,
   // matching the role required to create and approve certificate jobs.
   "certops.renewal_profile.manage": "workspace_manager",
+  "certops.distribution.emergency": "admin",
+  "certops.distribution.cleanup": "admin",
   // Diagnostic bootstrap mints a new machine credential and lets a
   // reference client authenticate against this workspace's agent protocol
   // (ADR-0012 decision 7). Low blast radius by construction (protocol_smoke

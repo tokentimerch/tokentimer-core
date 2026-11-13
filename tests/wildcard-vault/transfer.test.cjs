@@ -53,8 +53,15 @@ async function fixture({ ordinary = false, published = true, neverStarted = fals
       "INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'admin')",
       [id, actor],
     );
+    if (id === workspaceId) {
+      // One admin is allowed per workspace. The rollout approver still needs a
+      // current manager role, granted before any rollout intent.
+      await pool.query(
+        "INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'workspace_manager')",
+        [id, approver],
+      );
+    }
   }
-  await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'workspace_manager')", [workspaceId, approver]);
   const issuer = (
     await pool.query(
       `INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)

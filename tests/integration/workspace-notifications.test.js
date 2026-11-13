@@ -730,11 +730,13 @@ describe("Persisted operational notifications (bell)", function () {
           const activity = await client.query(
             `SELECT 1 FROM pg_stat_activity
               WHERE wait_event_type = 'Lock'
-                AND query LIKE $1 LIMIT 1`,
+                AND query LIKE $1
+                AND $2 = ANY(pg_blocking_pids(pid)) LIMIT 1`,
             [
               mode === "one"
                 ? "%FOR UPDATE OF n%"
                 : "%WITH visible AS MATERIALIZED%",
+              gate.processID,
             ],
           );
           if (activity.rowCount > 0) {
@@ -764,6 +766,23 @@ describe("Persisted operational notifications (bell)", function () {
               WHERE id = $1`,
             [notificationId],
           );
+          let escalationWaiting = false;
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            const activity = await client.query(
+              "SELECT cardinality(pg_blocking_pids($1)) > 0 AS waiting",
+              [escalator.processID],
+            );
+            if (activity.rows[0].waiting) {
+              escalationWaiting = true;
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          if (!escalationWaiting) {
+            await gate.query("ROLLBACK");
+            await escalatePromise;
+            throw new Error("escalation must wait on the incident row lock");
+          }
           await gate.query("COMMIT");
           expect((await readPromise).status).to.equal(200);
           await escalatePromise;

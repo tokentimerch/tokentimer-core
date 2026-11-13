@@ -36,6 +36,7 @@ const dedicatedSuites = {
   "tests/e2e/certops-signing-rotation-native-e2e.test.js": ["signing-rotation-stack", "certops-signing-rotation-qualification.yml", "signing-rotation"],
 };
 function environmentFor(site) {
+  if (site.file === "tests/postgres/material-reconciliation.test.js") return "core-material-reconciliation";
   if (site.reason === "unimplemented") return "unsupported-feature";
   if (["tests/e2e/windows-material-real.test.js", "tests/e2e/windows-material-custody-real.test.js"].includes(site.file)) return "windows-material-iis";
   if (site.file === "packages/agent/src/windows-material/pkcs12.test.js") return "windows-elevated";
@@ -65,6 +66,7 @@ function environmentFor(site) {
   return "prerequisite-review";
 }
 const environments = {
+  "core-material-reconciliation": { capabilities: ["linux", "postgres", "core-api", "agent"], owner: "Original deployment reconciliation", workflow: ".github/workflows/ci.yml", status: "candidate-environment-not-qualified" },
   "windows-material-iis": {capabilities:["windows-server","iis","machine-cng","disposable-store"],owner:"Native shared material qualification",workflow:".github/workflows/ci.yml",status:"candidate-environment-not-qualified"},
   "distribution-kv-live": {capabilities:["linux","disposable-vault-kv2","synthetic-credentials"],owner:"Live material provider compatibility",workflow:".github/workflows/ci.yml",status:"candidate-environment-not-qualified"},
   "distribution-azure-live": {capabilities:["azure-keyvault","oidc","protected-environment","disposable-vault"],owner:"Protected Azure material qualification",workflow:".github/workflows/certops-azure-keyvault-qualification.yml",status:"candidate-environment-not-qualified"},
@@ -88,6 +90,7 @@ for (const [name, file] of Object.values(dedicatedSuites)) {
 }
 function routeFor(site, environment) {
   const direct = (workflow, job, command = `node --test ${site.file}`) => ({workflow, job, command});
+  if (environment === "core-material-reconciliation") return direct(".github/workflows/ci.yml", "vault_cleanup_regression", "tests/postgres/material-reconciliation.test.js");
   if (environment === "windows-material-iis") return direct(".github/workflows/ci.yml", "windows_material_qualification", site.file);
   if (environment === "distribution-kv-live") return direct(".github/workflows/ci.yml", "material_store_compatibility");
   if (environment === "distribution-azure-live") return direct(".github/workflows/certops-azure-keyvault-qualification.yml", "lab");

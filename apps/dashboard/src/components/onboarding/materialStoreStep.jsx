@@ -90,9 +90,8 @@ export function LocalStoreFields({
         </FormControl>
       )}
       <Text fontSize='sm'>
-        These values only generate a host-local configuration. They are not
-        saved to onboarding or sent in jobs. Never paste a token, private key,
-        password or credential here.
+        Used only to generate local configuration. Keep credentials and private
+        keys on the agent.
       </Text>
     </>
   );
@@ -334,11 +333,13 @@ function MaterialStoreForm({ ctx }) {
             then refresh.
           </StatusPanel>
         )}
-        {requirements.map(reason => (
-          <Text fontSize='sm' key={reason}>
-            {reason}
-          </Text>
-        ))}
+        {issuer && requirements.length > 0 && (
+          <StatusPanel status='warning' title='Agent requirements not met'>
+            {requirements.map(reason => (
+              <Text key={reason}>{reason}</Text>
+            ))}
+          </StatusPanel>
+        )}
         <FormControl>
           <FormLabel>Material store reference</FormLabel>
           <Input
@@ -559,14 +560,14 @@ function MaterialStoreForm({ ctx }) {
               </Text>
             </VStack>
             {setup.provider === 'azure-key-vault' ? (
-              <Text fontSize='sm'>
+              <StatusPanel status='info' title='Azure access'>
                 The example uses VM managed identity (IMDS). Workload identity
                 and renewable token-file authentication are also implemented;
                 configure those locally using the distribution runbook. Issuers
                 need get/list/set; consumers get only. No delete or purge
                 rights. Secrets bundles only, public Azure cloud, maximum 25
                 KiB. Production use stays gated.
-              </Text>
+              </StatusPanel>
             ) : (
               <VStack align='stretch' spacing={1} fontSize='sm'>
                 <Text>
@@ -599,17 +600,21 @@ function MaterialStoreForm({ ctx }) {
                 text={JSON.stringify(local.issuer, null, 2)}
               />
             ) : (
-              local.problems?.map(p => (
-                <Text key={p} fontSize='sm'>
-                  {p}
-                </Text>
-              ))
+              <StatusPanel
+                status='warning'
+                title='Complete the local configuration'
+              >
+                {local.problems?.map(p => (
+                  <Text key={p}>{p}</Text>
+                ))}
+              </StatusPanel>
             )}
             <Text fontSize='sm'>
               <strong>Uncertain publication:</strong> Preserve the local
-              checkpoint and complete runbook reconciliation before retrying.
-              Azure never blindly retries a write. Do not delete a pinned object
-              or create a new order to hide uncertainty.
+              checkpoint and complete runbook reconciliation before choosing
+              Retry original publication above. Azure never blindly retries a
+              write. Do not delete a pinned object or create a new order to hide
+              uncertainty.
             </Text>
           </VStack>
         </DetailsSection>

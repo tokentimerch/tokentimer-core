@@ -428,7 +428,7 @@ jobs:
   vault_cleanup_regression:
     name: Vault Inventory Cleanup Regression
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
@@ -498,6 +498,7 @@ jobs:
       - name: Upgrade main enrollment history to distribution without rewriting migrations
         env:
           DB_NAME: pr329_distribution_upgrade_ci_test
+          CERTOPS_ENABLED: "true"
         run: |
           node - <<'NODE'
           const { Client } = require('pg');
@@ -512,16 +513,19 @@ jobs:
             await client.connect();
             try {
               await client.query('CREATE DATABASE pr329_distribution_upgrade_ci_test');
+              await client.query('CREATE DATABASE pr329_distribution_main_upgrade_ci_test');
+              await client.query('CREATE DATABASE pr498_retirement_preview_ci_test');
               await client.query('CREATE DATABASE pr329_review_distribution_ci_test');
               await client.query('CREATE DATABASE pr329_final_distribution_ci_test');
               await client.query('CREATE DATABASE wildcard_candidate_ci_test');
               await client.query('CREATE DATABASE pr329_issuance_path_reuse_ci_test');
               await client.query('CREATE DATABASE pr329_workspace_delete_ci_test');
+              await client.query('CREATE DATABASE recipient_delivery_worker_ci_test');
               await client.query('CREATE DATABASE pagerduty_ci_issue364_test');
               for (const history of ['78','80','81','82','92','94','legacy79','legacy81']) {
                 await client.query(`CREATE DATABASE pd_${history}_migration_issue364_test`);
               }
-              await client.query('CREATE DATABASE recipient_delivery_worker_ci_test');
+              await client.query('CREATE DATABASE distribution_lifecycle_c1_test');
             } finally {
               await client.end();
             }
@@ -529,6 +533,16 @@ jobs:
           main().catch(error => { console.error(error.message); process.exitCode = 1; });
           NODE
           node --test --test-force-exit tests/postgres/distribution-migration-upgrade.test.js
+      - name: Upgrade released Core to the distribution lifecycle
+        env:
+          DB_NAME: pr329_distribution_main_upgrade_ci_test
+          CERTOPS_ENABLED: "true"
+        run: node --test --test-force-exit tests/postgres/distribution-main-migration-upgrade.test.js
+      - name: Upgrade applied retirement preview and replay
+        env:
+          DB_NAME: pr498_retirement_preview_ci_test
+          CERTOPS_ENABLED: "true"
+        run: node --test --test-force-exit tests/postgres/retirement-preview-migration-upgrade.test.js
       - name: Verify alert date serialization across host timezones
         run: node --test tests/postgres/alert-queue-timezones.test.js
       - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability
@@ -554,6 +568,24 @@ jobs:
           DELIVERY_WORKER_DB_USER: ${{ env.DB_USER }}
           DELIVERY_WORKER_DB_PASSWORD: ${{ env.DB_PASSWORD }}
         run: node --test --test-force-exit tests/postgres/delivery-worker-ledger.test.js
+      - name: Prove lifecycle policy, concurrent verification, incident and retention fences
+        env:
+          DB_NAME: distribution_lifecycle_c1_test
+          CERTOPS_ENABLED: "true"
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit --test-concurrency=1 tests/postgres/distribution-lifecycle.test.js tests/postgres/distribution-cleanup.test.js tests/postgres/distribution-staging.test.js tests/postgres/material-reconciliation.test.js
+      - name: Prove real Vault cleanup completion and receipt retry through HTTP
+        run: node scripts/run-cleanup-completion-acceptance.cjs
+      - name: Prove separate OpenBao cleanup identity and real provider completion
+        run: node scripts/run-cleanup-completion-acceptance.cjs --openbao
+      - name: Preserve sanitized cleanup completion evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cleanup-completion-evidence
+          path: qualification-results/cleanup-completion-*/
+          if-no-files-found: error
       - name: Verify member email reuse and migration
         env:
           RV_TEST_DB_HOST: ${{ env.DB_HOST }}
@@ -579,7 +611,7 @@ jobs:
           node apps/api/migrations/migrate.js
           node --test --test-force-exit tests/postgres/workspace-delete-certops.test.js tests/postgres/certops-period-creator-delete.test.js tests/postgres/retired-identity-periods.test.js tests/postgres/distribution-claim-locking.test.js
       - name: Replay all supported immutable migration histories
-        run: pnpm exec mocha --no-config tests/integration/certops-distribution-upgrade.test.js --timeout 120000 --exit
+        run: pnpm exec mocha --no-config tests/integration/certops-distribution-upgrade.test.js tests/integration/certops-distribution-compatibility.test.js --timeout 120000 --exit
       - name: Verify material provider version pins and retained-version rollback
         run: pnpm exec mocha --no-config tests/integration/certops-material-providers.test.js tests/integration/certops-azure-keyvault-qualification.test.js --timeout 180000 --exit
       - name: Fence pinned rollback identities and late deployment evidence

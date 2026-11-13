@@ -124,7 +124,9 @@ describe("Azure qualification bridge (offline protocol, real PostgreSQL)", funct
           ...deployment.options,
           checkLease: async () => {
             await deployment.lease();
-            if (++leases === 3)
+            // The third admission check is still before the filesystem write.
+            // Only the next check has an uncertain installed binding.
+            if (++leases === 4)
               throw new Error("controlled offline interruption");
           },
         });

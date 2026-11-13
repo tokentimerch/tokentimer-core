@@ -9098,14 +9098,14 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/workspaces/{id}/certops/jobs:
     get:
-      tags: [CertOps]
+      tags:
+        - CertOps
       summary: List CertOps jobs
       operationId: listCertOpsJobs
-      description: >-
-        Returns paginated public CertOps job summaries for the workspace. Consumers
-        must follow pagination.limit and pagination.offset; long job histories can
-        require multiple requests. Private key material, raw executor output, token
-        hashes, and credentials are never returned.
+      description: Returns paginated public CertOps job summaries for the workspace.
+        Consumers must follow pagination.limit and pagination.offset; long job
+        histories can require multiple requests. Private key material, raw
+        executor output, token hashes, and credentials are never returned.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - $ref: "#/components/parameters/certOpsReadLimitParam"
@@ -9114,27 +9114,12 @@ paths:
           name: status
           schema:
             type: string
-            enum:
-              [
-                pending_approval,
-                approved,
-                rejected,
-                pending,
-                claimed,
-                running,
-                succeeded,
-                failed,
-                blocked,
-                cancelled,
-                dry_run_complete,
-                orphaned_unknown_effect,
-                awaiting_issuer,
-              ]
+            enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled, dry_run_complete, orphaned_unknown_effect, awaiting_issuer]
         - in: query
           name: operation
           schema:
             type: string
-            enum: [issue, renew, deploy, deploy-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+            enum: [issue, renew, deploy, deploy-from-store, cleanup-from-store, reconcile-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
         - in: query
           name: source
           schema:
@@ -9152,8 +9137,7 @@ paths:
             maxLength: 128
         - in: query
           name: q
-          description: >-
-            Case-insensitive substring match on job id, subject id, operation,
+          description: Case-insensitive substring match on job id, subject id, operation,
             status, and related public job fields (max 128 characters).
           schema:
             type: string
@@ -9191,17 +9175,17 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
     post:
-      tags: [CertOps]
+      tags:
+        - CertOps
       summary: Create a manual CertOps job
       operationId: createCertOpsJob
-      description: >-
-        Creates a workspace-scoped CertOps job through the manual creation
+      description: Creates a workspace-scoped CertOps job through the manual creation
         surface. This is a session-authenticated exception path for the
-        pre-certops-scheduler window (and a break-glass path afterward);
-        jobs created this way are always recorded with source "api" and
-        cannot be attributed to the executor or automated-scheduler
-        pipelines. Requires workspace_manager role or above. Private key or
-        secret material in the request body is rejected.
+        pre-certops-scheduler window (and a break-glass path afterward); jobs
+        created this way are always recorded with source "api" and cannot be
+        attributed to the executor or automated-scheduler pipelines. Requires
+        workspace_manager role or above. Private key or secret material in the
+        request body is rejected.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -9218,12 +9202,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/CertOpsJobDetailResponse"
         "400":
-          description: >-
-            Malformed request body, (for "distribute-trust"/"revoke-trust")
-            an agentId that is not a well-formed UUID, or (for "renew") a
-            payload naming an execution field other than "reason", which the
-            server now resolves exclusively from the certificate's stored
-            renewal profile.
+          description: Malformed request body, (for "distribute-trust"/"revoke-trust") an
+            agentId that is not a well-formed UUID, or (for "renew") a payload
+            naming an execution field other than "reason", which the server now
+            resolves exclusively from the certificate's stored renewal profile.
           content:
             application/json:
               schema:
@@ -9235,20 +9217,17 @@ paths:
                     code: CERTOPS_TARGET_AGENT_INVALID
                 renewalOverrideInvalid:
                   value:
-                    error: >-
-                      Renewal override is invalid: only "reason" may be
-                      overridden on a renew job; every other execution field
-                      is resolved from the certificate's renewal profile
+                    error: "Renewal override is invalid: only \"reason\" may be overridden on a
+                      renew job; every other execution field is resolved from the
+                      certificate's renewal profile"
                     code: CERTOPS_RENEWAL_OVERRIDE_INVALID
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
-          description: >-
-            Not found, or (for "distribute-trust"/"revoke-trust") a
-            well-formed agentId that does not match a registered agent in
-            this workspace.
+          description: Not found, or (for "distribute-trust"/"revoke-trust") a well-formed
+            agentId that does not match a registered agent in this workspace.
           content:
             application/json:
               schema:
@@ -9263,13 +9242,13 @@ paths:
                     error: Target agent not found in this workspace
                     code: CERTOPS_TARGET_AGENT_NOT_FOUND
         "409":
-          description: >-
-            idempotencyKey conflict, workspace CertOps is paused, per-CA renewal
-            capacity exceeded, the subject certificate has no agent-manageable
-            key custody, or (for "distribute-trust"/"revoke-trust") the trust
-            anchor is not currently active or the idempotencyKey (scoped to
-            its full operation/target tuple) was already used with a
-            different distribute-trust/revoke-trust request.
+          description: idempotencyKey conflict, workspace CertOps is paused, per-CA
+            renewal capacity exceeded, the subject certificate has no
+            agent-manageable key custody, or (for
+            "distribute-trust"/"revoke-trust") the trust anchor is not currently
+            active or the idempotencyKey (scoped to its full operation/target
+            tuple) was already used with a different distribute-trust/revoke-trust
+            request.
           content:
             application/json:
               schema:
@@ -9281,8 +9260,7 @@ paths:
                     code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT
                 trustJobIdempotencyConflict:
                   value:
-                    error: >-
-                      Idempotency key was already used with a different
+                    error: Idempotency key was already used with a different
                       distribute-trust/revoke-trust request for this
                       operation/target tuple
                     code: CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT
@@ -9296,10 +9274,9 @@ paths:
                     code: CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED
                 certificateNotAgentDeployable:
                   value:
-                    error: >-
-                      This certificate has no agent-manageable key custody (it
-                      was only observed, e.g. via an endpoint or domain monitor)
-                      and cannot be assigned an agent-executed renew job
+                    error: This certificate has no agent-manageable key custody (it was only
+                      observed, e.g. via an endpoint or domain monitor) and cannot
+                      be assigned an agent-executed renew job
                     code: CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE
                 trustAnchorNotActive:
                   value:
@@ -9317,7 +9294,8 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
         "503":
-          description: Workspace pause state could not be read; new CertOps work is denied fail-closed
+          description: Workspace pause state could not be read; new CertOps work is denied
+            fail-closed
           content:
             application/json:
               schema:
@@ -11853,10 +11831,7 @@ paths:
               properties:
                 state:
                   type: string
-                  enum:
-                    - paused
-                    - deploying
-                    - retired
+                  enum: [paused, deploying, retired]
       responses:
         '200':
           description: Public distribution metadata
@@ -11896,6 +11871,40 @@ paths:
           description: Stale intent, version, generation, period or approval
         '422':
           description: Invalid public intent
+  /api/v1/workspaces/{id}/certops/distribution-jobs/{jobId}/reconciliation:
+    post:
+      tags: [CertOps]
+      summary: Request read-only reconciliation of an uncertain original deployment
+      description: >-
+        Requires an active workspace and current CertOps manager authority. Creates a
+        separately reviewed job for the original agent and immutable deployment intent.
+        The agent inspects existing material without installing certificates or reloading
+        services. Missing, superseded or mismatched evidence leaves the original fence
+        intact. Successful proof may settle uncertainty metadata, but does not rewrite
+        the original execution outcome or promote newer consumer evidence.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Existing or newly requested reconciliation job
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job]
+                properties:
+                  job: { $ref: '#/components/schemas/CertOpsJob' }
+        '403': { description: Workspace or role denied }
+        '404': { description: Original deployment not found in this workspace }
+        '409': { description: Original intent or current authority is ineligible for reconciliation }
+        '422': { description: Invalid public intent }
   /api/v1/workspaces/{id}/contacts/{contactId}/verifications/{channel}:
     post:
       tags: [Alerts]
@@ -12187,6 +12196,344 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/management:
+    get:
+      tags:
+        - CertOps
+      summary: Read distribution management, public evidence and partial discovery
+        coverage
+      description: Workspace membership and existing CertOps manager authorization
+        apply. Public metadata only; customer-local credentials and private
+        material are never accepted. Policy writes require a session user and an
+        active workspace.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Public lifecycle metadata or accepted revision
+        "403":
+          description: Workspace role or delivery policy denied
+        "404":
+          description: Workspace-scoped distribution group not found
+        "409":
+          description: Authorization or policy revision changed; refresh and review again
+        "422":
+          description: Closed public contract or bounded policy validation failed
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/policy:
+    get:
+      tags:
+        - CertOps
+      summary: Read revisioned distribution policy and manual defaults
+      description: Workspace membership and existing CertOps manager authorization
+        apply. Public metadata only; customer-local credentials and private
+        material are never accepted. Policy writes require a session user and an
+        active workspace.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Public lifecycle metadata or accepted revision
+        "403":
+          description: Workspace role or delivery policy denied
+        "404":
+          description: Workspace-scoped distribution group not found
+        "409":
+          description: Authorization or policy revision changed; refresh and review again
+        "422":
+          description: Closed public contract or bounded policy validation failed
+    put:
+      tags:
+        - CertOps
+      summary: Configure post-publication, verification, alert and retention policies
+      description: Workspace membership and existing CertOps manager authorization
+        apply. Public metadata only; customer-local credentials and private
+        material are never accepted. Policy writes require a session user and an
+        active workspace.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DistributionLifecycle_policyRequest"
+      responses:
+        "200":
+          description: Public lifecycle metadata or accepted revision
+        "403":
+          description: Workspace role or delivery policy denied
+        "404":
+          description: Workspace-scoped distribution group not found
+        "409":
+          description: Authorization or policy revision changed; refresh and review again
+        "422":
+          description: Closed public contract or bounded policy validation failed
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/preflight:
+    get:
+      tags:
+        - CertOps
+      summary: Preview non-mutating control-plane preflight; customer-local checks
+        remain necessary
+      description: Workspace membership and existing CertOps manager authorization
+        apply. Public metadata only; customer-local credentials and private
+        material are never accepted. Policy writes require a session user and an
+        active workspace.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: materialVersionId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Public lifecycle metadata or accepted revision
+        "403":
+          description: Workspace role or delivery policy denied
+        "404":
+          description: Workspace-scoped distribution group not found
+        "409":
+          description: Authorization or policy revision changed; refresh and review again
+        "422":
+          description: Closed public contract or bounded policy validation failed
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/cleanups:
+    post:
+      tags:
+        - CertOps
+      summary: Request independently approved exact-version customer-side Vault soft
+        deletion
+      description: Administrator session only. Requires an active workspace, enabled
+        non-report-only retention policy, an explicitly enabled runtime cleanup
+        setting and a freshly declared qualified customer agent capability.
+        Preview eligibility is rechecked under locks before a permanent version
+        fence and signed agent claim. Never reads private material or deletes
+        public history. Only Vault KV v2 exact-version soft deletion is supported.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - materialVersionId
+                - expectedRevision
+              properties:
+                materialVersionId:
+                  type: string
+                  format: uuid
+                expectedRevision:
+                  type: integer
+                  minimum: 1
+                reauthorize:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Genuine pending approval or existing request metadata; never proof
+            of deletion
+        "403":
+          description: Administrator session required
+        "409":
+          description: Disabled, unqualified, protected, stale authority or live claim; no
+            deletion
+        "422":
+          description: Closed public request contract invalid
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/retention:
+    get:
+      tags:
+        - CertOps
+      summary: Preview protected retained versions without deleting customer material
+      description: Workspace membership and existing CertOps manager authorization
+        apply. Public metadata only; customer-local credentials and private
+        material are never accepted. Policy writes require a session user and an
+        active workspace.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Public lifecycle metadata or accepted revision
+        "403":
+          description: Workspace role or delivery policy denied
+        "404":
+          description: Workspace-scoped distribution group not found
+        "409":
+          description: Authorization or policy revision changed; refresh and review again
+        "422":
+          description: Closed public contract or bounded policy validation failed
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/consumers/{bindingId}/activation-policy:
+    put:
+      tags:
+        - CertOps
+      summary: Configure a consumer IANA maintenance calendar and activation class
+      description: Workspace membership and existing CertOps manager authorization
+        apply. Public metadata only; customer-local credentials and private
+        material are never accepted. Policy writes require a session user and an
+        active workspace.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: bindingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DistributionLifecycle_activationRequest"
+      responses:
+        "200":
+          description: Public lifecycle metadata or accepted revision
+        "403":
+          description: Workspace role or delivery policy denied
+        "404":
+          description: Workspace-scoped distribution group not found
+        "409":
+          description: Authorization or policy revision changed; refresh and review again
+        "422":
+          description: Closed public contract or bounded policy validation failed
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/consumers/{bindingId}/emergency:
+    post:
+      tags:
+        - CertOps
+      summary: Request a bounded audited emergency activation exception
+      description: Administrator-only bounded per-consumer emergency exception; at
+        most four hours. Audited, revision-fenced, blackouts win, and explicit
+        Jobs approval remains necessary. No remote commands.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: bindingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DistributionLifecycle_activationRequest"
+      responses:
+        "200":
+          description: Public lifecycle metadata or accepted revision
+        "403":
+          description: Workspace role or delivery policy denied
+        "404":
+          description: Workspace-scoped distribution group not found
+        "409":
+          description: Authorization or policy revision changed; refresh and review again
+        "422":
+          description: Closed public contract or bounded policy validation failed
 components:
   securitySchemes:
     operatorConnectionAuth:
@@ -12391,15 +12738,7 @@ components:
         the set is rejected with 400 rather than answered with an empty page.
       schema:
         type: string
-        enum:
-          - discovered
-          - provisioning
-          - active
-          - renewing
-          - expiring
-          - expired
-          - revoked
-          - decommissioned
+        enum: [discovered, provisioning, active, renewing, expiring, expired, revoked, decommissioned]
     certOpsCertificateSourceFilterParam:
       in: query
       name: source
@@ -12408,17 +12747,7 @@ components:
         A value outside the set is rejected with 400.
       schema:
         type: string
-        enum:
-          - manual
-          - api
-          - import
-          - domain_checker
-          - endpoint_monitor
-          - integration
-          - auto_sync
-          - cert_manager
-          - agent_filesystem
-          - agent_issuance
+        enum: [manual, api, import, domain_checker, endpoint_monitor, integration, auto_sync, cert_manager, agent_filesystem, agent_issuance]
     certOpsCertificateNoRenewalProfileParam:
       in: query
       name: noRenewalProfile
@@ -12555,6 +12884,8 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    MaterialDistribution_materialReconciliation: {"type":"object","additionalProperties":false,"required":["originalJobId","assignedAgentId","workspaceAuthorizationRevision","intent"],"properties":{"originalJobId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"assignedAgentId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"workspaceAuthorizationRevision":{"type":"string","pattern":"^[0-9]{1,20}$"},"intent":{"$ref":"#/components/schemas/MaterialDistribution_materialDeployment"}}}
+    MaterialDistribution_reconciliationReceipt: {"type":"object","additionalProperties":false,"required":["schemaVersion","workspaceId","originalJobId","groupId","bindingId","materialVersionId","generation","fingerprintSha256","observedAt","proofKind"],"properties":{"schemaVersion":{"enum":[1]},"workspaceId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"originalJobId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"groupId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"bindingId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"materialVersionId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"generation":{"$ref":"#/components/schemas/MaterialDistribution_generation"},"fingerprintSha256":{"$ref":"#/components/schemas/MaterialDistribution_fingerprint"},"observedAt":{"type":"string","format":"date-time","maxLength":40},"proofKind":{"enum":["staged","deployed"]}}}
     OperatorTokenRecord:
       type: object
       additionalProperties: false
@@ -13742,9 +14073,7 @@ components:
         authorizationRevision:
           $ref: '#/components/schemas/MaterialDistribution_revision'
         verificationPolicy:
-          enum:
-            - served
-            - trust
+          enum: [served, trust]
         verificationOnly:
           type: boolean
           description: Approved read-only verification without installation or reload.
@@ -13880,17 +14209,13 @@ components:
           minimum: 0
           maximum: 1000
         verificationPolicy:
-          enum:
-            - served
-            - trust
+          enum: [served, trust]
         freshnessSeconds:
           type: integer
           minimum: 60
           maximum: 604800
         state:
-          enum:
-            - active
-            - removed
+          enum: [active, removed]
 
     CertOpsCsrWorkflow:
       type: object
@@ -14088,12 +14413,7 @@ components:
                   not_agent_deployable means no agent holds the private key (typically an
                   externally observed certificate), so renewal is impossible regardless of
                   the profile, and is reported ahead of any profile problem.
-                enum:
-                  - auto_renew_disabled
-                  - no_profile
-                  - incomplete_profile
-                  - not_agent_deployable
-                  - unknown_expiry
+                enum: [auto_renew_disabled, no_profile, incomplete_profile, not_agent_deployable, unknown_expiry]
               renewBeforeDays:
                 type: number
                 description: Effective lead time in days; may be fractional for certificates valid for less than two days.
@@ -14283,28 +14603,11 @@ components:
           nullable: true
         status:
           type: string
-          enum:
-            - discovered
-            - provisioning
-            - active
-            - renewing
-            - expiring
-            - expired
-            - revoked
-            - decommissioned
+          enum: [discovered, provisioning, active, renewing, expiring, expired, revoked, decommissioned]
         source:
           type: string
           nullable: true
-          enum:
-            - manual
-            - api
-            - import
-            - domain_checker
-            - endpoint_monitor
-            - integration
-            - auto_sync
-            - cert_manager
-            - null
+          enum: [manual, api, import, domain_checker, endpoint_monitor, integration, auto_sync, cert_manager, null]
         sourceRef:
           type: string
           nullable: true
@@ -14357,16 +14660,7 @@ components:
         keyMode:
           type: string
           nullable: true
-          enum:
-            - agent-local
-            - proxy-agent-local
-            - cert-manager-managed
-            - appliance-managed
-            - hsm-managed
-            - vault-managed
-            - os-store-managed
-            - external-unknown
-            - null
+          enum: [agent-local, proxy-agent-local, cert-manager-managed, appliance-managed, hsm-managed, vault-managed, os-store-managed, external-unknown, null]
           description: Non-secret mode describing where the private key lives outside the control plane.
         keyReference:
           type: string
@@ -14408,12 +14702,7 @@ components:
         renewalPathState:
           type: string
           nullable: true
-          enum:
-            - healthy
-            - degraded
-            - unavailable
-            - unknown
-            - null
+          enum: [healthy, degraded, unavailable, unknown, null]
           description: >-
             Derived renewal EXECUTION health: whether a live agent able to run
             this certificate's configured renewal currently exists. A
@@ -14428,22 +14717,7 @@ components:
         renewalPathReason:
           type: string
           nullable: true
-          enum:
-            - all_paths_available
-            - partial_location_outage
-            - agent_offline
-            - all_executors_offline
-            - no_execution_target
-            - topology_unknown
-            - auto_renew_disabled
-            - not_agent_deployable
-            - no_profile
-            - certificate_retired
-            - assigned_agent_retired
-            - assigned_agent_ineligible
-            - adcs_enroll_capability_unavailable
-            - waiting_for_fresh_preflight
-            - null
+          enum: [all_paths_available, partial_location_outage, agent_offline, all_executors_offline, no_execution_target, topology_unknown, auto_renew_disabled, not_agent_deployable, no_profile, certificate_retired, assigned_agent_retired, assigned_agent_ineligible, adcs_enroll_capability_unavailable, waiting_for_fresh_preflight, null]
           description: Machine-readable reason code for `renewalPathState`.
         renewalPathSummary:
           type: string
@@ -14529,12 +14803,7 @@ components:
         locationKind:
           type: string
           nullable: true
-          enum:
-            - filesystem
-            - windows_store
-            - iis_binding
-            - http_sys
-            - null
+          enum: [filesystem, windows_store, iis_binding, http_sys, null]
           description: What kind of place this location is. Distinct from `source`, which says who/what reported it. Null on rows written before the generalized observation contract; callers must treat null as unknown unless independent source/reference evidence proves a filesystem location.
         responsibleAgentId:
           type: string
@@ -14593,12 +14862,7 @@ components:
             locationKind:
               type: string
               nullable: true
-              enum:
-                - filesystem
-                - windows_store
-                - iis_binding
-                - http_sys
-                - null
+              enum: [filesystem, windows_store, iis_binding, http_sys, null]
             deploymentReference:
               type: string
               nullable: true
@@ -14681,12 +14945,7 @@ components:
           description: When the sweep starts attempting this renewal (notAfter minus the effective lead time). Only set when state is 'auto'.
         state:
           type: string
-          enum:
-            - auto
-            - disabled
-            - not-configured
-            - not-eligible
-            - not-applicable
+          enum: [auto, disabled, not-configured, not-eligible, not-applicable]
         detail:
           type: string
           description: Operator-facing explanation of the state.
@@ -14903,9 +15162,7 @@ components:
       properties:
         status:
           type: string
-          enum:
-            - revoked
-            - decommissioned
+          enum: [revoked, decommissioned]
           description: Lifecycle status for the exact fingerprint in this workspace.
         reason:
           type: string
@@ -14970,16 +15227,7 @@ components:
         keyMode:
           type: string
           nullable: true
-          enum:
-            - agent-local
-            - proxy-agent-local
-            - cert-manager-managed
-            - appliance-managed
-            - hsm-managed
-            - vault-managed
-            - os-store-managed
-            - external-unknown
-            - null
+          enum: [agent-local, proxy-agent-local, cert-manager-managed, appliance-managed, hsm-managed, vault-managed, os-store-managed, external-unknown, null]
           description: Non-secret mode describing where the private key lives outside the control plane.
         keyReference:
           type: string
@@ -15008,7 +15256,8 @@ components:
     CertOpsJob:
       type: object
       additionalProperties: false
-      description: Public CertOps job summary for dashboard and timeline reads. Payload and result metadata are omitted from list responses.
+      description: Public CertOps job summary for dashboard and timeline reads.
+        Payload and result metadata are omitted from list responses.
       required:
         - id
         - workspaceId
@@ -15026,7 +15275,20 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+          enum:
+            - renew
+            - deploy
+            - deploy-from-store
+            - cleanup-from-store
+            - reconcile-from-store
+            - reload
+            - revoke
+            - noop
+            - issue
+            - distribute-trust
+            - revoke-trust
+            - continue-enrollment
+            - adcs-preflight
         status:
           type: string
           enum:
@@ -15045,11 +15307,28 @@ components:
             - awaiting_issuer
         source:
           type: string
-          enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external, controller_provisioning]
+          enum:
+            - api
+            - executor
+            - system
+            - automation
+            - domain-monitor
+            - endpoint-monitor
+            - control-plane
+            - external
+            - controller_provisioning
         subjectType:
           type: string
           nullable: true
-          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external, trust_anchor]
+          enum:
+            - managed_certificate
+            - certificate_instance
+            - certificate_target
+            - token
+            - domain
+            - endpoint
+            - external
+            - trust_anchor
         subjectId:
           type: string
           maxLength: 128
@@ -15097,129 +15376,118 @@ components:
     CertOpsJobCreateRequest:
       type: object
       additionalProperties: false
-      required: [operation]
-      description: >-
-        Manual job creation request. source is always forced to "api" by the
-        server and is not accepted from the request body. Operation "issue"
-        requests a brand-new certificate for which no managed certificate row
-        exists yet: subjectType, subjectId, and payload.certificateId must all
-        be omitted, and idempotencyKey is required. For "issue" the server
-        creates the managed certificate upfront in the same transaction with
-        status "provisioning" and source "agent_issuance", then creates the job
-        against that new row and reconciles the certificate to "active" from
-        the job's own validation evidence when the job succeeds. Operations
-        "distribute-trust" and "revoke-trust" install or remove a trust anchor
-        (an approved root/intermediate CA) in one specific agent's machine
-        trust store rather than acting on a certificate's lifecycle: for these
-        two operations subjectType must be omitted (the server sets
-        trust_anchor), subjectId identifies the trust anchor to act on, and
-        agentId and owner are additionally required (and are ignored for
-        every other operation). Creating either operation requires the
-        certops.trust_anchor.manage permission rather than the workspace
-        manager role that every other operation accepts.
+      required:
+        - operation
+      description: "Manual job creation request. source is always forced to \"api\" by
+        the server and is not accepted from the request body. Operation \"issue\"
+        requests a brand-new certificate for which no managed certificate row exists
+        yet: subjectType, subjectId, and payload.certificateId must all be omitted,
+        and idempotencyKey is required. For \"issue\" the server creates the managed
+        certificate upfront in the same transaction with status \"provisioning\" and
+        source \"agent_issuance\", then creates the job against that new row and
+        reconciles the certificate to \"active\" from the job's own validation
+        evidence when the job succeeds. Operations \"distribute-trust\" and
+        \"revoke-trust\" install or remove a trust anchor (an approved
+        root/intermediate CA) in one specific agent's machine trust store rather
+        than acting on a certificate's lifecycle: for these two operations
+        subjectType must be omitted (the server sets trust_anchor), subjectId
+        identifies the trust anchor to act on, and agentId and owner are
+        additionally required (and are ignored for every other operation). Creating
+        either operation requires the certops.trust_anchor.manage permission rather
+        than the workspace manager role that every other operation accepts."
       properties:
         mode:
           type: string
           enum: [real, dry_run]
           default: real
-          description: Signed execution mode. dry_run performs checks without effects and terminates as dry_run_complete, never succeeded.
+          description: Signed execution mode. dry_run performs checks without effects and
+            terminates as dry_run_complete, never succeeded.
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust]
-          description: >-
-            Job operation. "issue" is control-plane-only first-time issuance;
-            it is dispatched to agents as action "renew", so the agent-facing
-            action values are unchanged. "distribute-trust"/"revoke-trust"
-            install or remove a trust anchor in one agent's machine trust
-            store; see subjectId/agentId/owner below.
+          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust]
+          description: Job operation. "issue" is control-plane-only first-time issuance;
+            it is dispatched to agents as action "renew", so the agent-facing action
+            values are unchanged. "distribute-trust"/"revoke-trust" install or
+            remove a trust anchor in one agent's machine trust store; see
+            subjectId/agentId/owner below.
         subjectType:
           type: string
           enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external, trust_anchor]
-          description: >-
-            Subject kind of an already existing subject. Must be omitted for
-            operation "issue" (the server sets managed_certificate on the row
-            it creates); for "distribute-trust"/"revoke-trust" the only
-            accepted value is trust_anchor and the server sets it
-            automatically even when omitted.
+          description: Subject kind of an already existing subject. Must be omitted for
+            operation "issue" (the server sets managed_certificate on the row it
+            creates); for "distribute-trust"/"revoke-trust" the only accepted value
+            is trust_anchor and the server sets it automatically even when omitted.
         subjectId:
           type: string
           maxLength: 128
-          description: >-
-            Id of an already existing subject. Must be omitted for operation
+          description: Id of an already existing subject. Must be omitted for operation
             "issue"; the server assigns the id of the managed certificate it
-            creates. For "distribute-trust"/"revoke-trust", this is the id of
-            the trust anchor to act on.
+            creates. For "distribute-trust"/"revoke-trust", this is the id of the
+            trust anchor to act on.
         assignedAgentId:
           type: string
           format: uuid
-          description: Explicit issuer agent row ID, required for issue with publicationDestination.
+          description: Explicit issuer agent row ID, required for issue with
+            publicationDestination.
         agentId:
           type: string
           format: uuid
-          description: >-
-            Required for operations "distribute-trust" and "revoke-trust"
-            only (ignored otherwise): the UUID of the specific agent in this
-            workspace whose machine trust store the job targets. A value that
-            is not a well-formed UUID fails with CERTOPS_TARGET_AGENT_INVALID
-            (400); a well-formed UUID that does not match a registered agent
-            in this workspace fails with CERTOPS_TARGET_AGENT_NOT_FOUND (404).
+          description: 'Required for operations "distribute-trust" and "revoke-trust" only
+            (ignored otherwise): the UUID of the specific agent in this workspace
+            whose machine trust store the job targets. A value that is not a
+            well-formed UUID fails with CERTOPS_TARGET_AGENT_INVALID (400); a
+            well-formed UUID that does not match a registered agent in this
+            workspace fails with CERTOPS_TARGET_AGENT_NOT_FOUND (404).'
         owner:
           type: string
           minLength: 1
           maxLength: 128
-          description: >-
-            Required for operations "distribute-trust" and "revoke-trust"
+          description: "Required for operations \"distribute-trust\" and \"revoke-trust\"
             only (ignored otherwise): a caller-supplied 1-128 character label
             identifying who holds this trust-anchor reference on this agent.
-            Installations are reference-counted per (agent, trust anchor,
-            owner): revoking one owner's reference only marks that owner's
-            reference removed, and the certificate is only actually removed
-            from the agent's OS trust store once no other owner's live
-            reference to the same anchor on the same agent remains.
+            Installations are reference-counted per (agent, trust anchor, owner):
+            revoking one owner's reference only marks that owner's reference
+            removed, and the certificate is only actually removed from the agent's
+            OS trust store once no other owner's live reference to the same anchor
+            on the same agent remains."
         payload:
           allOf:
             - $ref: "#/components/schemas/CertOpsPublicObject"
-          description: >-
-            Public job payload. A vault-managed issue uses publicationDestination
-            with materialStoreRef, issuanceProfileRef and profileRevision; it
-            requires assignedAgentId and forbids filesystem, reload and probe
-            destinations. The server assigns group and material-version IDs.
-            A deploy-from-store job is created from an approved rollout snapshot.
-            For operation "issue", payload.certificateId
-            must be omitted because the server assigns it; the name and common
-            name of the created certificate come from
-            payload.target.reference, and its subject alternative names come
-            from payload.sans. The execution
-            fields accepted on an "issue" job are exactly the renew set
-            (commandRef, caEndpoint, acmeKind, keyRotation, certPath,
-            reloadService, verifyHost, verifyPort, dnsZone, dnsProvider); a
-            renewalProfile snapshot is not valid on an "issue" job.
-            payload.issuerKind and payload.enrollment are set by the control
-            plane at signed dispatch and are refused on every operation with
-            CERTOPS_JOB_EXECUTION_FIELD_INVALID, even when null.
+          description: Public job payload. A vault-managed issue uses
+            publicationDestination with materialStoreRef, issuanceProfileRef and
+            profileRevision; it requires assignedAgentId and forbids filesystem,
+            reload and probe destinations. The server assigns group and
+            material-version IDs. A deploy-from-store job is created from an
+            approved rollout snapshot. For operation "issue", payload.certificateId
+            must be omitted because the server assigns it; the name and common name
+            of the created certificate come from payload.target.reference, and its
+            subject alternative names come from payload.sans. The execution fields
+            accepted on an "issue" job are exactly the renew set (commandRef,
+            caEndpoint, acmeKind, keyRotation, certPath, reloadService, verifyHost,
+            verifyPort, dnsZone, dnsProvider); a renewalProfile snapshot is not
+            valid on an "issue" job. payload.issuerKind and payload.enrollment are
+            set by the control plane at signed dispatch and are refused on every
+            operation with CERTOPS_JOB_EXECUTION_FIELD_INVALID, even when null.
         idempotencyKey:
           type: string
           maxLength: 128
-          description: >-
-            Required for operation "issue", where it makes a retry safe
-            instead of creating a duplicate certificate row and is stored as
-            the created certificate's source reference. Also required for
-            "distribute-trust"/"revoke-trust", where it makes the trust
-            mutation itself retry-safe: a replay of the same key AND the
-            same operation/trustAnchorId/agentId/store/owner returns the
-            same job (or the same no-op release) rather than re-applying
-            the transition. The same raw key reused for a different
-            operation or a different trust-anchor/agent/store/owner target
-            is treated as an unrelated request, since the key is scoped to
-            its full target tuple rather than shared workspace-wide.
-            Optional for every other operation.
+          description: "Required for operation \"issue\", where it makes a retry safe
+            instead of creating a duplicate certificate row and is stored as the
+            created certificate's source reference. Also required for
+            \"distribute-trust\"/\"revoke-trust\", where it makes the trust mutation
+            itself retry-safe: a replay of the same key AND the same
+            operation/trustAnchorId/agentId/store/owner returns the same job (or the
+            same no-op release) rather than re-applying the transition. The same raw
+            key reused for a different operation or a different
+            trust-anchor/agent/store/owner target is treated as an unrelated
+            request, since the key is scoped to its full target tuple rather than
+            shared workspace-wide. Optional for every other operation."
         requiresApproval:
           type: boolean
           default: false
-          description: >-
-            True creates the job at pending_approval instead of pending, so
-            it must be approved by a different user before it becomes
-            claimable (see the approval gate on POST .../{jobId}/approve).
+          description: True creates the job at pending_approval instead of pending, so it
+            must be approved by a different user before it becomes claimable (see
+            the approval gate on POST .../{jobId}/approve).
     CertOpsBulkRenewRequest:
       type: object
       additionalProperties: false
@@ -15456,7 +15724,14 @@ components:
     CertOpsJobDetail:
       type: object
       additionalProperties: false
-      required: [id, workspaceId, operation, status, source, createdAt, updatedAt]
+      required:
+        - id
+        - workspaceId
+        - operation
+        - status
+        - source
+        - createdAt
+        - updatedAt
       properties:
         id:
           type: string
@@ -15466,23 +15741,10 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reconcile-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
         status:
           type: string
-          enum:
-            - pending_approval
-            - approved
-            - rejected
-            - pending
-            - claimed
-            - running
-            - succeeded
-            - failed
-            - blocked
-            - cancelled
-            - dry_run_complete
-            - orphaned_unknown_effect
-            - awaiting_issuer
+          enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled, dry_run_complete, orphaned_unknown_effect, awaiting_issuer]
         source:
           type: string
           enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external, controller_provisioning]
@@ -15569,12 +15831,18 @@ components:
         claimedByAgentSigningKeyId:
           type: string
           nullable: true
-          description: |-
-            Best-effort proxy for "which signing key backed this job's dispatch": the
+          description: >-
+            Best-effort proxy for "which signing key backed this job's dispatch":
+            the
+
             claiming agent's *currently* pinned signing key, resolved by the single-job
+
             GET .../certops/jobs/{jobId} route only (absent on job-creation responses).
+
             There is no per-attempt signing-key column in the schema, so this reflects
+
             the agent's key at read time, not necessarily the key pinned at the moment
+
             of the specific claim being viewed.
     CertOpsJobDetailResponse:
       type: object
@@ -16032,21 +16300,7 @@ components:
           nullable: true
         eventType:
           type: string
-          enum:
-            - certificate.observed
-            - deployment.checked
-            - deployment.updated
-            - validation.passed
-            - validation.failed
-            - policy.checked
-            - adcs-template-verdict
-            - adcs-submitted
-            - adcs-pending
-            - adcs-issued
-            - adcs-denied
-            - adcs-uncertain
-            - adcs-validation-deferred
-            - adcs-rejected-invalid
+          enum: [certificate.observed, deployment.checked, deployment.updated, validation.passed, validation.failed, policy.checked, adcs-template-verdict, adcs-submitted, adcs-pending, adcs-issued, adcs-denied, adcs-uncertain, adcs-validation-deferred, adcs-rejected-invalid]
         source:
           type: string
           enum: [executor, domain-monitor, endpoint-monitor, control-plane, external]
@@ -16139,13 +16393,7 @@ components:
           nullable: true
         eventType:
           type: string
-          enum:
-            - certificate.observed
-            - deployment.checked
-            - deployment.updated
-            - validation.passed
-            - validation.failed
-            - policy.checked
+          enum: [certificate.observed, deployment.checked, deployment.updated, validation.passed, validation.failed, policy.checked]
         source:
           type: string
           enum: [executor, domain-monitor, endpoint-monitor, control-plane, external]
@@ -16216,7 +16464,8 @@ components:
       properties:
         schemaVersion:
           type: integer
-          enum: [1]
+          enum:
+            - 1
         eventId:
           type: string
           minLength: 1
@@ -16284,11 +16533,18 @@ components:
       oneOf:
         - properties:
             eventType:
-              enum: [job.accepted, job.started, job.progress, job.completed, job.failed, job.rejected]
+              enum:
+                - job.accepted
+                - job.started
+                - job.progress
+                - job.completed
+                - job.failed
+                - job.rejected
         - required: [evidence]
           properties:
             eventType:
-              enum: [evidence.attached]
+              enum:
+                - evidence.attached
             evidence:
               minItems: 1
     CertOpsPerJobExecutorEventRequest:
@@ -16333,14 +16589,7 @@ components:
           enum: [accepted, claimed, running, succeeded, failed, rejected, blocked, cancelled]
         eventType:
           type: string
-          enum:
-            - job.accepted
-            - job.started
-            - job.progress
-            - job.completed
-            - job.failed
-            - job.rejected
-            - evidence.attached
+          enum: [job.accepted, job.started, job.progress, job.completed, job.failed, job.rejected, evidence.attached]
         occurredAt:
           type: string
           format: date-time
@@ -16805,19 +17054,7 @@ components:
           type: string
         type:
           type: string
-          enum:
-            - threshold_reached
-            - alert_queued
-            - alert_discarded
-            - alert_not_queued
-            - delivery_deferred
-            - delivery_attempted
-            - delivery_failed
-            - delivery_succeeded
-            - delivery_partial
-            - delivery_blocked
-            - retry_scheduled
-            - alert_requeued
+          enum: [threshold_reached, alert_queued, alert_discarded, alert_not_queued, delivery_deferred, delivery_attempted, delivery_failed, delivery_succeeded, delivery_partial, delivery_blocked, retry_scheduled, alert_requeued]
         occurred_at:
           type: string
           format: date-time
@@ -16882,14 +17119,7 @@ components:
           enum: [outside_threshold, due, suppressed]
         reason:
           type: string
-          enum:
-            - threshold_not_reached
-            - threshold_reached
-            - post_expiry_threshold_not_configured
-            - stale_import_threshold
-            - retired_certificate
-            - no_eligible_channels
-            - invalid_expiration
+          enum: [threshold_not_reached, threshold_reached, post_expiry_threshold_not_configured, stale_import_threshold, retired_certificate, no_eligible_channels, invalid_expiration]
         days_until_expiry:
           type: integer
           nullable: true
@@ -16940,15 +17170,7 @@ components:
           enum: [pending, sent, sent_unverified, discarded, failed, blocked, limit_exceeded, partial]
         reason:
           type: string
-          enum:
-            - delivery_window
-            - monthly_plan_limit
-            - max_attempts
-            - retry_scheduled
-            - retired_certificate
-            - endpoint_recovered
-            - alert_discarded
-            - delivery_unverified
+          enum: [delivery_window, monthly_plan_limit, max_attempts, retry_scheduled, retired_certificate, endpoint_recovered, alert_discarded, delivery_unverified]
           nullable: true
         threshold_days:
           type: integer
@@ -18179,7 +18401,8 @@ components:
             body:
               type: object
               nullable: true
-              description: agent-protocol claimBody; poll preferences only, never a specific job selection.
+              description: agent-protocol claimBody; poll preferences only, never a specific
+                job selection.
               properties:
                 maxJobs:
                   type: integer
@@ -18191,7 +18414,7 @@ components:
                   maxItems: 16
                   items:
                     type: string
-                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store]
+                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store, cleanup-from-store, reconcile-from-store]
     CertOpsAgentClaimResponse:
       type: object
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.
@@ -18487,20 +18710,7 @@ components:
                 rejectionReason:
                   type: string
                   nullable: true
-                  enum:
-                    - job_integrity_failed
-                    - job_replay_rejected
-                    - target_out_of_scope
-                    - command_not_allowlisted
-                    - path_not_allowlisted
-                    - ca_endpoint_not_allowlisted
-                    - dns_zone_not_allowlisted
-                    - dns_provider_not_allowlisted
-                    - key_export_requested
-                    - clock_drift_suspected
-                    - unexpected_job_type
-                    - issuer_not_allowlisted
-                    - enrollment_snapshot_mismatch
+                  enum: [job_integrity_failed, job_replay_rejected, target_out_of_scope, command_not_allowlisted, path_not_allowlisted, ca_endpoint_not_allowlisted, dns_zone_not_allowlisted, dns_provider_not_allowlisted, key_export_requested, clock_drift_suspected, unexpected_job_type, issuer_not_allowlisted, enrollment_snapshot_mismatch]
                 keyRotated:
                   type: boolean
                   nullable: true
@@ -18527,6 +18737,8 @@ components:
                   $ref: "#/components/schemas/MaterialDistribution_publicationReceipt"
                 deploymentReceipt:
                   $ref: "#/components/schemas/MaterialDistribution_deploymentReceipt"
+                reconciliationReceipt:
+                  $ref: "#/components/schemas/MaterialDistribution_reconciliationReceipt"
                 publicationCertificatePem:
                   type: string
                   maxLength: 262144
@@ -18542,21 +18754,7 @@ components:
                     properties:
                       eventType:
                         type: string
-                        enum:
-                          - certificate.observed
-                          - deployment.checked
-                          - deployment.updated
-                          - validation.passed
-                          - validation.failed
-                          - policy.checked
-                          - adcs-template-verdict
-                          - adcs-submitted
-                          - adcs-pending
-                          - adcs-issued
-                          - adcs-denied
-                          - adcs-uncertain
-                          - adcs-validation-deferred
-                          - adcs-rejected-invalid
+                        enum: [certificate.observed, deployment.checked, deployment.updated, validation.passed, validation.failed, policy.checked, adcs-template-verdict, adcs-submitted, adcs-pending, adcs-issued, adcs-denied, adcs-uncertain, adcs-validation-deferred, adcs-rejected-invalid]
                       observedAt:
                         type: string
                         format: date-time
@@ -18604,3 +18802,246 @@ components:
         evidenceCount:
           type: integer
           description: Number of evidence items appended (evidence messages only).
+    DistributionLifecycle_alias:
+      type: string
+      pattern: ^[A-Za-z0-9_-]{1,64}$
+    DistributionLifecycle_policy:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - maxParallel
+        - authorizationExpiresAt
+        - verification
+        - alerts
+        - retention
+      properties:
+        mode:
+          enum: [manual, approval_request, preauthorized]
+        maxParallel:
+          type: integer
+          minimum: 1
+          maximum: 16
+        authorizationExpiresAt:
+          type: string
+          format: date-time
+          maxLength: 40
+          nullable: true
+        verification:
+          type: object
+          additionalProperties: false
+          required:
+            - enabled
+            - intervalSeconds
+            - maxBackoffSeconds
+            - staleJobSeconds
+            - failureThreshold
+          properties:
+            enabled:
+              type: boolean
+            intervalSeconds:
+              type: integer
+              minimum: 300
+              maximum: 604800
+            maxBackoffSeconds:
+              type: integer
+              minimum: 300
+              maximum: 604800
+            staleJobSeconds:
+              type: integer
+              minimum: 300
+              maximum: 86400
+            failureThreshold:
+              type: integer
+              minimum: 1
+              maximum: 20
+        alerts:
+          type: object
+          additionalProperties: false
+          required:
+            - enabled
+            - offlineSeconds
+            - stuckSeconds
+            - convergenceSeconds
+            - expiryWarningDays
+            - repeatSeconds
+            - contactGroupIds
+          properties:
+            enabled:
+              type: boolean
+            offlineSeconds:
+              type: integer
+              minimum: 60
+              maximum: 604800
+            stuckSeconds:
+              type: integer
+              minimum: 60
+              maximum: 604800
+            convergenceSeconds:
+              type: integer
+              minimum: 60
+              maximum: 604800
+            expiryWarningDays:
+              type: integer
+              minimum: 0
+              maximum: 90
+            repeatSeconds:
+              type: integer
+              minimum: 3600
+              maximum: 604800
+            contactGroupIds:
+              type: array
+              maxItems: 20
+              uniqueItems: true
+              items:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{1,128}$
+        retention:
+          type: object
+          additionalProperties: false
+          required:
+            - minimumSeconds
+            - minimumVersions
+            - rollbackSeconds
+            - cleanupEnabled
+            - reportOnly
+            - requiresApproval
+          properties:
+            minimumSeconds:
+              type: integer
+              minimum: 0
+              maximum: 315360000
+            minimumVersions:
+              type: integer
+              minimum: 2
+              maximum: 1000
+            rollbackSeconds:
+              type: integer
+              minimum: 0
+              maximum: 31536000
+            cleanupEnabled:
+              type: boolean
+            reportOnly:
+              type: boolean
+            requiresApproval:
+              enum: [true]
+    DistributionLifecycle_activationPolicy:
+      type: object
+      additionalProperties: false
+      required:
+        - method
+        - disruptive
+        - requiresApproval
+        - timezone
+        - windows
+        - blackouts
+        - validUntil
+        - emergency
+      properties:
+        independentStaging:
+          type: boolean
+          description: Authorize preparation before activation only on a qualified connector with customer-local opt-in. Staging is not installed, served or trusted proof.
+        method:
+          enum: [none, reload, rebind, no-restart-refresh, controlled-restart, manual]
+        disruptive:
+          type: boolean
+        requiresApproval:
+          type: boolean
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 100
+        windows:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - days
+              - start
+              - end
+            properties:
+              days:
+                type: array
+                minItems: 1
+                maxItems: 7
+                uniqueItems: true
+                items:
+                  type: integer
+                  minimum: 0
+                  maximum: 6
+              start:
+                type: string
+                pattern: ^(?:[01][0-9]|2[0-3]):[0-5][0-9]$
+              end:
+                type: string
+                pattern: ^(?:[01][0-9]|2[0-3]):[0-5][0-9]$
+        blackouts:
+          type: array
+          maxItems: 64
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - start
+              - end
+            properties:
+              start:
+                type: string
+                format: date-time
+                maxLength: 40
+              end:
+                type: string
+                format: date-time
+                maxLength: 40
+        validUntil:
+          type: string
+          format: date-time
+          maxLength: 40
+          nullable: true
+        emergency:
+          type: object
+          additionalProperties: false
+          required:
+            - start
+            - end
+            - reference
+          properties:
+            start:
+              type: string
+              format: date-time
+              maxLength: 40
+            end:
+              type: string
+              format: date-time
+              maxLength: 40
+            reference:
+              $ref: "#/components/schemas/DistributionLifecycle_alias"
+          nullable: true
+    DistributionLifecycle_policyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - policy
+        - expectedRevision
+      properties:
+        policy:
+          $ref: "#/components/schemas/DistributionLifecycle_policy"
+        expectedRevision:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+    DistributionLifecycle_activationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - policy
+        - expectedAuthorizationRevision
+      properties:
+        policy:
+          $ref: "#/components/schemas/DistributionLifecycle_activationPolicy"
+        expectedAuthorizationRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647

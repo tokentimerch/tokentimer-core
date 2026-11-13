@@ -31,6 +31,23 @@ function serviceBlock(file, service) {
 
 describe("Compose operational incident worker environment", () => {
   for (const file of ["docker-compose.yml", "docker-compose.dev.yml"]) {
+    it(`${file} exposes lifecycle sweep controls and keeps cleanup opt-in`, () => {
+      const worker = serviceBlock(file, "worker-certops");
+      for (const key of [
+        "CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_ENABLED",
+        "CERTOPS_SWEEP_DISTRIBUTION_SCHEDULER_TIMEOUT_MS",
+        "CERTOPS_SWEEP_DISTRIBUTION_MONITORING_ENABLED",
+        "CERTOPS_SWEEP_DISTRIBUTION_MONITORING_TIMEOUT_MS",
+      ]) assert.match(worker, new RegExp(`\\b${key}[:=]`), key);
+      assert.ok(serviceBlock(file, "api").includes("${CERTOPS_MATERIAL_CLEANUP_ENABLED:-false}"));
+      assert.match(serviceBlock(file, "worker-delivery"), /\bTWILIO_WHATSAPP_ALERT_CONTENT_SID_DISTRIBUTION[:=]/);
+    });
+  }
+  it("makes the qualified cleanup flag and distribution template configurable in the test stack", () => {
+    assert.ok(serviceBlock("docker-compose.test.yml", "api").includes("${CERTOPS_MATERIAL_CLEANUP_ENABLED:-false}"));
+    assert.match(serviceBlock("docker-compose.test.yml", "worker-delivery"), /\bTWILIO_WHATSAPP_ALERT_CONTENT_SID_DISTRIBUTION[:=]/);
+  });
+  for (const file of ["docker-compose.yml", "docker-compose.dev.yml"]) {
     it(`${file} wires auto-sync email context and tuning`, () => {
       const block = serviceBlock(file, "worker-auto-sync");
       for (const key of autoSyncVariables) {

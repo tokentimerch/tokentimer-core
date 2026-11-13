@@ -117,6 +117,8 @@ these base services. Neither edition gains provider credentials.
 
 ## Sources
 
+The [qualification guide](../certops/distribution-extensions-qualification.md) describes capability gates and the evidence required for promotion.
+
 - [Azure Set Secret](https://learn.microsoft.com/en-us/rest/api/keyvault/secrets/set-secret/set-secret): every successful set creates a version.
 - [Azure version enumeration](https://learn.microsoft.com/en-us/rest/api/keyvault/secrets/get-secret-versions/get-secret-versions): list permission and public identifiers.
 - [OpenBao KV v2](https://openbao.org/docs/secrets/kv/kv-v2/): CAS and pinned-version semantics.

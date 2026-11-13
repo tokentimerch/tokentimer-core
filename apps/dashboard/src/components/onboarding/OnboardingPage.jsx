@@ -14,7 +14,7 @@ import {
   FiRepeat,
   FiRefreshCw,
 } from 'react-icons/fi';
-import { Link as RouterLink, useNavigate } from 'react-router';
+import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router';
 import {
   Alert,
   AlertDescription,
@@ -564,6 +564,8 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
   });
   const onboarding = useOnboardingState();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedGoal = searchParams.get('goal');
 
   const docsBaseUrl = onboarding.capabilities?.docsBaseUrl;
   const docs = useCallback(
@@ -724,6 +726,14 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
   useEffect(() => {
     setViewStepId(null);
   }, [stepKey, chosenGoal]);
+  const handledGoalLink = useRef(null);
+  useEffect(() => {
+    if (!ready || requestedGoal !== 'certops_vault') return;
+    const linkKey = `${onboarding.workspaceId}/${requestedGoal}`;
+    if (handledGoalLink.current === linkKey) return;
+    handledGoalLink.current = linkKey;
+    if (chosenGoal !== requestedGoal) setViewStepId('goal');
+  }, [ready, requestedGoal, chosenGoal, onboarding.workspaceId]);
 
   const Current = nav.shownId
     ? STEP_COMPONENTS[nav.shownId] || editionStepComponents()[nav.shownId]

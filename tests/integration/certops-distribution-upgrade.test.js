@@ -15,13 +15,12 @@ describe("Core distribution and lifecycle migration histories", function () {
     'certops_stable_consumer_discovery', 'certops_material_cleanup',
     'certops_consumer_verification_failures', 'certops_distribution_resolution_delivery',
     'pagerduty_incident_lifecycle', 'pagerduty_resolution_reason',
-    'pagerduty_operator_actions', 'remove_pagerduty_rest_lookup',
+    'pagerduty_operator_actions', 'remove_pagerduty_rest_lookup', 'certops_consumer_staging', 'certops_review_authority_epochs',
     'certops_manual_rollout_authority',
     'operator_connections', 'operator_enrollment_grants', 'operator_action_requests', 'operator_oauth',
     'operator_connection_lifetimes', 'operator_inventory', 'operator_oauth_retention', 'operator_issuance',
     'certops_issuance_job_identity', 'certops_issuance_identity_transfer',
-    'certops_period_creator_delete', 'recipient_member_verification',
-    'auto_sync_owner_username',
+    'certops_period_creator_delete', 'recipient_member_verification', 'auto_sync_owner_username', 'certops_retirement_dossiers', 'certops_material_reconciliation',
   ];
   const migrations = require('../../apps/api/migrations/migrate').migrations;
   const companions = companionNames.filter(name => migrations.some(m => m.name === name));
@@ -271,11 +270,17 @@ describe("Core distribution and lifecycle migration histories", function () {
           ...companions,
         ];
         if (["provider-preview-81", "provider-preview-through-pagerduty"].includes(history)) {
-          // These reviewed previews finish their original MCP tail before
-          // appending the later PagerDuty action and REST-removal companions.
+          // These previews retain the reviewed PagerDuty/MCP append order
+          // before adding lifecycle companions.
           const mcp = ["operator_connections", "operator_enrollment_grants", "operator_action_requests"];
           expected.splice(expected.indexOf(mcp[0]), mcp.length);
-          expected.splice(expected.indexOf("pagerduty_operator_actions"), 0, ...mcp);
+          const append = history === "provider-preview-81"
+            ? ["pagerduty_incident_lifecycle", "pagerduty_resolution_reason", ...mcp]
+            : mcp;
+          if (history === "provider-preview-81") {
+            expected.splice(expected.indexOf("pagerduty_incident_lifecycle"), 2);
+          }
+          expected.splice(expected.indexOf("certops_distribution_lifecycle"), 0, ...append);
         }
         assert.deepEqual(
           after.filter((row) => row.version >= 70).map((row) => row.name),
@@ -322,9 +327,14 @@ describe("Core distribution and lifecycle migration histories", function () {
           "certificate_enrollments",
           "certops_distribution_groups",
           "certops_agent_job_log",
+          "certops_distribution_policies",
+          "certops_distribution_incidents",
+          "certops_discovered_consumers",
           "auto_sync_provider_stats",
           "auto_sync_run_outcome_stats",
           "auto_sync_run_freshness",
+          "certops_material_cleanups",
+          "certops_consumer_verification_outcomes",
         ]) {
           assert.equal(
             (await db.query("SELECT to_regclass($1)::text AS name", [table]))

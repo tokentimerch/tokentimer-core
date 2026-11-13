@@ -20,6 +20,7 @@ const {
   createJobMock,
   approveJobMock,
   rejectJobMock,
+  getJobMock,
   listCertificatesMock,
   listCertificateTargetsMock,
   listWorkspaceCertificateInstancesMock,
@@ -44,6 +45,7 @@ const {
   createJobMock: vi.fn(),
   approveJobMock: vi.fn(),
   rejectJobMock: vi.fn(),
+  getJobMock: vi.fn(),
   listCertificatesMock: vi.fn(),
   listCertificateTargetsMock: vi.fn(),
   listWorkspaceCertificateInstancesMock: vi.fn(),
@@ -71,6 +73,7 @@ vi.mock('../../src/components/certops/certopsJobsApi.js', async () => {
     createJob: createJobMock,
     approveJob: approveJobMock,
     rejectJob: rejectJobMock,
+    getJob: getJobMock,
   };
 });
 
@@ -163,6 +166,10 @@ beforeEach(() => {
   createJobMock.mockReset();
   approveJobMock.mockReset();
   rejectJobMock.mockReset();
+  getJobMock.mockReset();
+  getJobMock.mockResolvedValue({
+    job: job({ workspaceId: 'ws-1', status: 'pending_approval' }),
+  });
   listCertificatesMock.mockReset();
   listCertificatesMock.mockResolvedValue({ items: [] });
   listCertificateTargetsMock.mockReset();
@@ -439,6 +446,48 @@ describe('ExecutorJobsPanel manual job creation', () => {
 
 describe('ExecutorJobsPanel approvals', () => {
   const pendingJob = job({ status: 'pending_approval' });
+
+  it('loads the full immutable scope when the Jobs list supplies its normal payload-free summary', async () => {
+    const summary = job({
+      operation: 'cleanup-from-store',
+      status: 'pending_approval',
+    });
+    useCertOpsJobsMock.mockReturnValue(jobsState({ jobs: [summary] }));
+    getJobMock.mockResolvedValue({
+      job: {
+        ...summary,
+        workspaceId: 'ws-1',
+        payload: {
+          materialCleanup: {
+            groupId: 'owned-group',
+            materialVersionId: 'exact-reviewed-version',
+            provider: 'vault-kv2',
+            materialStoreRef: 'approved-store',
+            providerVersion: 1,
+            profileRevision: 1,
+            policyRevision: 2,
+            scopeHash: 'exact-reviewed-scope',
+            expiresAt: '2026-11-04T00:00:00Z',
+          },
+        },
+      },
+    });
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    const dialog = within(
+      await screen.findByRole('dialog', { name: /Approve job/ })
+    );
+    expect(
+      await dialog.findByText('exact-reviewed-version')
+    ).toBeInTheDocument();
+    expect(dialog.getByText('exact-reviewed-scope')).toBeInTheDocument();
+    expect(getJobMock).toHaveBeenCalledWith(
+      'ws-1',
+      'job-1',
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+    expect(dialog.getByRole('button', { name: 'Approve' })).toBeEnabled();
+  });
 
   it('shows the requester why approval needs a different person while leaving rejection available', () => {
     useCertOpsJobsMock.mockReturnValue(

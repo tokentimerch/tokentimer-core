@@ -126,7 +126,7 @@ the origins users and integrations actually use in the browser.
 | `PHONE_HASH_SALT`                          | Optional salt for phone hashing                                                 | `unset`                                | API privacy  |
 | `WEEKLY_DIGEST_RECIPIENT_KEY`              | HMAC secret for weekly-digest skip keys. Falls back to `SESSION_SECRET`. Rotating it re-sends already claimed recipients for the current week. | `unset` | Worker privacy |
 | `WEEKLY_DIGEST_UNCERTAIN_RETRY_SECONDS`    | How long a weekly digest waits after an in-flight or ambiguous provider call before another worker may send | `900` | Worker |
-| `TRUST_PROXY_HOPS`                         | Number of trusted reverse-proxy hops in front of the API (affects `req.ip` and `req.protocol` resolution). `0` = no proxy, `1` = single ingress/reverse proxy, `2` = LB -> ingress. | `2`                                    | API security |
+| `TRUST_PROXY_HOPS`                         | Number of trusted proxy hops. Default `0` is for direct access. **Operator action:** deployments previously relying on implicit proxy trust must set the actual hop count before upgrading, restrict direct API access, and ensure proxies sanitize forwarding headers. This also controls the forwarded protocol used for callback URLs. | `0`                                    | API security |
 | `WORKER_API_KEY`                           | Worker-to-API auth key. Bearer requests authenticated with this key are CSRF-exempt, as are CertOps machine-token paths. CSRF is enforced in development as well as production. | `unset (falls back to SESSION_SECRET)` | Worker, API  |
 
 ## Email and delivery
@@ -194,6 +194,11 @@ For Microsoft Teams, create a Teams Workflows incoming webhook with the trigger 
 | `GLOBAL_SLOWDOWN_WINDOW_MS`               | Global slowdown window in ms                                                | `900000`                              | API rate limiting    |
 | `GLOBAL_SLOWDOWN_DELAY_AFTER`             | Requests before delay is applied                                            | `50`                                  | API rate limiting    |
 | `GLOBAL_SLOWDOWN_DELAY_MS`                | Added delay per request after threshold                                     | `500`                                 | API rate limiting    |
+| `CERTOPS_MACHINE_IP_RATE_LIMIT_MAX` | Aggregate machine POST requests per source IP and window | `3000` | API rate limiting |
+| `CERTOPS_MACHINE_IP_RATE_LIMIT_WINDOW_MS` | Aggregate machine IP window in milliseconds | `60000` | API rate limiting |
+| `CERTOPS_MACHINE_IP_SLOWDOWN_DELAY_AFTER` | Aggregate machine requests before slowdown | `30000` | API rate limiting |
+| `CERTOPS_MACHINE_IP_SLOWDOWN_WINDOW_MS` | Aggregate machine slowdown window in milliseconds | `900000` | API rate limiting |
+| `CERTOPS_MACHINE_IP_SLOWDOWN_DELAY_MS` | Delay after the machine slowdown threshold | `500` | API rate limiting |
 | `CSRF_TOKEN_RATE_LIMIT_WINDOW_MS`         | Per-IP limiter window for `GET /api/csrf-token`. Helm: `config.csrfTokenRateLimitWindowMs`. | `900000`                              | API rate limiting    |
 | `CSRF_TOKEN_RATE_LIMIT_MAX`               | Per-IP max `GET /api/csrf-token` requests per window. If clients return 429 `CSRF_TOKEN_RATE_LIMITED`, raise this value. Counters are per API replica. Helm: `config.csrfTokenRateLimitMax`. | `60` (prod) / `1000` (dev,test) | API rate limiting    |
 | `LOGIN_RATE_LIMIT_WINDOW_MS`              | Login limiter window in ms                                                  | `900000`                              | Auth rate limiting   |
@@ -249,6 +254,8 @@ For Microsoft Teams, create a Teams Workflows incoming webhook with the trigger 
 | `CONTACT_GROUP_MEMBER_LIMITS`             | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `WORKSPACE_PLAN_LIMITS`                   | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspaces           |
 | `MEMBER_PLAN_LIMITS`                      | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspace members    |
+
+**Operator guidance:** Exact CertOps machine POSTs share a separate IP limit and slowdown across agents behind a NAT, per API replica and in addition to per-credential limits. Size `CERTOPS_MACHINE_IP_RATE_LIMIT_MAX` and `CERTOPS_MACHINE_IP_SLOWDOWN_DELAY_AFTER` for peak polling and job traffic; raising them reduces flood protection. Compose forwards these settings from `.env`; Helm accepts them through `api.env`.
 
 The three operational notification settings accept integers of at least `1`.
 `ALERT_DEGRADED_ATTEMPTS_THRESHOLD` is read by the delivery worker,
