@@ -521,6 +521,7 @@
         "names": [
           "creates the job, log, and evidence tables with safe columns and indexes",
           "roundtrips job, log, and evidence data with workspace isolation",
+          "sorts observation history before pagination with stable ties",
           "rejects dangerous payload and evidence metadata before persistence",
           "enforces monotonic status transitions and replay-safe idempotency",
           "cascades job logs and detaches evidence when a job is deleted",
