@@ -21,7 +21,17 @@ async function cleanupApiFixture({ pool, workspaceId, userId, onCleanupFailure }
     try { await pool.query("DELETE FROM audit_events WHERE workspace_id=ANY($1::uuid[]) OR actor_user_id=$2 OR subject_user_id=$2", [ownedWorkspaceIds, userId || null]); }
     catch (error) { failures.push(error); report("audit-delete"); }
     for (const id of ownedWorkspaceIds) {
-      try { await pool.query("DELETE FROM workspaces WHERE id=$1", [id]); }
+      try {
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          await apiRequire("./services/workspaceDeletion").deleteWorkspaces(client, [id]);
+          await client.query("COMMIT");
+        } catch (error) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw error;
+        } finally { client.release(); }
+      }
       catch (error) { failures.push(error); report("workspace-delete"); }
     }
     if (userId) {
