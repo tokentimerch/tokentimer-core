@@ -83,7 +83,8 @@ async function settleRecoveredDistributionAlerts(client, batchSize, canRecover) 
         const ids = new Set(recovered.rows.map(row => row.destination_id));
         const hooks = Array.isArray(settings?.webhook_urls) ? settings.webhook_urls : [];
         const selected = hooks.filter(hook => names.has(String(hook?.name || "").trim()));
-        const eligible = selected.length > 0 && selected.every(hook => ids.has(pagerDutyDestinationId(queue.workspace_id,hook)));
+        const selectedNames = new Set(selected.map(hook => String(hook?.name || "").trim()));
+        const eligible = names.size > 0 && selectedNames.size === names.size && selected.every(hook => ids.has(pagerDutyDestinationId(queue.workspace_id,hook)));
         const fingerprint = crypto.createHash("sha256").update(JSON.stringify([settings?.contact_groups,settings?.default_contact_group_id,settings?.webhook_urls,settings?.policy?.alerts])).digest("hex");
         if (eligible && settings?.policy?.alerts?.enabled === true && queue.metadata?.pagerdutyRecoveryRetryFingerprint !== fingerprint &&
             await canRecover(client,{workspace_id:queue.workspace_id})) {

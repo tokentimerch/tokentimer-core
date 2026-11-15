@@ -178,3 +178,24 @@ test("legacy recovery resumes after the original contact group is restored",asyn
  assert.equal(q.status,"sent");
 });
 
+
+test("legacy recovery waits for every named webhook to be restored",async()=>{
+ const {f,incident,id,worker,send,allow}=await blocked();
+ await pool.query("UPDATE alert_queue SET channels='[\"webhooks\"]'::jsonb WHERE id=$1",[id]);
+ await pool.query("UPDATE workspace_settings SET contact_groups=$2::jsonb WHERE workspace_id=$1",[f.workspaceId,JSON.stringify([{id:"original",name:"Original",webhook_names:["missing"]}])]);allow();
+ await pool.query("UPDATE certops_distribution_pagerduty SET next_attempt_at=clock_timestamp() WHERE incident_id=$1",[incident.id]);
+ await worker.deliveryWorkerJob({closePool:false,webhookSender:send});
+ let q=(await pool.query("SELECT status,channels,metadata,error_message FROM alert_queue WHERE id=$1",[id])).rows[0];
+ assert.notEqual(q.status,"sent"); for(let n=0;n<3;n++){await pool.query("UPDATE alert_queue SET next_attempt_at=clock_timestamp() WHERE id=$1",[id]);await worker.deliveryWorkerJob({closePool:false,webhookSender:send});}
+ await pool.query("UPDATE workspace_settings SET contact_groups=$2::jsonb WHERE workspace_id=$1",[f.workspaceId,JSON.stringify([{id:"original",name:"Original",webhook_names:["original","missing"]}])]);
+ await pool.query("UPDATE alert_queue SET next_attempt_at=clock_timestamp() WHERE id=$1",[id]);
+ await worker.deliveryWorkerJob({closePool:false,webhookSender:send});
+ q=(await pool.query("SELECT status FROM alert_queue WHERE id=$1",[id])).rows[0];assert.equal(q.status,"blocked");
+ assert.equal((await pool.query("SELECT resolved_at FROM operational_notifications WHERE workspace_id=$1 AND dedupe_key=$2",[f.workspaceId,`delivery_blocked:${id}`])).rows[0].resolved_at,null);
+ await pool.query("UPDATE workspace_settings SET contact_groups=$2::jsonb WHERE workspace_id=$1",[f.workspaceId,JSON.stringify([{id:"original",name:"Original",webhook_names:["original"]}])]);
+ await pool.query("UPDATE alert_queue SET next_attempt_at=clock_timestamp() WHERE id=$1",[id]);
+ await worker.deliveryWorkerJob({closePool:false,webhookSender:send});
+ q=(await pool.query("SELECT status,channels,metadata,error_message FROM alert_queue WHERE id=$1",[id])).rows[0];
+ assert.equal(q.status,"sent");
+});
+
