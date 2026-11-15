@@ -19,6 +19,7 @@ test("worker resolves the integration that received the distribution trigger", a
     VALUES($1,$2::jsonb,$3::jsonb) ON CONFLICT(workspace_id) DO UPDATE
     SET webhook_urls=EXCLUDED.webhook_urls,contact_groups=EXCLUDED.contact_groups`,
   [f.workspaceId,JSON.stringify([a,b]),JSON.stringify(groups)]);
+  await pool.query("UPDATE workspace_settings SET webhooks_alerts_enabled=true WHERE workspace_id=$1",[f.workspaceId]);
   const policy=structuredClone(lifecycle.DEFAULT_POLICY);
   policy.alerts.enabled=true;policy.alerts.contactGroupIds=["original"];
   await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f.actor});
@@ -73,6 +74,9 @@ test("a failed incident update does not erase an accepted trigger recovery oblig
   const hook={name:"original",kind:"pagerduty",url:"https://events.pagerduty.com/v2/enqueue",routingKey:"a".repeat(32)};
   await pool.query(`INSERT INTO workspace_settings(workspace_id,webhook_urls) VALUES($1,$2::jsonb)
     ON CONFLICT(workspace_id) DO UPDATE SET webhook_urls=EXCLUDED.webhook_urls`,[f.workspaceId,JSON.stringify([hook])]);
+  await pool.query("UPDATE workspace_settings SET webhooks_alerts_enabled=true WHERE workspace_id=$1",[f.workspaceId]);
+  const recoveryPolicy=structuredClone(lifecycle.DEFAULT_POLICY);recoveryPolicy.alerts.enabled=true;
+  await lifecycle.putPolicy({...f,policy:recoveryPolicy,expectedRevision:0,actorUserId:f.actor});
   const service=await import("../../apps/worker/src/shared/distributionPagerDuty.js");
   const client=await pool.connect(),sent=[];
   const send=async(_url,payload)=>{sent.push(payload);return {success:sent.length!==2};};
@@ -103,4 +107,28 @@ test("migration backfills only exact accepted distribution trigger destinations"
   await pool.query(sql.slice(sql.indexOf("INSERT INTO certops_distribution_pagerduty")));
   const rows=(await pool.query("SELECT destination_id,trigger_accepted_at FROM certops_distribution_pagerduty WHERE workspace_id=$1 AND incident_id=$2",[f.workspaceId,incident.id])).rows;
   assert.equal(rows.length,1);assert.equal(rows[0].destination_id,destination);assert.ok(rows[0].trigger_accepted_at);
+});
+
+test("recovery waits for distribution and webhook controls and resumes when enabled",async()=>{
+ for(const mode of ["policy","webhooks"]){
+  const f=await fixture(),hook={kind:"pagerduty",url:"https://events.pagerduty.com/v2/enqueue",routingKey:"a".repeat(32)};
+  await pool.query(`INSERT INTO workspace_settings(workspace_id,webhook_urls,webhooks_alerts_enabled) VALUES($1,$2::jsonb,true)
+    ON CONFLICT(workspace_id) DO UPDATE SET webhook_urls=EXCLUDED.webhook_urls,webhooks_alerts_enabled=true`,[f.workspaceId,JSON.stringify([hook])]);
+  const policy=structuredClone(lifecycle.DEFAULT_POLICY);policy.alerts.enabled=true;
+  await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f.actor});
+  const incident=(await pool.query(`INSERT INTO certops_distribution_incidents(workspace_id,group_id,code,dedupe_key,severity) VALUES($1,$2,'required_consumer_offline',$3,'critical') RETURNING id`,[f.workspaceId,f.groupId,crypto.randomUUID()])).rows[0];
+  const service=await import("../../apps/worker/src/shared/distributionPagerDuty.js"),sent=[],client=await pool.connect();
+  const send=async(_url,payload)=>{sent.push(payload.event_action);return {success:true}};
+  try {
+   await service.deliverDistributionPagerDutyTrigger(client,{alert:{workspace_id:f.workspaceId,distributionContext:{incidentId:incident.id}},webhook:hook,payload:{event_action:"trigger"},send});
+   await pool.query("UPDATE certops_distribution_incidents SET resolved_at=clock_timestamp() WHERE id=$1",[incident.id]);
+   if(mode==="policy")await pool.query("UPDATE certops_distribution_policies SET policy=jsonb_set(policy,'{alerts,enabled}','false'::jsonb) WHERE workspace_id=$1",[f.workspaceId]);
+   else await pool.query("UPDATE workspace_settings SET webhooks_alerts_enabled=false WHERE workspace_id=$1",[f.workspaceId]);
+   await service.reconcileDistributionPagerDuty(client,{send});assert.deepEqual(sent,["trigger"]);
+   if(mode==="policy")await pool.query("UPDATE certops_distribution_policies SET policy=jsonb_set(policy,'{alerts,enabled}','true'::jsonb) WHERE workspace_id=$1",[f.workspaceId]);
+   else await pool.query("UPDATE workspace_settings SET webhooks_alerts_enabled=true WHERE workspace_id=$1",[f.workspaceId]);
+   await pool.query("UPDATE certops_distribution_pagerduty SET next_attempt_at=clock_timestamp() WHERE incident_id=$1",[incident.id]);
+   await service.reconcileDistributionPagerDuty(client,{send});assert.deepEqual(sent,["trigger","resolve"]);
+  } finally {client.release()}
+ }
 });
