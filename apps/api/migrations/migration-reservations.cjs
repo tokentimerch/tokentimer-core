@@ -40,6 +40,7 @@ const reservations = Object.freeze({
   117: "certops_adcs_expected_identity_receipts",
   118: "certops_windows_iis_consent",
   119: "certops_material_adcs_operation_union",
+  120: "certops_iis_absence_proofs",
 });
 
 function validateMigrationReservations(migrations) {

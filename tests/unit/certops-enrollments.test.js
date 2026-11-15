@@ -767,6 +767,8 @@ describe("enrollment rows", () => {
         }
         if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: [claimRow] };
         if (sql.includes("SET status = 'claimed'")) return { rows: [claimRow] };
+        if (sql.includes("SELECT iis_reassociation_requires_absence,fingerprint_sha256 FROM managed_certificates"))
+          return { rows: [{ iis_reassociation_requires_absence:false, fingerprint_sha256:"a".repeat(64) }] };
         throw new Error(`unexpected claim query: ${sql}`);
       },
     };

@@ -1149,6 +1149,20 @@ async function checkWildcardPrecedence({ binding, newThumbprint, execFileImpl, p
   } : { ok: true };
 }
 
+// This guard is only used for registrations moved from a legacy wildcard.
+// It is not a lock against a concurrent administrator changing Windows.
+async function checkReassociatedBinding({ binding, thumbprint, fingerprintSha256, permittedFingerprints, execFileImpl, signal, read }) {
+  const { readStableAbsenceSnapshot, provesWildcardAbsent } = require("../discovery/iis-absence-proof");
+  try {
+    const snapshot = await readStableAbsenceSnapshot({ execFileImpl, signal, ...(read ? { read } : {}) });
+    const certificate = snapshot.certificates.find(c => c.thumbprint.toLowerCase() === String(thumbprint || "").toLowerCase());
+    const fingerprint = fingerprintSha256 || certificate?.fingerprintSha256;
+    if (permittedFingerprints && !permittedFingerprints.includes(fingerprint)) return false;
+    return provesWildcardAbsent({ locationKind:"iis_binding", siteName:binding.site, port:binding.port,
+      boundAddress:binding.address, thumbprint, fingerprintSha256:fingerprint }, snapshot.iis, snapshot.http, snapshot.certificates);
+  } catch (_) { return false; }
+}
+
 /**
  * Splits an http.sys `ipPort` literal (an
  * `IP:port` or `Hostname:port` string, per ../windows-discovery's own
@@ -1285,6 +1299,8 @@ function splitIpPortLiteral(ipPort) {
 async function deployIisBinding({
   binding,
   certificatePem,
+  reassociationGuard,
+  reassociationRead,
   expectedExistingThumbprint,
   execFileImpl = childProcess.execFile,
   netshPath = "netsh.exe",
@@ -1323,6 +1339,13 @@ async function deployIisBinding({
     });
   }
   const outgoingThumbprint = currentBindingResult.thumbprint;
+  const reassociationGuardValid = reassociationGuard && typeof reassociationGuard === "object" &&
+    Object.keys(reassociationGuard).length === 1 && /^[a-f0-9]{64}$/.test(reassociationGuard.fingerprintSha256 || "");
+  if (reassociationGuard !== undefined && (!reassociationGuardValid || !(await checkReassociatedBinding({ binding, thumbprint:outgoingThumbprint, execFileImpl, signal, read:reassociationRead,
+    permittedFingerprints:[reassociationGuard.fingerprintSha256,expectedFingerprintSha256] })))) {
+    return guardReturnValue({ ok:false, code:"REASSOCIATION_CONFLICT", outgoingThumbprint, rolledBack:false,
+      detail:"Cannot confirm that the reassociated IIS binding is present without a wildcard. The issued certificate may already be in the Windows store; inspect before retrying." });
+  }
   // A concrete HTTP.sys binding wins over a wildcard for that IP. Probing
   // only loopback can therefore report success while remote clients still
   // receive a different certificate. Check before changing anything.
@@ -1469,6 +1492,10 @@ async function deployIisBinding({
   });
 
   if (verifyResult.verified) {
+    if (reassociationGuard !== undefined && !(await checkReassociatedBinding({ binding, thumbprint:newThumbprint, fingerprintSha256:expectedFingerprintSha256, execFileImpl, signal, read:reassociationRead }))) {
+      return guardReturnValue({ ok:false, code:"REASSOCIATION_CONFLICT_AFTER_MUTATION", outgoingThumbprint, rolledBack:false,
+        detail:"IIS changed during deployment or could not be verified. The binding and certificate may already have changed; reconcile them before retrying." });
+    }
     if (isWildcard) {
       const check = await checkWildcardPrecedence({ binding, newThumbprint, execFileImpl, powershellPath, timeoutMs, signal });
       if (!check.ok) return guardReturnValue({
@@ -1553,6 +1580,7 @@ module.exports = {
   formatPreservedParamArgs,
   findUnsupportedNetshParams,
   checkSniPrecedenceConflict,
+  checkReassociatedBinding,
   queryCurrentBinding,
   bindCertificate,
   deployIisBinding,

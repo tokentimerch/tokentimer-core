@@ -178,7 +178,7 @@
           "kind": "schema",
           "path": "packages/contracts/certops/job-payload.schema.json",
           "status": "existing",
-          "sha256": "2f2a9854498e4c0b2113cd5ff4f46587e7dbbb4f315dc2d0cccba1c203c9fb3d"
+          "sha256": "7f15a501c9122368f8008fea059953596220a64c52a611adf073f91d2923cecb"
         },
         {
           "id": "certops-renewal-profile-schema",
@@ -247,7 +247,7 @@
           "kind": "schema",
           "path": "packages/contracts/certops/agent-protocol.schema.json",
           "status": "existing",
-          "sha256": "bf20b344954df5abb44c0a1987c085af5cee5970e490f9295f4adc93d32e4674"
+          "sha256": "ec258b3f79fc3e5154712fc3df2d16f26fa21b3f1bfabc6e166a67d466a0f89a"
         },
         {
           "id": "certops-trust-job-payload-schema",

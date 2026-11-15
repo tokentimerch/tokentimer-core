@@ -9,6 +9,7 @@ Advanced reference for CNG custody, IIS binding behavior, crash recovery, and re
 The agent supports native Windows service installation. Its runtime differs from Linux in the following areas:
 
 - **IIS addresses:** automatic renewal through the console targets a wildcard IP listener, or an SNI hostname. Do not use that renewal flow for a non-SNI binding restricted to a specific IP address; discovery alone does not make that address a supported renewal target. Check the IIS binding before enabling renewal.
+- **Explicit-IP reassociation:** this capability is not yet qualified for release. In a qualified test build, the agent checks eligible bindings every minute; the controller accepts a successful check for at most two minutes. Keep the agent clock synchronized with the control plane. Hosts with more than 64 candidate bindings are not checked, and a wildcard or unreadable IIS, HTTP.sys, or certificate-store inventory blocks reassociation. IPv6 address variants are not qualified. Reassociated registrations currently support renewal and continuation only; other deployment and reload actions are refused. Recheck the binding before deployment: a successful check does not lock Windows configuration.
 - Windows state uses validated ACLs through `icacls`; POSIX-mode assertions do not apply. See [Windows installation](install-windows.md) for the permission model.
 - Directory fsync after the deploy rename is skipped on win32 (opening a
   directory for fsync fails there); the file-content fsync before rename

@@ -485,12 +485,145 @@ describe("Windows store certificate collision on PostgreSQL", function () {
     await assert.rejects(reassociateWindowsStore(explicitParams),{code:'CERTOPS_WINDOWS_REASSOCIATION_REFUSED'});
     await db.query("UPDATE certificate_instances SET captured_at=NOW()-interval '25 hours' WHERE managed_certificate_id=$1",[currentId]);
     assert.equal(await canClaim(),false,'a stale wildcard cannot authorize the old target');
+    assert.deepEqual(await listIisReassociationCandidates({client:db,workspaceId,legacyId:currentId}),[], 'aging a wildcard is not proof of absence');
+    await assert.rejects(reassociateWindowsStore(explicitParams),{code:'CERTOPS_WINDOWS_REASSOCIATION_REFUSED'});
+    const { persistIisAbsenceProofBatch } = require('../../apps/api/services/certops/iisAbsenceProof');
+    const proof = {evidenceId:randomUUID(),targetHost:'pilot.example.test',site:'Default Web Site',port:443,address:'192.0.2.10',fingerprintSha256:fingerprint,thumbprint:'a'.repeat(40),observedAt:new Date().toISOString()};
+    const otherWorkspace=(await db.query("INSERT INTO workspaces(id,name,plan,created_by) VALUES(gen_random_uuid(),'Other workspace','oss',$1) RETURNING id",[userId])).rows[0].id;
+    const otherAgentId=`iis-other-${randomUUID()}`;
+    const otherAgent=(await db.query(`INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash,status,last_seen_at)
+      VALUES($1,$2,'test','1.0.0',$3,$4,'active',NOW()) RETURNING id`,[otherWorkspace,otherAgentId,`ttagent_${randomUUID().replaceAll('-','').slice(0,16)}`,createHash('sha256').update(otherAgentId).digest('hex')])).rows[0].id;
+    await db.query(`INSERT INTO certops_iis_absence_proofs(workspace_id,agent_id,evidence_id,target_host,site,port,address,fingerprint_sha256,thumbprint,observed_at,agent_sequence)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1)`,[otherWorkspace,otherAgent,randomUUID(),proof.targetHost,proof.site,proof.port,proof.address,proof.fingerprintSha256,proof.thumbprint,proof.observedAt]);
+    assert.deepEqual(await listIisReassociationCandidates({client:db,workspaceId,legacyId:currentId}),[], 'another workspace cannot authorize this reassociation');
+    const otherLocalId=`iis-other-local-${randomUUID()}`;
+    const otherLocal=(await db.query(`INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash,status,last_seen_at)
+      VALUES($1,$2,'test','1.0.0',$3,$4,'active',NOW()) RETURNING id`,[workspaceId,otherLocalId,`ttagent_${randomUUID().replaceAll('-','').slice(0,16)}`,createHash('sha256').update(otherLocalId).digest('hex')])).rows[0].id;
+    await db.query(`INSERT INTO certops_iis_absence_proofs(workspace_id,agent_id,evidence_id,target_host,site,port,address,fingerprint_sha256,thumbprint,observed_at,agent_sequence)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1)`,[workspaceId,otherLocal,randomUUID(),proof.targetHost,proof.site,proof.port,proof.address,proof.fingerprintSha256,proof.thumbprint,proof.observedAt]);
+    assert.deepEqual(await listIisReassociationCandidates({client:db,workspaceId,legacyId:currentId}),[], 'another agent cannot authorize this reassociation');
+    await db.query("UPDATE certops_iis_absence_proofs SET received_at=clock_timestamp()-interval '6 minutes' WHERE workspace_id=$1",[otherWorkspace]);
+    const { purgeExpiredIisAbsenceProofs } = require('../../apps/api/services/certops/iisAbsenceProof');
+    assert.deepEqual(await purgeExpiredIisAbsenceProofs({client:db,batchSize:1}),{deleted:1});
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM certops_iis_absence_proofs WHERE workspace_id=$1',[workspaceId])).rows[0].n,1,'purge must keep usable proofs');
+    await persistIisAbsenceProofBatch({dbPool:db,agent,envelope:{sequence:4},proofs:[{...proof,site:'Wrong Site'},{...proof,evidenceId:randomUUID(),targetHost:'other.example.test'}]});
+    assert.deepEqual(await listIisReassociationCandidates({client:db,workspaceId,legacyId:currentId}),[], 'proof for another site or host does not qualify');
+    proof.evidenceId=randomUUID(); proof.observedAt=new Date().toISOString();
+    await persistIisAbsenceProofBatch({dbPool:db,agent,envelope:{sequence:5},proofs:[proof]});
+    const originalProof=(await db.query('SELECT received_at FROM certops_iis_absence_proofs WHERE evidence_id=$1',[proof.evidenceId])).rows[0].received_at;
+    const replay=await persistIisAbsenceProofBatch({dbPool:db,agent,envelope:{sequence:6},proofs:[proof]});
+    assert.equal(replay.duplicateCount,1);
+    assert.deepEqual((await db.query('SELECT received_at FROM certops_iis_absence_proofs WHERE evidence_id=$1',[proof.evidenceId])).rows[0].received_at,originalProof,'retry cannot extend freshness');
+    await assert.rejects(persistIisAbsenceProofBatch({dbPool:db,agent,envelope:{sequence:6},proofs:[proof]}),{code:'CERTOPS_AGENT_SEQUENCE_REGRESSION'});
+    await assert.rejects(persistIisAbsenceProofBatch({dbPool:db,agent,envelope:{sequence:7},proofs:[{...proof,observedAt:new Date(Date.now()-120001).toISOString()}]}),{code:'CERTOPS_AGENT_OBSERVATION_INVALID'});
+    await assert.rejects(persistIisAbsenceProofBatch({dbPool:db,agent,envelope:{sequence:7},proofs:[{...proof,observedAt:new Date(Date.now()+60000).toISOString()}]}),{code:'CERTOPS_AGENT_OBSERVATION_INVALID'});
+    const oldMetadata=(await db.query('SELECT metadata FROM certificate_evidence WHERE workspace_id=$1 AND client_evidence_id=$2',[workspaceId,explicit.evidenceId])).rows[0].metadata;
+    await db.query('UPDATE certificate_evidence SET metadata=metadata || $3::jsonb WHERE workspace_id=$1 AND client_evidence_id=$2',[workspaceId,explicit.evidenceId,JSON.stringify({agentSequence:7,observedWindowsPort:443,observedWindowsAddress:'not:a:valid:address'})]);
+    assert.deepEqual(await listIisReassociationCandidates({client:db,workspaceId,legacyId:currentId}),[], 'malformed historical metadata cannot throw or authorize');
+    await db.query('UPDATE certificate_evidence SET metadata=$3::jsonb WHERE workspace_id=$1 AND client_evidence_id=$2',[workspaceId,explicit.evidenceId,JSON.stringify(oldMetadata)]);
+    // A later positive wildcard observation supersedes the proof even though
+    // the proof has not expired. Removing the wildcard requires a new proof.
+    await new Promise(resolve=>setTimeout(resolve,5));
+    const lateWildcard=item('iis_binding',443,fingerprint,[{name:'boundAddress',value:'0.0.0.0'},{name:'subjectAltNames',value:JSON.stringify(['certops.example'])}]);
+    lateWildcard.observedAt=new Date(Date.parse(proof.observedAt)-10000).toISOString();
+    await persistAgentDiscoveryEvidenceBatch({dbPool:db,agent,envelope:{sequence:7},evidenceItems:[lateWildcard]});
+    assert.deepEqual(await listIisReassociationCandidates({client:db,workspaceId,legacyId:currentId}),[], 'later sequence invalidates the proof even when the agent timestamp is older');
+    await assert.rejects(reassociateWindowsStore(explicitParams),{code:'CERTOPS_WINDOWS_REASSOCIATION_REFUSED'});
+    await db.query('DELETE FROM certificate_instances WHERE workspace_id=$1 AND managed_certificate_id=$2',[workspaceId,currentId]);
+    proof.evidenceId=randomUUID(); proof.observedAt=new Date().toISOString();
+    await persistIisAbsenceProofBatch({dbPool:db,agent,envelope:{sequence:8},proofs:[proof]});
     const explicitChoices=await listIisReassociationCandidates({client:db,workspaceId,legacyId:currentId});
     assert.equal(explicitChoices.length,1);
     assert.equal(explicitChoices[0].expectedAddress,'192.0.2.10');
     await assert.rejects(reassociateWindowsStore({...explicitParams,expectedAddress:'192.0.2.11'}),{code:'CERTOPS_WINDOWS_REASSOCIATION_REFUSED'});
-    const movedExplicit=await reassociateWindowsStore(explicitParams);
+    // Claim holds the registration lock until its claimed status commits. The
+    // transfer must wait and then see the active job rather than moving it.
+    const claiming=await db.connect();
+    let blockedTransfer;
+    try {
+      await claiming.query('BEGIN');
+      await claiming.query('SELECT id FROM managed_certificates WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[workspaceId,currentId]);
+      const claimingPid=(await claiming.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      blockedTransfer=reassociateWindowsStore(explicitParams);
+      let blocked=false;
+      for(let i=0;i<100;i++) {
+        if((await db.query('SELECT 1 FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))',[claimingPid])).rowCount) { blocked=true; break; }
+        await new Promise(resolve=>setTimeout(resolve,10));
+      }
+      assert.equal(blocked,true,'reassociation must wait for a concurrent claim on the registration');
+      const concurrent=(await claiming.query(`INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,claim_id)
+        VALUES($1,'managed_certificate',$2,'renew','claimed',$3) RETURNING id`,[workspaceId,currentId,randomUUID()])).rows[0];
+      await claiming.query('COMMIT');
+      await assert.rejects(blockedTransfer,{code:'CERTOPS_WINDOWS_REASSOCIATION_REFUSED'});
+      await db.query("UPDATE certificate_jobs SET status='succeeded' WHERE id=$1",[concurrent.id]);
+    } finally { try { await claiming.query('ROLLBACK'); } catch (_) {} claiming.release(); }
+    // Exercise the actual claim transaction with a signing barrier, then try
+    // the transfer on a second connection while the claim owns its locks.
+    const activeIdentity=(await db.query('SELECT current_identity_id FROM certops_management_periods WHERE id=$1',[explicitPeriod])).rows[0].current_identity_id;
+    await db.query(`UPDATE certops_agents SET declared_capabilities='["iis-binding-v1","windows-cert-store-v1","iis-explicit-ip-v1"]'::jsonb,
+      capabilities_updated_at=NOW(),platform='win32' WHERE id=$1`,[agentRowId]);
+    const realClaimJob=(await db.query(`INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,executor_kind,assigned_agent_id,management_period_id,certificate_identity_id,payload)
+      VALUES($1,'managed_certificate',$2,'renew','pending','agent',$3,$4,$5,$6::jsonb) RETURNING id`,
+      [workspaceId,explicitId,agentRowId,explicitPeriod,activeIdentity,JSON.stringify({target:{type:'windows-iis',reference:'certops.example',store:'My',binding:{site:'Default Web Site',port:443,address:'192.0.2.10'}}})])).rows[0];
+    let releaseSigning, enteredSigning;
+    const signingGate=new Promise(resolve=>{releaseSigning=resolve;});
+    const signingEntered=new Promise(resolve=>{enteredSigning=resolve;});
+    const { claimJobs }=require('../../apps/api/services/certops/agentDispatch');
+    const claimingReal=claimJobs({dbPool:db,agent,envelope:{sequence:9},body:{supportedActions:['renew']},env:{CERTOPS_AGENT_LOG_STORAGE_ENABLED:'false'},
+      deps:{lockWorkspaceForCertOpsSideEffect:async()=>({locked:true}),computeAgentCompatibility:()=>({compatibilityState:'compatible'}),
+        signJobForDispatch:async({client,job})=>{enteredSigning((await client.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);await signingGate;return job;}}});
+    let signedPid;
+    try {
+      signedPid=await Promise.race([signingEntered,new Promise((_,reject)=>setTimeout(()=>reject(new Error('claim did not reach signing')),4000)),claimingReal.then(async value=>{const detail=(await db.query(`SELECT mc.status,mc.source_ref,mc.reconciliation_reason,ci.lifecycle_status,j.status AS job_status,j.payload FROM managed_certificates mc JOIN certificate_jobs j ON j.subject_id=mc.id::text LEFT JOIN certops_certificate_identities ci ON ci.id=j.certificate_identity_id WHERE j.id=$1`,[realClaimJob.id])).rows;throw new Error(`claim returned without signing: ${JSON.stringify({value,detail})}`);})]);
+      const transfer=reassociateWindowsStore(explicitParams);
+      let blocked=false;
+      for(let i=0;i<100;i++) { if((await db.query('SELECT 1 FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))',[signedPid])).rowCount){blocked=true;break;} await new Promise(resolve=>setTimeout(resolve,10)); }
+      assert.equal(blocked,true,'the transfer must wait while claimJobs signs');
+      releaseSigning();
+      assert.equal((await claimingReal).jobs.length,1);
+      await assert.rejects(transfer,{code:'CERTOPS_WINDOWS_REASSOCIATION_REFUSED'});
+    } finally { releaseSigning(); await claimingReal.catch(()=>{}); }
+    await db.query("UPDATE certificate_jobs SET status='succeeded' WHERE id=$1",[realClaimJob.id]);
+    // The transfer wins the registration lock. Activate a pre-created dormant
+    // job after its busy check, then start a real claim while the transfer is
+    // paused just before commit. Both promises are bounded and the barrier is
+    // always released on failure.
+    const lateJob=(await db.query(`INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,executor_kind,assigned_agent_id,certificate_identity_id,payload)
+      VALUES($1,'managed_certificate',$2,'renew','succeeded','agent',$3,$4,$5::jsonb) RETURNING id`,[workspaceId,currentId,agentRowId,activeIdentity,
+      JSON.stringify({target:{type:'windows-iis',reference:'certops.example',store:'My',binding:{site:'Default Web Site',port:443}}})])).rows[0];
+    let releaseTransfer,transferEntered;
+    const transferGate=new Promise(resolve=>{releaseTransfer=resolve;});
+    const transferReady=new Promise(resolve=>{transferEntered=resolve;});
+    const heldPool={connect:async()=>{const client=await db.connect();return {release:()=>client.release(),query:async(...args)=>{
+      const out=await client.query(...args);
+      if(typeof args[0]==='string' && args[0].includes('UPDATE managed_certificates SET iis_reassociation_requires_absence=TRUE')) {transferEntered((await client.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);await transferGate;}
+      return out;
+    }};}};
+    const transferring=reassociateWindowsStore({...explicitParams,dbPool:heldPool});
+    let movedExplicit;
+    try {
+      const transferPid=await Promise.race([transferReady,transferring.then(()=>{throw new Error('transfer ended before the guard update');}),new Promise((_,reject)=>setTimeout(()=>reject(new Error('transfer barrier timed out')),4000))]);
+      const activation=db.query("UPDATE certificate_jobs SET status='pending' WHERE id=$1",[lateJob.id]);
+      let activationBlocked=false;
+      for(let i=0;i<100;i++) { if((await db.query('SELECT 1 FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))',[transferPid])).rowCount){activationBlocked=true;break;} await new Promise(resolve=>setTimeout(resolve,10)); }
+      assert.equal(activationBlocked,true,'late job activation must wait for the transfer');
+      releaseTransfer();
+      movedExplicit=await Promise.race([transferring,new Promise((_,reject)=>setTimeout(()=>reject(new Error('transfer commit timed out')),4000))]);
+      await Promise.race([activation,new Promise((_,reject)=>setTimeout(()=>reject(new Error('late job activation timed out')),4000))]);
+      let lateSigned=false;
+      const lateClaim=claimJobs({dbPool:db,agent,envelope:{sequence:10},body:{supportedActions:['renew']},env:{CERTOPS_AGENT_LOG_STORAGE_ENABLED:'false'},
+        deps:{lockWorkspaceForCertOpsSideEffect:async()=>({locked:true}),computeAgentCompatibility:()=>({compatibilityState:'compatible'}),signJobForDispatch:async()=>{lateSigned=true;return {};}}});
+      const after=await Promise.race([lateClaim,new Promise((_,reject)=>setTimeout(()=>reject(new Error('late claim timed out')),4000))]);
+      assert.equal(after.jobs.length,0,'late claim cannot dispatch an ended legacy registration');
+      assert.equal(lateSigned,false);
+    } finally { releaseTransfer(); await transferring.catch(()=>{}); }
+    await db.query("UPDATE certificate_jobs SET status='cancelled' WHERE id=$1",[lateJob.id]);
     assert.equal(movedExplicit.managedCertificateId,explicitId);
+    const marked=await db.query('SELECT id,iis_reassociation_requires_absence FROM managed_certificates WHERE id=ANY($1::uuid[])',[[currentId,explicitId]]);
+    assert.equal(marked.rows.length,2);
+    assert.ok(marked.rows.every(row=>row.iis_reassociation_requires_absence),'both the old and new registration retain the guard');
+    await db.query("UPDATE certificate_profiles SET name='Edited profile' WHERE id=$1",[profileId]);
+    assert.ok((await db.query('SELECT iis_reassociation_requires_absence FROM managed_certificates WHERE id=$1',[explicitId])).rows[0].iis_reassociation_requires_absence,'ordinary profile edits cannot remove the guard');
     const changed=(await db.query('SELECT public_metadata FROM certificate_profiles WHERE id=$1',[profileId])).rows[0].public_metadata;
     assert.equal(changed.renewalProfile.target.binding.address,'192.0.2.10');
     const explicitAudit=(await db.query("SELECT metadata FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_WINDOWS_STORE_REASSOCIATED' ORDER BY id DESC LIMIT 1",[workspaceId])).rows[0].metadata;

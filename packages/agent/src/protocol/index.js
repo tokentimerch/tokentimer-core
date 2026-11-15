@@ -43,6 +43,7 @@ const MESSAGE_TYPES = Object.freeze({
   RESULT: "result",
   EVIDENCE: "evidence",
   LOG: "log",
+  IIS_ABSENCE_PROOF: "iis-absence-proof",
 });
 
 const logStreamByJob = new WeakMap();
@@ -884,7 +885,16 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return json ?? {};
   }
 
-  return { register, heartbeat, claim, renewLease, authorizeIisConsumer, reportResult, reportEvidence, postJobLogs };
+  async function reportIisAbsenceProof(proofs) {
+    const token = await resolveCredential(getCredential);
+    const { status, ok, json } = await enqueueSequencedSend((sequence) =>
+      send(ROUTES.RESULTS, token, buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.IIS_ABSENCE_PROOF, sequence, body: { proofs } })),
+    );
+    if (!ok) throw new AgentProtocolError(`IIS absence proof failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
+    return json ?? {};
+  }
+
+  return { register, heartbeat, claim, renewLease, authorizeIisConsumer, reportResult, reportEvidence, reportIisAbsenceProof, postJobLogs };
 }
 
 module.exports = {

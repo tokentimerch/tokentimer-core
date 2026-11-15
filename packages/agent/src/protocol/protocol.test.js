@@ -681,6 +681,20 @@ test("reportResult: forwards trustResult in the body when provided, omits it ent
   assert.equal("trustResult" in calls[1].parsedBody.body, false);
 });
 
+test("IIS proofs share the agent's serialized sequence and preserve an id across a failed send", async () => {
+  const calls = stubFetch([{ status:200, json:{} }, { status:503, json:{} }, { status:200, json:{} }]);
+  const client = createProtocolClient({ serverUrl:"https://example.test", agentId:"agent-1", protocolVersion:"1.0.0", getCredential:()=>CREDENTIAL });
+  const proof = { evidenceId:"proof-1", targetHost:"pilot.example.test", site:"Default Web Site", port:443, address:"192.0.2.10", fingerprintSha256:"a".repeat(64), thumbprint:"b".repeat(40), observedAt:new Date().toISOString() };
+  const first = client.heartbeat({ agentVersion:"1.0.0" });
+  const failed = client.reportIisAbsenceProof([proof]);
+  await first;
+  await assert.rejects(failed, AgentProtocolError);
+  await client.reportIisAbsenceProof([proof]);
+  assert.deepEqual(calls.map(call => call.parsedBody.sequence),[1,2,3]);
+  assert.equal(calls[1].parsedBody.messageType,"iis-absence-proof");
+  assert.equal(calls[1].parsedBody.body.proofs[0].evidenceId,calls[2].parsedBody.body.proofs[0].evidenceId);
+});
+
 test("reportEvidence: sends correct envelope shape (messageType + evidenceBody fields)", async () => {
   const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
 

@@ -114,6 +114,7 @@ const {
 } = require("./evidence");
 const { discoverCertificates } = require("./discovery");
 const { collectWindowsDiscoveryObservations } = require("./discovery/windows");
+const { readStableAbsenceSnapshot, provesWildcardAbsent } = require("./discovery/iis-absence-proof");
 const { enrichObservedItems, createScanChecker } = require("./revocation/observation");
 const {
   validateClaimedJob,
@@ -3969,6 +3970,7 @@ async function runWindowsIisDeployTail({
     const deployResult = await deployIisBinding({
       binding,
       certificatePem,
+      reassociationGuard: target.iisReassociationGuard,
       signal,
       ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
       ...(windowsConnectImpl ? { connectImpl: windowsConnectImpl } : {}),
@@ -3992,8 +3994,9 @@ async function runWindowsIisDeployTail({
         }),
       ]);
       return {
-        status: "failed",
+        status: deployResult.code === "REASSOCIATION_CONFLICT_AFTER_MUTATION" ? "orphaned_unknown_effect" : "failed",
         keyRotated: null,
+        ...(deployResult.code === "REASSOCIATION_CONFLICT_AFTER_MUTATION" ? { retryableInterrupt:true } : {}),
         ...(deployResult.code === "ABORTED" ? { retryableInterrupt: true } : {}),
         errorMessage: boundErrorMessage(
           `IIS binding deploy failed (${deployResult.code}): ${deployResult.detail} ` +
@@ -5066,7 +5069,7 @@ async function executeWindowsIisRenewJob({
         "windows-iis deploy target (multi-target windows-iis renewal is not supported yet)",
     };
   }
-  const windowsTarget = deployTargets[0];
+  const windowsTarget = { ...deployTargets[0], ...(job.iisReassociationGuard ? { iisReassociationGuard:job.iisReassociationGuard } : {}) };
   if (!storeOnly && (
     !isNonEmptyStringValue(windowsTarget.store) ||
     windowsTarget.binding === null ||
@@ -6990,6 +6993,7 @@ async function runWindowsDiscoveryScan({
   collect = collectWindowsDiscoveryObservations,
   checkRevocation = null,
   observationRevision = null,
+  onObservations = null,
 }) {
   const warnings = [];
   const observations = await collect({
@@ -7078,7 +7082,25 @@ async function runWindowsDiscoveryScan({
     await client.reportEvidence(body);
   }
 
+  if (typeof onObservations === "function") onObservations(observations);
+
   return { observed: items.length, warnings: warnings.length };
+}
+
+// This reports an independent, short-lived topology proof; it never replays
+// certificate observations or changes the freshness of revocation results.
+async function runIisAbsenceProofRefresh({ client, candidates, signal, read = readStableAbsenceSnapshot }) {
+  if (!Array.isArray(candidates) || candidates.length === 0) return { proofs:0 };
+  if (candidates.length > 64) return { proofs:0, incomplete:true };
+  const observedAt = new Date().toISOString();
+  const snapshot = await read({ signal });
+  if (signal?.aborted || Date.now() - Date.parse(observedAt) > 30000) return { proofs:0, incomplete:true };
+  const proofs = candidates.filter(item => provesWildcardAbsent(item, snapshot.iis, snapshot.http, snapshot.certificates)).map(item => ({
+    evidenceId:crypto.randomUUID(), targetHost:os.hostname(), site:item.siteName, port:item.port, address:item.boundAddress,
+    fingerprintSha256:item.fingerprintSha256, thumbprint:item.thumbprint.toLowerCase(), observedAt,
+  }));
+  for (let start = 0; start < proofs.length; start += 16) await client.reportIisAbsenceProof(proofs.slice(start,start+16));
+  return { proofs:proofs.length };
 }
 
 /**
@@ -7682,6 +7704,8 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   // check avoids scheduling a poll loop whose every tick is guaranteed to
   // be a trivial [] result.
   if (config.windowsDiscovery && config.windowsDiscovery.enabled && isWindows()) {
+    let iisProofCandidates = [];
+    const iisProofEnabled = resolveDeclaredCapabilities(config.requireSignedAgentId).includes("iis-explicit-ip-v1");
     loops.push(
       startPollLoop({
         intervalMs: config.windowsDiscovery.intervalMs,
@@ -7695,10 +7719,15 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
             stores: config.windowsDiscovery.stores,
             observationRevision,
             checkRevocation,
+            ...(iisProofEnabled ? { onObservations: observations => { iisProofCandidates = observations.filter(item => item.locationKind === "iis_binding" && item.boundAddress && !["0.0.0.0", "::"].includes(item.boundAddress)); } } : {}),
           }),
         }),
       }),
     );
+    if (iisProofEnabled) loops.push(startPollLoop({ intervalMs:60000, signal:controller.signal, startImmediately:false,
+      onTick:() => runIisAbsenceProofRefresh({ client, candidates:iisProofCandidates, signal:controller.signal }).catch(err => {
+        defaultAgentLogger.error(`IIS topology proof failed: ${err.message}`);
+      }) }));
   }
 
   try {
@@ -7714,6 +7743,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
 
 module.exports = {
   runAgent,
+  runIisAbsenceProofRefresh,
   handleClaimedJob,
   UNVERIFIED_JOB_ID_PLACEHOLDER,
   executeJob,

@@ -33,6 +33,7 @@ test("reserved Windows store migrations and observed revocation compose in eithe
       ...store,
       consent,
       { version: 119, name: "certops_material_adcs_operation_union" },
+      { version: 120, name: "certops_iis_absence_proofs" },
     ]);
   }
 });

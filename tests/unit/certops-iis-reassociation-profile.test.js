@@ -21,7 +21,7 @@ test("explicit IIS reassociation updates both targets without mutating the sourc
 });
 
 test("explicit IIS reassociation rejects ambiguous targets and non-concrete addresses", () => {
-  for (const address of ["*", "0.0.0.0", "::", "fe80::1%3", "example.com"]) {
+  for (const address of ["*", "0.0.0.0", "::", "0:0:0:0:0:0:0:0", "::ffff:0.0.0.0", "fe80::1%3", "example.com"]) {
     assert.throws(() => profileForExplicitIisReassociation(profile(), address), { code: "CERTOPS_WINDOWS_REASSOCIATION_REFUSED" });
   }
   const duplicate = profile();

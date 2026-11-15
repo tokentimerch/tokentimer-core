@@ -629,6 +629,7 @@ async function resolveWindowsIisTarget(job) {
       store,
       binding,
       reference,
+      ...(job.iisReassociationGuard ? { iisReassociationGuard:job.iisReassociationGuard } : {}),
     },
   };
 }
@@ -3248,6 +3249,7 @@ function createAdcsWindowsIisExecutors(deps) {
 }
 
 module.exports = {
+  resolveWindowsIisTarget,
   storeSnapshotTargetError,
   createAdcsWindowsIisExecutors,
   resultForAdcsOutcome,

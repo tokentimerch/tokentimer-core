@@ -1674,6 +1674,39 @@ async function claimJobs({
         });
       }
 
+      // Never trust this marker from a stored/operator-supplied job payload.
+      // The registration owns the provenance across profile edits and periods.
+      delete basePayload.iisReassociationGuard;
+      if (job.subject_type === "managed_certificate" && job.subject_id &&
+          ["renew", "deploy", "reload", "continue-enrollment", "deploy-from-store", "reconcile-from-store"].includes(basePayload.action)) {
+        const guarded = (await client.query(`SELECT iis_reassociation_requires_absence,fingerprint_sha256 FROM managed_certificates
+          WHERE workspace_id=$1 AND id::text=$2 FOR UPDATE`, [agent.workspaceId,String(job.subject_id)])).rows[0];
+        let guardError = !guarded ? "The managed certificate for this job is unavailable." : null;
+        // Only the directive reconstructed from the locked enrollment is
+        // cleanup-only. Nonterminal recovery can still install and must keep
+        // the reassociation guard even if its operator metadata says cleanup.
+        const terminalAdcsCleanup = basePayload.action === "continue-enrollment" && job.enrollment_id &&
+          basePayload.issuerKind === "adcs" && ["cancelled", "expired", "abandoned"].includes(basePayload.enrollment?.terminalState);
+        if (guarded?.iis_reassociation_requires_absence && !terminalAdcsCleanup) {
+          if (!["renew", "continue-enrollment"].includes(basePayload.action))
+            guardError = "This reassociated IIS registration supports renewal and enrollment continuation only. This action is not supported.";
+          const address=basePayload.target?.binding?.address;
+          const family=typeof address === "string" ? require("node:net").isIP(address) : 0;
+          const concrete=family === 4 ? address !== "0.0.0.0" : family === 6 && new URL(`http://[${address}]/`).hostname !== "[::]";
+          if (basePayload.target?.type !== "windows-iis" || !concrete || basePayload.target.binding.sniHost)
+            guardError = "This job refers to the former IIS binding. Start a new renewal for the reassociated explicit-IP registration.";
+          const fingerprint=String(guarded.fingerprint_sha256 || "").toLowerCase();
+          if (!/^[a-f0-9]{64}$/.test(fingerprint)) guardError = "The reassociated IIS certificate has no valid fingerprint. Refresh discovery before retrying.";
+          if (!guardError) basePayload.iisReassociationGuard = { fingerprintSha256:fingerprint };
+        }
+        if (guardError) {
+          await client.query(`UPDATE certificate_jobs SET status='rejected',error_code='CERTOPS_IIS_REASSOCIATION_UNSAFE',
+            error_message=$2,completed_at=COALESCE(completed_at,NOW()),claimed_by_agent_id=NULL,claim_id=NULL,lease_expires_at=NULL,updated_at=NOW()
+            WHERE id=$1 AND status='claimed'`, [job.id,guardError]);
+          continue;
+        }
+      }
+
       const signedJob = await signJob({
         client,
         job: basePayload,

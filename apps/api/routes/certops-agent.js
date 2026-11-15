@@ -590,6 +590,14 @@ async function iisConsentHandler(req, res, options = {}) {
 async function resultsHandler(req, res, options = {}) {
   try {
     const messageType = req.body?.messageType;
+    if (messageType === "iis-absence-proof") {
+      const envelope = validateEnvelope(req.body, "iis-absence-proof");
+      const body = assertValidAgentProtocolEnvelope(envelope, "iis-absence-proof");
+      const persist = options.persistIisAbsenceProofBatch || require("../services/certops/iisAbsenceProof").persistIisAbsenceProofBatch;
+      const result = await persist({ dbPool:options.dbPool, agent:req.certopsAgent, envelope, proofs:body.proofs,
+        deps:{ enforceAgentSequence:options.enforceAgentSequence || enforceAgentSequence } });
+      return res.status(200).json(result);
+    }
     if (messageType === "evidence") {
       const envelope = validateEnvelope(req.body, "evidence");
       const body = validateEvidenceBody(envelope);

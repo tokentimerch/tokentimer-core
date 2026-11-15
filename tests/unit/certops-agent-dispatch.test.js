@@ -138,6 +138,9 @@ function createMockPool(handler) {
       ) {
         return { rows: [] };
       }
+      if (sql.includes("SELECT iis_reassociation_requires_absence,fingerprint_sha256 FROM managed_certificates")) {
+        return { rows: [{ iis_reassociation_requires_absence: state.iisGuardByCertificate?.[params[1]] ?? (state.iisReassociationRequiresAbsence === true), fingerprint_sha256:"a".repeat(64) }] };
+      }
       return handler(sql, params, state);
     },
     release: () => {
@@ -1263,6 +1266,59 @@ describe("agentDispatch.claimJobs", () => {
       signature: "sig",
     }),
   };
+
+  it("derives the IIS reassociation guard from the registration rather than job payload", async () => {
+    const target={type:"windows-iis",reference:"example.com",store:"My",binding:{site:"Default Web Site",port:443,address:"192.0.2.10"}};
+    const row={id:42,workspace_id:WORKSPACE_A,operation:"renew",subject_type:"managed_certificate",subject_id:"cert-1",
+      payload:{target,iisReassociationGuard:false},executor_kind:"agent"};
+    const dbPool=createMockPool(sql=>{
+      if(sql.includes("SELECT last_sequence")) return {rows:[{last_sequence:0}]};
+      if(sql.includes("SET last_seen_at = NOW()")) return {rows:[]};
+      if(sql.includes("SELECT declared_target_selectors")) return {rows:[{platform:"win32",declared_target_selectors:["example.com"],
+        declared_capabilities:["iis-explicit-ip-v1"],capabilities_updated_at:new Date().toISOString()}]};
+      if(sql.includes("FOR UPDATE SKIP LOCKED")) return {rows:[row]};
+      if(sql.includes("SET status = 'claimed'")) return {rows:[{...row,claim_id:"claim-1",attempt_count:1,lease_expires_at:new Date(Date.now()+900000)}]};
+      if(sql.includes("error_code='CERTOPS_IIS_REASSOCIATION_UNSAFE'")) return {rows:[],rowCount:1};
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    dbPool.state.iisReassociationRequiresAbsence=true;
+    const result=await claimJobs({dbPool,agent:agentFixture(),body:{supportedActions:["renew"]},env:{CERTOPS_AGENT_LOG_STORAGE_ENABLED:"false"},deps:CLAIM_DEPS_BASE});
+    assert.equal(result.jobs.length,1);
+    assert.deepEqual(result.jobs[0].iisReassociationGuard,{fingerprintSha256:"a".repeat(64)});
+    dbPool.state.iisReassociationRequiresAbsence=false;
+    row.payload.iisReassociationGuard=true;
+    const forged=await claimJobs({dbPool,agent:agentFixture(),body:{supportedActions:["renew"]},env:{CERTOPS_AGENT_LOG_STORAGE_ENABLED:"false"},deps:CLAIM_DEPS_BASE});
+    assert.equal(Object.hasOwn(forged.jobs[0],"iisReassociationGuard"),false);
+    dbPool.state.iisReassociationRequiresAbsence=true;
+    row.payload.target={...target,binding:{...target.binding,address:"*"}};
+    const rejected=await claimJobs({dbPool,agent:agentFixture(),body:{supportedActions:["renew"]},env:{CERTOPS_AGENT_LOG_STORAGE_ENABLED:"false"},deps:CLAIM_DEPS_BASE});
+    assert.equal(rejected.jobs.length,0);
+    assert.match(dbPool.state.queries.findLast(q=>q.text.includes("error_code='CERTOPS_IIS_REASSOCIATION_UNSAFE'")).params[1],/former IIS binding/);
+    row.operation="reload";
+    row.payload.target=target;
+    const unsupported=await claimJobs({dbPool,agent:agentFixture(),body:{supportedActions:["reload"]},env:{CERTOPS_AGENT_LOG_STORAGE_ENABLED:"false"},deps:CLAIM_DEPS_BASE});
+    assert.equal(unsupported.jobs.length,0);
+    assert.match(dbPool.state.queries.findLast(q=>q.text.includes("error_code='CERTOPS_IIS_REASSOCIATION_UNSAFE'")).params[1],/supports renewal and enrollment continuation only/);
+  });
+
+  it("rejects only the unsafe reassociation job and continues signing the batch", async () => {
+    const target={type:"windows-iis",reference:"example.com",store:"My",binding:{site:"Default Web Site",port:443,address:"*"}};
+    const rows=[{id:42,workspace_id:WORKSPACE_A,operation:"renew",subject_type:"managed_certificate",subject_id:"guarded",payload:{target},executor_kind:"agent"},
+      {id:43,workspace_id:WORKSPACE_A,operation:"renew",subject_type:"managed_certificate",subject_id:"normal",payload:{target},executor_kind:"agent"}];
+    const dbPool=createMockPool((sql,params)=>{
+      if(sql.includes("SELECT last_sequence")) return {rows:[{last_sequence:0}]};
+      if(sql.includes("SET last_seen_at = NOW()")) return {rows:[]};
+      if(sql.includes("SELECT declared_target_selectors")) return {rows:[{platform:"win32",declared_target_selectors:["example.com"],declared_capabilities:[],capabilities_updated_at:new Date().toISOString()}]};
+      if(sql.includes("FOR UPDATE SKIP LOCKED")) return {rows};
+      if(sql.includes("SET status = 'claimed'")) return {rows:[{...rows.find(row=>row.id===params[0]),claim_id:`claim-${params[0]}`,attempt_count:1,lease_expires_at:new Date(Date.now()+900000)}]};
+      if(sql.includes("error_code='CERTOPS_IIS_REASSOCIATION_UNSAFE'")) return {rows:[],rowCount:1};
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    dbPool.state.iisGuardByCertificate={guarded:true,normal:false};
+    const result=await claimJobs({dbPool,agent:agentFixture(),body:{maxJobs:2,supportedActions:["renew"]},env:{CERTOPS_AGENT_LOG_STORAGE_ENABLED:"false"},deps:CLAIM_DEPS_BASE});
+    assert.deepEqual(result.jobs.map(job=>job.jobId),["43"]);
+    assert.equal(dbPool.state.queries.filter(q=>q.text.includes("error_code='CERTOPS_IIS_REASSOCIATION_UNSAFE'")).length,1);
+  });
 
   it("does not claim a persisted store-only job before the executor is qualified", async () => {
     const dbPool = createMockPool((sql) => {

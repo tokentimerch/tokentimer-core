@@ -696,7 +696,9 @@ async function loadEnrollment(db, workspaceId, enrollmentId, { lock = false } = 
 }
 
 function enrollmentView(row) {
-  const active = row.job_status && ["pending_approval", "approved", "pending", "claimed", "running"].includes(row.job_status);
+  // An uncertain installation is deliberately not a terminal success or an
+  // invitation to retry: only explicit operator reconciliation may proceed.
+  const active = row.job_status && ["pending_approval", "approved", "pending", "claimed", "running", "orphaned_unknown_effect"].includes(row.job_status);
   return {
     id: row.id,
     state: row.state,

@@ -1009,6 +1009,11 @@ async function persistOneObservation(client, observation) {
     targetId: inventory.target?.id || null,
     certificateInstanceId: inventory.instance?.id || null,
     observedAtServer: observation.observedAtServer,
+    // Captured by the controller, never from agent-provided metadata. This
+    // orders a delayed positive observation against an IIS absence proof.
+    agentSequence: observation.agentSequence ?? null,
+    observedWindowsPort: observation.windowsFields?.port ?? null,
+    observedWindowsAddress: observation.windowsFields?.boundAddress ?? null,
   };
 
   const evidence = await createControllerObservationEvidence({
@@ -1074,6 +1079,8 @@ async function persistAgentDiscoveryEvidenceBatch({
 
     const results = [];
     for (const observation of observations) {
+      observation.agentSequence = Number.isSafeInteger(envelope.sequence) && envelope.sequence > 0
+        ? envelope.sequence : null;
       results.push(await persistOneObservation(client, observation));
     }
 

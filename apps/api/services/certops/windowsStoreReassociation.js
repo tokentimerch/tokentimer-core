@@ -12,6 +12,56 @@ const { writeAudit } = require("../audit");
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const SHA256 = /^[0-9a-f]{64}$/;
+function isConcreteIpAddress(value) {
+  if (typeof value !== "string" || value.includes("%")) return false;
+  const family=isIP(value);
+  if (family === 4) return value !== "0.0.0.0";
+  if (family !== 6) return false;
+  const canonical=new URL(`http://[${value}]/`).hostname.slice(1,-1);
+  return canonical !== "::" && !canonical.startsWith("::ffff:");
+}
+// A stale positive observation does not prove disappearance. Require a recent
+// authenticated, sequenced native proof for this exact target and reject it
+// when a later wildcard observation contradicts it. The caller locks the
+// agent row before committing a reassociation, matching ingestion ordering.
+const IIS_ABSENCE_PROOF_FILTER = `EXISTS (
+  SELECT 1 FROM certops_iis_absence_proofs proof
+  WHERE proof.workspace_id=ct.workspace_id AND proof.agent_id=a.id
+    AND lower(proof.target_host)=lower(ct.hostname)
+    AND lower(proof.site)=lower(ct.windows_site) AND proof.port=ct.windows_port
+    AND host(proof.address)=ct.public_metadata->>'boundAddress'
+    AND proof.fingerprint_sha256=ci.observed_fingerprint_sha256
+    AND EXISTS (SELECT 1 FROM certificate_evidence observed
+      WHERE observed.workspace_id=ci.workspace_id AND observed.created_by_agent_id=a.id
+        AND observed.evidence_type='certificate.observed'
+        AND observed.metadata->>'certificateInstanceId'=ci.id::text
+        AND observed.metadata->>'fingerprintSha256'=proof.fingerprint_sha256
+        AND lower(observed.metadata->>'thumbprint')=proof.thumbprint)
+    AND proof.observed_at BETWEEN clock_timestamp()-interval '2 minutes' AND clock_timestamp()
+    AND proof.received_at BETWEEN clock_timestamp()-interval '2 minutes' AND clock_timestamp()
+    AND NOT EXISTS (
+      SELECT 1 FROM certificate_evidence later
+      WHERE later.workspace_id=proof.workspace_id AND later.created_by_agent_id=proof.agent_id
+        AND later.evidence_type='certificate.observed'
+        AND later.metadata->>'locationKind' IN ('iis_binding','http_sys')
+        AND later.metadata->>'observedWindowsPort'=proof.port::text
+        AND CASE WHEN later.metadata->>'agentSequence' ~ '^[0-9]+$'
+          THEN (later.metadata->>'agentSequence')::numeric > proof.agent_sequence ELSE false END
+        AND (later.metadata->>'observedWindowsAddress' IS NULL OR later.metadata->>'observedWindowsAddress'='0.0.0.0'
+          OR (lower(later.metadata->>'observedWindowsAddress')<>lower(host(proof.address))
+            AND later.metadata->>'observedWindowsAddress' !~ '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$'))
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM certificate_instances wildcard
+      JOIN certificate_targets wt ON wt.workspace_id=wildcard.workspace_id AND wt.id=wildcard.target_id
+      WHERE wildcard.workspace_id=proof.workspace_id AND wildcard.presence_state='confirmed_present'
+        AND wildcard.captured_at >= proof.observed_at AND wt.public_metadata->>'agentId'=a.agent_id
+        AND wt.windows_port=proof.port AND wt.location_kind IN ('iis_binding','http_sys')
+        AND (wt.public_metadata->>'boundAddress' IS NULL OR wt.public_metadata->>'boundAddress'='0.0.0.0'
+          OR (lower(wt.public_metadata->>'boundAddress')<>lower(host(proof.address))
+            AND wt.public_metadata->>'boundAddress' !~ '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$'))
+    )
+)`;
 function refuse(message) {
   const error = new Error(message);
   error.code = "CERTOPS_WINDOWS_REASSOCIATION_REFUSED";
@@ -21,8 +71,7 @@ function refuse(message) {
 // A legacy site:port identity did not preserve the listening IP. Never infer
 // it from a certificate name: the operator must confirm an observed address.
 function profileForExplicitIisReassociation(profile, address) {
-  if (typeof address !== "string" || address.includes("%") || !isIP(address) ||
-      address === "0.0.0.0" || address === "::") refuse("Select a concrete IIS IP address.");
+  if (!isConcreteIpAddress(address)) refuse("Select a concrete IIS IP address.");
   const original = profile?.target;
   const binding = original?.binding;
   if (original?.type !== "windows-iis" || typeof binding?.site !== "string" || !WINDOWS_IIS_SITE_PATTERN.test(binding.site) ||
@@ -83,6 +132,12 @@ async function reassociateWindowsStore({ dbPool = pool, workspaceId, legacyId, c
     if (explicitMove && (a.platform !== "win32" || !hasFreshCapability({
       declaredCapabilities: a.declared_capabilities, capabilitiesUpdatedAt: a.capabilities_updated_at,
       capability: "iis-explicit-ip-v1" }))) refuse("The owning agent is not qualified for this IIS IP address.");
+    if (explicitMove) {
+      const oldSuffix = `/iis_binding/${profile.target.binding.site}:${profile.target.binding.port}`;
+      const newSuffix = `${oldSuffix}@${expectedAddress}`;
+      const oldRef = String(old?.source_ref || ""); const newRef = String(current?.source_ref || "");
+      if (!oldRef.endsWith(oldSuffix) || !newRef.endsWith(newSuffix) || oldRef.slice(0,-oldSuffix.length) !== newRef.slice(0,-newSuffix.length)) refuse("Both registrations must belong to the same agent and host.");
+    }
     if (!isIis) refuse("Only IIS renewal profiles can be reassociated by this workflow.");
     if (!old || !current || old.period_id !== legacyPeriodId || current.period_id !== currentPeriodId ||
         old.source !== "agent_windows" || !(explicitMove
@@ -122,13 +177,12 @@ async function reassociateWindowsStore({ dbPool = pool, workspaceId, legacyId, c
         isIis ? profile.target.binding.port : null, isIis ? profile.target.binding.sniHost || "" : null, expectedAddress]);
     if (!evidence.rows.length) refuse("The owning agent must freshly observe this fingerprint at the exact configured target.");
     if (explicitMove) {
-      const wildcard = await client.query(`SELECT 1 FROM certificate_instances ci
-        JOIN certificate_targets ct ON ct.workspace_id=ci.workspace_id AND ct.id=ci.target_id
-        WHERE ci.workspace_id=$1 AND ci.managed_certificate_id=$2 AND ci.presence_state='confirmed_present'
-          AND ci.captured_at BETWEEN clock_timestamp()-interval '24 hours' AND clock_timestamp()
-          AND ct.public_metadata->>'agentId'=$3 AND ct.public_metadata->>'boundAddress'='0.0.0.0' LIMIT 1`,
-      [workspaceId, legacyId, a.agent_id]);
-      if (wildcard.rows.length) refuse("The original wildcard binding is still observed. Verify the target before moving the profile.");
+      const proof = await client.query(`SELECT 1 FROM certops_agents a
+        JOIN certificate_targets ct ON ct.workspace_id=a.workspace_id AND ct.public_metadata->>'agentId'=a.agent_id
+        JOIN certificate_instances ci ON ci.workspace_id=ct.workspace_id AND ci.target_id=ct.id
+        WHERE a.workspace_id=$1 AND a.id=$2 AND ci.managed_certificate_id=$3 AND ci.presence_state='confirmed_present'
+          AND ${IIS_ABSENCE_PROOF_FILTER} LIMIT 1`, [workspaceId,agentId,currentId]);
+      if (!proof.rows.length) refuse("A recent complete IIS and HTTP.sys proof is required before moving this profile.");
     }
     if (current.certificate_pem) {
       try {
@@ -173,6 +227,8 @@ async function reassociateWindowsStore({ dbPool = pool, workspaceId, legacyId, c
     await stopManagingSource({ client, workspaceId, periodId: currentPeriodId, actorUserId });
     const replacement = await readdManagingSource({ client, workspaceId, managedCertificateId: currentId,
       renewalProfileId: old.renewal_profile_id, automationEnabled: true, actorUserId });
+    if (explicitMove) await client.query(`UPDATE managed_certificates SET iis_reassociation_requires_absence=TRUE
+      WHERE workspace_id=$1 AND id=ANY($2::uuid[])`, [workspaceId,[legacyId,currentId]]);
     await writeAudit({ client, actorUserId, subjectUserId: actorUserId,
       action: "CERTOPS_WINDOWS_STORE_REASSOCIATED", targetType: "managed_certificate", targetId: null, workspaceId,
       metadata: { legacyId,currentId,legacyPeriodId,currentPeriodId,newPeriodId:replacement.periodId,agentId,
@@ -212,12 +268,7 @@ async function listIisReassociationCandidates({ client = pool, workspaceId, lega
       AND (position('/windows_store/' in COALESCE(old.source_ref,''))>0 OR
         (position('/iis_binding/' in COALESCE(old.source_ref,''))>0 AND ct.windows_sni_host IS NULL
           AND COALESCE(cp.public_metadata->'renewalProfile'->'target'->'binding'->>'address','*') IN ('*','0.0.0.0')
-          AND NOT EXISTS (SELECT 1 FROM certificate_instances oldci JOIN certificate_targets oldct
-            ON oldct.workspace_id=oldci.workspace_id AND oldct.id=oldci.target_id
-            WHERE oldci.workspace_id=old.workspace_id AND oldci.managed_certificate_id=old.id
-              AND oldci.presence_state='confirmed_present'
-              AND oldci.captured_at BETWEEN clock_timestamp()-interval '24 hours' AND clock_timestamp()
-              AND oldct.public_metadata->>'agentId'=a.agent_id AND oldct.public_metadata->>'boundAddress'='0.0.0.0')))
+          AND ${IIS_ABSENCE_PROOF_FILTER}))
       AND cp.public_metadata->'renewalProfile'->'target'->>'type'='windows-iis'
       AND p.renewal_profile_id IS NULL AND NOT p.automation_enabled
     ORDER BY mc.id,ci.captured_at DESC LIMIT 50`, [workspaceId, legacyId]);
@@ -226,13 +277,16 @@ async function listIisReassociationCandidates({ client = pool, workspaceId, lega
     if (!explicitMove) return row.target_metadata?.observationOnly !== true;
     const address = row.target_metadata?.boundAddress;
     try { profileForExplicitIisReassociation(row.profile, address); } catch (_) { return false; }
-    return typeof address === "string" && isIP(address) !== 0 && address !== "0.0.0.0" && address !== "::" &&
+    const legacySuffix = `/iis_binding/${row.windows_site}:${row.windows_port}`;
+    const currentSuffix = `${legacySuffix}@${address}`;
+    const legacyRef = String(row.legacy_ref || ""); const currentRef = String(row.current_ref || "");
+    return isConcreteIpAddress(address) &&
       row.target_metadata?.keyPresent === true && row.platform === "win32" &&
       row.agent_status === "active" && classifyAgentLiveness({ lastSeenAt:row.last_seen_at, createdAt:row.agent_created_at }) === "live" &&
       hasFreshCapability({ declaredCapabilities:row.declared_capabilities, capabilitiesUpdatedAt:row.capabilities_updated_at,
         capability:"iis-explicit-ip-v1" }) &&
-      String(row.legacy_ref || "").endsWith(`/iis_binding/${row.windows_site}:${row.windows_port}`) &&
-      String(row.current_ref || "").endsWith(`/iis_binding/${row.windows_site}:${row.windows_port}@${address}`);
+      legacyRef.endsWith(legacySuffix) && currentRef.endsWith(currentSuffix) &&
+      legacyRef.slice(0,-legacySuffix.length) === currentRef.slice(0,-currentSuffix.length);
   }).map(row => ({ legacyPeriodId:row.legacy_period_id,agentId:row.agent_id,
     expectedDnsName:row.dns_name,currentId:row.current_id,currentPeriodId:row.current_period_id,
     expectedFingerprintSha256:row.fingerprint_sha256,host:row.hostname,site:row.windows_site,

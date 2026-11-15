@@ -17,6 +17,13 @@
     "requestedAt"
   ],
   "properties": {
+    "iisReassociationGuard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fingerprintSha256"],
+      "properties": { "fingerprintSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } },
+      "description": "Controller-owned guard for an IIS registration reassociated from a legacy wildcard target."
+    },
     "mode": {
       "type": "string",
       "enum": [

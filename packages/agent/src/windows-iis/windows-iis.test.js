@@ -25,6 +25,21 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
 const { X509Certificate } = require("node:crypto");
+const { checkReassociatedBinding } = require("./index");
+
+it("reassociation guard checks stable native IIS, HTTP.sys and machine-store state", async () => {
+  const thumb="a".repeat(40), fingerprint="b".repeat(64);
+  const binding={site:"Default Web Site",address:"192.0.2.10",port:443};
+  const snapshot={iis:[{site:binding.site,address:binding.address,port:443,hostname:"",flags:0}],
+    http:[{keyedBy:"ipport",ipPort:"192.0.2.10:443",thumbprint:thumb,storeName:"My"}],
+    certificates:[{thumbprint:thumb,fingerprintSha256:fingerprint,hasPrivateKey:true}]};
+  assert.equal(await checkReassociatedBinding({binding,thumbprint:thumb,read:async()=>snapshot}),true);
+  const shadowed={...snapshot,http:[...snapshot.http,{keyedBy:"ipport",ipPort:"0.0.0.0:443",thumbprint:thumb,storeName:"My"}]};
+  assert.equal(await checkReassociatedBinding({binding,thumbprint:thumb,read:async()=>shadowed}),false);
+  assert.equal(await checkReassociatedBinding({binding,thumbprint:thumb,fingerprintSha256:"c".repeat(64),read:async()=>snapshot}),false);
+  assert.equal(await checkReassociatedBinding({binding,thumbprint:thumb,permittedFingerprints:["c".repeat(64)],read:async()=>snapshot}),false);
+  assert.equal(await checkReassociatedBinding({binding,thumbprint:thumb,read:async()=>{throw new Error("access denied");}}),false);
+});
 
 const {
   THUMBPRINT_PATTERN,
@@ -896,6 +911,30 @@ describe("bindCertificate", () => {
 // ---------------------------------------------------------------------------
 
 describe("deployIisBinding", () => {
+  it("stops reassociated deployment before mutation on a wildcard conflict", async () => {
+    const execFileImpl=makeExecStub(key=>key === "query" ? boundAtValidBinding(OTHER_THUMBPRINT) : null);
+    const snapshot={iis:[{site:VALID_BINDING.site,address:VALID_BINDING.address,port:443,hostname:"",flags:0}],
+      http:[{keyedBy:"ipport",ipPort:"10.0.0.5:443",thumbprint:OTHER_THUMBPRINT,storeName:"My"},{keyedBy:"ipport",ipPort:"0.0.0.0:443",thumbprint:OTHER_THUMBPRINT,storeName:"My"}],
+      certificates:[{thumbprint:OTHER_THUMBPRINT,fingerprintSha256:"d".repeat(64),hasPrivateKey:true}]};
+    const result=await deployIisBinding({binding:VALID_BINDING,certificatePem:FIXTURE_CERT_PEM,execFileImpl,
+      reassociationGuard:{fingerprintSha256:"d".repeat(64)},reassociationRead:async()=>snapshot});
+    assert.equal(result.code,"REASSOCIATION_CONFLICT");
+    assert.match(result.detail,/already be in the Windows store/);
+    assert.equal(execFileImpl.calls.some(call=>["add","delete"].includes(call.args[1])),false);
+  });
+  it("reports uncertain effect if a wildcard appears after reassociated mutation", async () => {
+    const execFileImpl=makeExecStub(key=>key === "query" ? boundAtValidBinding(OTHER_THUMBPRINT) : null);
+    let reads=0;
+    const snapshot=(after)=>({iis:[{site:VALID_BINDING.site,address:VALID_BINDING.address,port:443,hostname:"",flags:0}],
+      http:[{keyedBy:"ipport",ipPort:"10.0.0.5:443",thumbprint:after?FIXTURE_THUMBPRINT:OTHER_THUMBPRINT,storeName:"My"},
+        ...(after?[{keyedBy:"ipport",ipPort:"0.0.0.0:443",thumbprint:FIXTURE_THUMBPRINT,storeName:"My"}]:[])],
+      certificates:[{thumbprint:after?FIXTURE_THUMBPRINT:OTHER_THUMBPRINT,fingerprintSha256:after?FIXTURE_FINGERPRINT_SHA256:"d".repeat(64),hasPrivateKey:true}]});
+    const result=await deployIisBinding({binding:VALID_BINDING,certificatePem:FIXTURE_CERT_PEM,execFileImpl,
+      reassociationGuard:{fingerprintSha256:"d".repeat(64)},reassociationRead:async()=>snapshot(++reads>2),connectImpl:makeConnectStub({peerDer:fixtureX509.raw})});
+    assert.equal(result.code,"REASSOCIATION_CONFLICT_AFTER_MUTATION");
+    assert.match(result.detail,/may already have changed/);
+    assert.equal(execFileImpl.calls.some(call=>call.args[1]==="add"),true);
+  });
   it("rejects a malformed expected predecessor before querying or changing IIS", async () => {
     const execFileImpl = makeExecStub(() => null);
     await assert.rejects(deployIisBinding({ binding: VALID_BINDING, certificatePem: FIXTURE_CERT_PEM,

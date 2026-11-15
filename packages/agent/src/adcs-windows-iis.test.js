@@ -1,5 +1,17 @@
 "use strict";
 
+const { test: reassociationTest } = require("node:test");
+reassociationTest("AD CS initial and continuation target reconstruction retains the signed reassociation guard", async () => {
+  const { resolveWindowsIisTarget } = require("./adcs-windows-iis");
+  const base={keyMode:"os-store-managed",target:{type:"windows-iis",reference:"example.test",store:"My",binding:{site:"Default Web Site",port:443,address:"192.0.2.10"}},iisReassociationGuard:{fingerprintSha256:"a".repeat(64)}};
+  for (const action of ["renew","continue-enrollment"]) {
+    const result=await resolveWindowsIisTarget({...base,action});
+    require("node:assert/strict").deepEqual(result.windowsTarget.iisReassociationGuard,base.iisReassociationGuard);
+  }
+  const { isRetryableInstallInterrupt } = require("./adcs-windows-iis");
+  require("node:assert/strict").equal(isRetryableInstallInterrupt({status:"orphaned_unknown_effect",retryableInterrupt:true}),true);
+});
+
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
@@ -1462,7 +1474,9 @@ describe("continue-enrollment recovery executor", () => {
             return { kill() {}, once() {}, pid: 1 };
           },
         });
-        const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir);
+        const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir, {
+          runWindowsIisDeployTail: async () => assert.fail("terminal cleanup must never deploy IIS"),
+        });
         for (let replay = 0; replay < 2; replay++) {
           const result = await executeWindowsIisContinueEnrollmentJob({ job: seed.job,
             jobId: seed.journalBase.jobId, client: {}, log: {}, executionContext });

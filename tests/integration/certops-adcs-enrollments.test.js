@@ -912,12 +912,13 @@ describe("CertOps AD CS enrollments (real database)", function () {
         dispatchCaps.SIGNED_PAYLOAD_B64_CAPABILITY]), JSON.stringify(["app.example.com", "iis-01/webhosting"])],
     );
     const agentId = (await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1", [agentRowId])).rows[0].agent_id;
+    const signedJobs=[];
     const claim = () => claimJobs({
       dbPool: pool,
       agent: { id: agentRowId, workspaceId, agentId, agentVersion: "0.18.0", protocolVersion: "1.0.0", status: "active" },
       envelope: { agentId, protocolVersion: "1.0.0" },
       body: { supportedActions: ["continue-enrollment"], maxJobs: 16 },
-      deps: { enforceAgentSequence: async () => ({ sequence: 1 }), signJobForDispatch: async ({ job, envelopeVersion }) => ({ ...job, envelopeVersion }) },
+      deps: { enforceAgentSequence: async () => ({ sequence: 1 }), signJobForDispatch: async ({ job, envelopeVersion }) => {signedJobs.push(job);return { ...job, envelopeVersion };} },
     }).then((result) => result.jobs.map((job) => String(job.id ?? job.jobId)));
     const retiredCertificate = async (name) => {
       const fingerprint = crypto.randomBytes(32).toString("hex");
@@ -944,12 +945,19 @@ describe("CertOps AD CS enrollments (real database)", function () {
       return job.id;
     };
 
-    // A cancelled enrollment keeps its key-cleanup job claimable, and proves the harness can claim.
-    const cleanupCert = await retiredCertificate("cleanup after retirement");
-    const cleanupEnrollment = await insertEnrollment("cancelled", { certificateId: cleanupCert.certificateId });
-    const cleanupJobId = await continuation(cleanupEnrollment, cleanupCert.certificateId);
-    await pool.query("UPDATE certops_certificate_identities SET lifecycle_status='revoked', retired_at=NOW() WHERE id=$1", [cleanupCert.identityId]);
-    expect(await claim()).to.include(cleanupJobId);
+    // A signed terminal directive only cleans the owned key. All three states
+    // remain claimable after reassociation and lifecycle retirement.
+    for (const state of ["cancelled","expired","abandoned"]) {
+      const cleanupCert = await retiredCertificate(`cleanup after ${state}`);
+      const cleanupEnrollment = await insertEnrollment(state, { certificateId: cleanupCert.certificateId });
+      const cleanupJobId = await continuation(cleanupEnrollment, cleanupCert.certificateId);
+      await pool.query("UPDATE managed_certificates SET iis_reassociation_requires_absence=TRUE WHERE id=$1",[cleanupCert.certificateId]);
+      await pool.query("UPDATE certops_certificate_identities SET lifecycle_status='revoked', retired_at=NOW() WHERE id=$1", [cleanupCert.identityId]);
+      expect(await claim()).to.include(cleanupJobId);
+      const signed=signedJobs.find(job=>String(job.jobId)===cleanupJobId);
+      expect(signed.enrollment.terminalState).to.equal(state);
+      expect(signed.iisReassociationGuard).to.equal(undefined);
+    }
 
     // First issuance has no identity yet, and a missing identity is not retirement.
     const firstCertificateId = (await pool.query(
@@ -1002,6 +1010,39 @@ describe("CertOps AD CS enrollments (real database)", function () {
         expect(error.code).to.equal("55000");
       }
     }
+
+    // A bound continuation targeting the former IIS binding of a moved
+    // registration must be individually rejected at actual agent claim.
+    const movedCert = await retiredCertificate("reassociated continuation");
+    const movedEnrollment = await insertEnrollment("issued", { certificateId:movedCert.certificateId });
+    let spoofError;
+    try {
+      await createCertificateJob({client:pool,workspaceId,operation:"continue-enrollment",allowEnrollmentContinuation:true,
+        subjectType:"managed_certificate",subjectId:movedCert.certificateId,assignedAgentId:agentRowId,enrollmentId:movedEnrollment,
+        payload:{...storedAdcsPayload({certificateId:movedCert.certificateId,target:enrollmentInput().target}),issuerKind:"adcs",enrollment:{terminalState:"cancelled"}}});
+    } catch(error) { spoofError=error; }
+    expect(spoofError?.code).to.equal("CERTOPS_JOB_EXECUTION_FIELD_INVALID");
+    const movedJobId = await continuation(movedEnrollment,movedCert.certificateId);
+    await pool.query("UPDATE managed_certificates SET iis_reassociation_requires_absence=TRUE WHERE id=$1",[movedCert.certificateId]);
+    expect(await claim()).to.not.include(movedJobId);
+    const guardedResult=(await pool.query('SELECT status,error_code,error_message FROM certificate_jobs WHERE id=$1',[movedJobId])).rows[0];
+    expect(guardedResult.status).to.equal('rejected');
+    expect(guardedResult.error_code).to.equal('CERTOPS_IIS_REASSOCIATION_UNSAFE');
+    expect(guardedResult.error_message).to.include('former IIS binding');
+    const endedCert = await retiredCertificate("ended reassociated continuation");
+    const endedEnrollment = await insertEnrollment("issued", { certificateId:endedCert.certificateId });
+    const endedJobId = await continuation(endedEnrollment,endedCert.certificateId);
+    await pool.query("UPDATE managed_certificates SET iis_reassociation_requires_absence=TRUE WHERE id=$1",[endedCert.certificateId]);
+    await pool.query("UPDATE certops_management_periods SET ended_at=NOW() WHERE managed_certificate_id=$1 AND ended_at IS NULL",[endedCert.certificateId]);
+    expect(await claim()).to.not.include(endedJobId);
+    expect((await pool.query('SELECT status FROM certificate_jobs WHERE id=$1',[endedJobId])).rows[0].status).to.equal('pending');
+    const uncertainCert=await retiredCertificate("uncertain IIS deployment");
+    const uncertainEnrollment=await insertEnrollment("installing",{certificateId:uncertainCert.certificateId,nextPollAt:new Date(Date.now()-1000)});
+    const uncertainJobId=await continuation(uncertainEnrollment,uncertainCert.certificateId);
+    await pool.query("UPDATE certificate_jobs SET status='orphaned_unknown_effect',needs_operator_reconciliation=TRUE WHERE id=$1",[uncertainJobId]);
+    const scheduled=await scheduleDueEnrollments({client:pool,now:new Date()});
+    expect(scheduled.some(item=>item.enrollmentId===uncertainEnrollment),'an uncertain IIS effect must not be retried automatically').to.equal(false);
+    expect((await pool.query('SELECT current_job_id FROM certificate_enrollments WHERE id=$1',[uncertainEnrollment])).rows[0].current_job_id).to.equal(uncertainJobId);
   });
 
   it("retirement covers running and queued install-capable work and spares key cleanup", async () => {
