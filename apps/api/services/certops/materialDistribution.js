@@ -211,6 +211,7 @@ async function buildRolloutIntent({ client, workspaceId, groupId, materialVersio
     FROM workspaces WHERE id=$1 FOR SHARE`, [workspaceId])).rows[0];
   if (!workspace) fail("CERTOPS_WORKSPACE_NOT_FOUND", 404);
   const group = await lockGroup(client, workspaceId, groupId);
+  await assertDeployableVersion(client, workspaceId, groupId, materialVersionId);
   const unresolved = await client.query(`SELECT 1 FROM certops_consumer_deployments d
     JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND (j.id=d.job_id OR j.id=d.staging_job_id)
     WHERE d.workspace_id=$1 AND d.group_id=$2 AND
@@ -218,7 +219,6 @@ async function buildRolloutIntent({ client, workspaceId, groupId, materialVersio
         AND j.payload->'materialDeployment'->>'verificationOnly' IS DISTINCT FROM 'true'))
     LIMIT 1`, [workspaceId,groupId]);
   if (unresolved.rowCount) fail("CERTOPS_ROLLOUT_REQUIRES_RECONCILIATION");
-  await assertDeployableVersion(client, workspaceId, groupId, materialVersionId);
   const version = (await client.query(`SELECT * FROM certops_material_versions
     WHERE workspace_id=$1 AND group_id=$2 AND id=$3 AND state='published'`, [workspaceId, groupId, materialVersionId])).rows[0];
   if (!version || new Date(version.valid_to).getTime() <= Date.now()) fail("CERTOPS_ROLLOUT_VERSION_INVALID");
@@ -387,6 +387,11 @@ async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
           AND current_deployment.binding_id=b.id AND current_deployment.authorization_revision=b.authorization_revision
           AND current_deployment.stage='pending'
           AND (current_deployment.job_id IS NULL OR verification_job.status IN ('pending_approval','pending','claimed','running'))
+          AND NOT EXISTS (SELECT 1 FROM certops_consumer_deployments failed_deployment
+            JOIN certops_distribution_rollouts failed_rollout ON failed_rollout.workspace_id=failed_deployment.workspace_id AND failed_rollout.id=failed_deployment.rollout_id
+            JOIN certificate_job_log failure ON failure.workspace_id=failed_deployment.workspace_id AND failure.job_id=failed_deployment.job_id
+            WHERE failed_deployment.workspace_id=b.workspace_id AND failed_deployment.binding_id=b.id
+              AND failed_rollout.verification_only AND failure.event_type='job.failed' AND failure.created_at>=s.observed_at)
       )) AND s.observed_material_version_id=s.desired_material_version_id
       AND s.observed_valid_to>clock_timestamp() AND b.state='active'
       AND (b.verification_policy<>'installed' OR a.platform IS DISTINCT FROM 'win32')

@@ -17,7 +17,7 @@ export async function deliverDistributionPagerDutyTrigger(client, { alert, webho
     if (!active.rowCount) return { success: true, skipped: true };
     await client.query(`INSERT INTO certops_distribution_pagerduty(workspace_id,incident_id,destination_id,trigger_delivery_uncertain)
       VALUES($1,$2,$3,TRUE) ON CONFLICT(workspace_id,incident_id,destination_id)
-      DO UPDATE SET trigger_delivery_uncertain=TRUE`, [alert.workspace_id,incidentId,destinationId]);
+      DO UPDATE SET trigger_delivery_uncertain=(certops_distribution_pagerduty.trigger_accepted_at IS NULL)`, [alert.workspace_id,incidentId,destinationId]);
     let result;
     try { result = await send(String(webhook.url).trim(), payload, "pagerduty"); }
     catch { result = { success: false }; }

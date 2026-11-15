@@ -215,7 +215,12 @@ async function putPolicy({
     if (expectedRevision !== (prior?.revision || 0))
       fail("CERTOPS_LIFECYCLE_POLICY_REVISION_CHANGED", 409);
     const unchanged=prior && material.hashIntent(prior.policy)===material.hashIntent(policy);
-    if(unchanged && policy.mode!=="preauthorized")return prior;
+    if(unchanged && policy.mode!=="preauthorized"){
+      const authorized=await client.query(`SELECT 1 FROM workspaces WHERE id=$1 AND created_by=$2
+        UNION SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2 AND role IN ('admin','workspace_manager')`,
+        [workspaceId,prior.configured_by_user_id]);
+      if(authorized.rowCount)return prior;
+    }
     const settings = (
       await client.query(
         `SELECT contact_groups FROM workspace_settings WHERE workspace_id=$1`,
