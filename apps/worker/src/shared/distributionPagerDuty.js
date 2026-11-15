@@ -1,4 +1,6 @@
 import { pagerDutyDestinationId } from "./webhookDestinations.js";
+import { resolveContactGroupsForAsset, getWebhookNames } from "./contactGroups.js";
+import crypto from "node:crypto";
 
 const retryMs = attempt => Math.min(60_000 * 2 ** Math.max(0, attempt - 1), 3_600_000);
 const lockName = (incidentId, destinationId) => `distribution-pagerduty:${incidentId}:${destinationId}`;
@@ -45,6 +47,10 @@ async function settleRecoveredDistributionAlerts(client, batchSize, canRecover) 
         (aq.channels->'version'='1'::jsonb AND jsonb_typeof(aq.channels->'required')='array'
           AND jsonb_typeof(aq.channels->'retry')='array' AND jsonb_typeof(aq.channels->'outcomes'->'webhooks'->'endpoints')='object'
           AND aq.channels->'outcomes'->'webhooks'->'endpoints'->>p.destination_id IN ('pending','failed'))
+        OR (aq.metadata->>'pagerdutyRecoveryRequeued'='true' AND aq.channels->'required'='["webhooks"]'::jsonb
+          AND aq.channels->'retry'='["webhooks"]'::jsonb AND aq.channels->'outcomes'->'webhooks'->'endpoints'='{}'::jsonb
+          AND aq.error_message LIKE '%No webhook names defined in the selected contact group%'
+          AND (aq.next_attempt_at IS NULL OR aq.next_attempt_at<=clock_timestamp()))
         OR (aq.channels='["webhooks"]'::jsonb AND aq.metadata->>'pagerdutyRecoveryRequeued' IS DISTINCT FROM 'true'
           AND (aq.next_attempt_at IS NULL OR aq.next_attempt_at<=clock_timestamp())
           AND NOT EXISTS (SELECT 1 FROM certops_distribution_pagerduty pending
@@ -54,7 +60,7 @@ async function settleRecoveredDistributionAlerts(client, batchSize, canRecover) 
   for (const { id } of candidates.rows) {
     await client.query("BEGIN");
     try {
-      const queue = (await client.query(`SELECT aq.channels,aq.metadata,a.workspace_id
+      const queue = (await client.query(`SELECT aq.channels,aq.metadata,aq.error_message,a.workspace_id
         FROM alert_queue aq JOIN certops_agents a ON a.id=aq.certops_agent_id
         WHERE aq.id=$1 AND aq.status='blocked' AND aq.delivery_claim_id IS NULL AND aq.error_message LIKE '%MAX_ATTEMPTS%'
         FOR UPDATE OF aq SKIP LOCKED`, [id])).rows[0];
@@ -76,6 +82,31 @@ async function settleRecoveredDistributionAlerts(client, batchSize, canRecover) 
         }
         await client.query(`UPDATE alert_queue SET status='pending',attempts_webhooks=0,next_attempt_at=clock_timestamp(),
           metadata=jsonb_set(metadata,'{pagerdutyRecoveryRequeued}','true'::jsonb,true),updated_at=clock_timestamp() WHERE id=$1`,[id]);
+        await client.query("COMMIT"); continue;
+      }
+      if (queue.metadata?.pagerdutyRecoveryRequeued === true && String(queue.error_message || "").includes("No webhook names defined in the selected contact group") &&
+          JSON.stringify(ledger?.required) === '["webhooks"]' && JSON.stringify(ledger?.retry) === '["webhooks"]' &&
+          JSON.stringify(ledger?.outcomes?.webhooks?.endpoints) === '{}') {
+        const settings = (await client.query(`SELECT ws.contact_groups,ws.default_contact_group_id,ws.webhook_urls,policy.policy
+          FROM certops_distribution_incidents i
+          JOIN certops_distribution_policies policy ON policy.workspace_id=i.workspace_id AND policy.group_id=i.group_id
+          JOIN workspace_settings ws ON ws.workspace_id=i.workspace_id
+          WHERE i.workspace_id=$1 AND i.id::text=$2`,[queue.workspace_id,queue.metadata?.incidentId])).rows[0];
+        const groups = resolveContactGroupsForAsset({contactGroups:settings?.contact_groups,
+          assignedIds:settings?.policy?.alerts?.contactGroupIds,defaultContactGroupId:settings?.default_contact_group_id});
+        const names = new Set(groups.flatMap(group => getWebhookNames(group)));
+        const recovered = await client.query(`SELECT destination_id FROM certops_distribution_pagerduty
+          WHERE workspace_id=$1 AND incident_id::text=$2 AND resolved_at IS NOT NULL`,[queue.workspace_id,queue.metadata?.incidentId]);
+        const ids = new Set(recovered.rows.map(row => row.destination_id));
+        const hooks = Array.isArray(settings?.webhook_urls) ? settings.webhook_urls : [];
+        const selected = hooks.filter(hook => names.has(String(hook?.name || "").trim()));
+        const eligible = selected.length > 0 && selected.every(hook => ids.has(pagerDutyDestinationId(queue.workspace_id,hook)));
+        const fingerprint = crypto.createHash("sha256").update(JSON.stringify([settings?.contact_groups,settings?.default_contact_group_id,settings?.webhook_urls,settings?.policy?.alerts])).digest("hex");
+        if (eligible && settings?.policy?.alerts?.enabled === true && queue.metadata?.pagerdutyRecoveryRetryFingerprint !== fingerprint &&
+            await canRecover(client,{workspace_id:queue.workspace_id})) {
+          await client.query(`UPDATE alert_queue SET status='pending',attempts_webhooks=0,next_attempt_at=clock_timestamp(),
+            metadata=jsonb_set(metadata,'{pagerdutyRecoveryRetryFingerprint}',to_jsonb($2::text),true),updated_at=clock_timestamp() WHERE id=$1`,[id,fingerprint]);
+        } else await client.query("UPDATE alert_queue SET next_attempt_at=clock_timestamp()+interval '5 minutes' WHERE id=$1",[id]);
         await client.query("COMMIT"); continue;
       }
       const webhook = ledger?.outcomes?.webhooks;
