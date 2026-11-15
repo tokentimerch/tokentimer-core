@@ -29,7 +29,7 @@ const makeCtx = () => ({
   summary: { assets: { total: 0 }, autoSync: { items: [] } },
   capabilities: { items: [] },
   docs: () => [],
-  refresh: vi.fn().mockResolvedValue({}),
+  refresh: vi.fn().mockResolvedValue({ assets: { total: 10 } }),
   skip: vi.fn(),
   hold: vi.fn(),
   release: vi.fn(),
@@ -113,6 +113,66 @@ describe.each([
       await modal.props.onImported([]);
     });
     expect(screen.getByTestId('import-continue')).toBeDisabled();
+  });
+
+  it('does not double-count repeated updates to the same assets', async () => {
+    const ctx = makeCtx();
+    ctx.refresh.mockResolvedValue({ assets: { total: 2 } });
+    let session = { progress: {} };
+    ctx.controller.update.mockImplementation(async fn => {
+      session = { ...session, ...fn(session) };
+    });
+    render(wrap(<Step ctx={ctx} />));
+    await act(async () => {
+      await modal.props.onImported([{ id: 1 }, { id: 2 }]);
+    });
+    await act(async () => {
+      await modal.props.onImported([{ id: 1 }, { id: 2 }]);
+    });
+    expect(session.progress.imported[0].count).toBe(2);
+    expect(screen.getByTestId('import-continue')).toBeEnabled();
+  });
+
+  it('retries saving progress without reimporting or counting twice', async () => {
+    const ctx = makeCtx();
+    ctx.refresh.mockResolvedValue({ assets: { total: 2 } });
+    let session = { progress: {} };
+    ctx.controller.update.mockImplementation(async fn => {
+      session = { ...session, ...fn(session) };
+      if (ctx.controller.update.mock.calls.length === 1)
+        throw new Error('response lost');
+    });
+    render(wrap(<Step ctx={ctx} />));
+    await act(async () => {
+      await modal.props.onImported([{ id: 1 }, { id: 2 }]);
+    });
+    expect(
+      screen.getByText(/setup progress could not be confirmed/i)
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('import-continue')).toBeDisabled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    });
+    expect(session.progress.imported[0].count).toBe(2);
+    expect(screen.getByTestId('import-continue')).toBeEnabled();
+  });
+
+  it('retries when the workspace summary is temporarily unavailable', async () => {
+    const ctx = makeCtx();
+    ctx.refresh
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ assets: { total: 2 } });
+    render(wrap(<Step ctx={ctx} />));
+    await act(async () => {
+      await modal.props.onImported([{ id: 1 }, { id: 2 }]);
+    });
+    expect(screen.getByTestId('import-continue')).toBeDisabled();
+    expect(ctx.controller.update).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    });
+    expect(ctx.controller.update).toHaveBeenCalledOnce();
+    expect(screen.getByTestId('import-continue')).toBeEnabled();
   });
 
   it('offers a button to reopen the dialog after it is closed', () => {
