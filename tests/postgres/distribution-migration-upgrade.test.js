@@ -109,7 +109,7 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
       recovered.push({incident,delivered});
       if(delivered)await pool.query("INSERT INTO alert_queue(user_id,certops_agent_id,alert_key,threshold_days,due_date,channels,status) VALUES($1,$2,$3,0,CURRENT_DATE,'[]'::jsonb,'sent')",[f.actor,f.consumer,`cert_distribution:${incident.id}:2:resolved`]);
     }
-    migrations.push(...pending.filter(entry=>[90,91,96,97,109,110,111,112,113,114,115,116,117,118,119].includes(entry.version)));
+    migrations.push(...pending.filter(entry=>[90,91,96,97,109,110,111,112,113,114,115,116,117,118,119,120].includes(entry.version)));
     await runMigrations();
     assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=89 OR (version BETWEEN 92 AND 108 AND version NOT IN (96,97)) ORDER BY version")).rows,beforeVerificationLedger);
     assert.equal((await pool.query("SELECT to_regclass('public.certops_material_retirement_dossiers') AS name")).rows[0].name, "certops_material_retirement_dossiers");
@@ -261,6 +261,7 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
   {"version":117,"name":"certops_adcs_expected_identity_receipts"},
   {"version":118,"name":"certops_windows_iis_consent"},
   {"version":119,"name":"certops_material_adcs_operation_union"},
+  {"version":120,"name":"certops_iis_absence_proofs"},
 ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition

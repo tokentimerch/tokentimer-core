@@ -247,7 +247,7 @@
           "kind": "schema",
           "path": "packages/contracts/certops/agent-protocol.schema.json",
           "status": "existing",
-          "sha256": "ec258b3f79fc3e5154712fc3df2d16f26fa21b3f1bfabc6e166a67d466a0f89a"
+          "sha256": "702a1e1c5bb5dc2a3125b0abe2914606e68bfd0d3b5ca31e3cbf5c68542d79dc"
         },
         {
           "id": "certops-trust-job-payload-schema",

@@ -344,6 +344,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     { version: 117, name: "certops_adcs_expected_identity_receipts" },
     { version: 118, name: "certops_windows_iis_consent" },
     { version: 119, name: "certops_material_adcs_operation_union" },
+    { version: 120, name: "certops_iis_absence_proofs" },
   ]);
   assert.equal(
     (
