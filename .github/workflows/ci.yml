@@ -543,6 +543,13 @@ jobs:
           DB_NAME: pr498_retirement_preview_ci_test
           CERTOPS_ENABLED: "true"
         run: node --test --test-force-exit tests/postgres/retirement-preview-migration-upgrade.test.js
+      - name: Validate OAuth retention migration history
+        env:
+          RV_TEST_DB_HOST: ${{ env.DB_HOST }}
+          RV_TEST_DB_PORT: ${{ env.DB_PORT }}
+          RV_TEST_DB_USER: ${{ env.DB_USER }}
+          RV_TEST_DB_PASSWORD: ${{ env.DB_PASSWORD }}
+        run: node --test --test-force-exit tests/postgres/operator-oauth-retention-history.test.js
       - name: Verify alert date serialization across host timezones
         run: node --test tests/postgres/alert-queue-timezones.test.js
       - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability
