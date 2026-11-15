@@ -22,7 +22,7 @@ Independent Linux preparation, when separately qualified, stages material before
 
 Published, installed, served and trusted are different states. Select each consumer's required assurance and freshness policy. Recurring verification and incidents are off by default; enable them deliberately and configure eligible notification recipients. A new source publication does not prove consumers have converged. Required failures and stale canary evidence can pause a rollout; inspect Jobs and explicitly resume when safe.
 
-Distribution PagerDuty recovery targets each integration that accepted the original alert, even if contact groups change. If an endpoint or routing key is removed or rotated, restore the original configuration to deliver recovery, or resolve the incident in PagerDuty. Recovery waits while incident alerts or workspace webhooks are disabled. An uncertain trigger is not treated as accepted. See [PagerDuty incidents](../PAGERDUTY.md).
+Distribution PagerDuty recovery targets each integration that accepted the original alert, even if contact groups change. If an endpoint or routing key is removed or rotated, restore the original configuration to deliver recovery, or resolve the incident in PagerDuty. Recovery waits while distribution incident alerts are disabled. An uncertain trigger is not treated as accepted. See [PagerDuty incidents](../PAGERDUTY.md).
 
 Discovery reports observed relationships and coverage. A certificate found in a machine store is not proof that a service uses it.
 

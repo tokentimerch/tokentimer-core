@@ -43,7 +43,7 @@ export async function reconcileDistributionPagerDuty(client, { send, batchSize =
     const lock = lockName(row.incident_id,row.destination_id);
     if (!(await client.query("SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS owned", [lock])).rows[0]?.owned) continue;
     try {
-      const current = (await client.query(`SELECT p.*,ws.webhook_urls,ws.webhooks_alerts_enabled,policy.policy AS distribution_policy FROM certops_distribution_pagerduty p
+      const current = (await client.query(`SELECT p.*,ws.webhook_urls,policy.policy AS distribution_policy FROM certops_distribution_pagerduty p
         JOIN certops_distribution_incidents i ON i.workspace_id=p.workspace_id AND i.id=p.incident_id
         LEFT JOIN workspace_settings ws ON ws.workspace_id=p.workspace_id
         LEFT JOIN certops_distribution_policies policy ON policy.workspace_id=i.workspace_id AND policy.group_id=i.group_id
@@ -53,7 +53,7 @@ export async function reconcileDistributionPagerDuty(client, { send, batchSize =
           AND p.resolved_at IS NULL AND p.next_attempt_at<=clock_timestamp() AND p.resolve_attempts<8`,
       [row.workspace_id,row.incident_id,row.destination_id])).rows[0];
       if (!current) continue;
-      if (current.distribution_policy?.alerts?.enabled !== true || current.webhooks_alerts_enabled !== true ||
+      if (current.distribution_policy?.alerts?.enabled !== true ||
           !(await canRecover(client,row))) {
         await client.query(`UPDATE certops_distribution_pagerduty SET next_attempt_at=clock_timestamp()+interval '5 minutes'
           WHERE workspace_id=$1 AND incident_id=$2 AND destination_id=$3`,[row.workspace_id,row.incident_id,row.destination_id]);
