@@ -1,5 +1,4 @@
 import { buildOperationalIncidentEmail } from "../notify/email.js";
-import { formatPayload } from "../notify/webhooks.js";
 
 const UUID =
   /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -102,10 +101,23 @@ export function buildDistributionWebhookPayload(
           }
         : {}),
     };
-  return formatPayload(kind, content.message, facts, {
-    severity: c.transition === "resolved" ? "info" : c.severity || "warning",
-    title: title || content.subject,
-  });
+  const severity = c.transition === "resolved" ? "info" : c.severity || "warning";
+  const heading = title || content.subject;
+  const message = `${severity.toUpperCase()}: ${content.message}`;
+  if (kind === "slack") return {
+    text: message,
+    blocks: [{type:"header",text:{type:"plain_text",text:heading}},
+      {type:"section",text:{type:"mrkdwn",text:message}}],
+  };
+  if (kind === "discord") return {content:heading,
+    embeds:[{title:heading,description:message,url:content.href}]};
+  if (kind === "teams") return {type:"message",attachments:[{
+    contentType:"application/vnd.microsoft.card.adaptive",contentUrl:null,
+    content:{type:"AdaptiveCard",$schema:"http://adaptivecards.io/schemas/adaptive-card.json",version:"1.4",
+      body:[{type:"TextBlock",text:heading,weight:"Bolder",wrap:true},{type:"TextBlock",text:message,wrap:true}],
+      actions:[{type:"Action.OpenUrl",title:"View in TokenTimer",url:content.href}]},
+  }]};
+  return {type:"certops_distribution",title:heading,message:content.message,severity,timestamp:new Date().toISOString(),...facts};
 }
 export function distributionWhatsAppVariables(alert, recipientName) {
   const c = distributionContent(alert);
