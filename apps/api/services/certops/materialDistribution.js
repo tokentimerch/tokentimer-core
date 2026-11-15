@@ -211,6 +211,13 @@ async function buildRolloutIntent({ client, workspaceId, groupId, materialVersio
     FROM workspaces WHERE id=$1 FOR SHARE`, [workspaceId])).rows[0];
   if (!workspace) fail("CERTOPS_WORKSPACE_NOT_FOUND", 404);
   const group = await lockGroup(client, workspaceId, groupId);
+  const unresolved = await client.query(`SELECT 1 FROM certops_consumer_deployments d
+    JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND (j.id=d.job_id OR j.id=d.staging_job_id)
+    WHERE d.workspace_id=$1 AND d.group_id=$2 AND
+      (j.needs_operator_reconciliation IS TRUE OR (j.status IN ('claimed','running')
+        AND j.payload->'materialDeployment'->>'verificationOnly' IS DISTINCT FROM 'true'))
+    LIMIT 1`, [workspaceId,groupId]);
+  if (unresolved.rowCount) fail("CERTOPS_ROLLOUT_REQUIRES_RECONCILIATION");
   await assertDeployableVersion(client, workspaceId, groupId, materialVersionId);
   const version = (await client.query(`SELECT * FROM certops_material_versions
     WHERE workspace_id=$1 AND group_id=$2 AND id=$3 AND state='published'`, [workspaceId, groupId, materialVersionId])).rows[0];
@@ -370,7 +377,17 @@ async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
     (s.observed_at IS NOT NULL AND s.observed_at<=clock_timestamp()-b.freshness_seconds*interval '1 second') AS stale,
     s.desired_material_version_id,s.desired_generation,s.accepted_generation,s.observed_material_version_id,
     s.observed_fingerprint_sha256,s.observed_valid_to,s.verification_method,s.observed_at,
-    (s.accepted_generation=s.desired_generation AND s.observed_material_version_id=s.desired_material_version_id
+    ((s.accepted_generation=s.desired_generation OR EXISTS (
+        SELECT 1 FROM certops_distribution_rollouts verifying
+        JOIN certops_consumer_deployments current_deployment ON current_deployment.workspace_id=verifying.workspace_id AND current_deployment.rollout_id=verifying.id
+        LEFT JOIN certificate_jobs verification_job ON verification_job.workspace_id=current_deployment.workspace_id AND verification_job.id=current_deployment.job_id
+        WHERE verifying.workspace_id=b.workspace_id AND verifying.group_id=b.group_id
+          AND verifying.generation=s.desired_generation AND verifying.material_version_id=s.desired_material_version_id
+          AND verifying.verification_only AND verifying.state IN ('pending','deploying')
+          AND current_deployment.binding_id=b.id AND current_deployment.authorization_revision=b.authorization_revision
+          AND current_deployment.stage='pending'
+          AND (current_deployment.job_id IS NULL OR verification_job.status IN ('pending_approval','pending','claimed','running'))
+      )) AND s.observed_material_version_id=s.desired_material_version_id
       AND s.observed_valid_to>clock_timestamp() AND b.state='active'
       AND (b.verification_policy<>'installed' OR a.platform IS DISTINCT FROM 'win32')
       AND EXISTS (SELECT 1 FROM certops_consumer_deployments proof

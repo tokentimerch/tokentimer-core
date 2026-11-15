@@ -73,15 +73,14 @@ async function lockedOriginal(
     binding.state !== "active" ||
     binding.assigned_agent_id !== old.assigned_agent_id ||
     binding.current_agent !== old.assigned_agent_id ||
-    binding.current_revision !== binding.authorization_revision ||
     binding.authorization_revision !== intent.authorizationRevision ||
     Number(binding.generation) !== intent.generation ||
-    Number(binding.desired_generation) !== intent.generation ||
-    Number(group.generation) !== intent.generation ||
-    binding.material_version_id !== intent.materialVersionId ||
-    binding.desired_material_version_id !== intent.materialVersionId
+    binding.material_version_id !== intent.materialVersionId
   )
     fail("CERTOPS_RECONCILIATION_STALE");
+  // This read-only inspection settles only the original job. Its exact signed
+  // intent and agent-local journal remain authoritative even if a later edit
+  // or rollout has superseded current verification state.
   const live = (
     await client.query(
       `SELECT j.id FROM certops_consumer_deployments d JOIN certificate_jobs j
@@ -289,8 +288,10 @@ async function acceptReceipt({ client, workspaceId, agentId, job, receipt }) {
   )
     fail("CERTOPS_RECONCILIATION_RECEIPT_MISMATCH");
   await client.query(
-    "UPDATE certificate_jobs SET needs_operator_reconciliation=FALSE,reconciliation_reason=NULL,updated_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2",
-    [workspaceId, scope.originalJobId],
+    `UPDATE certificate_jobs SET needs_operator_reconciliation=FALSE,reconciliation_reason=NULL,
+      result_metadata=COALESCE(result_metadata,'{}'::jsonb) || jsonb_build_object('reconciliationJobId',$3::text),
+      updated_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2`,
+    [workspaceId, scope.originalJobId, job.id],
   );
   await require("../audit").writeAudit({
     client,

@@ -319,9 +319,12 @@ test("an inspected receipt arriving after original retry cannot settle the pendi
   assert.equal(after.status, "pending");
   assert.equal(after.needs_operator_reconciliation, true);
 });
-test("an older unresolved job remains fenced after a newer rollout supersedes it", async () => {
+test("historical reconciliation settles a superseded obligation without promoting old proof", async () => {
   const f = await setup();
+  // Simulate an obligation stranded by a rollout created before the guard.
+  await pool.query("UPDATE certificate_jobs SET needs_operator_reconciliation=FALSE WHERE id=$1", [f.original.id]);
   await operations.requestRollout({ ...f, actorUserId: f.actor });
+  await pool.query("UPDATE certificate_jobs SET needs_operator_reconciliation=TRUE WHERE id=$1", [f.original.id]);
   const latest = (
     await pool.query(
       "SELECT generation FROM certops_distribution_groups WHERE workspace_id=$1 AND id=$2",
@@ -332,14 +335,16 @@ test("an older unresolved job remains fenced after a newer rollout supersedes it
     Number(latest.generation) >
       f.original.payload.materialDeployment.generation,
   );
-  await assert.rejects(
-    reconciliation.requestReconciliation({
-      workspaceId: f.workspaceId,
-      jobId: f.original.id,
-      actorUserId: f.actor,
-    }),
-    { code: "CERTOPS_RECONCILIATION_STALE" },
-  );
+  const state = (await pool.query("SELECT * FROM certops_consumer_current_state WHERE workspace_id=$1 AND binding_id=$2", [f.workspaceId, f.bindingId])).rows[0];
+  const inspection = await reconciliation.requestReconciliation({ workspaceId: f.workspaceId, jobId: f.original.id, actorUserId: f.actor });
+  await approveJob({ workspaceId: f.workspaceId, jobId: inspection.id, approverUserId: f.approver });
+  const claim = crypto.randomUUID();
+  const job = (await pool.query("UPDATE certificate_jobs SET status='claimed',claim_id=$2,claimed_by_agent_id=assigned_agent_id,lease_expires_at=clock_timestamp()+interval '5 minutes' WHERE id=$1 RETURNING *", [inspection.id, claim])).rows[0];
+  const intent = job.payload.materialReconciliation.intent;
+  const receipt = { schemaVersion: 1, workspaceId: f.workspaceId, originalJobId: f.original.id, groupId: f.groupId,
+    bindingId: f.bindingId, materialVersionId: f.materialVersionId, generation: intent.generation,
+    fingerprintSha256: intent.fingerprintSha256, proofKind: 'deployed', observedAt: new Date().toISOString() };
+  await operations.transaction(client => reconciliation.acceptReceipt({ client, workspaceId: f.workspaceId, agentId: f.consumer, job, receipt }));
   assert.equal(
     (
       await pool.query(
@@ -347,8 +352,77 @@ test("an older unresolved job remains fenced after a newer rollout supersedes it
         [f.original.id],
       )
     ).rows[0].needs_operator_reconciliation,
-    true,
+    false,
   );
+  assert.deepEqual((await pool.query("SELECT * FROM certops_consumer_current_state WHERE workspace_id=$1 AND binding_id=$2", [f.workspaceId, f.bindingId])).rows[0], state);
+});
+test("a same-agent consumer edit leaves the original obligation recoverable", async () => {
+  const f = await setup();
+  // Reproduce an edit accepted before the guard was installed.
+  await pool.query("UPDATE certificate_jobs SET needs_operator_reconciliation=FALSE WHERE id=$1", [f.original.id]);
+  await operations.putBinding({ ...f, actorUserId: f.actor, binding: { ...f.binding, wave: 1 } });
+  await pool.query("UPDATE certificate_jobs SET needs_operator_reconciliation=TRUE WHERE id=$1", [f.original.id]);
+  const inspection = await reconciliation.requestReconciliation({
+    workspaceId: f.workspaceId, jobId: f.original.id, actorUserId: f.actor,
+  });
+  assert.equal(inspection.status, "pending_approval");
+});
+
+test("unresolved effects fence changes and newer rollouts while identical edits remain safe", async () => {
+  const f = await setup();
+  await operations.putBinding({ ...f, actorUserId: f.actor });
+  await assert.rejects(operations.putBinding({ ...f, actorUserId: f.actor, binding: { ...f.binding, wave: 1 } }),
+    { code: "CERTOPS_CONSUMER_CHANGE_REQUIRES_RECONCILIATION" });
+  const policy = { method:"reload",disruptive:true,requiresApproval:true,timezone:"UTC",windows:[],blackouts:[],validUntil:null,emergency:null };
+  await assert.rejects(require("../../apps/api/services/certops/distributionMaintenance").putConsumerPolicy({ ...f, policy, expectedAuthorizationRevision:1, actorUserId:f.actor }),
+    { code:"CERTOPS_CONSUMER_CHANGE_REQUIRES_RECONCILIATION" });
+  await assert.rejects(operations.requestRollout({ ...f, actorUserId:f.actor }), { code:"CERTOPS_ROLLOUT_REQUIRES_RECONCILIATION" });
+});
+
+test("a stale approved inspection is terminated and permits new reconciliation", async () => {
+  const f = await setup();
+  const inspection = await reconciliation.requestReconciliation({
+    workspaceId: f.workspaceId, jobId: f.original.id, actorUserId: f.actor,
+  });
+  await approveJob({ workspaceId: f.workspaceId, jobId: inspection.id, approverUserId: f.approver });
+  const renewal = (await pool.query(`INSERT INTO certificate_jobs(workspace_id,operation,status,source,payload,subject_type,assigned_agent_id)
+    VALUES($1,'renew','pending','api',$2::jsonb,NULL,$3) RETURNING id`,
+    [f.workspaceId, JSON.stringify({domain:'example.test'}), f.consumer])).rows[0];
+  await pool.query("UPDATE workspaces SET certops_distribution_authorization_revision=certops_distribution_authorization_revision+1 WHERE id=$1", [f.workspaceId]);
+  await pool.query("UPDATE certops_agents SET declared_target_selectors=$2::jsonb,platform='linux' WHERE id=$1", [f.consumer, JSON.stringify([f.bindingId])]);
+  const row = (await pool.query("SELECT * FROM certops_agents WHERE id=$1", [f.consumer])).rows[0];
+  const agent = { id: row.id, workspaceId: f.workspaceId, agentId: row.agent_id, agentVersion: row.agent_version, protocolVersion: row.protocol_version };
+  await require("../../apps/api/services/certops/jobSigning").ensureActiveSigningKey();
+  const dispatch = require("../../apps/api/services/certops/agentDispatch");
+  const next = await dispatch.claimJobs({ agent, body: { supportedActions: ["reconcile-from-store", "renew"], maxJobs: 1 } });
+  const stale = (await pool.query("SELECT status,error_code FROM certificate_jobs WHERE id=$1", [inspection.id])).rows[0];
+  assert.deepEqual(stale, { status: "rejected", error_code: "CERTOPS_RECONCILIATION_AUTHORITY_STALE" });
+  assert.equal(next.jobs.length, 1);
+  assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [renewal.id])).rows[0].status, "claimed");
+  const replacement = await reconciliation.requestReconciliation({ workspaceId: f.workspaceId, jobId: f.original.id, actorUserId: f.actor });
+  assert.equal(replacement.status, "pending_approval");
+});
+test("a temporarily locked inspection stays retryable without blocking later work", async () => {
+  const f = await setup();
+  const inspection = await reconciliation.requestReconciliation({workspaceId:f.workspaceId,jobId:f.original.id,actorUserId:f.actor});
+  await approveJob({workspaceId:f.workspaceId,jobId:inspection.id,approverUserId:f.approver});
+  const renewal=(await pool.query(`INSERT INTO certificate_jobs(workspace_id,operation,status,source,payload,subject_type,assigned_agent_id)
+    VALUES($1,'renew','pending','api',$2::jsonb,NULL,$3) RETURNING id`,[f.workspaceId,JSON.stringify({domain:'example.test'}),f.consumer])).rows[0];
+  await pool.query("UPDATE certops_agents SET declared_target_selectors=$2::jsonb,platform='linux' WHERE id=$1",[f.consumer,JSON.stringify([f.bindingId])]);
+  const row=(await pool.query("SELECT * FROM certops_agents WHERE id=$1",[f.consumer])).rows[0];
+  const agent={id:row.id,workspaceId:f.workspaceId,agentId:row.agent_id,agentVersion:row.agent_version,protocolVersion:row.protocol_version};
+  await require("../../apps/api/services/certops/jobSigning").ensureActiveSigningKey();
+  const dispatch=require("../../apps/api/services/certops/agentDispatch"),blocker=await pool.connect();
+  try {
+    await blocker.query("BEGIN");await blocker.query("SELECT 1 FROM certops_distribution_groups WHERE id=$1 FOR UPDATE",[f.groupId]);
+    const claimed=await dispatch.claimJobs({agent,body:{supportedActions:['reconcile-from-store','renew'],maxJobs:1}});
+    assert.equal(claimed.jobs.length,1);
+    assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1",[renewal.id])).rows[0].status,'claimed');
+    assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1",[inspection.id])).rows[0].status,'pending');
+  } finally {await blocker.query("ROLLBACK");blocker.release();}
+  const retry=await dispatch.claimJobs({agent,body:{supportedActions:['reconcile-from-store','renew'],maxJobs:1}});
+  assert.equal(retry.jobs.length,1);
+  assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1",[inspection.id])).rows[0].status,'claimed');
 });
 test("revoked and restored reviewer cannot revive an earlier reconciliation approval", async () => {
   const f = await setup();
