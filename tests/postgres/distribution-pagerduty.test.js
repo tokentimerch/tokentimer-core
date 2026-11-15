@@ -66,6 +66,30 @@ test("uncertain trigger acceptance never manufactures a recovery", async () => {
   } finally { client.release(); }
 });
 
+test("a failed incident update does not erase an accepted trigger recovery obligation", async () => {
+  const f=await fixture();
+  const incident=(await pool.query(`INSERT INTO certops_distribution_incidents(workspace_id,group_id,code,dedupe_key,severity)
+    VALUES($1,$2,'required_consumer_offline',$3,'critical') RETURNING id`,[f.workspaceId,f.groupId,crypto.randomUUID()])).rows[0];
+  const hook={name:"original",kind:"pagerduty",url:"https://events.pagerduty.com/v2/enqueue",routingKey:"a".repeat(32)};
+  await pool.query(`INSERT INTO workspace_settings(workspace_id,webhook_urls) VALUES($1,$2::jsonb)
+    ON CONFLICT(workspace_id) DO UPDATE SET webhook_urls=EXCLUDED.webhook_urls`,[f.workspaceId,JSON.stringify([hook])]);
+  const service=await import("../../apps/worker/src/shared/distributionPagerDuty.js");
+  const client=await pool.connect(),sent=[];
+  const send=async(_url,payload)=>{sent.push(payload);return {success:sent.length!==2};};
+  const trigger={alert:{workspace_id:f.workspaceId,distributionContext:{incidentId:incident.id}},webhook:hook,
+    payload:{event_action:"trigger",routing_key:hook.routingKey,dedup_key:`distribution:${incident.id}`},send};
+  try {
+    assert.equal((await service.deliverDistributionPagerDutyTrigger(client,trigger)).success,true);
+    assert.equal((await service.deliverDistributionPagerDutyTrigger(client,trigger)).success,false);
+    await pool.query("UPDATE certops_distribution_incidents SET resolved_at=clock_timestamp() WHERE id=$1",[incident.id]);
+    assert.equal((await service.deliverDistributionPagerDutyTrigger(client,trigger)).skipped,true);
+    await service.reconcileDistributionPagerDuty(client,{send});
+    assert.deepEqual(sent.map(payload=>payload.event_action),["trigger","trigger","resolve"]);
+    assert.equal(sent[2].routing_key,hook.routingKey);
+    assert.ok((await pool.query("SELECT resolved_at FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows[0].resolved_at);
+  } finally { client.release(); }
+});
+
 test("migration backfills only exact accepted distribution trigger destinations", async () => {
   const f=await fixture(),destination="a".repeat(64);
   const incident=(await pool.query(`INSERT INTO certops_distribution_incidents(workspace_id,group_id,code,dedupe_key,severity)

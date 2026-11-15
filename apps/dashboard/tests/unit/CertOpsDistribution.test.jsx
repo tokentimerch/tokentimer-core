@@ -338,6 +338,11 @@ describe('Distribution Management',()=>{
     page();fireEvent.click(await screen.findByRole('button',{name:'Run safe preflight'}));await screen.findByText(/Bring the registered agent online/);
     await openView('Policy');fireEvent.click(screen.getByRole('button',{name:'Preview retained versions'}));await screen.findByText(/desired consumer version/);expect(api.rollout).not.toHaveBeenCalled();
   });
+  it('explains when the maintenance forecast is inconclusive',async()=>{
+    api.preflight.mockResolvedValue({consumers:[{bindingId:'binding',diagnostics:[{code:'CERTOPS_ACTIVATION_WINDOW_FORECAST_UNKNOWN',status:'unknown'}]}]});
+    page();fireEvent.click(await screen.findByRole('button',{name:'Run safe preflight'}));
+    expect(await screen.findByText(/beyond the forecast horizon/)).toBeInTheDocument();
+  });
   it('disables mutations when workspace operations are paused',async()=>{
     page({paused:true});expect(await screen.findByRole('button',{name:'Request rollout'})).toBeDisabled();await openView('Policy');fireEvent.click(screen.getByRole('button',{name:'Edit policy settings'}));expect(screen.getByRole('button',{name:'Save distribution policy'})).toBeDisabled();
   });

@@ -1094,8 +1094,9 @@ export default function CertOpsAdcs({
             );
           }
           const changed = current?.lastPreflightJobId === jobId;
-          const failed = isJobFinal(job?.status) && job?.status !== 'succeeded';
-          if ((changed || failed) && pollRef.current === poll) {
+          const finished = isJobFinal(job?.status);
+          const failed = finished && job?.status !== 'succeeded';
+          if ((changed || finished) && pollRef.current === poll) {
             poll.cancelled = true;
             clearInterval(poll.timer);
             pollRef.current = null;
@@ -1104,6 +1105,10 @@ export default function CertOpsAdcs({
               setPreflightNote(
                 failedPreflightMessage(job) ||
                   'The CA check did not succeed. Review the job before retrying.'
+              );
+            } else if (finished && !changed) {
+              setPreflightNote(
+                'The CA check completed, but its verdict is not the current result. Review the latest check or run it again.'
               );
             }
           }

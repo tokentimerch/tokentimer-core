@@ -109,6 +109,21 @@ test("concurrent recurring schedulers create one read-only exact desired-version
     assert.equal(job.status,requireApproval?"pending_approval":"succeeded");
   }
 });
+for(const mode of ["manual","approval_request"]) test(`unchanged ${mode} policy can be reauthorized after its configurator leaves`,async()=>{
+  const f=await fixture();
+  const initial=await operations.requestRollout({...f,actorUserId:f.actor});
+  await pool.query("UPDATE certops_distribution_rollouts SET state='verified' WHERE approval_job_id=$1",[initial.id]);
+  const policy=structuredClone(lifecycle.DEFAULT_POLICY);policy.mode=mode;policy.verification.enabled=true;
+  const configured=await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f.approver});
+  const same=await lifecycle.putPolicy({...f,policy,expectedRevision:configured.revision,actorUserId:f.actor});
+  assert.equal(same.revision,configured.revision);assert.equal(same.configured_by_user_id,f.approver);
+  await pool.query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",[f.workspaceId,f.approver]);
+  assert.equal((await operations.transaction(client=>scheduler.scheduleGroup({client,workspaceId:f.workspaceId,groupId:f.groupId}))).reason,"verification_authorization_stale");
+  const renewed=await lifecycle.putPolicy({...f,policy,expectedRevision:configured.revision,actorUserId:f.actor});
+  assert.equal(renewed.revision,configured.revision+1);assert.equal(renewed.configured_by_user_id,f.actor);
+  await pool.query("UPDATE certops_distribution_schedules SET next_run_at=clock_timestamp()-interval '1 second' WHERE workspace_id=$1",[f.workspaceId]);
+  assert.equal((await operations.transaction(client=>scheduler.scheduleGroup({client,workspaceId:f.workspaceId,groupId:f.groupId}))).scheduled,true);
+});
 test("offline recurring verification backs off without creating jobs or stealing live work",async()=>{
   const f=await fixture();const initial=await operations.requestRollout({...f,actorUserId:f.actor});
   await pool.query("UPDATE certops_distribution_rollouts SET state='verified' WHERE approval_job_id=$1",[initial.id]);
@@ -133,6 +148,42 @@ test("pending verification preserves fresh proof without hiding expired evidence
   await monitor();
   incidents=(await pool.query("SELECT code FROM certops_distribution_incidents WHERE workspace_id=$1 AND resolved_at IS NULL",[f.workspaceId])).rows.map(row=>row.code);
   assert.ok(incidents.includes('renewal_not_converged'));
+});
+test("failed verification does not recover stale proof when the job is retried",async()=>{
+  const f=await fixture();await operations.requestRollout({...f,actorUserId:f.actor});await proveConsumer(f);
+  await pool.query("UPDATE certops_consumer_current_state SET observed_at=clock_timestamp()+interval '20 seconds' WHERE workspace_id=$1 AND binding_id=$2",[f.workspaceId,f.bindingId]);
+  await operations.requestRollout({...f,verificationOnly:true,actorUserId:f.actor});
+  const verification=(await pool.query("SELECT id FROM certops_distribution_rollouts WHERE workspace_id=$1 AND verification_only ORDER BY generation DESC LIMIT 1",[f.workspaceId])).rows[0];
+  await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,verification.id));
+  const job=(await pool.query(`SELECT d.job_id FROM certops_consumer_deployments d JOIN certops_distribution_rollouts r ON r.id=d.rollout_id
+    WHERE d.workspace_id=$1 AND d.binding_id=$2 AND r.verification_only ORDER BY r.generation DESC LIMIT 1`,[f.workspaceId,f.bindingId])).rows[0].job_id;
+  await pool.query(`INSERT INTO certificate_job_log(workspace_id,job_id,event_type,status,message)
+    VALUES($1,$2,'job.failed','failed','material_drift_detected')`,[f.workspaceId,job]);
+  const matrix=await require("../../apps/api/services/certops/materialDistribution").consumerMatrix({client:pool,workspaceId:f.workspaceId,groupId:f.groupId});
+  assert.equal(matrix[0].converged,false);
+});
+
+test("an inconclusive maintenance forecast is unknown, while a missed expiry remains critical",async()=>{
+  const now=Date.now(),day=86400000;
+  for(const validDays of [90,10]){
+  const f=await fixture({validDays});
+  const activation={method:"reload",disruptive:true,requiresApproval:true,timezone:"UTC",
+    windows:[{days:[0,1,2,3,4,5,6],start:"00:00",end:"23:59"}],
+    blackouts:[{start:new Date(now-day).toISOString(),end:new Date(now+40*day).toISOString()}],validUntil:null,emergency:null};
+  await maintenance.putConsumerPolicy({...f,policy:activation,expectedAuthorizationRevision:1,actorUserId:f.actor});
+  await pool.query(`INSERT INTO certops_consumer_current_state(workspace_id,group_id,binding_id,desired_material_version_id,desired_generation)
+    VALUES($1,$2,$3,$4,1)`,[f.workspaceId,f.groupId,f.bindingId,f.materialVersionId]);
+  const policy=structuredClone(lifecycle.DEFAULT_POLICY);policy.alerts.enabled=true;
+  await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f.actor});
+  const monitor=()=>operations.transaction(client=>monitoring.monitorGroup({client,workspaceId:f.workspaceId,groupId:f.groupId}));
+  await monitor();
+  const incidents=await pool.query("SELECT 1 FROM certops_distribution_incidents WHERE workspace_id=$1 AND code=$2 AND severity=$3",[f.workspaceId,"maintenance_window_missed","critical"]);
+  assert.equal(incidents.rowCount,validDays===90?0:1);
+  const diagnostics=(await administration.preflight({workspaceId:f.workspaceId,groupId:f.groupId})).consumers[0].diagnostics;
+  const expected=validDays===90?{code:"CERTOPS_ACTIVATION_WINDOW_FORECAST_UNKNOWN",status:"unknown",reason:"maintenance_search_horizon_exceeded"}:
+    {code:"CERTOPS_ACTIVATION_WINDOW_UNAVAILABLE",status:"blocked",reason:"no_window_before_expiry"};
+  assert.deepEqual(diagnostics.find(d=>d.reason===expected.reason),expected);
+  }
 });
 test("distribution PagerDuty recovery uses only the accepted original integration",async()=>{
   const f=await fixture(),crypto=require("node:crypto");
