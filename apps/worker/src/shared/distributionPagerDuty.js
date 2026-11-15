@@ -100,11 +100,18 @@ async function settleRecoveredDistributionAlerts(client, batchSize, canRecover) 
         if (ledger.length !== 1 || ledger[0] !== "webhooks" || queue.metadata?.pagerdutyRecoveryRequeued === true) {
           await client.query("COMMIT"); continue;
         }
-        const policyEnabled = (await client.query(`SELECT 1 FROM certops_distribution_incidents i
+        const settings = (await client.query(`SELECT ws.contact_groups,ws.default_contact_group_id,ws.webhook_urls,policy.policy
+          FROM certops_distribution_incidents i
           JOIN certops_distribution_policies policy ON policy.workspace_id=i.workspace_id AND policy.group_id=i.group_id
-          WHERE i.workspace_id=$1 AND i.id::text=$2 AND policy.policy->'alerts'->>'enabled'='true'`,
-        [queue.workspace_id,queue.metadata?.incidentId])).rowCount > 0;
-        if (!policyEnabled || !(await canRecover(client,{workspace_id:queue.workspace_id}))) {
+          JOIN workspace_settings ws ON ws.workspace_id=i.workspace_id
+          WHERE i.workspace_id=$1 AND i.id::text=$2`,[queue.workspace_id,queue.metadata?.incidentId])).rows[0];
+        const groups = resolveContactGroupsForAsset({contactGroups:settings?.contact_groups,
+          assignedIds:settings?.policy?.alerts?.contactGroupIds,defaultContactGroupId:settings?.default_contact_group_id});
+        const names = new Set(groups.flatMap(group => getWebhookNames(group)));
+        const hooks = Array.isArray(settings?.webhook_urls) ? settings.webhook_urls : [];
+        const selectedNames = new Set(hooks.map(hook => String(hook?.name || "").trim()).filter(name => names.has(name)));
+        const complete = names.size > 0 && selectedNames.size === names.size;
+        if (!complete || settings?.policy?.alerts?.enabled !== true || !(await canRecover(client,{workspace_id:queue.workspace_id}))) {
           await client.query("UPDATE alert_queue SET next_attempt_at=clock_timestamp()+interval '5 minutes' WHERE id=$1",[id]);
           await client.query("COMMIT"); continue;
         }

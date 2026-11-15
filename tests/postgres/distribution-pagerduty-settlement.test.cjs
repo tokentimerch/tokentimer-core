@@ -199,3 +199,32 @@ test("legacy recovery waits for every named webhook to be restored",async()=>{
  assert.equal(q.status,"sent");
 });
 
+
+test("initial legacy recovery waits for every named webhook",async()=>{
+ const {f,incident,id,worker,send,allow}=await blocked();
+ await pool.query("UPDATE alert_queue SET channels='[\"webhooks\"]'::jsonb WHERE id=$1",[id]);
+ await pool.query("UPDATE workspace_settings SET contact_groups=$2::jsonb WHERE workspace_id=$1",[f.workspaceId,JSON.stringify([{id:"original",name:"Original",webhook_names:["original","missing"]}])]);allow();
+ await pool.query("UPDATE certops_distribution_pagerduty SET next_attempt_at=clock_timestamp() WHERE incident_id=$1",[incident.id]);
+ await worker.deliveryWorkerJob({closePool:false,webhookSender:send});
+ let q=(await pool.query("SELECT status,metadata FROM alert_queue WHERE id=$1",[id])).rows[0];
+ assert.equal(q.status,"blocked");assert.equal(q.metadata.pagerdutyRecoveryRequeued,undefined);
+ assert.equal((await pool.query("SELECT resolved_at FROM operational_notifications WHERE workspace_id=$1 AND dedupe_key=$2",[f.workspaceId,`delivery_blocked:${id}`])).rows[0].resolved_at,null);
+ await pool.query("UPDATE workspace_settings SET contact_groups=$2::jsonb WHERE workspace_id=$1",[f.workspaceId,JSON.stringify([{id:"original",name:"Original",webhook_names:["original"]}])]);
+ await pool.query("UPDATE alert_queue SET next_attempt_at=clock_timestamp() WHERE id=$1",[id]);
+ await worker.deliveryWorkerJob({closePool:false,webhookSender:send});
+ q=(await pool.query("SELECT status,metadata FROM alert_queue WHERE id=$1",[id])).rows[0];assert.equal(q.status,"sent");
+ assert.ok((await pool.query("SELECT resolved_at FROM operational_notifications WHERE workspace_id=$1 AND dedupe_key=$2",[f.workspaceId,`delivery_blocked:${id}`])).rows[0].resolved_at);
+});
+
+
+test("initial legacy recovery delivers other configured webhooks",async()=>{
+ const {f,hook,incident,id,worker,allow}=await blocked(),events=[];
+ const generic={name:"generic",kind:"generic",url:"https://example.test/hook"};
+ await pool.query("UPDATE alert_queue SET channels='[\"webhooks\"]'::jsonb WHERE id=$1",[id]);
+ await pool.query("UPDATE workspace_settings SET contact_groups=$2::jsonb,webhook_urls=$3::jsonb WHERE workspace_id=$1",[f.workspaceId,JSON.stringify([{id:"original",name:"Original",webhook_names:["original","generic"]}]),JSON.stringify([hook,generic])]);allow();
+ await pool.query("UPDATE certops_distribution_pagerduty SET next_attempt_at=clock_timestamp() WHERE incident_id=$1",[incident.id]);
+ await worker.deliveryWorkerJob({closePool:false,webhookSender:async(url,payload,kind)=>{events.push({url,kind});return {success:true};}});
+ assert.equal((await pool.query("SELECT status FROM alert_queue WHERE id=$1",[id])).rows[0].status,"sent");
+ assert.equal(events.filter(e=>e.kind==="pagerduty").length,1);assert.equal(events.filter(e=>e.kind==="generic").length,1);
+});
+
