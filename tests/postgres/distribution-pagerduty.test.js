@@ -45,26 +45,83 @@ test("worker resolves the integration that received the distribution trigger", a
   assert.equal(sent[1].payload.dedup_key,sent[0].payload.dedup_key);
 });
 
-test("uncertain trigger acceptance never manufactures a recovery", async () => {
+test("worker records recovery after an uncertain PagerDuty trigger", async () => {
+  const f=await fixture(),hook={name:"original",kind:"pagerduty",url:"https://events.pagerduty.com/v2/enqueue",routingKey:"a".repeat(32)};
+  await pool.query(`INSERT INTO workspace_settings(workspace_id,webhook_urls,contact_groups) VALUES($1,$2::jsonb,$3::jsonb)
+    ON CONFLICT(workspace_id) DO UPDATE SET webhook_urls=EXCLUDED.webhook_urls,contact_groups=EXCLUDED.contact_groups`,
+    [f.workspaceId,JSON.stringify([hook]),JSON.stringify([{id:"original",name:"Original",webhook_names:["original"]}])]);
+  const policy=structuredClone(lifecycle.DEFAULT_POLICY);policy.alerts.enabled=true;policy.alerts.contactGroupIds=["original"];
+  await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f.actor});
+  const incident=(await pool.query(`INSERT INTO certops_distribution_incidents(workspace_id,group_id,code,dedupe_key,severity)
+    VALUES($1,$2,'required_consumer_offline',$3,'critical') RETURNING id`,[f.workspaceId,f.groupId,crypto.randomUUID()])).rows[0];
+  const queue=async transition=>(await pool.query(`INSERT INTO alert_queue(user_id,certops_agent_id,alert_key,threshold_days,due_date,channels,status,metadata)
+    VALUES($1,$2,$3,0,CURRENT_DATE,'["webhooks"]','pending',$4::jsonb) RETURNING id`,
+    [f.actor,f.consumer,`cert_distribution:${incident.id}:${transition}`,JSON.stringify({incidentId:incident.id,groupId:f.groupId,transition})])).rows[0].id;
+  await queue("opened");const worker=await import("../../apps/worker/src/delivery-worker.js");
+  workerPool=(await import("../../apps/worker/src/db.js")).pool;const events=[];
+  const send=async(_url,payload)=>{events.push(payload.event_action);if(payload.event_action==="trigger")throw new Error("response lost");return {success:true};};
+  await worker.deliveryWorkerJob({closePool:false,webhookSender:send});
+  await pool.query("UPDATE certops_distribution_incidents SET resolved_at=clock_timestamp() WHERE id=$1",[incident.id]);
+  const resolvedId=await queue("resolved");
+  await worker.deliveryWorkerJob({closePool:false,webhookSender:send});
+  assert.deepEqual(events,["trigger","resolve"]);
+  assert.equal((await pool.query("SELECT status FROM alert_queue WHERE id=$1",[resolvedId])).rows[0].status,"sent");
+});
+
+test("recovery resolves an uncertain trigger at its original destination without claiming acceptance", async () => {
   const f=await fixture();
   const incident=(await pool.query(`INSERT INTO certops_distribution_incidents(workspace_id,group_id,code,dedupe_key,severity)
     VALUES($1,$2,'required_consumer_offline',$3,'critical') RETURNING id`,[f.workspaceId,f.groupId,crypto.randomUUID()])).rows[0];
   const hook={name:"original",kind:"pagerduty",url:"https://events.pagerduty.com/v2/enqueue",routingKey:"a".repeat(32)};
-  const service=await import("../../apps/worker/src/shared/distributionPagerDuty.js");
-  const client=await pool.connect(),sent=[];
-  const send=async(_url,payload)=>{sent.push(payload);return {success:false};};
+  const replacement={...hook,routingKey:"b".repeat(32)};
+  await pool.query(`INSERT INTO workspace_settings(workspace_id,webhook_urls) VALUES($1,$2::jsonb)
+    ON CONFLICT(workspace_id) DO UPDATE SET webhook_urls=EXCLUDED.webhook_urls`,[f.workspaceId,JSON.stringify([replacement,hook])]);
+  const policy=structuredClone(lifecycle.DEFAULT_POLICY);policy.alerts.enabled=true;
+  await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f.actor});
+  const service=await import("../../apps/worker/src/shared/distributionPagerDuty.js"),client=await pool.connect(),sent=[];
   try {
-    await service.deliverDistributionPagerDutyTrigger(client,{alert:{workspace_id:f.workspaceId,distributionContext:{incidentId:incident.id}},webhook:hook,
-      payload:{event_action:"trigger",routing_key:hook.routingKey,dedup_key:`distribution:${incident.id}`},send});
+    const result=await service.deliverDistributionPagerDutyTrigger(client,{alert:{workspace_id:f.workspaceId,distributionContext:{incidentId:incident.id}},webhook:hook,
+      payload:{event_action:"trigger",routing_key:hook.routingKey,dedup_key:`distribution:${incident.id}`},send:async(_url,payload)=>{sent.push(payload);throw new Error("response lost");}});
+    assert.equal(result.success,false);
     await pool.query("UPDATE certops_distribution_incidents SET resolved_at=clock_timestamp() WHERE id=$1",[incident.id]);
-    const skipped=await service.deliverDistributionPagerDutyTrigger(client,{alert:{workspace_id:f.workspaceId,distributionContext:{incidentId:incident.id}},webhook:hook,
-      payload:{event_action:"trigger",routing_key:hook.routingKey,dedup_key:`distribution:${incident.id}`},send});
-    assert.equal(skipped.skipped,true);
-    await service.reconcileDistributionPagerDuty(client,{send});
-    assert.equal(sent.length,1);
+    await pool.query("UPDATE workspace_settings SET webhook_urls=$2::jsonb WHERE workspace_id=$1",[f.workspaceId,JSON.stringify([replacement])]);
+    await service.reconcileDistributionPagerDuty(client,{send:async(_url,payload)=>{sent.push(payload);return {success:true};}});
+    assert.deepEqual(sent.map(payload=>payload.event_action),["trigger"]);
+    assert.equal((await pool.query("SELECT last_error FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows[0].last_error,"original_destination_unavailable");
+    await pool.query("UPDATE workspace_settings SET webhook_urls=$2::jsonb WHERE workspace_id=$1",[f.workspaceId,JSON.stringify([replacement,hook])]);
+    await pool.query("UPDATE certops_distribution_pagerduty SET next_attempt_at=clock_timestamp() WHERE incident_id=$1",[incident.id]);
+    await service.reconcileDistributionPagerDuty(client,{send:async(_url,payload)=>{sent.push(payload);return {success:true};}});
+    assert.deepEqual(sent.map(payload=>payload.event_action),["trigger","resolve"]);
+    assert.equal(sent[1].routing_key,hook.routingKey);assert.equal(sent[1].dedup_key,sent[0].dedup_key);
     const row=(await pool.query("SELECT trigger_accepted_at,trigger_delivery_uncertain,resolved_at FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows[0];
-    assert.equal(row.trigger_accepted_at,null);assert.equal(row.trigger_delivery_uncertain,true);assert.equal(row.resolved_at,null);
-  } finally { client.release(); }
+    assert.equal(row.trigger_accepted_at,null);assert.equal(row.trigger_delivery_uncertain,true);assert.ok(row.resolved_at);
+  } finally {client.release();}
+});
+
+test("recovery keeps retrying after eight failures and resumes when PagerDuty returns", async () => {
+  const f=await fixture(),hook={kind:"pagerduty",url:"https://events.pagerduty.com/v2/enqueue",routingKey:"a".repeat(32)};
+  await pool.query(`INSERT INTO workspace_settings(workspace_id,webhook_urls) VALUES($1,$2::jsonb)
+    ON CONFLICT(workspace_id) DO UPDATE SET webhook_urls=EXCLUDED.webhook_urls`,[f.workspaceId,JSON.stringify([hook])]);
+  const policy=structuredClone(lifecycle.DEFAULT_POLICY);policy.alerts.enabled=true;
+  await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f.actor});
+  const incident=(await pool.query(`INSERT INTO certops_distribution_incidents(workspace_id,group_id,code,dedupe_key,severity)
+    VALUES($1,$2,'required_consumer_offline',$3,'critical') RETURNING id`,[f.workspaceId,f.groupId,crypto.randomUUID()])).rows[0];
+  const service=await import("../../apps/worker/src/shared/distributionPagerDuty.js"),client=await pool.connect();let attempts=0;
+  try {
+    await service.deliverDistributionPagerDutyTrigger(client,{alert:{workspace_id:f.workspaceId,distributionContext:{incidentId:incident.id}},webhook:hook,payload:{event_action:"trigger"},send:async()=>({success:true})});
+    await pool.query("UPDATE certops_distribution_incidents SET resolved_at=clock_timestamp() WHERE id=$1",[incident.id]);
+    for(let n=0;n<8;n++){
+      await pool.query("UPDATE certops_distribution_pagerduty SET next_attempt_at=clock_timestamp() WHERE incident_id=$1",[incident.id]);
+      await service.reconcileDistributionPagerDuty(client,{send:async()=>{attempts++;return {success:false}}});
+    }
+    const parked=(await pool.query("SELECT resolve_attempts,resolved_at,next_attempt_at>clock_timestamp() AS delayed FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows[0];
+    assert.equal(parked.resolve_attempts,8);assert.equal(parked.resolved_at,null);assert.equal(parked.delayed,true);
+    await service.reconcileDistributionPagerDuty(client,{send:async()=>{attempts++;return {success:true}}});assert.equal(attempts,8);
+    await pool.query("UPDATE certops_distribution_pagerduty SET next_attempt_at=clock_timestamp() WHERE incident_id=$1",[incident.id]);
+    await service.reconcileDistributionPagerDuty(client,{send:async()=>{attempts++;return {success:true}}});
+    const row=(await pool.query("SELECT resolve_attempts,resolved_at FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows[0];
+    assert.equal(attempts,9);assert.equal(row.resolve_attempts,9);assert.ok(row.resolved_at);
+  } finally {client.release();}
 });
 
 test("a failed incident update does not erase an accepted trigger recovery obligation", async () => {

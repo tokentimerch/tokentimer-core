@@ -2790,7 +2790,7 @@ export async function deliveryWorkerJob({
                 }
                 if (delegatedDistributionRecovery) {
                   const historical = await client.query(`SELECT destination_id,resolved_at FROM certops_distribution_pagerduty
-                    WHERE workspace_id=$1 AND incident_id=$2 AND trigger_accepted_at IS NOT NULL`,
+                    WHERE workspace_id=$1 AND incident_id=$2 AND (trigger_accepted_at IS NOT NULL OR trigger_delivery_uncertain)`,
                   [alert.workspace_id,alert.distributionContext.incidentId]);
                   if (!historical.rowCount) {
                     consideredEndpoints += 1;

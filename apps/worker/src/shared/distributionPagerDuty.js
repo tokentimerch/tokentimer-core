@@ -32,12 +32,14 @@ export async function deliverDistributionPagerDutyTrigger(client, { alert, webho
 
 // Recovery is independent of today's groups. A removed or
 // rotated integration is parked until its exact original configuration returns.
+// An uncertain trigger can have reached PagerDuty: resolve the same dedup key
+// without claiming the trigger was accepted. Retry unresolved sends with backoff.
 export async function reconcileDistributionPagerDuty(client, { send, batchSize = 100, canRecover = () => true } = {}) {
   const due = await client.query(`SELECT p.workspace_id,p.incident_id,p.destination_id
     FROM certops_distribution_pagerduty p
     JOIN certops_distribution_incidents i ON i.workspace_id=p.workspace_id AND i.id=p.incident_id
-    WHERE i.resolved_at IS NOT NULL AND p.trigger_accepted_at IS NOT NULL AND (NOT p.trigger_delivery_uncertain OR p.last_error='historical_destination_unverified') AND p.resolved_at IS NULL
-      AND p.next_attempt_at<=clock_timestamp() AND p.resolve_attempts<8
+    WHERE i.resolved_at IS NOT NULL AND (p.trigger_accepted_at IS NOT NULL OR p.trigger_delivery_uncertain) AND p.resolved_at IS NULL
+      AND p.next_attempt_at<=clock_timestamp()
     ORDER BY p.next_attempt_at,p.incident_id LIMIT $1`, [Math.max(1,Math.min(500,batchSize))]);
   for (const row of due.rows) {
     const lock = lockName(row.incident_id,row.destination_id);
@@ -48,9 +50,8 @@ export async function reconcileDistributionPagerDuty(client, { send, batchSize =
         LEFT JOIN workspace_settings ws ON ws.workspace_id=p.workspace_id
         LEFT JOIN certops_distribution_policies policy ON policy.workspace_id=i.workspace_id AND policy.group_id=i.group_id
         WHERE p.workspace_id=$1 AND p.incident_id=$2 AND p.destination_id=$3
-          AND i.resolved_at IS NOT NULL AND p.trigger_accepted_at IS NOT NULL
-          AND (NOT p.trigger_delivery_uncertain OR p.last_error='historical_destination_unverified')
-          AND p.resolved_at IS NULL AND p.next_attempt_at<=clock_timestamp() AND p.resolve_attempts<8`,
+          AND i.resolved_at IS NOT NULL AND (p.trigger_accepted_at IS NOT NULL OR p.trigger_delivery_uncertain)
+          AND p.resolved_at IS NULL AND p.next_attempt_at<=clock_timestamp()`,
       [row.workspace_id,row.incident_id,row.destination_id])).rows[0];
       if (!current) continue;
       if (current.distribution_policy?.alerts?.enabled !== true ||
@@ -62,7 +63,7 @@ export async function reconcileDistributionPagerDuty(client, { send, batchSize =
       const hook = (Array.isArray(current.webhook_urls) ? current.webhook_urls : [])
         .find(item => pagerDutyDestinationId(row.workspace_id,item) === row.destination_id);
       if (!hook) {
-        await client.query(`UPDATE certops_distribution_pagerduty SET last_error=CASE WHEN trigger_delivery_uncertain THEN 'historical_destination_unverified' ELSE 'original_destination_unavailable' END,
+        await client.query(`UPDATE certops_distribution_pagerduty SET last_error=CASE WHEN trigger_delivery_uncertain AND trigger_accepted_at IS NOT NULL AND last_error='historical_destination_unverified' THEN 'historical_destination_unverified' ELSE 'original_destination_unavailable' END,
           next_attempt_at=clock_timestamp()+interval '5 minutes' WHERE workspace_id=$1 AND incident_id=$2 AND destination_id=$3`,
         [row.workspace_id,row.incident_id,row.destination_id]);
         continue;
