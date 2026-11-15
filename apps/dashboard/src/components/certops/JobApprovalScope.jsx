@@ -130,14 +130,30 @@ function policyScope(policy) {
   };
 }
 
+function cleanupProvider(intent) {
+  if (
+    intent?.type === 'vault-kv2-soft-delete' &&
+    intent.operation == null &&
+    (intent.provider == null || intent.provider === 'vault-kv2')
+  )
+    return 'vault-kv2';
+  if (
+    intent?.type == null &&
+    intent?.operation === 'soft-delete' &&
+    ['vault-kv2', 'openbao-kv2'].includes(intent.provider)
+  )
+    return intent.provider;
+  return null;
+}
+
 export function cleanupScopeAvailable(job) {
   if (job?.operation !== 'cleanup-from-store') return true;
   const intent = job.payload?.materialCleanup;
   return (
     !!intent &&
+    !!cleanupProvider(intent) &&
     [
       'materialVersionId',
-      'provider',
       'providerVersion',
       'materialStoreRef',
       'profileRevision',
@@ -188,7 +204,6 @@ function reviewScope(job) {
         ['groupId', 'Distribution group'],
         ['managementPeriodId', 'Management period'],
         ['materialVersionId', 'Material version'],
-        ['provider', 'Provider'],
         ['materialStoreRef', 'Customer store alias'],
         ['providerVersion', 'Provider version'],
         ['profileRevision', 'Local profile revision'],
@@ -196,6 +211,7 @@ function reviewScope(job) {
         ['scopeHash', 'Scope hash'],
         ['expiresAt', 'Approval expires'],
       ]),
+      Provider: cleanupProvider(intent),
       Retention: retention(intent.retentionPolicy),
     };
   }

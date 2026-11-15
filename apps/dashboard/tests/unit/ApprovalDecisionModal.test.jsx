@@ -128,6 +128,31 @@ describe('immutable distribution approval review', () => {
     expect(dialog.getByRole('button', { name: 'Approve' })).toBeEnabled();
   });
 
+  it('recognizes a legacy Vault cleanup without rewriting its signed intent', async () => {
+    const { provider, operation, ...legacy } = cleanup;
+    const dialog = await show(
+      { materialCleanup: { ...legacy, type: 'vault-kv2-soft-delete' } },
+      { operation: 'cleanup-from-store' }
+    );
+    expect(dialog.getByText('vault-kv2')).toBeInTheDocument();
+    expect(dialog.getByRole('button', { name: 'Approve' })).toBeEnabled();
+  });
+
+  it('refuses a contradictory legacy cleanup provider', async () => {
+    const { operation, ...legacy } = cleanup;
+    const dialog = await show(
+      {
+        materialCleanup: {
+          ...legacy,
+          type: 'vault-kv2-soft-delete',
+          provider: 'openbao-kv2',
+        },
+      },
+      { operation: 'cleanup-from-store' }
+    );
+    expect(dialog.getByRole('button', { name: 'Approve' })).toBeDisabled();
+  });
+
   it('reviews frozen rollout destinations, exact Azure version, wave zero and local activation calendars', async () => {
     const dialog = await show({
       distributionRollout: {
@@ -179,15 +204,36 @@ describe('immutable distribution approval review', () => {
     );
   });
 
-  for (const approvalType of ['distributionRollout', 'distributionPolicyApproval']) {
+  for (const approvalType of [
+    'distributionRollout',
+    'distributionPolicyApproval',
+  ]) {
     for (const staging of [true, false]) {
       it(`shows staging ${staging ? 'enabled' : 'disabled'} for ${approvalType}`, async () => {
-        const selected = {...binding, activationPolicy: {...binding.activationPolicy, independentStaging: staging}};
-        const intent = approvalType === 'distributionRollout' ? {bindings:[selected]} : {scope:{bindings:[selected]}};
-        const dialog = await show({[approvalType]:intent});
-        const field = dialog.getByText('Preparation before activation window').parentElement;
-        expect(within(field).getByText(staging ? 'Yes' : 'No')).toBeInTheDocument();
-        if(staging) expect(dialog.getByText(/does not establish installation, service use or trust/)).toBeInTheDocument();
+        const selected = {
+          ...binding,
+          activationPolicy: {
+            ...binding.activationPolicy,
+            independentStaging: staging,
+          },
+        };
+        const intent =
+          approvalType === 'distributionRollout'
+            ? { bindings: [selected] }
+            : { scope: { bindings: [selected] } };
+        const dialog = await show({ [approvalType]: intent });
+        const field = dialog.getByText(
+          'Preparation before activation window'
+        ).parentElement;
+        expect(
+          within(field).getByText(staging ? 'Yes' : 'No')
+        ).toBeInTheDocument();
+        if (staging)
+          expect(
+            dialog.getByText(
+              /does not establish installation, service use or trust/
+            )
+          ).toBeInTheDocument();
       });
     }
   }
