@@ -48,13 +48,48 @@ function requireEnvironment(metadata, branches, name) {
   const reviewers = metadata.protection_rules?.find(
     (rule) => rule.type === "required_reviewers",
   );
-  if (
-    name === LAB_ENV &&
-    (!reviewers?.reviewers?.length || reviewers.prevent_self_review !== true)
-  )
+  if (name === LAB_ENV && !reviewers?.reviewers?.length)
     fail("AZURE_KV_INDEPENDENT_ENVIRONMENT_APPROVAL_REQUIRED");
   if (name === CLEANUP_ENV && reviewers?.reviewers?.length)
     fail("AZURE_KV_UNATTENDED_CLEANUP_ENVIRONMENT_REQUIRED");
+}
+// Approval history is run-scoped and does not identify a rerun attempt.
+// Accept only a fresh attempt with one independent approval for this environment.
+function requireIndependentApproval(run, approvals, env) {
+  requireTrusted(env);
+  const actorId = env.GITHUB_ACTOR_ID;
+  if (
+    env.GITHUB_RUN_ATTEMPT !== "1" ||
+    !/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID || "") ||
+    !/^[1-9][0-9]*$/.test(actorId || "") ||
+    !Number.isSafeInteger(run?.id) ||
+    String(run.id) !== env.GITHUB_RUN_ID ||
+    run.run_attempt !== 1 ||
+    run.event !== "workflow_dispatch" ||
+    run.head_branch !== "main" ||
+    run.head_sha !== env.GITHUB_SHA ||
+    run.path !== WORKFLOW ||
+    String(run.actor?.id || "") !== actorId ||
+    String(run.triggering_actor?.id || "") !== actorId
+  )
+    fail("AZURE_KV_APPROVAL_RUN_CONTEXT_INVALID");
+  const labApprovals = Array.isArray(approvals)
+    ? approvals.filter(
+        (item) =>
+          Array.isArray(item?.environments) &&
+          item.environments.some(
+            (environment) => environment?.name === LAB_ENV,
+          ),
+      )
+    : [];
+  if (
+    labApprovals.length !== 1 ||
+    labApprovals[0].state !== "approved" ||
+    !Number.isSafeInteger(labApprovals[0].user?.id) ||
+    labApprovals[0].user.id < 1 ||
+    String(labApprovals[0].user.id) === actorId
+  )
+    fail("AZURE_KV_INDEPENDENT_ENVIRONMENT_APPROVAL_REQUIRED");
 }
 function plan(
   env,
@@ -265,6 +300,7 @@ module.exports = {
   fail,
   requireTrusted,
   requireEnvironment,
+  requireIndependentApproval,
   plan,
   ownedGroup,
   ownedResources,

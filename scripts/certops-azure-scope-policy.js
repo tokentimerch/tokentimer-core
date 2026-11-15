@@ -168,18 +168,58 @@ function keyvaultPolicy(name, workflow, errors) {
       )
         errors.push("Real Azure campaign must be mandatory after preflight");
       const steps = job.steps || [];
-      for (const command of [
-        "node tests/e2e/azure-keyvault-real.cjs scrub",
-        ...(!janitor
-          ? ["node infra/certops-azure-keyvault/lab.js cleanup"]
-          : []),
-      ])
+      if (
+        !steps.some(
+          (step) =>
+            step.run === "node tests/e2e/azure-keyvault-real.cjs scrub" &&
+            step.if === "always()",
+        )
+      )
+        errors.push("Always-run private staging scrub required");
+      if (!janitor) {
+        const approval = steps.findIndex(
+          (step) => step.id === "independent-approval",
+        );
+        const loginSteps = steps.filter(
+          (step) =>
+            step.run === "./infra/certops-azure-keyvault/login-oidc.ps1",
+        );
+        const cleanupCondition =
+          "always() && steps.independent-approval.outcome == 'success'";
         if (
-          !steps.some((step) => step.run === command && step.if === "always()")
+          approval < 0 ||
+          steps[approval].run !==
+            "node infra/certops-azure-keyvault/lab.js github-approval" ||
+          steps[approval].if ||
+          steps[approval]["continue-on-error"] ||
+          steps
+            .slice(0, approval)
+            .some(
+              (step) =>
+                step.run ||
+                !/^actions\/(?:checkout|setup-node)@[a-f0-9]{40}$/.test(
+                  step.uses || "",
+                ),
+            ) ||
+          steps.findIndex(
+            (step) =>
+              step.run === "node infra/certops-azure-keyvault/lab.js provision",
+          ) <= approval ||
+          loginSteps.length !== 2 ||
+          steps.indexOf(loginSteps[0]) <= approval ||
+          loginSteps[0].if ||
+          steps.indexOf(loginSteps[1]) <= approval ||
+          loginSteps[1].if !== cleanupCondition ||
+          !steps.some(
+            (step) =>
+              step.run === "node infra/certops-azure-keyvault/lab.js cleanup" &&
+              step.if === cleanupCondition,
+          )
         )
           errors.push(
-            "Always-run private staging and owned-resource cleanup required",
+            "Independent run approval must precede Azure login and guard cleanup authentication",
           );
+      }
       if (
         janitor &&
         !steps.some(

@@ -81,6 +81,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
+      - name: Verify independent approval for this fresh run before Azure authentication
+        id: independent-approval
+        run: node infra/certops-azure-keyvault/lab.js github-approval
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: "11.28.8"
@@ -103,11 +106,11 @@ jobs:
       - name: Verify sanitized campaign evidence
         run: node scripts/certops-azure-keyvault-report.js qualification-results/azure-keyvault-evidence.json
       - name: Reauthenticate for cleanup even after cancellation or failed qualification
-        if: always()
+        if: always() && steps.independent-approval.outcome == 'success'
         shell: pwsh
         run: ./infra/certops-azure-keyvault/login-oidc.ps1
       - name: Remove only verified run-owned resources; never purge
-        if: always()
+        if: always() && steps.independent-approval.outcome == 'success'
         run: node infra/certops-azure-keyvault/lab.js cleanup
       - name: Remove private local credentials and staging
         if: always()
