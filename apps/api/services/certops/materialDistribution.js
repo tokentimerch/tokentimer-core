@@ -16,7 +16,8 @@ const PUBLIC_FAILURE_CODES=new Set(["material_auth_denied","material_auth_unavai
   "material_binding_uncertain","material_binding_locked","material_binding_policy_denied","material_destination_denied",
   "material_probe_identity_mismatch","material_lease_unavailable","material_install_failed","material_reload_failed",
   "material_service_verification_failed","material_windows_policy_denied","material_windows_preflight_failed","material_windows_algorithm_unsupported",
-  "material_windows_import_failed","material_windows_activation_failed","material_windows_commit_failed",
+  "material_windows_import_failed","material_windows_activation_failed","material_windows_wildcard_conflict",
+  "material_windows_binding_inventory_unavailable","material_windows_commit_failed",
   "material_windows_verify_failed","material_windows_binding_mismatch","material_windows_deployment_failed",
   "material_bundle_too_large","material_response_invalid","material_response_too_large","material_probe_config_invalid",
   "material_drift_detected","material_reconciliation_mismatch"]);

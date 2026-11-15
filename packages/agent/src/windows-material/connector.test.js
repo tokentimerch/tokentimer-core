@@ -43,6 +43,28 @@ test("Windows IIS accepts qualified key algorithms and rejects P-521 before nati
   });
   assert.doesNotThrow(() => validateWindowsKey(publicKey));
 });
+
+test("activation reports bounded conflict and inventory errors without exposing details", async (t) => {
+  const stateDir=fs.mkdtempSync(path.join(os.tmpdir(),"tt-win-conflict-"));
+  t.after(() => fs.rmSync(stateDir,{recursive:true,force:true}));
+  for (const [reason, expected] of [
+    ["WILDCARD_PRECEDENCE_CONFLICT","material_windows_wildcard_conflict"],
+    ["QUERY_FAILED","material_windows_binding_inventory_unavailable"],
+    ["BIND_FAILED","material_windows_activation_failed"],
+  ]) {
+    let calls=0;
+    const connector=createWindowsConnector({binding,stateDir,
+      execFileImpl:(_file,_args,_options,callback)=>{calls++;callback(null,JSON.stringify({ok:true}),"");},
+      deployBinding:async()=>({ok:false,code:reason,detail:"sensitive-address-canary"}),
+    });
+    await assert.rejects(connector.activate({certificatePem:"unused"}), error => {
+      assert.equal(error.code,expected);
+      assert.doesNotMatch(error.message,/sensitive-address-canary/);
+      return true;
+    });
+    assert.equal(calls,1,"commit is not attempted after a rejected bind");
+  }
+});
 test("Windows connector permits only the exact typed IIS rebind surface", () => {
   const policy = {
     checkTargetScope: (ref) => ({ allowed: ref === "iis-customer" }),
