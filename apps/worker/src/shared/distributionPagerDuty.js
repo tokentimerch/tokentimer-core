@@ -30,6 +30,100 @@ export async function deliverDistributionPagerDutyTrigger(client, { alert, webho
   }
 }
 
+// A resolved PagerDuty destination can outlive the ordinary queue's retry limit.
+// Reconcile only proven endpoints, and never take over an in-flight claim or
+// clear another channel's failure. Repeating this sweep repairs a crash or a
+// queue worker that finishes its claim after the recovery request succeeded.
+async function settleRecoveredDistributionAlerts(client, batchSize, canRecover) {
+  const candidates = await client.query(`SELECT DISTINCT aq.id
+    FROM alert_queue aq
+    JOIN certops_agents a ON a.id=aq.certops_agent_id
+    JOIN certops_distribution_pagerduty p ON p.workspace_id=a.workspace_id AND p.incident_id::text=aq.metadata->>'incidentId'
+    WHERE aq.alert_key LIKE 'cert_distribution:%' AND aq.metadata->>'transition'='resolved'
+      AND aq.status='blocked' AND aq.delivery_claim_id IS NULL AND aq.error_message LIKE '%MAX_ATTEMPTS%'
+      AND p.resolved_at IS NOT NULL AND (
+        (aq.channels->'version'='1'::jsonb AND jsonb_typeof(aq.channels->'required')='array'
+          AND jsonb_typeof(aq.channels->'retry')='array' AND jsonb_typeof(aq.channels->'outcomes'->'webhooks'->'endpoints')='object'
+          AND aq.channels->'outcomes'->'webhooks'->'endpoints'->>p.destination_id IN ('pending','failed'))
+        OR (aq.channels='["webhooks"]'::jsonb AND aq.metadata->>'pagerdutyRecoveryRequeued' IS DISTINCT FROM 'true'
+          AND (aq.next_attempt_at IS NULL OR aq.next_attempt_at<=clock_timestamp())
+          AND NOT EXISTS (SELECT 1 FROM certops_distribution_pagerduty pending
+            WHERE pending.workspace_id=p.workspace_id AND pending.incident_id=p.incident_id AND pending.resolved_at IS NULL))
+      )
+    ORDER BY aq.id LIMIT $1`, [batchSize]);
+  for (const { id } of candidates.rows) {
+    await client.query("BEGIN");
+    try {
+      const queue = (await client.query(`SELECT aq.channels,aq.metadata,a.workspace_id
+        FROM alert_queue aq JOIN certops_agents a ON a.id=aq.certops_agent_id
+        WHERE aq.id=$1 AND aq.status='blocked' AND aq.delivery_claim_id IS NULL AND aq.error_message LIKE '%MAX_ATTEMPTS%'
+        FOR UPDATE OF aq SKIP LOCKED`, [id])).rows[0];
+      if (!queue) { await client.query("COMMIT"); continue; }
+      const ledger = queue.channels;
+      if (Array.isArray(ledger)) {
+        // Legacy retry arrays have no per-endpoint proof. Requeue only the
+        // single-channel case once; the ordinary worker settles actual targets.
+        if (ledger.length !== 1 || ledger[0] !== "webhooks" || queue.metadata?.pagerdutyRecoveryRequeued === true) {
+          await client.query("COMMIT"); continue;
+        }
+        const policyEnabled = (await client.query(`SELECT 1 FROM certops_distribution_incidents i
+          JOIN certops_distribution_policies policy ON policy.workspace_id=i.workspace_id AND policy.group_id=i.group_id
+          WHERE i.workspace_id=$1 AND i.id::text=$2 AND policy.policy->'alerts'->>'enabled'='true'`,
+        [queue.workspace_id,queue.metadata?.incidentId])).rowCount > 0;
+        if (!policyEnabled || !(await canRecover(client,{workspace_id:queue.workspace_id}))) {
+          await client.query("UPDATE alert_queue SET next_attempt_at=clock_timestamp()+interval '5 minutes' WHERE id=$1",[id]);
+          await client.query("COMMIT"); continue;
+        }
+        await client.query(`UPDATE alert_queue SET status='pending',attempts_webhooks=0,next_attempt_at=clock_timestamp(),
+          metadata=jsonb_set(metadata,'{pagerdutyRecoveryRequeued}','true'::jsonb,true),updated_at=clock_timestamp() WHERE id=$1`,[id]);
+        await client.query("COMMIT"); continue;
+      }
+      const webhook = ledger?.outcomes?.webhooks;
+      if (!ledger || ledger.version !== 1 || !Array.isArray(ledger.required) || !Array.isArray(ledger.retry) ||
+          !webhook?.endpoints || typeof webhook.endpoints !== "object" || Array.isArray(webhook.endpoints)) {
+        await client.query("COMMIT"); continue;
+      }
+      const recovered = await client.query(`SELECT destination_id FROM certops_distribution_pagerduty
+        WHERE workspace_id=$1 AND incident_id::text=$2 AND resolved_at IS NOT NULL`,
+      [queue.workspace_id,queue.metadata?.incidentId]);
+      let changed = false;
+      for (const { destination_id: destination } of recovered.rows) {
+        if (["pending","failed"].includes(webhook.endpoints[destination])) {
+          webhook.endpoints[destination] = "sent";
+          changed = true;
+        }
+      }
+      if (!changed) { await client.query("COMMIT"); continue; }
+      const endpoints = Object.values(webhook.endpoints);
+      const allWebhooksSent = endpoints.length > 0 && endpoints.every(state => state === "sent");
+      if (allWebhooksSent) {
+        Object.assign(webhook,{state:"sent",terminal:true,reason:null,code:null});
+        ledger.retry = ledger.retry.filter(channel => channel !== "webhooks");
+      } else {
+        const remaining = endpoints.filter(state => state !== "sent");
+        const terminal = remaining.every(state => state === "permanent");
+        Object.assign(webhook,{state:"partial",terminal,reason:terminal ? "provider" : null});
+      }
+      const allSent = allWebhooksSent && ledger.required.includes("webhooks") && ledger.required.length > 0 &&
+        ledger.required.every(channel => ledger.outcomes?.[channel]?.state === "sent") &&
+        ledger.retry.every(channel => ledger.outcomes?.[channel]?.state === "sent");
+      await client.query(`UPDATE alert_queue SET channels=$2::jsonb,
+        status=CASE WHEN $3 THEN 'sent' ELSE status END,
+        error_message=CASE WHEN $3 THEN NULL ELSE error_message END,
+        attempts_webhooks=CASE WHEN $4 THEN 0 ELSE attempts_webhooks END,
+        next_attempt_at=CASE WHEN $3 THEN NULL ELSE next_attempt_at END,updated_at=clock_timestamp()
+        WHERE id=$1`, [id,JSON.stringify(ledger),allSent,allWebhooksSent]);
+      if (allSent) await client.query(`UPDATE operational_notifications SET resolved_at=clock_timestamp(),updated_at=clock_timestamp()
+        WHERE workspace_id=$1 AND dedupe_key=ANY($2::text[]) AND resolved_at IS NULL`,
+      [queue.workspace_id,[`delivery_blocked:${id}`,`delivery_degraded:${id}`]]);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  }
+}
+
 // Recovery is independent of today's groups. A removed or
 // rotated integration is parked until its exact original configuration returns.
 // An uncertain trigger can have reached PagerDuty: resolve the same dedup key
@@ -119,4 +213,5 @@ export async function reconcileDistributionPagerDuty(client, { send, batchSize =
       await client.query("SELECT pg_advisory_unlock(hashtextextended($1,0))", [lock]);
     }
   }
+  await settleRecoveredDistributionAlerts(client,Math.max(1,Math.min(500,batchSize)),canRecover);
 }
