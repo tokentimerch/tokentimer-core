@@ -26,10 +26,13 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
   const [retry, setRetry] = useState(0);
   const [showHistory, setShowHistory] = useState(false);
   const current = useRef(tokenId);
+  const generation = useRef(0);
   current.current = tokenId;
   useEffect(() => {
     let cancelled = false;
+    generation.current += 1;
     setData(null);
+    setLoading(false);
     setShowHistory(false);
     setError('');
     apiClient
@@ -60,23 +63,34 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
     : ownership === 'Managed' || ownership === 'Observed';
   if (!hasAutoSyncProvenance && !error) return null;
   const loadMore = async () => {
+    const requestGeneration = generation.current;
     setLoading(true);
     setError('');
     try {
       const res = await apiClient.get(
         `/api/tokens/${tokenId}/auto-sync-provenance?before=${data.next_before}`
       );
-      if (current.current === tokenId)
+      if (
+        current.current === tokenId &&
+        generation.current === requestGeneration
+      )
         setData(previous => ({
           ...res.data,
           items: [...previous.items, ...res.data.items],
         }));
     } catch {
-      if (current.current === tokenId) {
+      if (
+        current.current === tokenId &&
+        generation.current === requestGeneration
+      ) {
         setError('Earlier history could not be loaded. Please try again.');
       }
     } finally {
-      if (current.current === tokenId) setLoading(false);
+      if (
+        current.current === tokenId &&
+        generation.current === requestGeneration
+      )
+        setLoading(false);
     }
   };
   return (
