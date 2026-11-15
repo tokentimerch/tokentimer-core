@@ -279,7 +279,8 @@ function assertValidBinding(binding) {
  * @returns {{ host: string, servername: string|undefined }}
  */
 function resolveVerificationTarget(binding) {
-  const loopback = WILDCARD_BINDING_ADDRESSES[binding.address];
+  const family = wildcardAddressFamily(binding.address);
+  const loopback = family === 4 ? '127.0.0.1' : family === 6 ? '::1' : undefined;
   const host = loopback !== undefined ? loopback : stripIpv6Brackets(binding.address);
   return { host, servername: binding.sniHost || undefined };
 }
@@ -288,6 +289,15 @@ function resolveVerificationTarget(binding) {
 function stripIpv6Brackets(address) {
   const match = /^\[(.+)\]$/.exec(address);
   return match ? match[1] : address;
+}
+
+function wildcardAddressFamily(address) {
+  if (typeof address !== 'string') return 0;
+  if (address === '*' || address === '0.0.0.0') return 4;
+  const literal = stripIpv6Brackets(address);
+  if (require('node:net').isIP(literal) !== 6) return 0;
+  try { return new URL(`http://[${literal}]/`).hostname === '[::]' ? 6 : 0; }
+  catch { return 0; }
 }
 
 /**
@@ -1119,13 +1129,18 @@ async function checkWildcardPrecedence({ binding, newThumbprint, execFileImpl, p
     ok: false, code: inventory.reason === "aborted" ? "ABORTED" : "QUERY_FAILED",
     detail: "Cannot verify HTTP.sys bindings for this wildcard.",
   };
-  const family = ["::", "[::]"].includes(binding.address) ? 6 : 4;
+  const family = wildcardAddressFamily(binding.address);
   const conflict = inventory.bindings.find((entry) => {
     if (entry.keyedBy !== "ipport") return false;
     const parsed = splitIpPortLiteral(canonicalSelectorValue(entry.ipPort));
     if (!parsed || parsed.port !== binding.port) return false;
     const address = parsed.address.replace(/^\[|\]$/g, "");
-    if (require("node:net").isIP(address) !== family || address === "0.0.0.0" || address === "::") return false;
+    const addressFamily = require("node:net").isIP(address);
+    // Treat mapped IPv4 selectors conservatively: their reachability may
+    // depend on the Windows dual-stack configuration.
+    const mappedIPv4 = family === 4 && addressFamily === 6 &&
+      new URL(`http://[${address}]/`).hostname.startsWith("[::ffff:");
+    if ((addressFamily !== family && !mappedIPv4) || wildcardAddressFamily(address)) return false;
     return entry.thumbprint !== newThumbprint;
   });
   return conflict ? {
@@ -1311,7 +1326,7 @@ async function deployIisBinding({
   // A concrete HTTP.sys binding wins over a wildcard for that IP. Probing
   // only loopback can therefore report success while remote clients still
   // receive a different certificate. Check before changing anything.
-  const isWildcard = !binding.sniHost && Object.prototype.hasOwnProperty.call(WILDCARD_BINDING_ADDRESSES, binding.address);
+  const isWildcard = !binding.sniHost && wildcardAddressFamily(binding.address) !== 0;
   if (isWildcard) {
     const check = await checkWildcardPrecedence({ binding, newThumbprint, execFileImpl, powershellPath, timeoutMs, signal });
     if (!check.ok) return guardReturnValue({ ...check, detail: `${check.detail} No changes were made.`, outgoingThumbprint, rolledBack: false });

@@ -215,6 +215,8 @@ describe("resolveVerificationTarget", () => {
     assert.equal(resolveVerificationTarget({ address: "0.0.0.0" }).host, "127.0.0.1");
     assert.equal(resolveVerificationTarget({ address: "[::]" }).host, "::1");
     assert.equal(resolveVerificationTarget({ address: "::" }).host, "::1");
+    assert.equal(resolveVerificationTarget({ address: "0:0:0:0:0:0:0:0" }).host, "::1");
+    assert.equal(resolveVerificationTarget({ address: "[0:0:0:0:0:0:0:0]" }).host, "::1");
   });
 
   it("strips IPv6 brackets from a concrete IPv6 literal", () => {
@@ -1592,6 +1594,30 @@ describe("wildcard deployment and concrete HTTP.sys bindings", () => {
     const result=await deploy(exec,{...wildcard,address:"::"});
     assert.equal(result.code,"WILDCARD_PRECEDENCE_CONFLICT");
     assert.equal(exec.calls.some(call => ["add","delete"].includes(call.args[1])),false);
+  });
+  it("treats expanded IPv6 unspecified addresses as wildcard bindings", async () => {
+    for (const address of ["0:0:0:0:0:0:0:0", "[0:0:0:0:0:0:0:0]"]) {
+      const exec=makeExecStub(key => key === "query" ? bindingsOutput(
+        {ipPort:"[::]:443",thumbprint:OTHER_THUMBPRINT},
+        {ipPort:"[2001:db8::1]:443",thumbprint:OTHER_THUMBPRINT},
+      ) : {});
+      const result=await deploy(exec,{...wildcard,address});
+      assert.equal(result.code,"WILDCARD_PRECEDENCE_CONFLICT",address);
+      assert.equal(exec.calls.some(call => ["add","delete"].includes(call.args[1])),false);
+    }
+  });
+  it("does not mistake an expanded IPv6 unspecified inventory entry for a concrete address", async () => {
+    const exec=makeExecStub(key => key === "query" ? bindingsOutput(
+      {ipPort:"[0:0:0:0:0:0:0:0]:443",thumbprint:FIXTURE_THUMBPRINT},
+    ) : {});
+    assert.equal((await deploy(exec,{...wildcard,address:"::"})).ok,true);
+  });
+  it("conservatively rejects an IPv4-mapped IPv6 selector over an IPv4 wildcard", async () => {
+    const exec=makeExecStub(key => key === "query" ? bindingsOutput(
+      {ipPort:"0.0.0.0:443",thumbprint:OTHER_THUMBPRINT},
+      {ipPort:"[::ffff:192.0.2.10]:443",thumbprint:OTHER_THUMBPRINT},
+    ) : {});
+    assert.equal((await deploy(exec)).code,"WILDCARD_PRECEDENCE_CONFLICT");
   });
   it("does not confuse IPv6-specific bindings with an IPv4 wildcard", async () => {
     const exec = makeExecStub(key => key === "query" ? bindingsOutput(
