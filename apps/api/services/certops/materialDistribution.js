@@ -391,7 +391,7 @@ async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
             JOIN certops_distribution_rollouts failed_rollout ON failed_rollout.workspace_id=failed_deployment.workspace_id AND failed_rollout.id=failed_deployment.rollout_id
             JOIN certificate_job_log failure ON failure.workspace_id=failed_deployment.workspace_id AND failure.job_id=failed_deployment.job_id
             WHERE failed_deployment.workspace_id=b.workspace_id AND failed_deployment.binding_id=b.id
-              AND failed_rollout.verification_only AND failure.event_type='job.failed' AND failure.created_at>=s.observed_at)
+              AND failed_rollout.verification_only AND failed_rollout.generation>s.accepted_generation AND failure.event_type='job.failed')
       )) AND s.observed_material_version_id=s.desired_material_version_id
       AND s.observed_valid_to>clock_timestamp() AND b.state='active'
       AND (b.verification_policy<>'installed' OR a.platform IS DISTINCT FROM 'win32')

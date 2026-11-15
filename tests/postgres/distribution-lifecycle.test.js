@@ -151,6 +151,7 @@ test("pending verification preserves fresh proof without hiding expired evidence
 });
 test("failed verification does not recover stale proof when the job is retried",async()=>{
   const f=await fixture();await operations.requestRollout({...f,actorUserId:f.actor});await proveConsumer(f);
+  await pool.query("UPDATE certops_consumer_current_state SET observed_at=clock_timestamp()+interval '20 seconds' WHERE workspace_id=$1 AND binding_id=$2",[f.workspaceId,f.bindingId]);
   await operations.requestRollout({...f,verificationOnly:true,actorUserId:f.actor});
   const verification=(await pool.query("SELECT id FROM certops_distribution_rollouts WHERE workspace_id=$1 AND verification_only ORDER BY generation DESC LIMIT 1",[f.workspaceId])).rows[0];
   await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,verification.id));
