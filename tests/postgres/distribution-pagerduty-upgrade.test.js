@@ -5,7 +5,7 @@ assert.match(process.env.DB_NAME || "",/^distribution_lifecycle_[a-f0-9]+_test$/
 const {pool}=require("../../apps/api/db/database");
 const {migrations,runMigrations}=require("../../apps/api/migrations/migrate");
 after(()=>pool.end());
-test("upgrade preserves history and backfills only accepted exact PagerDuty triggers",async()=>{
+test("upgrade preserves accepted PagerDuty triggers and verifies historical destinations before recovery",async()=>{
   const index=migrations.findIndex(entry=>entry.version===114);
   assert.notEqual(index,-1);
   const pending=migrations.splice(index,1);
@@ -23,10 +23,27 @@ test("upgrade preserves history and backfills only accepted exact PagerDuty trig
     await insert("success",{kind:"pagerduty",destination_id:"a".repeat(64)});
     await insert("failed",{kind:"pagerduty",destination_id:"b".repeat(64)});
     await insert("success",{kind:"pagerduty",urlHash:"c".repeat(64)});
+    const hook={kind:'pagerduty',url:'https://events.pagerduty.com/v2/enqueue',routingKey:'a'.repeat(32)};
+    const {pagerDutyDestinationId}=await import('../../apps/worker/src/shared/webhookDestinations.js');
+    const exact=pagerDutyDestinationId(f.workspaceId,hook);
+    await insert('success',{kind:'pagerduty',urlHash:exact});
     const before=(await pool.query("SELECT * FROM alert_delivery_log WHERE alert_queue_id=$1 ORDER BY id",[queued.id])).rows;
     migrations.push(...pending);await runMigrations();
-    const records=(await pool.query("SELECT destination_id,trigger_accepted_at FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows;
-    assert.equal(records.length,1);assert.equal(records[0].destination_id,"a".repeat(64));assert.ok(records[0].trigger_accepted_at);
+    const records=(await pool.query("SELECT destination_id,trigger_accepted_at,trigger_delivery_uncertain,last_error FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows;
+    assert.equal(records.length,3);
+    assert.equal(records.find(row=>row.destination_id==="a".repeat(64)).trigger_delivery_uncertain,false);
+    for(const id of ["c".repeat(64),exact]){const candidate=records.find(row=>row.destination_id===id);
+      assert.ok(candidate.trigger_accepted_at);assert.equal(candidate.trigger_delivery_uncertain,true);assert.equal(candidate.last_error,"historical_destination_unverified");}
+    await pool.query(`INSERT INTO workspace_settings(workspace_id,webhook_urls) VALUES($1,$2::jsonb)
+      ON CONFLICT(workspace_id) DO UPDATE SET webhook_urls=EXCLUDED.webhook_urls`,[f.workspaceId,JSON.stringify([hook])]);
+    await pool.query("UPDATE certops_distribution_incidents SET resolved_at=clock_timestamp() WHERE id=$1",[incident.id]);
+    const service=await import('../../apps/worker/src/shared/distributionPagerDuty.js'),sent=[];
+    const client=await pool.connect();
+    try {await service.reconcileDistributionPagerDuty(client,{send:async(_url,payload)=>{sent.push(payload);return {success:true};}});} finally {client.release();}
+    assert.equal(sent.length,1);assert.equal(sent[0].event_action,"resolve");assert.equal(sent[0].routing_key,hook.routingKey);
+    const after=(await pool.query("SELECT destination_id,resolved_at,trigger_delivery_uncertain FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows;
+    assert.ok(after.find(row=>row.destination_id===exact).resolved_at);
+    assert.equal(after.find(row=>row.destination_id==="c".repeat(64)).resolved_at,null);
     assert.deepEqual((await pool.query("SELECT * FROM alert_delivery_log WHERE alert_queue_id=$1 ORDER BY id",[queued.id])).rows,before);
   } finally {
     if(!migrations.some(entry=>entry.version===114))migrations.push(...pending);

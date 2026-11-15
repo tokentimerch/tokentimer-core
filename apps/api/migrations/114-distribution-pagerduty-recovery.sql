@@ -17,15 +17,18 @@ CREATE TABLE certops_distribution_pagerduty (
 CREATE INDEX certops_distribution_pagerduty_due ON certops_distribution_pagerduty(next_attempt_at)
   WHERE resolved_at IS NULL AND trigger_accepted_at IS NOT NULL;
 
--- Existing distribution events already used a stable incident deduplication key.
--- Backfill only exact, destination-specific successful trigger evidence.
-INSERT INTO certops_distribution_pagerduty(workspace_id,incident_id,destination_id,trigger_accepted_at)
-SELECT dl.workspace_id,i.id,dl.metadata->>'destination_id',MIN(dl.sent_at)
+-- Older logs may contain only a urlHash. Preserve those candidates without
+-- treating them as an exact integration until the worker matches a current
+-- tenant/URL/routing-key fingerprint.
+INSERT INTO certops_distribution_pagerduty(workspace_id,incident_id,destination_id,trigger_accepted_at,trigger_delivery_uncertain,last_error)
+SELECT dl.workspace_id,i.id,COALESCE(dl.metadata->>'destination_id',dl.metadata->>'urlHash'),MIN(dl.sent_at),
+  NOT BOOL_OR(COALESCE(dl.metadata->>'destination_id' ~ '^[a-f0-9]{64}$',FALSE)),
+  CASE WHEN BOOL_OR(COALESCE(dl.metadata->>'destination_id' ~ '^[a-f0-9]{64}$',FALSE)) THEN NULL ELSE 'historical_destination_unverified' END
 FROM alert_delivery_log dl
 JOIN alert_queue aq ON aq.id=dl.alert_queue_id
 JOIN certops_distribution_incidents i ON i.workspace_id=dl.workspace_id AND i.id::text=aq.metadata->>'incidentId'
 WHERE dl.channel='webhooks' AND dl.status='success' AND dl.metadata->>'kind'='pagerduty'
-  AND dl.metadata->>'destination_id' ~ '^[a-f0-9]{64}$'
+  AND COALESCE(dl.metadata->>'destination_id',dl.metadata->>'urlHash') ~ '^[a-f0-9]{64}$'
   AND aq.alert_key LIKE 'cert_distribution:%' AND aq.metadata->>'transition' IN ('opened','updated')
-GROUP BY dl.workspace_id,i.id,dl.metadata->>'destination_id'
+GROUP BY dl.workspace_id,i.id,COALESCE(dl.metadata->>'destination_id',dl.metadata->>'urlHash')
 ON CONFLICT DO NOTHING;
