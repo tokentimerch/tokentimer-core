@@ -193,6 +193,9 @@ test("distribution PagerDuty recovery uses only the accepted original integratio
     b={...a,routingKey:'b'.repeat(32)};
   await pool.query(`INSERT INTO workspace_settings(workspace_id,webhook_urls) VALUES($1,$2::jsonb)
     ON CONFLICT(workspace_id) DO UPDATE SET webhook_urls=EXCLUDED.webhook_urls`,[f.workspaceId,JSON.stringify([a,b])]);
+  await pool.query("UPDATE workspace_settings SET webhooks_alerts_enabled=true WHERE workspace_id=$1",[f.workspaceId]);
+  const recoveryPolicy=structuredClone(lifecycle.DEFAULT_POLICY);recoveryPolicy.alerts.enabled=true;
+  await lifecycle.putPolicy({...f,policy:recoveryPolicy,expectedRevision:0,actorUserId:f.actor});
   const service=await import('../../apps/worker/src/shared/distributionPagerDuty.js'),calls=[];
   const send=async(url,payload)=>{calls.push({url,payload});return {success:true};};
   const client=await pool.connect();
@@ -1155,6 +1158,9 @@ test("failed repeat cannot suppress recovery of an accepted distribution inciden
   const incident=(await pool.query(`INSERT INTO certops_distribution_incidents(workspace_id,group_id,code,dedupe_key,severity) VALUES($1,$2,'consumer_offline',$3,'critical') RETURNING id`,[f.workspaceId,f.groupId,crypto.randomUUID()])).rows[0];
   const hook={kind:'pagerduty',url:'https://events.pagerduty.com/v2/enqueue',routingKey:'a'.repeat(32)};
   await pool.query(`INSERT INTO workspace_settings(workspace_id,webhook_urls) VALUES($1,$2::jsonb) ON CONFLICT(workspace_id) DO UPDATE SET webhook_urls=EXCLUDED.webhook_urls`,[f.workspaceId,JSON.stringify([hook])]);
+  await pool.query("UPDATE workspace_settings SET webhooks_alerts_enabled=true WHERE workspace_id=$1",[f.workspaceId]);
+  const recoveryPolicy=structuredClone(lifecycle.DEFAULT_POLICY);recoveryPolicy.alerts.enabled=true;
+  await lifecycle.putPolicy({...f,policy:recoveryPolicy,expectedRevision:0,actorUserId:f.actor});
   const service=await import('../../apps/worker/src/shared/distributionPagerDuty.js'),calls=[];
   const client=await pool.connect();
   try {
