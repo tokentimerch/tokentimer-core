@@ -228,3 +228,28 @@ test("initial legacy recovery delivers other configured webhooks",async()=>{
  assert.equal(events.filter(e=>e.kind==="pagerduty").length,1);assert.equal(events.filter(e=>e.kind==="generic").length,1);
 });
 
+
+
+test("legacy mixed-channel failures remain blocked through recovery retries",async()=>{
+ for(const mode of ["initial","retry-array","retry-ledger"]){
+  const {f,incident,id,worker,send,allow}=await blocked();
+  const ledger=mode==="retry-ledger" ? {version:1,required:["webhooks"],retry:["webhooks"],outcomes:{webhooks:{state:"failed",endpoints:{}}}} : ["webhooks"];
+  const marker=mode==="initial" ? {} : {pagerdutyRecoveryRequeued:true};
+  await pool.query(`UPDATE alert_queue SET channels=$2::jsonb,metadata=metadata || $3::jsonb,
+    error_message=CASE WHEN $4 THEN 'MAX_ATTEMPTS: No webhook names defined in the selected contact group' ELSE error_message END WHERE id=$1`,
+    [id,JSON.stringify(ledger),JSON.stringify(marker),mode!=="initial"]);
+  await pool.query(`INSERT INTO alert_delivery_log(alert_queue_id,user_id,workspace_id,channel,status,error_message,metadata)
+    VALUES($1,$2,$3,'email','blocked','NO_VERIFIED_RECIPIENTS',$4::jsonb)`,
+    [id,f.actor,f.workspaceId,JSON.stringify({code:"NO_VERIFIED_RECIPIENTS"})]);
+  allow();
+  await pool.query("UPDATE certops_distribution_pagerduty SET next_attempt_at=clock_timestamp() WHERE incident_id=$1",[incident.id]);
+  for(let n=0;n<2;n++){
+   await pool.query("UPDATE alert_queue SET next_attempt_at=clock_timestamp() WHERE id=$1",[id]);
+   await worker.deliveryWorkerJob({closePool:false,webhookSender:send});
+   const q=(await pool.query("SELECT status,metadata FROM alert_queue WHERE id=$1",[id])).rows[0];
+   assert.equal(q.status,"blocked");assert.equal(q.metadata.pagerdutyRecoveryRequeued,marker.pagerdutyRecoveryRequeued);
+   assert.equal((await pool.query("SELECT resolved_at FROM operational_notifications WHERE workspace_id=$1 AND dedupe_key=$2",[f.workspaceId,`delivery_blocked:${id}`])).rows[0].resolved_at,null);
+  }
+  assert.ok((await pool.query("SELECT resolved_at FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows[0].resolved_at);
+ }
+});
