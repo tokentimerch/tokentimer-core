@@ -175,6 +175,37 @@ function Assert-ProtectedBundleTree {
     }
 }
 
+# Check an external runtime before launching it, including the parents that
+# could replace it. Do not recursively require unrelated sibling files to be
+# protected as if they were part of the agent package.
+function Assert-ProtectedNodeExecutable {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not [IO.Path]::IsPathRooted($Path)) { throw 'Node runtime path is not absolute' }
+    $trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    $cursor = [IO.Path]::GetFullPath($Path)
+    $file = $true
+    while ($cursor) {
+        $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or ($file -and $item.PSIsContainer) -or (-not $file -and -not $item.PSIsContainer)) {
+            throw 'Node runtime path contains a link or unexpected file type'
+        }
+        $acl = Get-Acl -LiteralPath $cursor -ErrorAction Stop
+        if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trusted) { throw 'Node runtime path has an untrusted owner' }
+        $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+        if (-not $rules.Count) { throw 'Node runtime path has an empty or unreadable DACL' }
+        $mask = if ($file) { [int64]0x500D0156 } else { [int64]0x500D0142 }
+        foreach ($rule in $rules) {
+            if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+                ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
+            if ($rule.IdentityReference.Value -notin $trusted -and (([int64]$rule.FileSystemRights -band $mask) -ne 0)) {
+                throw 'Node runtime path permits an untrusted principal to modify or replace it'
+            }
+        }
+        $file = $false
+        $cursor = [IO.Path]::GetDirectoryName($cursor)
+    }
+}
+
 # Do not allow the caller's Node preload/module-path settings to run code
 # inside the elevated installer or its local validation helpers.
 function Invoke-PackagedNode {
@@ -673,6 +704,9 @@ try {
     } finally { $runtimeStream.Position = 0 }
     }
     if ($null -ne $script:AuthorizedLauncherTransaction -and -not $script:HasBundledRuntime) { throw 'launcher requires an independently pinned bundled runtime' }
+    # Both the launcher identity check and the version probe invoke Node.
+    Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1')) -NoClobber -ErrorAction Stop
+    Assert-ProtectedNodeExecutable -Path $script:NodeExe
     Assert-AuthorizedLauncherIdentities
     $engineRange = [regex]::Match([string]$package.engines.node, '^>=([0-9]+\.[0-9]+\.[0-9]+)\s+<([0-9]+\.[0-9]+\.[0-9]+)$')
     if (-not $engineRange.Success) { throw "unsupported Node engine range" }

@@ -12,7 +12,7 @@ Enable CertOps and provision the signing and registration encryption keys. In th
 
 ## Install
 
-Download the matching agent release, compare its checksum with the published checksum, and extract the package. From that directory:
+Download the matching agent release, compare its checksum with the published checksum, and extract the package. For the generic archive, use a system Node installation protected from unprivileged changes; an unsafe Node path is refused even for `--dry-run`. From that directory:
 
 ```powershell
 $workspaceId = Read-Host 'Workspace ID'
