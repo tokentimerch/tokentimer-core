@@ -1106,9 +1106,10 @@ export default function CertOpsAdcs({
                 failedPreflightMessage(job) ||
                   'The CA check did not succeed. Review the job before retrying.'
               );
-            }
-            else if (finished && !changed) {
-              setPreflightNote('The CA check completed, but its verdict is not the current result. Review the latest check or run it again.');
+            } else if (finished && !changed) {
+              setPreflightNote(
+                'The CA check completed, but its verdict is not the current result. Review the latest check or run it again.'
+              );
             }
           }
         } catch (err) {
