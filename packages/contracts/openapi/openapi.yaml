@@ -15405,7 +15405,7 @@ components:
             terminates as dry_run_complete, never succeeded.
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust]
+          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust]
           description: Job operation. "issue" is control-plane-only first-time issuance;
             it is dispatched to agents as action "renew", so the agent-facing action
             values are unchanged. "distribute-trust"/"revoke-trust" install or
