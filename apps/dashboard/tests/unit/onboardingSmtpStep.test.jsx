@@ -102,7 +102,9 @@ describe('NotificationsStep guidance', () => {
     wrap(<NotificationsStep ctx={{ ...ctxOf(), workspaceId: 'ws/a?' }} />);
     expect(await screen.findByText(/Choose the hours when alerts may/)).toBeVisible();
     expect(screen.getByText(/Receive one summary of what expires/)).toBeVisible();
-    expect(screen.getByText(/Each recipient must confirm their number/)).toBeVisible();
+    expect(screen.getByText(/Recipients may need to confirm their/)).toHaveTextContent(
+      'Recipients may need to confirm their number, depending on verification settings.'
+    );
     expect(screen.getByRole('link', { name: /Open Alert Preferences/ })).toHaveAttribute(
       'href', '/workspace-preferences?workspace=ws%2Fa%3F'
     );
