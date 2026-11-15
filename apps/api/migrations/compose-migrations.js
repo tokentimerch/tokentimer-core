@@ -190,6 +190,17 @@ function composeMigrations(migrations, recorded = []) {
   const recognizedRotationPreview = previewComplete && tail.length >= legacy.length &&
     tail.length <= expected.length && tail.every((row, index) =>
       row.version === expected[index].version && row.name === expected[index].name);
+  // The initial rotation preview used version 99 before the MCP tail existed.
+  // Preserve that identity and accept only the deterministic upgrade prefixes.
+  const rotation99Versions = [...Array.from({ length: 16 }, (_, i) => 70 + i), 92, 93, 94, 95, 98];
+  const rotation99Base = rotation99Versions.map((version) => migrations.find((entry) => entry.version === version));
+  const rotation99Prefix = [...rotation99Base, { version: 99, name: "agent_credential_rotations" }];
+  const rotation99Names = new Set(rotation99Prefix.filter(Boolean).map((entry) => entry.name));
+  const rotation99Pending = extensions.filter((entry) => !rotation99Names.has(entry.name));
+  const recognizedRotation99 = rotation99Base.every(Boolean) && tail.length >= rotation99Prefix.length &&
+    rotation99Prefix.every((entry, index) => tail[index].version === entry.version && tail[index].name === entry.name) &&
+    tail.slice(rotation99Prefix.length).every((row, index) =>
+      row.version === 100 + index && row.name === rotation99Pending[index]?.name);
   const unknown = rows.find((row) => !byName.has(row.name));
   if (unknown)
     throw new Error(
@@ -218,7 +229,7 @@ function composeMigrations(migrations, recorded = []) {
       !base.every((name, index) =>
         rows.some((row) => row.version === 78 + index && row.name === name),
       ) ||
-      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp && !recognizedRetirementPreview && !recognizedRotationPreview)
+      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp && !recognizedRetirementPreview && !recognizedRotationPreview && !recognizedRotation99)
     )
       throw new Error("Unsupported Core migration history: noncanonical gap");
   }
