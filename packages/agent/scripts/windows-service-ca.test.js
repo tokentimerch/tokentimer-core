@@ -16,7 +16,7 @@ const readEnd = source.indexOf("\n# A prior installation", readStart);
 assert.ok(readStart >= 0 && readEnd > readStart, "service environment reader must exist");
 const reader = source.slice(readStart, readEnd);
 const gateStart = source.indexOf("function Test-UnsupportedSystemCaOption {");
-const gateEnd = source.indexOf("\n# engines.node", gateStart);
+const gateEnd = source.indexOf("\n$packageJsonText =", gateStart);
 assert.ok(gateStart >= 0 && gateEnd > gateStart, "Node compatibility gate must exist");
 const gate = source.slice(gateStart, gateEnd);
 // skip-reason: platform - executes Windows PowerShell service environment helpers.

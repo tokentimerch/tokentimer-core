@@ -796,30 +796,18 @@ function Test-UnsupportedSystemCaOption {
     return @($Existing | Where-Object { $_ -match '^(?i:NODE_OPTIONS)=' -and $_ -match '(?i)(?:^|[=\s])--use-system-ca(?:\s|$)' }).Count -gt 0
 }
 
-# engines.node is a single ">=x.y.z <a.b.c" range in this package; a plain
-# regex parse of the lower bound avoids needing node before the node check
-# itself, mirroring install-agent.sh's sed parse.
+# Read the declared range; the shared validator checks both bounds.
 $packageJsonText = Get-Content -Raw -LiteralPath (Join-Path $PackageDir "package.json")
 $engineMatch = [regex]::Match($packageJsonText, '"node"\s*:\s*"([^"]*)"')
 if (-not $engineMatch.Success) {
     Fail "could not find engines.node in $PackageDir\package.json"
 }
 $requiredRange = $engineMatch.Groups[1].Value
-$requiredMajorMatch = [regex]::Match($requiredRange, '[0-9]+')
-if (-not $requiredMajorMatch.Success) {
-    Fail "could not parse required Node version from $PackageDir\package.json (engines.node='$requiredRange')"
-}
-$requiredMajor = [int]$requiredMajorMatch.Value
-
 $nodeVersionRaw = (Invoke-InstallerNode -NodeArguments @('-v')).Trim()
-$nodeMajorMatch = [regex]::Match($nodeVersionRaw, '^v([0-9]+)')
-if (-not $nodeMajorMatch.Success) {
-    Fail "could not parse installed Node version from 'node -v' (got '$nodeVersionRaw')"
-}
-$nodeMajor = [int]$nodeMajorMatch.Groups[1].Value
-if ($nodeMajor -lt $requiredMajor) {
-    Fail "Node $nodeVersionRaw is too old; the agent requires engines.node '$requiredRange'"
-}
+$nodeVersionValidator = Join-Path $ScriptDir 'check-node-engine.js'
+if (-not (Test-Path -LiteralPath $nodeVersionValidator -PathType Leaf)) { Fail "Node version validator is missing from the agent package" }
+Invoke-InstallerNode -NodeArguments @($nodeVersionValidator, $requiredRange, $nodeVersionRaw)
+if ($LASTEXITCODE -ne 0) { Fail "Node $nodeVersionRaw does not satisfy the agent's engines.node '$requiredRange'" }
 Write-Log "Node $nodeVersionRaw satisfies engines.node '$requiredRange'."
 $nodeVersionMatch = [regex]::Match($nodeVersionRaw, '^v([0-9]+)\.([0-9]+)\.([0-9]+)')
 if (-not $nodeVersionMatch.Success) { Fail "could not parse installed Node version from 'node -v' (got '$nodeVersionRaw')" }
