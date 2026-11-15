@@ -424,6 +424,10 @@ async function onMaterialPublished({ client, workspaceId, payload }) {
     );
     if (!scope.bindings.length) outcome = "no_consumers";
     else if (
+      String(scope.workspace.created_by) !== String(policy.configured_by_user_id) &&
+      !scope.snapshot.reviewers.some(reviewer => String(reviewer.user_id) === String(policy.configured_by_user_id))
+    ) outcome = "authorization_stale";
+    else if (
       policy.policy.mode === "preauthorized" &&
       !(await isPreauthorized(client, workspaceId, group, policy))
     )

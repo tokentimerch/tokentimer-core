@@ -49,6 +49,25 @@ test("concurrent/restarted publication handling creates exactly one genuine pend
   await approve(f,jobs[0].id);await publish(f,policy.revision);
   assert.equal((await pool.query("SELECT 1 FROM certops_distribution_rollouts WHERE workspace_id=$1",[f.workspaceId])).rowCount,1);
 });
+test("a departed policy configurator cannot create a doomed approval request and a handoff authorizes future publications",async()=>{
+  const f=await fixture(),policy=structuredClone(lifecycle.DEFAULT_POLICY);policy.mode="approval_request";
+  const configured=await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f.approver});
+  await pool.query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",[f.workspaceId,f.approver]);
+  assert.equal((await publish(f,configured.revision)).reason,"authorization_stale");
+  assert.equal((await pool.query("SELECT 1 FROM certificate_jobs WHERE workspace_id=$1 AND payload ? 'distributionRollout'",[f.workspaceId])).rowCount,0);
+  assert.equal((await pool.query("SELECT outcome FROM certops_distribution_automations WHERE workspace_id=$1 AND material_version_id=$2",[f.workspaceId,f.materialVersionId])).rows[0].outcome,"authorization_stale");
+  const other=await fixture();await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'workspace_manager')",[f.workspaceId,other.approver]);
+  const renewed=await lifecycle.putPolicy({...f,policy,expectedRevision:configured.revision,actorUserId:f.actor});
+  const id=require("node:crypto").randomUUID();
+  const issuing=await require("../../apps/api/services/certops/jobs").createCertificateJob({workspaceId:f.workspaceId,operation:"noop",source:"api",subjectType:"managed_certificate",subjectId:f.certificateId});
+  await pool.query("INSERT INTO certops_material_versions(id,workspace_id,group_id,management_period_id,publishing_job_id,profile_revision,state,certificate_identity_id,provider_version,fingerprint_sha256,valid_to,published_at,publishing_claim_id) SELECT $1,workspace_id,group_id,management_period_id,$2,profile_revision,'published',certificate_identity_id,2,fingerprint_sha256,valid_to,clock_timestamp(),$3 FROM certops_material_versions WHERE workspace_id=$4 AND id=$5",[id,issuing.id,require("node:crypto").randomUUID(),f.workspaceId,f.materialVersionId]);
+  await pool.query("UPDATE certops_distribution_groups SET latest_material_version_id=$3 WHERE workspace_id=$1 AND id=$2",[f.workspaceId,f.groupId,id]);
+  assert.equal((await publish({...f,materialVersionId:id},renewed.revision)).reason,"approval_requested");
+  const job=(await pool.query("SELECT * FROM certificate_jobs WHERE workspace_id=$1 AND payload ? 'distributionRollout'",[f.workspaceId])).rows[0];
+  assert.equal(job.status,"pending_approval");assert.equal(job.requested_by_user_id,f.actor);
+  await approveJob({workspaceId:f.workspaceId,jobId:job.id,approverUserId:other.approver});
+  assert.equal((await operations.transaction(client=>operations.processDistributionIntent({client,row:{workspace_id:f.workspaceId,event_type:"distribution_approval_granted"},payload:{jobId:job.id}}))).queued,true);
+});
 test("preauthorized mode needs a real bounded policy review; workspace mandatory approval cannot be bypassed",async()=>{
   for(const requireApproval of [false,true]){
     const f=await fixture({requireApproval}),policy=await configure(f,"preauthorized");
