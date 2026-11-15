@@ -253,3 +253,24 @@ test("legacy mixed-channel failures remain blocked through recovery retries",asy
   assert.ok((await pool.query("SELECT resolved_at FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows[0].resolved_at);
  }
 });
+
+
+test("legacy mixed-channel failure survives conversion before recovery",async()=>{
+ const {f,incident,id,worker,send,allow}=await blocked();
+ await pool.query(`INSERT INTO alert_delivery_log(alert_queue_id,user_id,workspace_id,channel,status,error_message,metadata)
+   VALUES($1,$2,$3,'email','blocked','NO_VERIFIED_RECIPIENTS',$4::jsonb)`,[id,f.actor,f.workspaceId,JSON.stringify({code:"NO_VERIFIED_RECIPIENTS",recipientDecision:"terminal"})]);
+ await pool.query(`UPDATE alert_queue SET channels='["webhooks"]'::jsonb,status='failed',attempts_webhooks=0,next_attempt_at=clock_timestamp() WHERE id=$1`,[id]);
+ await pool.query("UPDATE certops_distribution_pagerduty SET next_attempt_at=clock_timestamp() WHERE incident_id=$1",[incident.id]);
+ await worker.deliveryWorkerJob({closePool:false,webhookSender:send});
+ await pool.query("UPDATE alert_queue SET next_attempt_at=clock_timestamp() WHERE id=$1",[id]);
+ await worker.deliveryWorkerJob({closePool:false,webhookSender:send});
+ let q=(await pool.query("SELECT status,channels,metadata FROM alert_queue WHERE id=$1",[id])).rows[0];
+ assert.equal(q.status,"blocked");assert.deepEqual(q.channels.required,["webhooks"]);assert.equal(q.metadata.pagerdutyRecoveryRequeued,undefined);
+ allow();await pool.query("UPDATE certops_distribution_pagerduty SET next_attempt_at=clock_timestamp() WHERE incident_id=$1",[incident.id]);
+ await pool.query("UPDATE alert_queue SET next_attempt_at=clock_timestamp() WHERE id=$1",[id]);
+ await worker.deliveryWorkerJob({closePool:false,webhookSender:send});
+ q=(await pool.query("SELECT status,next_attempt_at,next_attempt_at > clock_timestamp() AS deferred FROM alert_queue WHERE id=$1",[id])).rows[0];assert.equal(q.status,"blocked");assert.equal(q.deferred,true);
+ assert.equal((await pool.query("SELECT resolved_at FROM operational_notifications WHERE workspace_id=$1 AND dedupe_key=$2",[f.workspaceId,`delivery_blocked:${id}`])).rows[0].resolved_at,null);
+ const deferred=q.next_attempt_at.getTime();await worker.deliveryWorkerJob({closePool:false,webhookSender:send});
+ q=(await pool.query("SELECT status,next_attempt_at FROM alert_queue WHERE id=$1",[id])).rows[0];assert.equal(q.status,"blocked");assert.equal(q.next_attempt_at.getTime(),deferred);
+});

@@ -47,7 +47,7 @@ async function settleRecoveredDistributionAlerts(client, batchSize, canRecover) 
         (aq.channels->'version'='1'::jsonb AND jsonb_typeof(aq.channels->'required')='array'
           AND jsonb_typeof(aq.channels->'retry')='array' AND jsonb_typeof(aq.channels->'outcomes'->'webhooks'->'endpoints')='object'
           AND aq.channels->'outcomes'->'webhooks'->'endpoints'->>p.destination_id IN ('pending','failed')
-          AND (aq.metadata->>'pagerdutyRecoveryRequeued' IS DISTINCT FROM 'true' OR aq.next_attempt_at IS NULL OR aq.next_attempt_at<=clock_timestamp()))
+          AND (aq.next_attempt_at IS NULL OR aq.next_attempt_at<=clock_timestamp()))
         OR (aq.metadata->>'pagerdutyRecoveryRequeued'='true' AND
           (aq.channels='["webhooks"]'::jsonb OR (aq.channels->'required'='["webhooks"]'::jsonb
             AND aq.channels->'retry' IN ('[]'::jsonb,'["webhooks"]'::jsonb) AND aq.channels->'outcomes'->'webhooks'->'endpoints'='{}'::jsonb))
@@ -68,12 +68,14 @@ async function settleRecoveredDistributionAlerts(client, batchSize, canRecover) 
         FOR UPDATE OF aq SKIP LOCKED`, [id])).rows[0];
       if (!queue) { await client.query("COMMIT"); continue; }
       const ledger = queue.channels;
-      // Legacy retry arrays can omit channels that already failed. Their logs
-      // cannot prove that a later delivery covered every original recipient.
-      if (Array.isArray(ledger) || queue.metadata?.pagerdutyRecoveryRequeued === true) {
+      // A retry can convert a legacy array into a ledger without retaining
+      // failures for channels removed from the current contact group.
+      const legacyRecovery = Array.isArray(ledger) || queue.metadata?.pagerdutyRecoveryRequeued === true;
+      if (legacyRecovery || (ledger?.version === 1 && Array.isArray(ledger.required))) {
         const otherFailure = await client.query(`SELECT 1 FROM alert_delivery_log
           WHERE alert_queue_id=$1 AND workspace_id=$2 AND channel <> 'webhooks'
-            AND status IN ('failed','blocked') LIMIT 1`, [id,queue.workspace_id]);
+            AND status IN ('failed','blocked') AND ($3::boolean OR NOT (channel = ANY($4::text[])))
+          LIMIT 1`, [id,queue.workspace_id,legacyRecovery,Array.isArray(ledger?.required) ? ledger.required : []]);
         if (otherFailure.rowCount) {
           await client.query("UPDATE alert_queue SET next_attempt_at=clock_timestamp()+interval '5 minutes' WHERE id=$1",[id]);
           await client.query("COMMIT"); continue;
