@@ -3,7 +3,7 @@
 const { test: reassociationTest } = require("node:test");
 reassociationTest("AD CS initial and continuation target reconstruction retains the signed reassociation guard", async () => {
   const { resolveWindowsIisTarget } = require("./adcs-windows-iis");
-  const base={keyMode:"os-store-managed",target:{type:"windows-iis",reference:"example.test",store:"My",binding:{site:"Default Web Site",port:443,address:"192.0.2.10"}},iisReassociationGuard:{fingerprintSha256:"a".repeat(64)}};
+  const base={keyMode:"os-store-managed",target:{type:"windows-iis",reference:"example.test",store:"My",binding:{site:"Default Web Site",port:443,address:"192.0.2.10"}},iisReassociationGuard:{fingerprintSha256:"a".repeat(64),site:"Default Web Site",port:443,address:"192.0.2.10",store:"My"}};
   for (const action of ["renew","continue-enrollment"]) {
     const result=await resolveWindowsIisTarget({...base,action});
     require("node:assert/strict").deepEqual(result.windowsTarget.iisReassociationGuard,base.iisReassociationGuard);

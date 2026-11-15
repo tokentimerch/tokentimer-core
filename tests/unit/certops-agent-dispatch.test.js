@@ -138,8 +138,9 @@ function createMockPool(handler) {
       ) {
         return { rows: [] };
       }
-      if (sql.includes("SELECT iis_reassociation_requires_absence,fingerprint_sha256 FROM managed_certificates")) {
-        return { rows: [{ iis_reassociation_requires_absence: state.iisGuardByCertificate?.[params[1]] ?? (state.iisReassociationRequiresAbsence === true), fingerprint_sha256:"a".repeat(64) }] };
+      if (sql.includes("SELECT iis_reassociation_requires_absence,fingerprint_sha256,source_ref,key_mode,key_reference FROM managed_certificates")) {
+        return { rows: [{ iis_reassociation_requires_absence: state.iisGuardByCertificate?.[params[1]] ?? (state.iisReassociationRequiresAbsence === true), fingerprint_sha256:"a".repeat(64),
+          source_ref:state.iisSourceRef || "agent-01/host/iis_binding/Default Web Site:443@192.0.2.10", key_mode:"os-store-managed", key_reference:"winstore://LocalMachine/My/"+"b".repeat(40) }] };
       }
       return handler(sql, params, state);
     },
@@ -1284,7 +1285,19 @@ describe("agentDispatch.claimJobs", () => {
     dbPool.state.iisReassociationRequiresAbsence=true;
     const result=await claimJobs({dbPool,agent:agentFixture(),body:{supportedActions:["renew"]},env:{CERTOPS_AGENT_LOG_STORAGE_ENABLED:"false"},deps:CLAIM_DEPS_BASE});
     assert.equal(result.jobs.length,1);
-    assert.deepEqual(result.jobs[0].iisReassociationGuard,{fingerprintSha256:"a".repeat(64)});
+    assert.deepEqual(result.jobs[0].iisReassociationGuard,{fingerprintSha256:"a".repeat(64),site:"Default Web Site",port:443,address:"192.0.2.10",store:"My"});
+    for (const mismatch of [{address:"192.0.2.20"},{site:"Other Site"},{port:444}]) {
+      row.payload.deploymentTargets=[{...target,binding:{...target.binding,...mismatch}}];
+      const rejected=await claimJobs({dbPool,agent:agentFixture(),body:{supportedActions:["renew"]},env:{CERTOPS_AGENT_LOG_STORAGE_ENABLED:"false"},deps:CLAIM_DEPS_BASE});
+      assert.equal(rejected.jobs.length,0);
+      assert.match(dbPool.state.queries.findLast(q=>q.text.includes("error_code='CERTOPS_IIS_REASSOCIATION_UNSAFE'")).params[1],/deployment target differs/);
+    }
+    row.payload.deploymentTargets=[{...target,store:"WebHosting"}];
+    assert.equal((await claimJobs({dbPool,agent:agentFixture(),body:{supportedActions:["renew"]},env:{CERTOPS_AGENT_LOG_STORAGE_ENABLED:"false"},deps:CLAIM_DEPS_BASE})).jobs.length,0);
+    delete row.payload.deploymentTargets;
+    row.payload.target={...target,binding:{...target.binding,address:"192.0.2.20"}};
+    assert.equal((await claimJobs({dbPool,agent:agentFixture(),body:{supportedActions:["renew"]},env:{CERTOPS_AGENT_LOG_STORAGE_ENABLED:"false"},deps:CLAIM_DEPS_BASE})).jobs.length,0);
+    row.payload.target=target;
     dbPool.state.iisReassociationRequiresAbsence=false;
     row.payload.iisReassociationGuard=true;
     const forged=await claimJobs({dbPool,agent:agentFixture(),body:{supportedActions:["renew"]},env:{CERTOPS_AGENT_LOG_STORAGE_ENABLED:"false"},deps:CLAIM_DEPS_BASE});

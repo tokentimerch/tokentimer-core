@@ -1340,7 +1340,10 @@ async function deployIisBinding({
   }
   const outgoingThumbprint = currentBindingResult.thumbprint;
   const reassociationGuardValid = reassociationGuard && typeof reassociationGuard === "object" &&
-    Object.keys(reassociationGuard).length === 1 && /^[a-f0-9]{64}$/.test(reassociationGuard.fingerprintSha256 || "");
+    Object.keys(reassociationGuard).length === 5 && /^[a-f0-9]{64}$/.test(reassociationGuard.fingerprintSha256 || "") &&
+    typeof reassociationGuard.site === "string" && reassociationGuard.site.toLowerCase() === String(binding.site || "").toLowerCase() &&
+    typeof reassociationGuard.address === "string" && reassociationGuard.address.toLowerCase() === String(binding.address || "").toLowerCase() &&
+    reassociationGuard.port === binding.port && reassociationGuard.store === "My" && String(binding.store || "").toLowerCase() === "my" && !binding.sniHost;
   if (reassociationGuard !== undefined && (!reassociationGuardValid || !(await checkReassociatedBinding({ binding, thumbprint:outgoingThumbprint, execFileImpl, signal, read:reassociationRead,
     permittedFingerprints:[reassociationGuard.fingerprintSha256,expectedFingerprintSha256] })))) {
     return guardReturnValue({ ok:false, code:"REASSOCIATION_CONFLICT", outgoingThumbprint, rolledBack:false,

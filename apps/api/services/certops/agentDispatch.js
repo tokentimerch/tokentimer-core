@@ -1679,7 +1679,7 @@ async function claimJobs({
       delete basePayload.iisReassociationGuard;
       if (job.subject_type === "managed_certificate" && job.subject_id &&
           ["renew", "deploy", "reload", "continue-enrollment", "deploy-from-store", "reconcile-from-store"].includes(basePayload.action)) {
-        const guarded = (await client.query(`SELECT iis_reassociation_requires_absence,fingerprint_sha256 FROM managed_certificates
+        const guarded = (await client.query(`SELECT iis_reassociation_requires_absence,fingerprint_sha256,source_ref,key_mode,key_reference FROM managed_certificates
           WHERE workspace_id=$1 AND id::text=$2 FOR UPDATE`, [agent.workspaceId,String(job.subject_id)])).rows[0];
         let guardError = !guarded ? "The managed certificate for this job is unavailable." : null;
         // Only the directive reconstructed from the locked enrollment is
@@ -1692,12 +1692,27 @@ async function claimJobs({
             guardError = "This reassociated IIS registration supports renewal and enrollment continuation only. This action is not supported.";
           const address=basePayload.target?.binding?.address;
           const family=typeof address === "string" ? require("node:net").isIP(address) : 0;
-          const concrete=family === 4 ? address !== "0.0.0.0" : family === 6 && new URL(`http://[${address}]/`).hostname !== "[::]";
-          if (basePayload.target?.type !== "windows-iis" || !concrete || basePayload.target.binding.sniHost)
+          const canonical=family === 6 ? new URL(`http://[${address}]/`).hostname : null;
+          const concrete=family === 4 ? address !== "0.0.0.0" : family === 6 && canonical !== "[::]" && !canonical.startsWith("[::ffff:");
+          const site=basePayload.target?.binding?.site;
+          const port=basePayload.target?.binding?.port;
+          const store=basePayload.target?.store;
+          const suffix=`/iis_binding/${site}:${port}@${address}`;
+          const sourceMatches=typeof guarded.source_ref === "string" && guarded.source_ref.toLowerCase().endsWith(suffix.toLowerCase());
+          if (basePayload.target?.type !== "windows-iis" || !concrete || basePayload.target.binding.sniHost ||
+              typeof site !== "string" || !require("./renewalProfile").WINDOWS_IIS_SITE_PATTERN.test(site) ||
+              !Number.isInteger(port) || port < 1 || port > 65535 || String(store).toLowerCase() !== "my" ||
+              guarded.key_mode !== "os-store-managed" || !/^winstore:\/\/LocalMachine\/My\//i.test(guarded.key_reference || "") || !sourceMatches)
             guardError = "This job refers to the former IIS binding. Start a new renewal for the reassociated explicit-IP registration.";
+          const targets=basePayload.deploymentTargets;
+          if (targets != null && (!Array.isArray(targets) || (targets.length > 0 &&
+              (targets.length !== 1 || targets[0]?.type !== "windows-iis" || String(targets[0]?.store).toLowerCase() !== String(store).toLowerCase() ||
+               String(targets[0]?.binding?.site).toLowerCase() !== String(site).toLowerCase() || targets[0]?.binding?.port !== port ||
+               String(targets[0]?.binding?.address).toLowerCase() !== String(address).toLowerCase() || targets[0]?.binding?.sniHost))))
+            guardError = "The IIS deployment target differs from the reassociated registration. Review the renewal profile before retrying.";
           const fingerprint=String(guarded.fingerprint_sha256 || "").toLowerCase();
           if (!/^[a-f0-9]{64}$/.test(fingerprint)) guardError = "The reassociated IIS certificate has no valid fingerprint. Refresh discovery before retrying.";
-          if (!guardError) basePayload.iisReassociationGuard = { fingerprintSha256:fingerprint };
+          if (!guardError) basePayload.iisReassociationGuard = { fingerprintSha256:fingerprint,site,port,address,store:"My" };
         }
         if (guardError) {
           await client.query(`UPDATE certificate_jobs SET status='rejected',error_code='CERTOPS_IIS_REASSOCIATION_UNSAFE',

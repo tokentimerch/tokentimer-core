@@ -20,8 +20,14 @@
     "iisReassociationGuard": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["fingerprintSha256"],
-      "properties": { "fingerprintSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } },
+      "required": ["fingerprintSha256", "site", "port", "address", "store"],
+      "properties": {
+        "fingerprintSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "site": { "type": "string", "pattern": "^[A-Za-z0-9 _.:-]{1,256}$" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "address": { "type": "string", "minLength": 2, "maxLength": 45 },
+        "store": { "const": "My" }
+      },
       "description": "Controller-owned guard for an IIS registration reassociated from a legacy wildcard target."
     },
     "mode": {

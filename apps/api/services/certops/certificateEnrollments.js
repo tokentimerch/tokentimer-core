@@ -684,7 +684,7 @@ async function loadEnrollment(db, workspaceId, enrollmentId, { lock = false } = 
     `SELECT e.id, e.workspace_id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
             e.operator_request_id, e.pending_since, e.next_poll_at,
             e.last_error_code, e.current_job_id, e.certificate_id, e.agent_id, e.request_id,
-            e.deploy_target, j.status AS job_status
+            e.deploy_target, j.status AS job_status, j.error_code AS job_error_code
        FROM certificate_enrollments e
        LEFT JOIN certificate_jobs j
          ON j.workspace_id = e.workspace_id AND j.id = e.current_job_id
@@ -1221,6 +1221,13 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
       const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
       const decision = decideContinuation(view, snapshot, now);
       if (!decision) return null;
+      if (decision.dispatch && decision.reason !== "free_key" && row.job_status === "rejected" &&
+          row.job_error_code === "CERTOPS_IIS_REASSOCIATION_UNSAFE") {
+        if (!await claimDueEnrollment(tx, row.workspace_id, row.id, now)) return null;
+        await tx.query(`UPDATE certificate_enrollments SET last_error_code=$3, updated_at=NOW()
+          WHERE workspace_id=$1 AND id=$2`, [row.workspace_id, row.id, row.job_error_code]);
+        return null;
+      }
       if (decision.reason === "retrieve_reconciliation") {
         if (!await claimDueEnrollment(tx, row.workspace_id, row.id, now)) return null;
         await tx.query(`UPDATE certificate_enrollments

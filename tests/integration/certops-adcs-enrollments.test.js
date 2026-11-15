@@ -250,7 +250,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
         state,
         frozen.bytes,
         frozen.sha256,
-        JSON.stringify(enrollmentInput().target),
+        JSON.stringify(extra.target || enrollmentInput().target),
         extra.operatorRequestId || null,
         extra.nextPollAt || null,
       ],
@@ -906,10 +906,10 @@ describe("CertOps AD CS enrollments (real database)", function () {
     const { claimJobs, _test: dispatchCaps } = require("./helpers/authenticated-agent-dispatch");
     await assertNoForeignDueRows();
     await pool.query(
-      `UPDATE certops_agents SET agent_version='0.18.0', declared_capabilities=$2::jsonb,
+      `UPDATE certops_agents SET agent_version='0.18.0', platform='win32', declared_capabilities=$2::jsonb,
               capabilities_updated_at=NOW(), declared_target_selectors=$3::jsonb WHERE id=$1`,
       [agentRowId, JSON.stringify(["adcs-enroll-v1", dispatchCaps.EVIDENCE_CLAIM_BINDING_CAPABILITY,
-        dispatchCaps.SIGNED_PAYLOAD_B64_CAPABILITY]), JSON.stringify(["app.example.com", "iis-01/webhosting"])],
+        dispatchCaps.SIGNED_PAYLOAD_B64_CAPABILITY, "iis-explicit-ip-v1"]), JSON.stringify(["app.example.com", "iis-01/webhosting"])],
     );
     const agentId = (await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1", [agentRowId])).rows[0].agent_id;
     const signedJobs=[];
@@ -934,11 +934,11 @@ describe("CertOps AD CS enrollments (real database)", function () {
       )).rows[0].id;
       return { certificateId, identityId };
     };
-    const continuation = async (enrollmentId, certificateId) => {
+    const continuation = async (enrollmentId, certificateId, target = enrollmentInput().target) => {
       const job = await createCertificateJob({
         client: pool, workspaceId, operation: "continue-enrollment", allowEnrollmentContinuation: true,
         subjectType: "managed_certificate", subjectId: certificateId, assignedAgentId: agentRowId, enrollmentId,
-        payload: storedAdcsPayload({ certificateId, target: enrollmentInput().target }),
+        payload: storedAdcsPayload({ certificateId, target }),
       });
       await pool.query("UPDATE certificate_enrollments SET current_job_id=$3 WHERE workspace_id=$1 AND id=$2",
         [workspaceId, enrollmentId, job.id]);
@@ -1008,6 +1008,31 @@ describe("CertOps AD CS enrollments (real database)", function () {
         throw new Error(`continuation claim in ${state} should fail`);
       } catch (error) {
         expect(error.code).to.equal("55000");
+      }
+    }
+
+    // The locked registration defines the only binding a non-terminal AD CS
+    // continuation may use, even when another binding has the same certificate.
+    const exactTarget = { type:"windows-iis", reference:"iis-01/webhosting", store:"My",
+      binding:{site:"Shop",port:443,address:"192.0.2.10"} };
+    for (const address of ["192.0.2.10", "192.0.2.20"]) {
+      const cert = await retiredCertificate(`guarded continuation ${address}`);
+      await pool.query(`UPDATE managed_certificates SET iis_reassociation_requires_absence=TRUE,
+        source_ref=$2, key_reference=$3 WHERE id=$1`, [cert.certificateId,
+        `${cert.certificateId}/host/iis_binding/Shop:443@192.0.2.10`, "winstore://LocalMachine/My/"+"b".repeat(40)]);
+      const target = {...exactTarget,binding:{...exactTarget.binding,address}};
+      const enrollment = await insertEnrollment("issued", {certificateId:cert.certificateId,target});
+      const jobId = await continuation(enrollment,cert.certificateId,target);
+      const claimed = await claim();
+      if (address === "192.0.2.10") {
+        const row=(await pool.query("SELECT status,error_code,error_message FROM certificate_jobs WHERE id=$1",[jobId])).rows[0];
+        expect(claimed, JSON.stringify(row)).to.include(jobId);
+        expect(signedJobs.find(job=>String(job.jobId)===jobId).iisReassociationGuard).to.deep.include({
+          site:"Shop",port:443,address,store:"My"});
+      } else {
+        expect(claimed).to.not.include(jobId);
+        const rejected=(await pool.query("SELECT status,error_code FROM certificate_jobs WHERE id=$1",[jobId])).rows[0];
+        expect(rejected).to.deep.equal({status:"rejected",error_code:"CERTOPS_IIS_REASSOCIATION_UNSAFE"});
       }
     }
 

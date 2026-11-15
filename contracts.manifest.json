@@ -178,7 +178,7 @@
           "kind": "schema",
           "path": "packages/contracts/certops/job-payload.schema.json",
           "status": "existing",
-          "sha256": "7f15a501c9122368f8008fea059953596220a64c52a611adf073f91d2923cecb"
+          "sha256": "307efcd3df18b8bbcbee76a4532f4e84db81fe4e33f2bbce14d32e5ab4f247bb"
         },
         {
           "id": "certops-renewal-profile-schema",

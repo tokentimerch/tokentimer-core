@@ -911,13 +911,25 @@ describe("bindCertificate", () => {
 // ---------------------------------------------------------------------------
 
 describe("deployIisBinding", () => {
+  it("deploys a reassociated binding when the signed destination and inventories match", async () => {
+    const execFileImpl=makeExecStub(key=>key === "query" ? boundAtValidBinding(OTHER_THUMBPRINT) : null);
+    let reads=0;
+    const snapshot=(after)=>({iis:[{site:VALID_BINDING.site,address:VALID_BINDING.address,port:443,hostname:"",flags:0}],
+      http:[{keyedBy:"ipport",ipPort:"10.0.0.5:443",thumbprint:after?FIXTURE_THUMBPRINT:OTHER_THUMBPRINT,storeName:"My"}],
+      certificates:[{thumbprint:after?FIXTURE_THUMBPRINT:OTHER_THUMBPRINT,fingerprintSha256:after?FIXTURE_FINGERPRINT_SHA256:"d".repeat(64),hasPrivateKey:true}]});
+    const result=await deployIisBinding({binding:VALID_BINDING,certificatePem:FIXTURE_CERT_PEM,execFileImpl,
+      reassociationGuard:{fingerprintSha256:"d".repeat(64),site:VALID_BINDING.site,port:443,address:VALID_BINDING.address,store:"My"},
+      reassociationRead:async()=>snapshot(++reads>2),connectImpl:makeConnectStub({peerDer:fixtureX509.raw})});
+    assert.equal(result.ok,true);
+    assert.equal(execFileImpl.calls.some(call=>call.args[1]==="add"),true);
+  });
   it("stops reassociated deployment before mutation on a wildcard conflict", async () => {
     const execFileImpl=makeExecStub(key=>key === "query" ? boundAtValidBinding(OTHER_THUMBPRINT) : null);
     const snapshot={iis:[{site:VALID_BINDING.site,address:VALID_BINDING.address,port:443,hostname:"",flags:0}],
       http:[{keyedBy:"ipport",ipPort:"10.0.0.5:443",thumbprint:OTHER_THUMBPRINT,storeName:"My"},{keyedBy:"ipport",ipPort:"0.0.0.0:443",thumbprint:OTHER_THUMBPRINT,storeName:"My"}],
       certificates:[{thumbprint:OTHER_THUMBPRINT,fingerprintSha256:"d".repeat(64),hasPrivateKey:true}]};
     const result=await deployIisBinding({binding:VALID_BINDING,certificatePem:FIXTURE_CERT_PEM,execFileImpl,
-      reassociationGuard:{fingerprintSha256:"d".repeat(64)},reassociationRead:async()=>snapshot});
+      reassociationGuard:{fingerprintSha256:"d".repeat(64),site:VALID_BINDING.site,port:443,address:VALID_BINDING.address,store:"My"},reassociationRead:async()=>snapshot});
     assert.equal(result.code,"REASSOCIATION_CONFLICT");
     assert.match(result.detail,/already be in the Windows store/);
     assert.equal(execFileImpl.calls.some(call=>["add","delete"].includes(call.args[1])),false);
@@ -930,10 +942,20 @@ describe("deployIisBinding", () => {
         ...(after?[{keyedBy:"ipport",ipPort:"0.0.0.0:443",thumbprint:FIXTURE_THUMBPRINT,storeName:"My"}]:[])],
       certificates:[{thumbprint:after?FIXTURE_THUMBPRINT:OTHER_THUMBPRINT,fingerprintSha256:after?FIXTURE_FINGERPRINT_SHA256:"d".repeat(64),hasPrivateKey:true}]});
     const result=await deployIisBinding({binding:VALID_BINDING,certificatePem:FIXTURE_CERT_PEM,execFileImpl,
-      reassociationGuard:{fingerprintSha256:"d".repeat(64)},reassociationRead:async()=>snapshot(++reads>2),connectImpl:makeConnectStub({peerDer:fixtureX509.raw})});
+      reassociationGuard:{fingerprintSha256:"d".repeat(64),site:VALID_BINDING.site,port:443,address:VALID_BINDING.address,store:"My"},reassociationRead:async()=>snapshot(++reads>2),connectImpl:makeConnectStub({peerDer:fixtureX509.raw})});
     assert.equal(result.code,"REASSOCIATION_CONFLICT_AFTER_MUTATION");
     assert.match(result.detail,/may already have changed/);
     assert.equal(execFileImpl.calls.some(call=>call.args[1]==="add"),true);
+  });
+  it("rejects a reassociation guard for a different IIS destination", async () => {
+    const guard={fingerprintSha256:"d".repeat(64),site:VALID_BINDING.site,port:443,address:VALID_BINDING.address,store:"My"};
+    for (const changed of [{site:"Other Site"},{port:444},{address:"10.0.0.6"},{store:"WebHosting"}]) {
+      const execFileImpl=makeExecStub(key=>key === "query" ? boundAtValidBinding(OTHER_THUMBPRINT) : null);
+      const result=await deployIisBinding({binding:VALID_BINDING,certificatePem:FIXTURE_CERT_PEM,execFileImpl,
+        reassociationGuard:{...guard,...changed},reassociationRead:async()=>assert.fail("mismatched destination must not be read")});
+      assert.equal(result.code,"REASSOCIATION_CONFLICT");
+      assert.equal(execFileImpl.calls.some(call=>["add","delete"].includes(call.args[1])),false);
+    }
   });
   it("rejects a malformed expected predecessor before querying or changing IIS", async () => {
     const execFileImpl = makeExecStub(() => null);

@@ -76,6 +76,29 @@ function automatic(f, dbPool = pool) {
 async function count(f) {
   return Number((await pool.query("SELECT count(*) FROM certificate_enrollments WHERE workspace_id=$1 AND certificate_id=$2", [f.workspaceId, f.certificate.id])).rows[0].count);
 }
+test("a rejected unsafe IIS continuation is not recreated by a due installation retry", async () => {
+  const f = await fixture();
+  const first = await manual(f);
+  await pool.query("UPDATE certificate_jobs SET status='awaiting_issuer' WHERE id=$1", [first.jobId]);
+  await pool.query("UPDATE certificate_enrollments SET state='installing', next_poll_at=NOW()-interval '1 minute' WHERE id=$1", [first.enrollmentId]);
+  const initial = await enrollments.scheduleDueEnrollments({ client: pool });
+  const continuation = initial.find(row => row.enrollmentId === first.enrollmentId);
+  assert.ok(continuation);
+  assert.equal((await pool.query('SELECT operation FROM certificate_jobs WHERE id=$1', [continuation.jobId])).rows[0].operation, 'continue-enrollment');
+  await pool.query("UPDATE certificate_jobs SET status='rejected', error_code='CERTOPS_IIS_REASSOCIATION_UNSAFE' WHERE id=$1", [continuation.jobId]);
+  await pool.query("UPDATE certificate_enrollments SET next_poll_at=NOW()-interval '1 minute' WHERE id=$1", [first.enrollmentId]);
+  const scheduled = await enrollments.scheduleDueEnrollments({ client: pool });
+  assert.equal(scheduled.some(row => row.enrollmentId === first.enrollmentId), false);
+  const state = (await pool.query('SELECT next_poll_at,last_error_code FROM certificate_enrollments WHERE id=$1', [first.enrollmentId])).rows[0];
+  assert.equal(state.next_poll_at, null);
+  assert.equal(state.last_error_code, 'CERTOPS_IIS_REASSOCIATION_UNSAFE');
+  const recoverable = await fixture();
+  const other = await manual(recoverable);
+  await pool.query("UPDATE certificate_jobs SET status='rejected', error_code='ADCS_UNREACHABLE' WHERE id=$1", [other.jobId]);
+  await pool.query("UPDATE certificate_enrollments SET state='installing', next_poll_at=NOW()-interval '1 minute' WHERE id=$1", [other.enrollmentId]);
+  const retry = await enrollments.scheduleDueEnrollments({ client: pool });
+  assert.equal(retry.some(row => row.enrollmentId === other.enrollmentId), true);
+});
 test("AD CS enrollment retains an explicit IIS IP in its job target", async () => {
   const f = await fixture();
   await pool.query("UPDATE certops_agents SET declared_capabilities=declared_capabilities || '[\"iis-explicit-ip-v1\"]'::jsonb WHERE id=$1", [f.agentId]);
