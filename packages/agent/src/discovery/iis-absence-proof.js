@@ -3,6 +3,7 @@
 // The ordinary discovery adapters are intentionally best effort. An absence
 // proof must use its own fail-closed IIS enumeration and strict HTTP.sys read.
 const childProcess = require("node:child_process");
+const { createHash } = require("node:crypto");
 const { isIP } = require("node:net");
 const { execWithoutShell, listHttpSysBindings } = require("../windows-discovery");
 
@@ -19,8 +20,8 @@ const IIS_SNAPSHOT_SCRIPT = [
 ].join("\n");
 const STORE_SNAPSHOT_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
-  "$hash = [System.Security.Cryptography.SHA256]::Create()",
-  "try { $items = @(Get-ChildItem -Path 'Cert:\\LocalMachine\\My' -ErrorAction Stop | ForEach-Object { @{ thumbprint = [string]$_.Thumbprint; fingerprintSha256 = ([BitConverter]::ToString($hash.ComputeHash($_.RawData))).Replace('-', '').ToLowerInvariant(); hasPrivateKey = [bool]$_.HasPrivateKey } }); ConvertTo-Json -InputObject @{ items = $items } -Compress -Depth 4 } finally { $hash.Dispose() }",
+  "$items = @(Get-ChildItem -Path 'Cert:\\LocalMachine\\My' -ErrorAction Stop | ForEach-Object { @{ thumbprint = [string]$_.Thumbprint; rawData = [int[]]$_.RawData; hasPrivateKey = [bool]$_.HasPrivateKey } })",
+  "ConvertTo-Json -InputObject @{ items = $items } -Compress -Depth 4",
 ].join("\n");
 
 function isConcreteAddress(value) {
@@ -92,7 +93,17 @@ async function readAbsenceSnapshot({ execFileImpl, signal } = {}) {
   if (store.exitCode !== 0) throw new Error("Certificate store snapshot unavailable");
   let certificates;
   try { certificates = JSON.parse(String(store.stdout || "")).items; } catch { throw new Error("Invalid certificate store snapshot"); }
-  if (!Array.isArray(certificates) || certificates.length > 10000 || certificates.some(c => !/^[a-f0-9]{40}$/i.test(c?.thumbprint || "") || !/^[a-f0-9]{64}$/.test(c?.fingerprintSha256 || "") || typeof c?.hasPrivateKey !== "boolean")) throw new Error("Invalid certificate store snapshot");
+  if (!Array.isArray(certificates) || certificates.length > 10000 || certificates.some(c =>
+    !/^[a-f0-9]{40}$/i.test(c?.thumbprint || "") || typeof c?.hasPrivateKey !== "boolean" ||
+    !Array.isArray(c?.rawData) || c.rawData.length < 1 || c.rawData.length > 1024 * 1024 ||
+    !c.rawData.every(byte => Number.isInteger(byte) && byte >= 0 && byte <= 255))) {
+    throw new Error("Invalid certificate store snapshot");
+  }
+  certificates = certificates.map(c => ({
+    thumbprint: c.thumbprint,
+    hasPrivateKey: c.hasPrivateKey,
+    fingerprintSha256: createHash("sha256").update(Buffer.from(c.rawData)).digest("hex"),
+  }));
   return { iis, http: http.bindings, certificates };
 }
 
