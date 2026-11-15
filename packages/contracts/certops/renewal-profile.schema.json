@@ -235,6 +235,12 @@
               "site",
               "port"
             ],
+            "allOf": [
+              {
+                "if": { "required": ["address"], "properties": { "address": { "not": { "enum": ["*", "0.0.0.0"] } } } },
+                "then": { "properties": { "sniHost": { "type": "null" } } }
+              }
+            ],
             "properties": {
               "site": {
                 "type": "string",
@@ -244,6 +250,13 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 65535
+              },
+              "address": {
+                "anyOf": [
+                  { "const": "*" },
+                  { "type": "string", "format": "ipv4" },
+                  { "type": "string", "format": "ipv6" }
+                ]
               },
               "sniHost": {
                 "type": [
@@ -434,6 +447,12 @@
             "site",
             "port"
           ],
+          "allOf": [
+            {
+              "if": { "required": ["address"], "properties": { "address": { "not": { "enum": ["*", "0.0.0.0"] } } } },
+              "then": { "properties": { "sniHost": { "type": "null" } } }
+            }
+          ],
           "properties": {
             "site": {
               "type": "string",
@@ -443,6 +462,13 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 65535
+            },
+            "address": {
+              "anyOf": [
+                { "const": "*" },
+                { "type": "string", "format": "ipv4" },
+                { "type": "string", "format": "ipv6" }
+              ]
             },
             "sniHost": {
               "type": [

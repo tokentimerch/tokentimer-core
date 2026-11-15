@@ -915,9 +915,12 @@ export default function CertificateIdentityDetailModal({
                 .filter(
                   source =>
                     source.renewalProfileId &&
-                    String(source.sourceRef || '').includes(
+                    (String(source.sourceRef || '').includes(
                       '/windows_store/'
-                    ) &&
+                    ) ||
+                      /\/iis_binding\/[^/]+:\d+$/.test(
+                        String(source.sourceRef || '')
+                      )) &&
                     !isEndedSource(source)
                 )
                 .map(source => (

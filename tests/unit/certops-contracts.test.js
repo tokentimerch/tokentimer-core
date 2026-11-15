@@ -1808,6 +1808,20 @@ describe("signed-dispatch payload, wire wrappers, and the action-keyed discrimin
     assert.equal(result.valid, true, JSON.stringify(result.errors));
   });
 
+  it("accepts only literal IPs for an explicit IIS binding address", () => {
+    const target = { type: "windows-iis", reference: "iis-01/default-web-site", store: "My",
+      binding: { site: "Default Web Site", port: 443 } };
+    for (const address of ["192.0.2.10", "2001:db8::10", "*"]) {
+      const result = validateSignedJob(baseCertificateJob({ action: "deploy", target: { ...target, binding: { ...target.binding, address } } }));
+      assert.equal(result.valid, true, JSON.stringify(result.errors));
+    }
+    for (const address of ["host.example.test", "999.999.999.999", "192.0.2.10;cmd"]) {
+      assert.equal(validateSignedJob(baseCertificateJob({ action: "deploy", target: { ...target, binding: { ...target.binding, address } } })).valid, false);
+    }
+    assert.equal(validateSignedJob(baseCertificateJob({ action: "deploy", target: { ...target,
+      binding: { ...target.binding, address: "192.0.2.10", sniHost: "app.example.test" } } })).valid, false);
+  });
+
   it("accepts only a machine-store CNG target without service fields", () => {
     const target = { type: "windows-cert-store", reference: "app.example.com", store: "My" };
     const job = baseCertificateJob({ target, keyMode: "os-store-managed" });

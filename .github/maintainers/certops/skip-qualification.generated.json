@@ -664,7 +664,7 @@
     {
       "id": "f95b49bb19f40cd2479e",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 514,
+      "line": 515,
       "name": "unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -673,7 +673,7 @@
     {
       "id": "37eb38150afcae9c2681",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 567,
+      "line": 568,
       "name": "reports an http.sys binding with no matching IIS site as http_sys, not iis_binding",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -682,7 +682,7 @@
     {
       "id": "896b620b80b9c787229a",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 655,
+      "line": 656,
       "name": "reports real subjectAltNames end-to-end from the certificate's raw bytes",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -691,7 +691,7 @@
     {
       "id": "b45f65881e8f3ba572b1",
       "file": "packages/agent/src/index.test.js",
-      "line": 4318,
+      "line": 4347,
       "name": "refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",

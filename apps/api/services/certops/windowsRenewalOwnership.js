@@ -2,16 +2,22 @@
 
 const { WINDOWS_SNI_HOST_PATTERN } = require("./renewalProfile");
 
-// Current Windows IIS jobs always use a wildcard IP listener. A hostname SNI
-// selector covers every listening IP, so its site name is not part of the key.
+// A hostname SNI selector covers every listening IP, so its site name is not
+// part of the key. IP-keyed bindings include the actual listener address.
 function iisSelectorKey(binding) {
   if (!binding || !Number.isInteger(binding.port) || binding.port < 1 || binding.port > 65535) {
     throw new Error("invalid IIS binding port");
   }
-  if (binding.address != null && binding.address !== "*" && binding.address !== "0.0.0.0") {
-    throw new Error("unsupported IIS binding address");
+  const address = binding.address == null || binding.address === "*" ? "0.0.0.0" : binding.address;
+  const addressFamily = typeof address === "string" && !address.includes("%") ? require("node:net").isIP(address) : 0;
+  if (!addressFamily) {
+    throw new Error("invalid IIS binding address");
   }
-  if (binding.sniHost == null || binding.sniHost === "") return `ipport:0.0.0.0:${binding.port}`;
+  if (binding.sniHost == null || binding.sniHost === "") {
+    const normalized = addressFamily === 6 ? new URL(`http://[${address}]/`).hostname : address;
+    return `ipport:${normalized}:${binding.port}`;
+  }
+  if (address !== "0.0.0.0") throw new Error("IIS binding address cannot be combined with SNI");
   if (typeof binding.sniHost !== "string" || !WINDOWS_SNI_HOST_PATTERN.test(binding.sniHost)) {
     throw new Error("invalid IIS SNI hostname");
   }

@@ -271,7 +271,7 @@ function resolveRequiredExecutors({
     (certificateRow.source === "agent_windows" || forceDeployedAgentPin)
   ) {
     const candidateId = String(certificateRow.deployed_agent_id);
-    if (agentIndex.byRowId.has(candidateId)) assignedAgentId = candidateId;
+    if (forceDeployedAgentPin || agentIndex.byRowId.has(candidateId)) assignedAgentId = candidateId;
     if (agentIndex.retiredRowIds?.has(candidateId)) {
       return {
         pinned: true,
@@ -383,6 +383,9 @@ function partialCapabilitySummary(declaredOperations) {
 }
 
 function ineligiblePinSummary(reason, declaredOperations) {
+  if (reason === "iis_explicit_ip_capability_unavailable") {
+    return "The assigned agent needs a qualified Windows build with a fresh declaration for explicit-IP IIS bindings.";
+  }
   if (reason === "compatibility_blocked") {
     return TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON.compatibility_blocked;
   }
@@ -563,6 +566,7 @@ function adcsRenewalRequirements(renewalProfile, certificateRow) {
     }),
     subjectIsProvisioning: certificateRow.status === "provisioning",
     issuerKind: "adcs",
+    payload: { target: profile.target },
   };
 }
 
@@ -656,6 +660,12 @@ function resolveRenewalPathForRow({
 
   const profileMetadata = parseMetadata(certificateRow.profile_public_metadata);
   const renewalProfile = profileMetadata.renewalProfile;
+  const bindingAddress = renewalProfile?.target?.type === "windows-iis" ? renewalProfile.target.binding?.address : null;
+  if (bindingAddress != null && !["*", "0.0.0.0"].includes(bindingAddress) && !certificateRow.deployed_agent_id) {
+    return { renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
+      renewalPathReason: RENEWAL_PATH_REASONS.TOPOLOGY_UNKNOWN,
+      renewalPathSummary: "An explicit-IP IIS binding needs an owning agent before it can renew.", dependencies: [] };
+  }
   let jobRequirements;
   try {
     // The issuer decides the rules, as it does for the scheduler. An ACME-shaped
@@ -692,6 +702,9 @@ function resolveRenewalPathForRow({
     now,
     env,
     jobRequirements,
+    forceDeployedAgentPin: renewalProfile?.target?.type === "windows-iis" &&
+      renewalProfile.target.binding?.address != null &&
+      !["*", "0.0.0.0"].includes(renewalProfile.target.binding.address),
   });
   if (
     eligibilityIndeterminate &&

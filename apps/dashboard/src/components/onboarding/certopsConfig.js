@@ -657,6 +657,7 @@ function buildWindowsIssueJob({
   iisSite,
   iisPort,
   iisStore,
+  iisAddress,
   sniHost,
   acmeProfile,
   assignedAgentId,
@@ -664,6 +665,15 @@ function buildWindowsIssueJob({
 }) {
   const list = (names || []).map(n => String(n).trim()).filter(Boolean);
   const binding = { site: iisSite, port: Number(iisPort) };
+  const address = String(iisAddress || '').trim();
+  if (
+    address &&
+    !['*', '0.0.0.0'].includes(address) &&
+    String(sniHost || '').trim()
+  ) {
+    throw new Error('A specific IIS IP address cannot be combined with SNI.');
+  }
+  if (address) binding.address = address;
   if (String(sniHost || '').trim()) binding.sniHost = String(sniHost).trim();
   return {
     operation: 'issue',
@@ -700,6 +710,7 @@ export function buildIssueJob({
   iisSite = 'Default Web Site',
   iisPort = 443,
   iisStore = 'My',
+  iisAddress = '',
   sniHost = '',
   acmeProfile = WINDOWS_ACME_PROFILE,
   assignedAgentId,
@@ -714,6 +725,7 @@ export function buildIssueJob({
       iisSite,
       iisPort,
       iisStore,
+      iisAddress,
       sniHost,
       acmeProfile,
       assignedAgentId,

@@ -105,6 +105,18 @@ function certificateRow() {
 }
 
 describe("shared agent-job eligibility", () => {
+  it("does not route an explicit-IP IIS job to an unqualified or stale agent", () => {
+    const candidate = agent({ platform: "win32" });
+    const job = { operation: "renew", payload: { target: { type: "windows-iis",
+      reference: "host/web", binding: { site: "site", port: 443, address: "192.0.2.10" } } } };
+    const eligibility = value => evaluateAgentJobEligibility({ agent: value, job,
+      compatibility: computeAgentCompatibility(value, {}), now: NOW });
+    assert.equal(eligibility(candidate).reason, "iis_explicit_ip_capability_unavailable");
+    assert.equal(eligibility({ ...candidate, declaredCapabilities: ["iis-explicit-ip-v1"],
+      capabilitiesUpdatedAt: new Date(NOW - 30 * 86400000).toISOString() }).reason, "iis_explicit_ip_capability_unavailable");
+    assert.equal(eligibility({ ...candidate, platform: "linux", declaredCapabilities: ["iis-explicit-ip-v1"] }).reason, "iis_explicit_ip_capability_unavailable");
+    assert.equal(eligibility({ ...candidate, declaredCapabilities: ["iis-explicit-ip-v1"] }).eligible, true);
+  });
   it("requires the fresh dedicated store-only capability", () => {
     const candidate = agent({
       platform: "win32",

@@ -40,6 +40,13 @@ function job(overrides = {}) {
 }
 
 describe("pendingReasonForJob", () => {
+  it("explains a missing explicit-IP IIS capability without blaming supported actions", () => {
+    const reason = pendingReasonForJob(job({ operation: "renew", payload: { target: {
+      type: "windows-iis", reference: "app.example.com", binding: { site: "site", port: 443, address: "192.0.2.10" } } } }),
+    agent({ platform: "win32", supportedOperations: ["renew"], targetSelectors: ["app.example.com"] }));
+    assert.equal(reason.code, "iis_explicit_ip_capability_unavailable");
+    assert.match(reason.message, /explicit-IP IIS/);
+  });
   it("returns null for a terminal job", () => {
     assert.equal(
       pendingReasonForJob(job({ status: "succeeded" }), agent()),

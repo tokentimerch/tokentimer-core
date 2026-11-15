@@ -8,6 +8,7 @@ Advanced reference for CNG custody, IIS binding behavior, crash recovery, and re
 
 The agent supports native Windows service installation. Its runtime differs from Linux in the following areas:
 
+- **IIS addresses:** automatic renewal through the console targets a wildcard IP listener, or an SNI hostname. Do not use that renewal flow for a non-SNI binding restricted to a specific IP address; discovery alone does not make that address a supported renewal target. Check the IIS binding before enabling renewal.
 - Windows state uses validated ACLs through `icacls`; POSIX-mode assertions do not apply. See [Windows installation](install-windows.md) for the permission model.
 - Directory fsync after the deploy rename is skipped on win32 (opening a
   directory for fsync fails there); the file-content fsync before rename

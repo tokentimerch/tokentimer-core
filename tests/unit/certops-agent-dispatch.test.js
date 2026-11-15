@@ -1302,6 +1302,30 @@ describe("agentDispatch.claimJobs", () => {
     assert.equal(dbPool.state.queries.some((q) => q.text.includes("SET status = 'claimed'")), false);
   });
 
+  it("does not claim an explicit-IP IIS job without the qualified capability", async () => {
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT last_sequence")) return { rows: [{ last_sequence: 0 }] };
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("SELECT declared_target_selectors")) return { rows: [{
+        declared_target_selectors: ["app.example.com"], declared_command_profile_names: [],
+        supported_dns_providers: [], declared_capabilities: [],
+        capabilities_updated_at: new Date().toISOString(), platform: "win32",
+      }] };
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: [{
+        id: 42, workspace_id: WORKSPACE_A, operation: "renew", subject_type: "certificate",
+        subject_id: "cert-1", executor_kind: "agent", required_target_selector: "app.example.com",
+        payload: { target: { type: "windows-iis", reference: "app.example.com",
+          binding: { site: "Default Web Site", port: 443, address: "192.0.2.10" } } },
+      }] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const result = await claimJobs({ dbPool, agent: agentFixture(),
+      body: { maxJobs: 1, supportedActions: ["renew"] },
+      env: { CERTOPS_AGENT_LOG_STORAGE_ENABLED: "false" }, deps: CLAIM_DEPS_BASE });
+    assert.equal(result.jobs.length, 0);
+    assert.equal(dbPool.state.queries.some(q => q.text.includes("SET status = 'claimed'")), false);
+  });
+
   it("claims pending jobs, sets lease fields, and returns signed payloads", async () => {
     let livenessUpdates = 0;
     const dbPool = createMockPool((sql, params) => {

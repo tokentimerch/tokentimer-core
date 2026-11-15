@@ -187,6 +187,10 @@ function validateWindowsBinding(value, fieldName) {
   if (!binding || typeof binding !== "object" || Array.isArray(binding)) {
     throw profileError(`renewalProfile.${fieldName}.binding is invalid`);
   }
+  if (binding.address != null && (typeof binding.address !== "string" ||
+      (binding.address !== "*" && (binding.address.includes("%") || require("node:net").isIP(binding.address) === 0)))) {
+    throw profileError(`renewalProfile.${fieldName}.binding.address must be an IP literal or wildcard`);
+  }
   const site = requireString(
     binding.site,
     `${fieldName}.binding.site`,
@@ -209,6 +213,9 @@ function validateWindowsBinding(value, fieldName) {
           255,
           WINDOWS_SNI_HOST_PATTERN,
         );
+  if (sniHost && binding.address != null && binding.address !== "*" && binding.address !== "0.0.0.0") {
+    throw profileError(`renewalProfile.${fieldName}.binding.address cannot be combined with SNI`);
+  }
 
   const thumbprintSha1 =
     value.thumbprintSha1 === undefined || value.thumbprintSha1 === null
@@ -222,7 +229,7 @@ function validateWindowsBinding(value, fieldName) {
 
   return {
     store,
-    binding: { site, port: binding.port, sniHost },
+    binding: { site, port: binding.port, sniHost, ...(binding.address != null ? { address: binding.address } : {}) },
     thumbprintSha1,
   };
 }

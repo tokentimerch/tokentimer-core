@@ -27,6 +27,7 @@ const {
   runDiscoveryScan,
   runRevisionedDiscoveryScan,
   runWindowsDiscoveryScan,
+  runWindowsIisDeployTail,
   registerIfNeeded,
   createCandidateAgentId,
   resolveClaimSupportedActions,
@@ -56,6 +57,24 @@ const {
   AGENT_TRUST_STORE_PREREQUISITES,
   AGENT_CANDIDATE_CAPABILITIES,
 } = require("./index.js");
+
+it("refuses unqualified or ambiguous explicit-IP IIS work before any mutation", async () => {
+  let mutated = false;
+  const target = { type: "windows-iis", store: "My", binding: { site: "site", port: 443, address: "192.0.2.10" } };
+  const options = { target, onBeforeMutation: () => { mutated = true; } };
+  const unqualified = await runWindowsIisDeployTail(options);
+  assert.equal(unqualified.status, "blocked");
+  assert.match(unqualified.errorMessage, /not qualified/);
+  const ambiguous = await runWindowsIisDeployTail({ ...options, target: { ...target,
+    binding: { ...target.binding, sniHost: "app.example.test" } } });
+  assert.equal(ambiguous.status, "blocked");
+  assert.match(ambiguous.errorMessage, /without an SNI selector/);
+  assert.equal(mutated, false);
+  const dispatched = await executeJob({ job: { action: "renew", issuerKind: "adcs", target },
+    executionContext: { execution: {} } });
+  assert.equal(dispatched.status, "blocked");
+  assert.match(dispatched.errorMessage, /not qualified/);
+});
 
 it("preserves recovery after a completed AD CS or ACME store job loses its lease", () => {
   const abort = { status: "blocked", errorMessage: "lease lost" };
@@ -644,6 +663,16 @@ describe("runWindowsDiscoveryScan", () => {
     assert.equal(byName.port, "443");
     assert.equal(byName.sniHost, "example.com");
     assert.equal(byName.thumbprint, WINDOWS_THUMBPRINT);
+  });
+
+  it("reports the observed IP address for a non-SNI IIS binding", async () => {
+    const client = createRecordingClient();
+    const collect = () => [{ locationKind: "iis_binding", locationSlot: "site:443@192.0.2.10",
+      fingerprintSha256: "b".repeat(64), siteName: "site", port: 443, boundAddress: "192.0.2.10",
+      storeLocation: "LocalMachine", storeName: "My", thumbprint: WINDOWS_THUMBPRINT }];
+    await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+    const metadata = Object.fromEntries(client.calls.reportEvidence[0].evidenceItems[0].metadata.map(x => [x.name, x.value]));
+    assert.equal(metadata.boundAddress, "192.0.2.10");
   });
 
   it("includes http_sys-specific port metadata without sniHost/siteName", async () => {

@@ -49,7 +49,13 @@ const CERTIFICATE_ID_UUID =
 
 function validAdcsTarget(target) {
   if (!target || typeof target !== "object" || Array.isArray(target)) return false;
-  if (target.type === "windows-iis") return Boolean(target.binding);
+  if (target.type === "windows-iis") {
+    if (!target.binding) return false;
+    if (target.binding.address != null) {
+      try { iisSelectorKey(target.binding); } catch (_) { return false; }
+    }
+    return true;
+  }
   return target.type === "windows-cert-store" && target.store === "My" &&
     typeof target.reference === "string" &&
     target.reference.length <= 253 &&
@@ -127,6 +133,7 @@ async function assertIisTargetAvailable(tx, { workspaceId, certificateId, agentI
   }
   const port = String(target.binding.port || "");
   const sni = String(target.binding.sniHost || "").trim().toLowerCase();
+  const address = !target.binding.address || target.binding.address === "*" ? "0.0.0.0" : target.binding.address;
   const selector = iisSelectorKey(target.binding);
   const key = JSON.stringify([String(workspaceId).toLowerCase(), String(agentId).toLowerCase(), selector]);
   await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))", [`certops-iis-enrollment:${key}`]);
@@ -136,6 +143,7 @@ async function assertIisTargetAvailable(tx, { workspaceId, certificateId, agentI
         AND (e.agent_id = $2::uuid OR e.agent_id IS NULL)
         AND e.deploy_target->'binding'->>'port' = $3
         AND lower(btrim(COALESCE(e.deploy_target->'binding'->>'sniHost', ''))) = $4
+        AND ($4 <> '' OR COALESCE(NULLIF(e.deploy_target->'binding'->>'address', '*'), '0.0.0.0')::inet = $8::inet)
         AND (e.state = ANY($5::text[]) OR ($6 = 'automation'
           AND (e.state = 'installed' OR EXISTS (SELECT 1 FROM certificate_jobs j
             WHERE j.workspace_id = e.workspace_id AND j.enrollment_id = e.id AND j.source = 'automation'))
@@ -153,7 +161,7 @@ async function assertIisTargetAvailable(tx, { workspaceId, certificateId, agentI
             AND association.associated_at <= e.created_at
             AND (association.superseded_at IS NULL OR association.superseded_at >= e.created_at)
         ))) LIMIT 1`,
-    [workspaceId, agentId, port, sni, OPEN_ENROLLMENT_STATES, source, certificateId || null],
+    [workspaceId, agentId, port, sni, OPEN_ENROLLMENT_STATES, source, certificateId || null, address],
   );
   if (result.rows.length) {
     const error = serviceError("This IIS binding already has an enrollment in progress or was renewed for this certificate.", "CERTOPS_ENROLLMENT_OPEN");

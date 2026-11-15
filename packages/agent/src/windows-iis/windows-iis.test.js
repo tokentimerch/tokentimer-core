@@ -214,6 +214,7 @@ describe("resolveVerificationTarget", () => {
     assert.equal(resolveVerificationTarget({ address: "*" }).host, "127.0.0.1");
     assert.equal(resolveVerificationTarget({ address: "0.0.0.0" }).host, "127.0.0.1");
     assert.equal(resolveVerificationTarget({ address: "[::]" }).host, "::1");
+    assert.equal(resolveVerificationTarget({ address: "::" }).host, "::1");
   });
 
   it("strips IPv6 brackets from a concrete IPv6 literal", () => {
@@ -242,6 +243,12 @@ describe("formatIpPort", () => {
   it("writes the IIS wildcard as 0.0.0.0 because netsh rejects an asterisk", () => {
     assert.equal(formatIpPort({ address: "*", port: 8443 }), "0.0.0.0:8443");
     assert.equal(formatBindingSelector({ address: "*", port: 8443 }), "ipport=0.0.0.0:8443");
+  });
+
+  it("brackets unbracketed IPv6 addresses for netsh", () => {
+    assert.equal(formatIpPort({ address: "2001:db8::1", port: 443 }), "[2001:db8::1]:443");
+    assert.equal(formatIpPort({ address: "[2001:db8::1]", port: 443 }), "[2001:db8::1]:443");
+    assert.equal(formatBindingSelector({ address: "::", port: 443 }), "ipport=[::]:443");
   });
 });
 
@@ -350,6 +357,11 @@ describe("queryCurrentBinding", () => {
       execFileImpl,
     });
     assert.equal(ipv6.thumbprint, FIXTURE_THUMBPRINT.toUpperCase());
+    const apiIpv6 = await queryCurrentBinding({
+      binding: { ...VALID_BINDING, address: "2001:DB8:0:0::1" },
+      execFileImpl,
+    });
+    assert.equal(apiIpv6.thumbprint, FIXTURE_THUMBPRINT.toUpperCase());
   });
 
   it("decodes the binding's settings into result.parameters (rebind-settings preservation)", async () => {

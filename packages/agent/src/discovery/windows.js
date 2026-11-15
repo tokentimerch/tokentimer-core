@@ -474,6 +474,7 @@ async function collectWindowsDiscoveryObservations({
           siteName,
           port: parsed.port,
           sniHost,
+          ...(!sniHost ? { boundAddress: parsed.address } : {}),
         });
       }
     } else {

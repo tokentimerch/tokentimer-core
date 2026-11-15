@@ -8020,6 +8020,12 @@ paths:
                       properties:
                         site: { type: string }
                         port: { type: integer, minimum: 1, maximum: 65535 }
+                        address:
+                          description: Optional IP-keyed IIS listener. A specific IP requires a qualified agent and cannot be combined with SNI.
+                          oneOf:
+                            - { type: string, enum: ["*"] }
+                            - { type: string, format: ipv4 }
+                            - { type: string, format: ipv6 }
                         sniHost: { type: string }
       responses:
         "201":

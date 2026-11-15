@@ -63,6 +63,50 @@ describe('AdcsProfileWizard docs panel', () => {
     listAgentsMock.mockReset().mockResolvedValue({ items: [] });
   });
 
+  it('keeps the explicit IIS IP in the profile and blocks an SNI conflict', async () => {
+    createAdcsRenewalProfile.mockReturnValue(new Promise(() => {}));
+    mount();
+    fireEvent.change(screen.getByLabelText('Profile name'), {
+      target: { value: 'IP renewal' },
+    });
+    fireEvent.change(screen.getByLabelText('AD CS issuer'), {
+      target: { value: ISSUER.id },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.change(screen.getByLabelText('Certificate name'), {
+      target: { value: 'app.example' },
+    });
+    fireEvent.change(screen.getByLabelText('IIS site'), {
+      target: { value: 'Site' },
+    });
+    fireEvent.change(screen.getByLabelText('IIS port'), {
+      target: { value: '443' },
+    });
+    fireEvent.change(screen.getByLabelText('IIS IP address'), {
+      target: { value: '192.0.2.10' },
+    });
+    fireEvent.change(screen.getByLabelText('SNI hostname'), {
+      target: { value: 'app.example' },
+    });
+    expect(screen.getByRole('button', { name: 'Review' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('SNI hostname'), {
+      target: { value: '' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    expect(screen.getByText(/192\.0\.2\.10:443/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
+    await waitFor(() =>
+      expect(createAdcsRenewalProfile).toHaveBeenCalledWith(
+        'ws-1',
+        expect.objectContaining({
+          target: expect.objectContaining({
+            binding: expect.objectContaining({ address: '192.0.2.10' }),
+          }),
+        })
+      )
+    );
+  });
+
   it('shows one compact panel per step, each with a single renewal link', async () => {
     mount();
     await screen.findByLabelText('Profile name');

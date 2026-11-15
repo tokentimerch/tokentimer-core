@@ -434,6 +434,26 @@ async function createAutomaticAdcsRenewal({
   if (issuer.rows[0]?.kind !== "adcs") return null;
 
   const fields = adcsFieldsFromProfile(certificate);
+  const binding = fields.target?.type === "windows-iis" ? fields.target.binding : null;
+  const explicitIp = binding?.address != null && binding.address !== "*" && binding.address !== "0.0.0.0";
+  if (explicitIp) {
+    if (!certificate.deployed_agent_id) {
+      const error = new Error("the explicit-IP IIS binding has no owning agent");
+      error.code = CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
+      throw error;
+    }
+    const result = await dbPool.query(`SELECT platform,declared_capabilities,capabilities_updated_at
+      FROM certops_agents WHERE workspace_id=$1 AND id=$2 AND status='active'`,
+    [certificate.workspace_id, certificate.deployed_agent_id]);
+    const owner = result.rows[0];
+    if (owner?.platform !== "win32" || !require("./agentJobEligibility").hasFreshCapability({
+      declaredCapabilities: owner.declared_capabilities, capabilitiesUpdatedAt: owner.capabilities_updated_at,
+      capability: "iis-explicit-ip-v1", env })) {
+      const error = new Error("the owning agent is not qualified for explicit-IP IIS renewal");
+      error.code = CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
+      throw error;
+    }
+  }
   // Evidence must describe the confirmed version (config, template, pinned key)
   // and come from a preflight job created after confirmation. Template ACLs can
   // change in AD without the name changing, so an older check does not qualify.
@@ -458,7 +478,7 @@ async function createAutomaticAdcsRenewal({
     error.code = CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
     throw error;
   }
-  const agent = storeOnly
+  const agent = storeOnly || explicitIp
     ? eligibleAgents.find(candidate => String(candidate.id) === String(certificate.deployed_agent_id))
     : eligibleAgents[0];
   if (!agent) {
@@ -473,7 +493,7 @@ async function createAutomaticAdcsRenewal({
           AND ($3::uuid IS NULL OR id = $3::uuid)
         ORDER BY last_seen_at DESC NULLS LAST, id
         LIMIT 1`,
-      [certificate.workspace_id, fields.target.reference, storeOnly ? certificate.deployed_agent_id : null],
+      [certificate.workspace_id, fields.target.reference, storeOnly || explicitIp ? certificate.deployed_agent_id : null],
     );
     if (declared.rows[0]?.id && version?.confirmed_at && version?.ca_key_sha256 && version?.ca_config && version?.template) {
       await preflightDispatcher({
@@ -501,7 +521,7 @@ async function createAutomaticAdcsRenewal({
   const open = await findOpenEnrollment(dbPool, certificate.workspace_id, certificate.id);
   if (open) {
     const retry = await retryDryRunBlockedRenewal({ client: dbPool, workspaceId: certificate.workspace_id,
-      enrollmentId: open.id, eligibleAgentIds: eligibleAgents.map(candidate => String(candidate.id)), env });
+      enrollmentId: open.id, eligibleAgentIds: (explicitIp ? [agent] : eligibleAgents).map(candidate => String(candidate.id)), env });
     return { job: retry || { id: null, operation: "renew" }, created: Boolean(retry) };
   }
 
@@ -619,6 +639,18 @@ async function createRenewalJobForCertificate({
     });
 
     const storeOnly = payload.target?.type === "windows-cert-store";
+    const iisAddress = payload.target?.type === "windows-iis" ? payload.target.binding?.address : null;
+    const explicitIis = iisAddress != null && iisAddress !== "*" && iisAddress !== "0.0.0.0";
+    if (explicitIis && !certificate.deployed_agent_id) {
+      const error = new Error("the explicit-IP IIS binding has no owning agent");
+      error.code = CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
+      throw error;
+    }
+    if (explicitIis && payload.publication) {
+      const error = new Error("explicit-IP IIS renewal with shared publication is not yet supported");
+      error.code = CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
+      throw error;
+    }
     const creator = storeOnly ? require("./acmeStoreIssuance").createAcmeStoreRenewalTx : jobCreator;
     const outcome = await creator({
       client,
@@ -635,6 +667,7 @@ async function createRenewalJobForCertificate({
       ),
       payload: storeOnly ? { reason: "scheduled-renewal" } : payload,
       ...(storeOnly ? { transactionOwned: true, assignedAgentId: certificate.deployed_agent_id } : {}),
+      ...(explicitIis ? { assignedAgentId: certificate.deployed_agent_id } : {}),
       ...(payload.publication ? { assignedAgentId: (await client.query(
         "SELECT issuer_agent_id FROM certops_distribution_groups WHERE workspace_id=$1 AND id=$2 AND state='active'",
         [certificate.workspace_id, payload.publication.groupId])).rows[0]?.issuer_agent_id } : {}),

@@ -1175,6 +1175,7 @@ async function claimJobs({
                AND (POSITION('/windows_store/' IN COALESCE(mc.source_ref, '')) > 0
                     OR mc.reconciliation_reason = 'windows_store_identity_conflict')
           ))
+          AND ${require("./legacyIisClaimGuard").legacyIisClaimGuard}
           AND NOT (payload ? 'distributionRollout')
           AND NOT (payload ? 'distributionPolicyApproval')
           -- Exclude contained/superseded distribution work before LIMIT.
@@ -1368,7 +1369,10 @@ async function claimJobs({
             materialDeployment: row.payload?.materialDeployment,
             materialCleanup: row.payload?.materialCleanup,
             materialReconciliation: row.payload?.materialReconciliation,
-            target: row.payload?.target ? { type: row.payload.target.type } : undefined,
+            target: row.payload?.target ? {
+              type: row.payload.target.type,
+              binding: row.payload.target.binding ? { address: row.payload.target.binding.address } : undefined,
+            } : undefined,
           },
           issuerKind: row.enrollment_id ? "adcs" : row.acme_store_bound ? "acme" : null,
         },

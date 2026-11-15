@@ -31,6 +31,10 @@ function adcsTargetComplete(target) {
       /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/.test(target.reference) &&
       Object.keys(target).every(key => ["type", "reference", "store"].includes(key));
   }
+  const address = target?.binding?.address;
+  if (address != null && (typeof address !== "string" ||
+      (address !== "*" && (address.includes("%") || require("node:net").isIP(address) === 0)) ||
+      (target?.binding?.sniHost && address !== "*" && address !== "0.0.0.0"))) return false;
   return Boolean(
     target &&
       target.type === "windows-iis" &&

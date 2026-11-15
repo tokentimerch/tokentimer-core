@@ -327,6 +327,7 @@ function windowsLocationFieldsFor(locationKind, clientMeta) {
         255,
         WINDOWS_SNI_HOST_PATTERN,
       ),
+      boundAddress: optionalWindowsBoundAddress(clientMeta.boundAddress, "boundAddress"),
     };
   }
   if (locationKind === "http_sys") {
@@ -363,7 +364,10 @@ function defaultLocationRef(locationKind, { targetHost, windowsFields, locationS
     if (!windowsFields.siteName) return `iis://${locationSlot}`;
     const port = windowsFields.port ? `:${windowsFields.port}` : "";
     const sniHost = windowsFields.sniHost ? `#${windowsFields.sniHost}` : "";
-    return `iis://${windowsFields.siteName}${port}${sniHost}`;
+    const address = windowsFields.boundAddress;
+    const explicitAddress = !sniHost && address && address !== "0.0.0.0" && address !== "*"
+      ? `@${isIP(address) === 6 ? `[${address}]` : address}` : "";
+    return `iis://${windowsFields.siteName}${port}${sniHost}${explicitAddress}`;
   }
   if (locationKind === "http_sys") {
     if (!windowsFields.boundAddress || !windowsFields.port) {
@@ -489,6 +493,16 @@ function normalizeAgentFilesystemObservation({
       );
     }
     windowsFields = windowsLocationFieldsFor(locationKind, clientMeta);
+    if (locationKind === "iis_binding" && windowsFields.boundAddress) {
+      const address = windowsFields.boundAddress;
+      if (address.includes("%") || !isIP(address) || windowsFields.sniHost || !windowsFields.siteName || !windowsFields.port) {
+        throw observationError("IIS boundAddress requires an IP-keyed binding");
+      }
+      const suffix = address === "0.0.0.0" ? "" : `@${address}`;
+      if (locationSlot !== `${windowsFields.siteName}:${windowsFields.port}${suffix}`) {
+        throw observationError("IIS boundAddress does not match locationSlot");
+      }
+    }
     // Fact only, never material: whether the location's certificate has an
     // associated private key, exactly as Windows itself reports it
     // (`X509Certificate2.HasPrivateKey`) -- never a key path, export, or
@@ -847,8 +861,11 @@ async function upsertTargetForObservation(client, observation) {
       agentId: observation.agentId,
       targetHost: observation.targetHost,
       locationKind: observation.locationKind,
+      ...(observation.locationKind === "iis_binding" && observation.windowsFields?.boundAddress
+        ? { boundAddress: observation.windowsFields.boundAddress, keyPresent: observation.keyPresent === true } : {}),
       observationOnly:
         observation.locationKind !== "iis_binding" ||
+        (observation.windowsFields?.boundAddress && observation.windowsFields.boundAddress !== "0.0.0.0" && observation.windowsFields.boundAddress !== "*") ||
         observation.keyPresent !== true,
     },
   });

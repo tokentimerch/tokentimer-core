@@ -231,6 +231,29 @@ describe("certops renewal profile", () => {
     assert.deepEqual(validateRenewalProfile(input).target, target);
   });
 
+  it("describes explicit IIS addresses in the renewal profile contract", () => {
+    const Ajv = require("ajv");
+    const ajv = new Ajv({ strict: false });
+    require("ajv-formats")(ajv);
+    const validate = ajv.compile(require("../../packages/contracts/certops/renewal-profile.schema.json"));
+    const target = { type: "windows-iis", reference: "app.example.com", store: "My",
+      binding: { site: "Default Web Site", port: 443, address: "192.0.2.10" } };
+    const input = validProfile({ target, deploymentTargets: [target] });
+    assert.equal(validate(input), true, JSON.stringify(validate.errors));
+    const invalid = structuredClone(input);
+    invalid.target.binding.address = "host.example.com";
+    assert.equal(validate(invalid), false);
+  });
+
+  it("retains an explicit IIS address and refuses an ambiguous SNI selector", () => {
+    const target = { type: "windows-iis", reference: "app.example.com", store: "My",
+      binding: { site: "Default Web Site", port: 443, address: "192.0.2.10" } };
+    const profile = validProfile({ target, deploymentTargets: [target] });
+    assert.equal(validateRenewalProfile(profile).target.binding.address, "192.0.2.10");
+    const ambiguous = { ...target, binding: { ...target.binding, sniHost: "app.example.com" } };
+    assert.throws(() => validateRenewalProfile(validProfile({ target: ambiguous, deploymentTargets: [ambiguous] })), /binding\.address/);
+  });
+
   it("refuses explicit Windows reuse without rewriting stored intent, preserving Linux reuse", () => {
     const input = validProfile({ target: { type: "windows-iis", reference: "app.example.com", store: "My", binding: { site: "Default Web Site", port: 443 } }, keyRotationPolicy: { rotateOnRenew: false } });
     assert.throws(() => validateRenewalProfile(input), /WINDOWS_ACME_KEY_REUSE_UNSUPPORTED/);

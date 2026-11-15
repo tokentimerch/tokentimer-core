@@ -447,6 +447,7 @@ describe("collectWindowsDiscoveryObservations", () => {
       assert.ok(iisObservation, "expected an iis_binding observation");
       assert.equal(iisObservation.siteName, "Default Web Site");
       assert.equal(iisObservation.port, 443);
+      assert.equal(iisObservation.boundAddress, "10.0.0.5");
       assert.equal(iisObservation.fingerprintSha256, storeObservation.fingerprintSha256);
       // A binding never holds its own key handle -- it references the
       // store entry by thumbprint, cross-referenced from the same

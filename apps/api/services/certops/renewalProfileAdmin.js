@@ -775,6 +775,14 @@ function normalizeAdcsProfileInput(body) {
     binding?.sniHost == null || binding.sniHost === ""
       ? null
       : adcsHost(binding.sniHost, "SNI hostname");
+  const address = binding?.address == null || binding.address === "" ? null : binding.address;
+  if (address !== null && (typeof address !== "string" ||
+      (address !== "*" && (address.includes("%") || require("node:net").isIP(address) === 0)))) {
+    throw profileError("IIS address must be an IP literal or wildcard");
+  }
+  if (sniHost && address !== null && address !== "*" && address !== "0.0.0.0") {
+    throw profileError("IIS address cannot be combined with SNI");
+  }
   const extraNames = Array.isArray(body?.dnsNames) ? body.dnsNames : [];
   const dnsNames = [];
   for (const entry of [reference, ...extraNames]) {
@@ -807,6 +815,7 @@ function normalizeAdcsProfileInput(body) {
           site: binding.site.trim(),
           port,
           ...(sniHost ? { sniHost } : {}),
+          ...(address !== null ? { address } : {}),
         } } : {}),
       },
       sanPolicy: { sans: dnsNames },

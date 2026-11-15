@@ -153,11 +153,12 @@ const STORE_NAME_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
 const SNI_HOST_PATTERN =
   /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 
-/** The three wildcard address forms decision 13 names explicitly. Each maps
+/** Wildcard address forms. Each maps
  * to its own defined loopback probe address, never a DNS-resolved name. */
 const WILDCARD_BINDING_ADDRESSES = Object.freeze({
   "*": "127.0.0.1",
   "0.0.0.0": "127.0.0.1",
+  "::": "::1",
   "[::]": "::1",
 });
 
@@ -221,8 +222,8 @@ function boundAndRedactExcerpt(output) {
  * the two do not silently diverge on what a binding may look like.
  *
  * @param {object} binding
- * @param {string} binding.address IP literal, or one of the three wildcard
- *   forms in WILDCARD_BINDING_ADDRESSES ("*", "0.0.0.0", "[::]").
+ * @param {string} binding.address IP literal, or one of the wildcard
+ *   forms in WILDCARD_BINDING_ADDRESSES ("*", "0.0.0.0", "::", "[::]").
  * @param {number} binding.port 1-65535.
  * @param {string} [binding.sniHost] optional SNI hostname.
  * @param {string} binding.store Windows certificate store name.
@@ -272,7 +273,7 @@ function assertValidBinding(binding) {
 /**
  * Resolves the real TCP address+SNI decision 13's verification handshake
  * must use for a given binding: the binding's own address when it is a
- * concrete IP, or the defined loopback probe when it is one of the three
+ * concrete IP, or the defined loopback probe when it is one of the
  * wildcard forms. Never returns a DNS name.
  * @param {{ address: string, sniHost?: string }} binding
  * @returns {{ host: string, servername: string|undefined }}
@@ -331,7 +332,8 @@ function formatBindingSelector(binding) {
 function formatIpPort(binding) {
   // netsh rejects "*" in an ipport selector ("The parameter is incorrect");
   // the IIS wildcard is 0.0.0.0 to http.sys.
-  const address = binding.address === "*" ? "0.0.0.0" : binding.address;
+  let address = binding.address === "*" ? "0.0.0.0" : binding.address;
+  if (require("node:net").isIP(address) === 6) address = `[${address}]`;
   return `${address}:${binding.port}`;
 }
 

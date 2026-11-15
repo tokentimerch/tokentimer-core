@@ -321,6 +321,7 @@ export function ConfigStep({ ctx }) {
     acmeShellPath: saved.acmeShellPath ?? DEFAULT_WINDOWS_SHELL,
     iisSite: saved.iisSite || (objective === 'adcs' ? '' : 'Default Web Site'),
     iisPort: saved.iisPort || (objective === 'adcs' ? '' : '443'),
+    iisAddress: saved.iisAddress || '',
     sniHost: saved.sniHost || '',
     caHost: saved.caHost || '',
     caName: saved.caName || '',
@@ -423,6 +424,7 @@ export function ConfigStep({ ctx }) {
         acmeShellPath: form.acmeShellPath,
         iisSite: form.iisSite,
         iisPort: form.iisPort,
+        iisAddress: form.iisAddress,
         sniHost: form.sniHost,
         caHost: form.caHost,
         caName: form.caName,
@@ -452,7 +454,16 @@ export function ConfigStep({ ctx }) {
             ]),
       ]}
       actions={
-        <PrimaryButton onClick={confirm} isDisabled={!result.ok}>
+        <PrimaryButton
+          onClick={confirm}
+          isDisabled={
+            !result.ok ||
+            (os === 'windows' &&
+              form.iisAddress.trim() &&
+              !['*', '0.0.0.0'].includes(form.iisAddress.trim()) &&
+              form.sniHost.trim())
+          }
+        >
           I saved this file
         </PrimaryButton>
       }
@@ -700,6 +711,18 @@ export function ConfigStep({ ctx }) {
                       value={form.iisPort}
                       onChange={set('iisPort')}
                     />
+                  </FormControl>
+                  <FormControl flex='1 1 200px'>
+                    <FormLabel fontSize='sm'>IP address (optional)</FormLabel>
+                    <Input
+                      size='sm'
+                      value={form.iisAddress}
+                      onChange={set('iisAddress')}
+                    />
+                    <Text fontSize='xs' mt={1}>
+                      Leave blank for all IPv4 addresses. A specific IP requires
+                      a qualified Windows agent and cannot be combined with SNI.
+                    </Text>
                   </FormControl>
                   <FormControl flex='1 1 200px'>
                     <FormLabel fontSize='sm'>SNI host (optional)</FormLabel>

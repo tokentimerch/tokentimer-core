@@ -53,6 +53,7 @@ export async function reassociateWindowsSource(
     agentId,
     expectedFingerprintSha256,
     expectedDnsName,
+    expectedAddress,
   } = candidate;
   const res = await apiClient.post(
     `${workspaceBase(workspaceId)}/sources/${encodeURIComponent(sourceId)}/reassociate-windows-store`,
@@ -63,6 +64,7 @@ export async function reassociateWindowsSource(
       agentId,
       expectedFingerprintSha256,
       expectedDnsName,
+      ...(expectedAddress ? { expectedAddress } : {}),
     }
   );
   return res.data;

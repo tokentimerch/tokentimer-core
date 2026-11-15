@@ -151,6 +151,10 @@ function normalizeWindowsIssuanceTarget(target) {
   ) {
     throw issuanceError("payload.target.binding.port must be an integer 1-65535");
   }
+  if (binding.address != null && (typeof binding.address !== "string" ||
+      (binding.address !== "*" && (binding.address.includes("%") || require("node:net").isIP(binding.address) === 0)))) {
+    throw issuanceError("payload.target.binding.address must be an IP literal or wildcard");
+  }
   let sniHost = null;
   if (binding.sniHost !== undefined && binding.sniHost !== null) {
     if (
@@ -160,6 +164,9 @@ function normalizeWindowsIssuanceTarget(target) {
       throw issuanceError("payload.target.binding.sniHost is not a valid hostname");
     }
     sniHost = binding.sniHost;
+  }
+  if (sniHost && binding.address != null && binding.address !== "*" && binding.address !== "0.0.0.0") {
+    throw issuanceError("payload.target.binding.address cannot be combined with SNI");
   }
 
   let thumbprintSha1 = null;
@@ -181,7 +188,8 @@ function normalizeWindowsIssuanceTarget(target) {
   // reads), not target.certPath, since payload.certPath is where a filesystem
   // issuance's path lives (see normalizeIssuanceRequest below).
 
-  return { store, binding: { site: binding.site, port: binding.port, sniHost }, thumbprintSha1 };
+  return { store, binding: { site: binding.site, port: binding.port, sniHost,
+    ...(binding.address != null ? { address: binding.address } : {}) }, thumbprintSha1 };
 }
 
 /**

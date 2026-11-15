@@ -22,6 +22,7 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
       [
         "windows-cert-store-v1",
         "iis-binding-v1",
+        "iis-explicit-ip-v1",
         "trust-anchor-deploy-v1",
         "adcs-enroll-v1",
         "windows-store-only-adcs-v1",
@@ -44,6 +45,10 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
   it("qualifies adcs-enroll-v1 in the shipped manifest", () => {
     const manifest = loadQualifiedCapabilitiesManifest();
     assert.equal(manifest.qualified.includes("adcs-enroll-v1"), true);
+  });
+
+  it("does not advertise explicit-IP IIS support before qualification", () => {
+    assert.deepEqual(filterQualifiedCapabilities(["iis-explicit-ip-v1"]), []);
   });
 
   it("advertises AD CS and distribution capabilities once the manifest qualifies them", () => {

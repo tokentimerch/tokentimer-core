@@ -76,6 +76,97 @@ function automatic(f, dbPool = pool) {
 async function count(f) {
   return Number((await pool.query("SELECT count(*) FROM certificate_enrollments WHERE workspace_id=$1 AND certificate_id=$2", [f.workspaceId, f.certificate.id])).rows[0].count);
 }
+test("AD CS enrollment retains an explicit IIS IP in its job target", async () => {
+  const f = await fixture();
+  await pool.query("UPDATE certops_agents SET declared_capabilities=declared_capabilities || '[\"iis-explicit-ip-v1\"]'::jsonb WHERE id=$1", [f.agentId]);
+  const target = { ...TARGET, binding: { ...TARGET.binding, address: "192.0.2.10" } };
+  const result = await manual(f, { target });
+  const row = (await pool.query("SELECT payload FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [f.workspaceId, result.jobId])).rows[0];
+  assert.equal(row.payload.target.binding.address, "192.0.2.10");
+});
+test("explicit-IP topology adoption uses fresh owner observation and one authorized SAN", async () => {
+  const f = await fixture();
+  const agent = (await pool.query("UPDATE certops_agents SET declared_capabilities=declared_capabilities || '[\"iis-explicit-ip-v1\"]'::jsonb WHERE id=$1 RETURNING agent_id", [f.agentId])).rows[0];
+  await pool.query("UPDATE managed_certificates SET subject_alt_names=ARRAY['app.example.com'] WHERE id=$1", [f.certificate.id]);
+  const target = (await pool.query(`INSERT INTO certificate_targets(workspace_id,name,target_type,source,source_ref,location_kind,
+    deployment_reference,windows_store,windows_site,windows_port,public_metadata)
+    VALUES($1,'IIS','windows-iis','agent_windows',$2,'iis_binding','iis://Shop:443','WebHosting','Shop',443,$3::jsonb) RETURNING id`,
+  [f.workspaceId,randomUUID(),JSON.stringify({ agentId:agent.agent_id,observationOnly:true,keyPresent:true,boundAddress:'192.0.2.10' })])).rows[0];
+  await pool.query(`INSERT INTO certificate_instances(workspace_id,managed_certificate_id,target_id,status,source,source_ref,
+    location_kind,observed_fingerprint_sha256,observed_at,captured_at,presence_state)
+    VALUES($1,$2,$3,'discovered','agent_windows',$4,'iis_binding',$5,NOW(),NOW(),'confirmed_present')`,
+  [f.workspaceId,f.certificate.id,target.id,randomUUID(),f.certificate.fingerprint_sha256]);
+  const { loadWindowsRenewalTopology } = require('../../apps/api/services/certops/renewalAdoption');
+  const input = { db:pool,workspaceId:f.workspaceId,certificateId:f.certificate.id,deployedAgentId:f.agentId };
+  const topology = await loadWindowsRenewalTopology(input);
+  assert.equal(topology.target.reference,'app.example.com');
+  assert.equal(topology.target.binding.address,'192.0.2.10');
+  await pool.query("UPDATE certificate_targets SET public_metadata=jsonb_set(public_metadata,'{agentId}',to_jsonb('other-agent'::text)) WHERE id=$1", [target.id]);
+  assert.equal(await loadWindowsRenewalTopology(input),null);
+});
+test("AD CS enrollment rejects an explicit IP combined with SNI before creating a job", async () => {
+  const f = await fixture();
+  const target = { ...TARGET, binding: { ...TARGET.binding, address: "192.0.2.10", sniHost: "app.example.com" } };
+  assert.throws(() => manual(f, { target }), error => error.code === 'CERTOPS_SNAPSHOT_INVALID');
+  assert.equal(await count(f), 0);
+});
+test("automatic explicit-IP renewal requires the qualified owning agent", async () => {
+  const f = await fixture();
+  f.publicMetadata.renewalProfile.target.binding.address = "192.0.2.10";
+  f.certificate.deployed_agent_id = f.agentId;
+  await assert.rejects(automatic(f), error => error.code === 'CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE');
+  await pool.query("UPDATE certops_agents SET declared_capabilities=declared_capabilities || '[\"iis-explicit-ip-v1\"]'::jsonb WHERE id=$1", [f.agentId]);
+  const result = await automatic(f);
+  assert.equal(result.created, true);
+  const row = (await pool.query("SELECT assigned_agent_id,payload FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [f.workspaceId, result.job.id])).rows[0];
+  assert.equal(row.assigned_agent_id, f.agentId);
+  assert.equal(row.payload.target.binding.address, "192.0.2.10");
+});
+test("automatic explicit-IP renewal never selects another agent with a fresh CA check", async () => {
+  const f = await fixture();
+  f.publicMetadata.renewalProfile.target.binding.address = "192.0.2.10";
+  f.certificate.deployed_agent_id = f.agentId;
+  await pool.query("UPDATE certops_agents SET declared_capabilities=declared_capabilities || '[\"iis-explicit-ip-v1\"]'::jsonb WHERE id=$1", [f.agentId]);
+  const otherId = (await pool.query(`INSERT INTO certops_agents(workspace_id,agent_id,name,agent_version,protocol_version,
+    credential_prefix,credential_hash,status,platform,last_seen_at,declared_target_selectors,declared_capabilities,capabilities_updated_at)
+    SELECT workspace_id,$2,'Other agent',agent_version,protocol_version,$3,$4,'active','win32',NOW(),
+      declared_target_selectors,declared_capabilities,NOW() FROM certops_agents WHERE id=$1 RETURNING id`,
+  [f.agentId, 'agent-'+randomUUID(), 'ttagent_'+randomBytes(8).toString('hex'), randomBytes(32).toString('hex')])).rows[0].id;
+  await pool.query(`INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,assigned_agent_id,result_metadata)
+    SELECT workspace_id,subject_type,subject_id,operation,status,$2,result_metadata FROM certificate_jobs
+    WHERE workspace_id=$1 AND assigned_agent_id=$3 AND operation='adcs-preflight'`, [f.workspaceId, otherId, f.agentId]);
+  await pool.query("UPDATE certificate_jobs SET status='failed' WHERE workspace_id=$1 AND assigned_agent_id=$2 AND operation='adcs-preflight'", [f.workspaceId,f.agentId]);
+  await assert.rejects(automatic(f), error => ['CERTOPS_ADCS_AGENT_NOT_PREPARED', 'CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE'].includes(error.code));
+  const renewalJobs = await pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND operation='renew'", [f.workspaceId]);
+  assert.equal(renewalJobs.rows.length, 0);
+});
+test("distinct IIS IP listeners on one port do not share an enrollment lock", async () => {
+  const f = await fixture();
+  await pool.query("UPDATE certops_agents SET declared_capabilities=declared_capabilities || '[\"iis-explicit-ip-v1\"]'::jsonb WHERE id=$1", [f.agentId]);
+  const second = (await pool.query(`INSERT INTO managed_certificates
+    (workspace_id,source,source_ref,fingerprint_sha256,name,common_name,identity_observed_at,status,not_after,profile_id,key_mode)
+    VALUES($1,'agent_filesystem',$2,$3,'Second listener','app.example.com',NOW(),'discovered',$4,$5,'agent-local') RETURNING id`,
+  [f.workspaceId, randomUUID(), randomBytes(32).toString('hex'), f.certificate.not_after, f.profile.id])).rows[0];
+  const firstTarget = { ...TARGET, binding: { ...TARGET.binding, address: '192.0.2.10' } };
+  const secondTarget = { ...TARGET, binding: { ...TARGET.binding, address: '192.0.2.11' } };
+  const [first, other] = await Promise.all([manual(f, { target: firstTarget }),
+    manual(f, { certificateId: second.id, target: secondTarget })]);
+  assert.ok(first.enrollmentId);
+  assert.ok(other.enrollmentId);
+});
+test("equivalent IPv6 listener spellings cannot enroll concurrently", async () => {
+  const f = await fixture();
+  await pool.query("UPDATE certops_agents SET declared_capabilities=declared_capabilities || '[\"iis-explicit-ip-v1\"]'::jsonb WHERE id=$1", [f.agentId]);
+  const second = (await pool.query(`INSERT INTO managed_certificates
+    (workspace_id,source,source_ref,fingerprint_sha256,name,common_name,identity_observed_at,status,not_after,profile_id,key_mode)
+    VALUES($1,'agent_filesystem',$2,$3,'Second listener','app.example.com',NOW(),'discovered',$4,$5,'agent-local') RETURNING id`,
+  [f.workspaceId, randomUUID(), randomBytes(32).toString('hex'), f.certificate.not_after, f.profile.id])).rows[0];
+  const target = address => ({ ...TARGET, binding: { ...TARGET.binding, address } });
+  const results = await Promise.allSettled([manual(f, { target: target('2001:db8::1') }),
+    manual(f, { certificateId: second.id, target: target('2001:0db8:0:0:0:0:0:1') })]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(results.find(result => result.status === 'rejected').reason.code, 'CERTOPS_ENROLLMENT_OPEN');
+});
 test("manual concurrent mixed-case admission creates one enrollment and one job", async () => {
   const f = await fixture();
   const results = await Promise.allSettled([manual(f), manual(f, { workspaceId: f.workspaceId.toUpperCase(), certificateId: f.certificate.id.toUpperCase() })]);
@@ -901,6 +992,12 @@ test("IIS consent requires a fresh matching Store agent and rejects existing ren
   const client = await pool.connect();
   const { enableWindowsIisConsumer } = require('../../apps/api/services/certops/windowsIisConsent');
   try {
+    await pool.query("UPDATE certificate_targets SET public_metadata=public_metadata || '{\"observationOnly\":true,\"boundAddress\":\"192.0.2.10\"}'::jsonb WHERE id=$1", [target.id]);
+    await client.query('BEGIN');
+    await assert.rejects(enableWindowsIisConsumer({ client, workspaceId: f.workspaceId, periodId: period.id,
+      targetId: target.id, actorUserId: f.actor, audit: async () => {} }), error => error.code === 'CERTOPS_WINDOWS_CONSENT_REFUSED');
+    await client.query('ROLLBACK');
+    await pool.query("UPDATE certificate_targets SET public_metadata=public_metadata - 'observationOnly' - 'boundAddress' WHERE id=$1", [target.id]);
     await client.query('BEGIN');
     const created = await enableWindowsIisConsumer({ client, workspaceId: f.workspaceId, periodId: period.id,
       targetId: target.id, actorUserId: f.actor, audit: async () => {} });
@@ -929,6 +1026,9 @@ test("IIS consent requires a fresh matching Store agent and rejects existing ren
     const check = { client,agent: { id:f.agentId,workspaceId:f.workspaceId },jobId:enrollment.jobId,
       claimId:claim,consumerId:created.id,authorizationRevision:created.authorizationRevision };
     assert.equal(await authorize(check), true);
+    await pool.query("UPDATE certificate_targets SET public_metadata=public_metadata || '{\"observationOnly\":true}'::jsonb WHERE id=$1", [target.id]);
+    assert.equal(await authorize(check), false);
+    await pool.query("UPDATE certificate_targets SET public_metadata=public_metadata - 'observationOnly' WHERE id=$1", [target.id]);
     assert.equal(await authorize({ ...check, claimId:randomUUID() }), false);
     assert.equal(await authorize({ ...check, authorizationRevision:created.authorizationRevision+1 }), false);
     await pool.query("UPDATE certops_agents SET status='offline' WHERE id=$1", [f.agentId]);

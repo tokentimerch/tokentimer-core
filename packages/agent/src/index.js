@@ -432,6 +432,7 @@ const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
         "job-log-stream-v1",
         "windows-cert-store-v1",
         "iis-binding-v1",
+        "iis-explicit-ip-v1",
         "trust-anchor-deploy-v1",
         ADCS_ENROLL_CAPABILITY,
         "windows-store-only-adcs-v1",
@@ -2435,6 +2436,15 @@ async function executeJob({
 }) {
   const { execution } = executionContext;
   const action = job.action;
+  const iisAddress = job?.target?.type === "windows-iis" ? job.target.binding?.address : null;
+  if (iisAddress != null && iisAddress !== "*" && iisAddress !== "0.0.0.0") {
+    if (typeof iisAddress !== "string" || iisAddress.includes("%") || require("node:net").isIP(iisAddress) === 0 || job.target.binding?.sniHost) {
+      return { status: "blocked", errorMessage: "Explicit IIS address must be an IP literal without an SNI selector" };
+    }
+    if (!filterQualifiedCapabilities(["iis-explicit-ip-v1"]).length) {
+      return { status: "blocked", errorMessage: "Explicit-IP IIS execution is not qualified on this agent" };
+    }
+  }
   // Only a build with an embedded qualification for this issuer can execute
   // store-only. Both issuers remain independently qualified.
   if (job?.target?.type === "windows-cert-store" && !isStoreOnlyQualified(job)) {
@@ -3696,6 +3706,15 @@ async function runWindowsIisDeployTail({
   windowsConnectImpl,
   windowsKeySurvivorHelperPath,
 }) {
+  const requestedAddress = target?.type === "windows-iis" ? target.binding?.address : null;
+  if (requestedAddress != null && requestedAddress !== "*" && requestedAddress !== "0.0.0.0") {
+    if (typeof requestedAddress !== "string" || requestedAddress.includes("%") || require("node:net").isIP(requestedAddress) === 0 || target.binding?.sniHost) {
+      return { status: "blocked", errorMessage: "Explicit IIS address must be an IP literal without an SNI selector" };
+    }
+    if (!filterQualifiedCapabilities(["iis-explicit-ip-v1"]).length) {
+      return { status: "blocked", errorMessage: "Explicit-IP IIS execution is not qualified on this agent" };
+    }
+  }
   if (target?.type === "windows-cert-store") {
     if (!storeEnrollmentId || !/^[a-f0-9]{64}$/.test(storeDestinationSha256 || "")) {
       return { status: "failed", errorMessage: "store enrollment identity is missing" };
@@ -3915,13 +3934,9 @@ async function runWindowsIisDeployTail({
       }
     }
 
-    // job-payload.schema.json's windowsIisBinding carries only
-    // {site, port, sniHost} -- no explicit address -- so every windows-iis
-    // job binds the IIS-conventional wildcard listener ("*", matching
-    // ../windows-iis's WILDCARD_BINDING_ADDRESSES), with sniHost (when
-    // present) selecting the certificate under that shared listener.
+    // Legacy jobs omit the address and continue to use the wildcard listener.
     const binding = {
-      address: "*",
+      address: requestedAddress || "*",
       port: target.binding.port,
       ...(target.binding.sniHost ? { sniHost: target.binding.sniHost } : {}),
       store: target.store,
@@ -7030,6 +7045,7 @@ async function runWindowsDiscoveryScan({
       metadata.push({ name: "siteName", value: observation.siteName });
       metadata.push({ name: "port", value: String(observation.port) });
       if (observation.sniHost) metadata.push({ name: "sniHost", value: observation.sniHost });
+      if (observation.boundAddress) metadata.push({ name: "boundAddress", value: observation.boundAddress });
     }
     if (observation.locationKind === "http_sys") {
       metadata.push({ name: "port", value: String(observation.port) });

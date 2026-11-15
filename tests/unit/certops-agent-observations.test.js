@@ -619,6 +619,36 @@ describe("normalizeAgentFilesystemObservation - Windows locations", () => {
     );
   });
 
+  it("retains a validated IP address on an IIS binding observation", () => {
+    const observation = normalizeAgentFilesystemObservation({ agent: AGENT,
+      evidenceItem: windowsEvidenceItem({ metadata: [
+        { name: "locationKind", value: "iis_binding" },
+        { name: "locationSlot", value: "Default Web Site:443@192.0.2.10" },
+        { name: "targetHost", value: "iis-01.example" },
+        { name: "siteName", value: "Default Web Site" },
+        { name: "port", value: "443" },
+        { name: "boundAddress", value: "192.0.2.10" },
+        { name: "storeLocation", value: "LocalMachine" },
+        { name: "storeName", value: "My" },
+        { name: "thumbprint", value: WINDOWS_THUMBPRINT },
+      ] }) });
+    assert.equal(observation.windowsFields.boundAddress, "192.0.2.10");
+    assert.equal(observation.locationRef, "iis://Default Web Site:443@192.0.2.10");
+  });
+
+  it("rejects an IIS address that does not match its location slot", () => {
+    const metadata = [
+      { name: "locationKind", value: "iis_binding" },
+      { name: "locationSlot", value: "Default Web Site:443" },
+      { name: "targetHost", value: "iis-01.example" },
+      { name: "siteName", value: "Default Web Site" },
+      { name: "port", value: "443" },
+      { name: "boundAddress", value: "192.0.2.10" },
+    ];
+    assert.throws(() => normalizeAgentFilesystemObservation({ agent: AGENT,
+      evidenceItem: windowsEvidenceItem({ metadata }) }), /boundAddress does not match locationSlot/);
+  });
+
   it("builds an http_sys observation with only a port, no site identity", () => {
     const observation = normalizeAgentFilesystemObservation({
       agent: AGENT,
@@ -902,6 +932,15 @@ describe("_test.defaultLocationRef", () => {
       referenceFor("app-a.example.com"),
       referenceFor("app-b.example.com"),
     );
+  });
+
+  it("distinguishes IIS IP bindings while keeping the wildcard reference stable", () => {
+    const ref = boundAddress => _test.defaultLocationRef("iis_binding", {
+      windowsFields: { siteName: "Site", port: 443, boundAddress },
+    });
+    assert.equal(ref("0.0.0.0"), "iis://Site:443");
+    assert.equal(ref("192.0.2.10"), "iis://Site:443@192.0.2.10");
+    assert.equal(ref("2001:db8::1"), "iis://Site:443@[2001:db8::1]");
   });
 
   it("builds an http-sys:// URI from the real bound address, not the machine hostname", () => {

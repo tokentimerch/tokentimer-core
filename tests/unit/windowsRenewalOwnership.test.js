@@ -15,7 +15,12 @@ describe("Windows Store renewal dependencies", () => {
       iisSelectorKey({ port: 443, sniHost: "www.example.test" }));
     assert.notEqual(iisSelectorKey({ port: 443 }), iisSelectorKey({ port: 443, sniHost: "www.example.test" }));
     assert.throws(() => iisSelectorKey({ port: 443, sniHost: "bad host" }), /invalid/);
-    assert.throws(() => iisSelectorKey({ port: 443, address: "192.0.2.1" }), /address/);
+    assert.equal(iisSelectorKey({ port: 443, address: "192.0.2.1" }), "ipport:192.0.2.1:443");
+    assert.equal(iisSelectorKey({ port: 443, address: "2001:db8::1" }), iisSelectorKey({ port: 443, address: "2001:0db8::1" }));
+    assert.notEqual(iisSelectorKey({ port: 443 }), iisSelectorKey({ port: 443, address: "192.0.2.1" }));
+    assert.throws(() => iisSelectorKey({ port: 443, address: "host.example" }), /address/);
+    assert.throws(() => iisSelectorKey({ port: 443, address: "fe80::1%eth0" }), /address/);
+    assert.throws(() => iisSelectorKey({ port: 443, address: "192.0.2.1", sniHost: "www.example.test" }), /SNI/);
   });
   it("requires explicit authorization for a matching observed binding", () => {
     assert.deepEqual(classify(), { relationship: "observed", deployment: "observed_only" });

@@ -3725,7 +3725,7 @@ router.post(
   "/api/v1/workspaces/:id/certops/sources/:managedCertificateId/reassociate-windows-store",
   getApiLimiter(), rejectKeyMaterial, requireCertOpsEnabled, requireCertOpsWriteRole,
   async (req, res) => {
-    const allowed = new Set(["currentId", "legacyPeriodId", "currentPeriodId", "agentId", "expectedFingerprintSha256", "expectedDnsName"]);
+    const allowed = new Set(["currentId", "legacyPeriodId", "currentPeriodId", "agentId", "expectedFingerprintSha256", "expectedDnsName", "expectedAddress"]);
     if (!req.body || Object.keys(req.body).some((key) => !allowed.has(key))) {
       return res.status(400).json({ error: "Invalid reassociation request" });
     }

@@ -108,6 +108,12 @@ function evaluateAgentJobEligibility({
   now = Date.now(),
 } = {}) {
   if (!agent || !job) return result(false, "facts_unavailable", false);
+  const binding = job.payload?.target?.type === "windows-iis" ? job.payload.target.binding : null;
+  if (binding?.address != null && binding.address !== "*" && binding.address !== "0.0.0.0" &&
+      (agent.platform !== "win32" || !hasFreshCapability({ declaredCapabilities: agent.declaredCapabilities,
+        capabilitiesUpdatedAt: agent.capabilitiesUpdatedAt, capability: "iis-explicit-ip-v1", env, now }))) {
+    return result(false, "iis_explicit_ip_capability_unavailable");
+  }
   if (job.operation === "adcs-installation-proof" && !hasFreshCapability({ declaredCapabilities: agent.declaredCapabilities,
     capabilitiesUpdatedAt: agent.capabilitiesUpdatedAt, capability: "adcs-store-proof-only-v1", env, now })) {
     return result(false, "adcs_proof_capability_unavailable");

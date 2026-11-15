@@ -21,6 +21,7 @@ describe('IIS reassociation', () => {
       port: 443,
       expectedFingerprintSha256: 'abc123',
       expectedDnsName: 'pilot.example',
+      expectedAddress: '192.0.2.10',
       agentId: 'agent',
     };
     listIisReassociationCandidates.mockResolvedValue({ items: [candidate] });
@@ -42,6 +43,9 @@ describe('IIS reassociation', () => {
     fireEvent.change(select, { target: { value: 'binding-443' } });
     expect(screen.getByText(/Confirm Default Web Site:443/)).toHaveTextContent(
       'abc123'
+    );
+    expect(screen.getByText(/Confirm Default Web Site:443/)).toHaveTextContent(
+      '192.0.2.10'
     );
     expect(reassociateWindowsSource).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText('Move renewal profile to this binding'));

@@ -67,7 +67,8 @@ export default function IisReassociation({ workspaceId, sourceId, onChanged }) {
           <option value=''>Select a binding</option>
           {candidates.map(item => (
             <option key={item.currentId} value={item.currentId}>
-              {item.host} · {item.site}:{item.port} ·{' '}
+              {item.host} · {item.site}:{item.port}
+              {item.expectedAddress ? ` · ${item.expectedAddress}` : ''} ·{' '}
               {item.expectedFingerprintSha256}
             </option>
           ))}
@@ -76,9 +77,11 @@ export default function IisReassociation({ workspaceId, sourceId, onChanged }) {
       {current ? (
         <>
           <Text fontSize='sm'>
-            Confirm {current.site}:{current.port}, DNS {current.expectedDnsName}
-            , SHA-256 {current.expectedFingerprintSha256}. The profile retains
-            its current enabled or disabled state.
+            Confirm {current.site}:{current.port}
+            {current.expectedAddress ? ` at ${current.expectedAddress}` : ''},
+            DNS {current.expectedDnsName}, SHA-256{' '}
+            {current.expectedFingerprintSha256}. The profile retains its current
+            enabled or disabled state.
           </Text>
           <Button size='sm' onClick={confirm} isLoading={busy}>
             Move renewal profile to this binding

@@ -223,6 +223,7 @@ export default function AdcsProfileWizard({
   const [site, setSite] = useState('');
   const [port, setPort] = useState('');
   const [sniHost, setSniHost] = useState('');
+  const [address, setAddress] = useState('');
   const [store, setStore] = useState('My');
   const [destination, setDestination] = useState('windows-iis');
   const [keyAlgorithm, setKeyAlgorithm] = useState('rsa');
@@ -256,6 +257,7 @@ export default function AdcsProfileWizard({
     setSite('');
     setPort('');
     setSniHost('');
+    setAddress('');
     setStore('My');
     setDestination('windows-iis');
     setKeyAlgorithm('rsa');
@@ -371,6 +373,7 @@ export default function AdcsProfileWizard({
                   site: site.trim(),
                   port: Number(port),
                   ...(sniHost.trim() ? { sniHost: sniHost.trim() } : {}),
+                  ...(address.trim() ? { address: address.trim() } : {}),
                 },
               },
         dnsNames,
@@ -445,7 +448,12 @@ export default function AdcsProfileWizard({
   const deploymentReady =
     reference.trim() &&
     (destination === 'windows-cert-store' ||
-      (site.trim() && store.trim() && wholeInRange(port, 1, 65535))) &&
+      (site.trim() &&
+        store.trim() &&
+        wholeInRange(port, 1, 65535) &&
+        (!address.trim() ||
+          ['*', '0.0.0.0'].includes(address.trim()) ||
+          !sniHost.trim()))) &&
     (!leadTime.trim() || wholeInRange(leadTime, 1, 365)) &&
     extraNameCount <= 15;
 
@@ -621,6 +629,20 @@ export default function AdcsProfileWizard({
                       />
                     </FormControl>
                     <FormControl>
+                      <FormLabel {...modal.labelProps}>IP address</FormLabel>
+                      <Input
+                        {...modal.fieldProps}
+                        aria-label='IIS IP address'
+                        value={address}
+                        onChange={event => setAddress(event.target.value)}
+                        placeholder='All IPv4 addresses'
+                      />
+                      <FormHelperText>
+                        Optional. A specific IP requires a qualified Windows
+                        agent and cannot be combined with SNI.
+                      </FormHelperText>
+                    </FormControl>
+                    <FormControl>
                       <FormLabel {...modal.labelProps}>SNI hostname</FormLabel>
                       <Input
                         {...modal.fieldProps}
@@ -709,7 +731,7 @@ export default function AdcsProfileWizard({
                   {name.trim()} enrolls {dnsName} from the selected issuer into{' '}
                   {destination === 'windows-cert-store'
                     ? 'LocalMachine\\My'
-                    : `${site.trim()} on port ${port}, store ${store.trim()}`}
+                    : `${site.trim()} on ${address.trim() || 'all IPv4 addresses'}:${port}, store ${store.trim()}`}
                   . The next step attaches this profile to a certificate already
                   in inventory and turns automation on.
                 </Text>

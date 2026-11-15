@@ -65,14 +65,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "309f37f3c7f9f360829d5fa771bdd84422ad30816c19c0fcb363f4e0d55577bc"
+          "sha256": "268d9c4d45563747d8c2a2cc85251a4ad99fa99c9ecf5f1655a4141b0408d3e9"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "309f37f3c7f9f360829d5fa771bdd84422ad30816c19c0fcb363f4e0d55577bc"
+          "sha256": "268d9c4d45563747d8c2a2cc85251a4ad99fa99c9ecf5f1655a4141b0408d3e9"
         },
         {
           "id": "auth-route-compat-contract",
@@ -178,14 +178,14 @@
           "kind": "schema",
           "path": "packages/contracts/certops/job-payload.schema.json",
           "status": "existing",
-          "sha256": "6dd9a168cfa66d3ff5de1132f0a7baae973cd5f3f0b5769ab2a7ce386d0080a4"
+          "sha256": "2f2a9854498e4c0b2113cd5ff4f46587e7dbbb4f315dc2d0cccba1c203c9fb3d"
         },
         {
           "id": "certops-renewal-profile-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/renewal-profile.schema.json",
           "status": "existing",
-          "sha256": "9f92888dfedd07b3ea610e5bef1c8093554509669db9b2a23b2232ea7dfb7dfb"
+          "sha256": "a5a97d972d43b25a3f73722815abdaec7561422cff99faf3efaed9ebfdb5708b"
         },
         {
           "id": "certops-signed-dispatch-payload-schema",

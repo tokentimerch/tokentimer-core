@@ -72,6 +72,7 @@ const VARIANT_KEYS = [
   'acmeShellPath',
   'iisSite',
   'iisPort',
+  'iisAddress',
   'sniHost',
   'configReviewed',
   'executionAcknowledged',

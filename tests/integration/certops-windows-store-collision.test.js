@@ -16,6 +16,7 @@ const { replaceManagingSource } = require("../../apps/api/services/certops/certi
 const { listCertificateIdentities } = require("../../apps/api/services/certops/certificateIdentity");
 const { bindAuthenticatedCredential } = require("../../apps/api/services/certops/agentCredentialFence");
 const { reassociateWindowsStore, listIisReassociationCandidates } = require("../../apps/api/services/certops/windowsStoreReassociation");
+const { legacyIisClaimGuard } = require("../../apps/api/services/certops/legacyIisClaimGuard");
 const { listRenewalProfiles } = require("../../apps/api/services/certops/renewalProfileAdmin");
 
 const connection = {
@@ -406,6 +407,12 @@ describe("Windows store certificate collision on PostgreSQL", function () {
     assert.equal(choices.length,1);
     assert.equal(choices[0].currentId,currentId);
     assert.equal(choices[0].port,443);
+    await db.query(`UPDATE certificate_targets SET public_metadata=public_metadata || '{"observationOnly":true,"boundAddress":"192.0.2.10"}'::jsonb
+      WHERE id=(SELECT target_id FROM certificate_instances WHERE workspace_id=$1 AND managed_certificate_id=$2 LIMIT 1)`,[workspaceId,currentId]);
+    assert.deepEqual(await listIisReassociationCandidates({client:db,workspaceId,legacyId}),[]);
+    await assert.rejects(reassociateWindowsStore(params),{code:'CERTOPS_WINDOWS_REASSOCIATION_REFUSED'});
+    await db.query(`UPDATE certificate_targets SET public_metadata=public_metadata - 'observationOnly' - 'boundAddress'
+      WHERE id=(SELECT target_id FROM certificate_instances WHERE workspace_id=$1 AND managed_certificate_id=$2 LIMIT 1)`,[workspaceId,currentId]);
     await assert.rejects(reassociateWindowsStore({...params,currentId:wrongId,currentPeriodId:period(wrongId)}),{code:'CERTOPS_WINDOWS_REASSOCIATION_REFUSED'});
     await assert.rejects(reassociateWindowsStore({...params,expectedFingerprintSha256:'f'.repeat(64)}),{code:'CERTOPS_WINDOWS_REASSOCIATION_REFUSED'});
     await assert.rejects(reassociateWindowsStore({...params,expectedDnsName:'wrong.example'}),{code:'CERTOPS_WINDOWS_REASSOCIATION_REFUSED'});
@@ -448,5 +455,45 @@ describe("Windows store certificate collision on PostgreSQL", function () {
     assert.equal(moved.certificateCount, 1);
     assert.deepEqual(moved.certificates.map(item => item.id), [currentId]);
     assert.equal((await db.query('SELECT status FROM certificate_profiles WHERE id=$1',[profileId])).rows[0].status,'disabled');
+
+    // An older IIS site:port source never recorded its IP. Moving it to an
+    // explicitly addressed observation requires fresh, qualified agent proof.
+    const explicit = item('iis_binding',443,fingerprint,[{name:'subjectAltNames',value:JSON.stringify(['certops.example'])},
+      {name:'boundAddress',value:'192.0.2.10'}]);
+    explicit.metadata.find(entry=>entry.name==='locationSlot').value='Default Web Site:443@192.0.2.10';
+    const next=await persistAgentDiscoveryEvidenceBatch({dbPool:db,agent,envelope:{sequence:3},evidenceItems:[explicit]});
+    const explicitId=next.items[0].managedCertificateId;
+    const explicitPeriod=(await db.query('SELECT id FROM certops_management_periods WHERE managed_certificate_id=$1 AND ended_at IS NULL',[explicitId])).rows[0].id;
+    const explicitParams={dbPool:db,workspaceId,legacyId:currentId,currentId:explicitId,legacyPeriodId:result.periodId,
+      currentPeriodId:explicitPeriod,agentId:agentRowId,expectedFingerprintSha256:fingerprint,
+      expectedDnsName:'certops.example',expectedAddress:'192.0.2.10',actorUserId:userId};
+    const queued=(await db.query("INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status) VALUES($1,'managed_certificate',$2,'renew','pending') RETURNING id",[workspaceId,currentId])).rows[0].id;
+    const canClaim=async () => (await db.query(`SELECT ${legacyIisClaimGuard} AS allowed FROM certificate_jobs cj WHERE id=$1`,[queued])).rows[0].allowed;
+    assert.equal(await canClaim(),false,'a fresh explicit observation blocks an ambiguous legacy binding');
+    await db.query("UPDATE certificate_jobs SET operation='deploy' WHERE id=$1",[queued]);
+    assert.equal(await canClaim(),true,'other operations are unaffected by the renewal guard');
+    await db.query("UPDATE certificate_jobs SET operation='renew' WHERE id=$1",[queued]);
+    await db.query("UPDATE certificate_jobs SET status='cancelled' WHERE id=$1",[queued]);
+    assert.deepEqual(await listIisReassociationCandidates({client:db,workspaceId,legacyId:currentId}),[]);
+    await assert.rejects(reassociateWindowsStore(explicitParams),{code:'CERTOPS_WINDOWS_REASSOCIATION_REFUSED'});
+    await db.query(`UPDATE certops_agents SET platform='win32',declared_capabilities='["iis-explicit-ip-v1"]'::jsonb,
+      capabilities_updated_at=NOW() WHERE id=$1`,[agentRowId]);
+    await db.query(`UPDATE certificate_targets SET public_metadata=public_metadata || '{"boundAddress":"0.0.0.0"}'::jsonb
+      WHERE id=(SELECT target_id FROM certificate_instances WHERE workspace_id=$1 AND managed_certificate_id=$2 LIMIT 1)`,[workspaceId,currentId]);
+    assert.equal(await canClaim(),true,'a fresh wildcard remains eligible');
+    assert.deepEqual(await listIisReassociationCandidates({client:db,workspaceId,legacyId:currentId}),[]);
+    await assert.rejects(reassociateWindowsStore(explicitParams),{code:'CERTOPS_WINDOWS_REASSOCIATION_REFUSED'});
+    await db.query("UPDATE certificate_instances SET captured_at=NOW()-interval '25 hours' WHERE managed_certificate_id=$1",[currentId]);
+    assert.equal(await canClaim(),false,'a stale wildcard cannot authorize the old target');
+    const explicitChoices=await listIisReassociationCandidates({client:db,workspaceId,legacyId:currentId});
+    assert.equal(explicitChoices.length,1);
+    assert.equal(explicitChoices[0].expectedAddress,'192.0.2.10');
+    await assert.rejects(reassociateWindowsStore({...explicitParams,expectedAddress:'192.0.2.11'}),{code:'CERTOPS_WINDOWS_REASSOCIATION_REFUSED'});
+    const movedExplicit=await reassociateWindowsStore(explicitParams);
+    assert.equal(movedExplicit.managedCertificateId,explicitId);
+    const changed=(await db.query('SELECT public_metadata FROM certificate_profiles WHERE id=$1',[profileId])).rows[0].public_metadata;
+    assert.equal(changed.renewalProfile.target.binding.address,'192.0.2.10');
+    const explicitAudit=(await db.query("SELECT metadata FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_WINDOWS_STORE_REASSOCIATED' ORDER BY id DESC LIMIT 1",[workspaceId])).rows[0].metadata;
+    assert.equal(explicitAudit.bindingAddress,'192.0.2.10');
   });
 });

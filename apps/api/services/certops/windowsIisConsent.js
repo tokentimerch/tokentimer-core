@@ -30,7 +30,7 @@ async function listWindowsRenewal({ workspaceId, identityId, client = pool }) {
     const capable=require("./agentJobEligibility").hasFreshCapability({ declaredCapabilities:owner.declared_capabilities,
       capabilitiesUpdatedAt:owner.capabilities_updated_at,capability:"windows-store-iis-consumers-v1" });
     const storeProfile=owner.profile_metadata?.renewalProfile?.target?.type === "windows-cert-store";
-    const rows=await client.query(`SELECT ct.id,ct.windows_site,ct.windows_port,ct.windows_sni_host,ct.windows_store,
+    const rows=await client.query(`SELECT ct.id,ct.windows_site,ct.windows_port,ct.windows_sni_host,ct.windows_store,ct.public_metadata,
         ci.managed_certificate_id,ci.observed_fingerprint_sha256,ci.presence_state,ci.captured_at,
         c.id AS consumer_id,c.automatic_update,c.authorization_revision,
         EXISTS(SELECT 1 FROM certops_management_periods bp WHERE bp.workspace_id=ci.workspace_id
@@ -59,7 +59,7 @@ async function listWindowsRenewal({ workspaceId, identityId, client = pool }) {
         observationFresh:Number.isFinite(captured) && captured<=Date.now() && Date.now()-captured<=86400000 });
       return { targetId:row.id,managedCertificateId:row.managed_certificate_id,consumerId:row.consumer_id,
         site:row.windows_site,port:row.windows_port,sniHost:row.windows_sni_host,automaticUpdate:row.automatic_update === true,
-        ...state,lastResult:row.last_result,canEnable:!ambiguous && capable && storeProfile && state.deployment === "observed_only" };
+        ...state,lastResult:row.last_result,canEnable:!ambiguous && capable && storeProfile && row.public_metadata?.observationOnly !== true && state.deployment === "observed_only" };
     });
     groups.push({ periodId:owner.period_id,managedCertificateId:owner.managed_certificate_id,agentId:owner.agent_id,
       host:owner.hostname,store:"LocalMachine\\My",profileId:owner.renewal_profile_id,profileName:owner.profile_name,
@@ -116,7 +116,7 @@ async function enableWindowsIisConsumer({ client, workspaceId, periodId, targetI
     WHERE ct.workspace_id=$1 AND ct.id=$2 AND ct.source='agent_windows' AND ct.location_kind='iis_binding'
     ORDER BY ci.captured_at DESC NULLS LAST LIMIT 1 FOR UPDATE OF ct,ci`, [workspaceId, targetId]);
   const target = targetResult.rows[0];
-  if (!target || target.public_metadata?.agentId !== owner.agent_public_id || !target.windows_site) {
+  if (!target || target.public_metadata?.agentId !== owner.agent_public_id || target.public_metadata?.observationOnly === true || !target.windows_site) {
     throw refusal("The IIS binding is not confirmed on the Store agent.");
   }
   const captured = target.captured_at ? new Date(target.captured_at).getTime() : NaN;
@@ -206,6 +206,7 @@ async function authorizeWindowsIisConsumer({ client, agent, jobId, claimId, cons
       AND c.removed_at IS NULL AND c.authorization_revision=$5 AND p.ended_at IS NULL
       AND a.status='active' AND ct.source='agent_windows' AND ct.location_kind='iis_binding'
       AND ct.windows_store='My' AND ct.public_metadata->>'agentId'=a.agent_id
+      AND ct.public_metadata->'observationOnly' IS DISTINCT FROM 'true'::jsonb
       AND j.management_period_id=p.id AND j.operation IN ('renew','continue-enrollment') AND j.status IN ('claimed','running')
       AND j.claimed_by_agent_id=$4 AND j.claim_id=$6 AND j.lease_expires_at > clock_timestamp()
       AND j.payload->'target'->>'type'='windows-cert-store'
@@ -252,7 +253,7 @@ async function snapshotWindowsIisConsumers({ client, workspaceId, certificateId,
   if (result.rows.length > 32) throw refusal("A Store renewal supports at most 32 IIS bindings.");
   const now=Date.now(), items=[];
   for (const row of result.rows) {
-    if (row.public_metadata?.agentId !== row.agent_public_id || !row.windows_site || row.certificate_status === "revoked" || row.certificate_status === "decommissioned") continue;
+    if (row.public_metadata?.agentId !== row.agent_public_id || row.public_metadata?.observationOnly === true || !row.windows_site || row.certificate_status === "revoked" || row.certificate_status === "decommissioned") continue;
     const captured=row.captured_at ? new Date(row.captured_at).getTime() : NaN;
     const binding={ address:"*",store:"My",site:row.windows_site,port:row.windows_port,
       ...(row.windows_sni_host ? { sniHost:row.windows_sni_host } : {}) };

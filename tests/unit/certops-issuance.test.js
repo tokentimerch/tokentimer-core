@@ -342,6 +342,15 @@ describe("certops issuance request validation (windows-iis target)", () => {
     assert.equal(normalized.windowsTarget.thumbprintSha1, "AA".repeat(20));
   });
 
+  it("retains an explicit IP and rejects invalid or ambiguous IIS addresses", () => {
+    const target = { type: "windows-iis", reference: "iis.example.com", store: "My",
+      binding: { site: "Default Web Site", port: 443, address: "192.0.2.10" } };
+    assert.equal(normalizeIssuanceRequest(windowsRequest({ payload: { target } })).windowsTarget.binding.address, "192.0.2.10");
+    for (const binding of [{ ...target.binding, address: "not-an-ip" }, { ...target.binding, sniHost: "app.example.com" }]) {
+      assert.throws(() => normalizeIssuanceRequest(windowsRequest({ payload: { target: { ...target, binding } } })), /binding\.address/);
+    }
+  });
+
   it("does not require payload.certPath for a windows-iis target", () => {
     assert.doesNotThrow(() => normalizeIssuanceRequest(windowsRequest()));
   });
