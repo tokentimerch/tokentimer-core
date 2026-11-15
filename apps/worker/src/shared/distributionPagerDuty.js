@@ -48,7 +48,7 @@ async function settleRecoveredDistributionAlerts(client, batchSize, canRecover) 
           AND jsonb_typeof(aq.channels->'retry')='array' AND jsonb_typeof(aq.channels->'outcomes'->'webhooks'->'endpoints')='object'
           AND aq.channels->'outcomes'->'webhooks'->'endpoints'->>p.destination_id IN ('pending','failed'))
         OR (aq.metadata->>'pagerdutyRecoveryRequeued'='true' AND aq.channels->'required'='["webhooks"]'::jsonb
-          AND aq.channels->'retry'='["webhooks"]'::jsonb AND aq.channels->'outcomes'->'webhooks'->'endpoints'='{}'::jsonb
+          AND aq.channels->'retry' IN ('[]'::jsonb,'["webhooks"]'::jsonb) AND aq.channels->'outcomes'->'webhooks'->'endpoints'='{}'::jsonb
           AND aq.error_message LIKE '%No webhook names defined in the selected contact group%'
           AND (aq.next_attempt_at IS NULL OR aq.next_attempt_at<=clock_timestamp()))
         OR (aq.channels='["webhooks"]'::jsonb AND aq.metadata->>'pagerdutyRecoveryRequeued' IS DISTINCT FROM 'true'
@@ -85,7 +85,7 @@ async function settleRecoveredDistributionAlerts(client, batchSize, canRecover) 
         await client.query("COMMIT"); continue;
       }
       if (queue.metadata?.pagerdutyRecoveryRequeued === true && String(queue.error_message || "").includes("No webhook names defined in the selected contact group") &&
-          JSON.stringify(ledger?.required) === '["webhooks"]' && JSON.stringify(ledger?.retry) === '["webhooks"]' &&
+          JSON.stringify(ledger?.required) === '["webhooks"]' && ['[]','["webhooks"]'].includes(JSON.stringify(ledger?.retry)) &&
           JSON.stringify(ledger?.outcomes?.webhooks?.endpoints) === '{}') {
         const settings = (await client.query(`SELECT ws.contact_groups,ws.default_contact_group_id,ws.webhook_urls,policy.policy
           FROM certops_distribution_incidents i
@@ -105,6 +105,7 @@ async function settleRecoveredDistributionAlerts(client, batchSize, canRecover) 
         if (eligible && settings?.policy?.alerts?.enabled === true && queue.metadata?.pagerdutyRecoveryRetryFingerprint !== fingerprint &&
             await canRecover(client,{workspace_id:queue.workspace_id})) {
           await client.query(`UPDATE alert_queue SET status='pending',attempts_webhooks=0,next_attempt_at=clock_timestamp(),
+            channels=jsonb_set(channels,'{retry}','["webhooks"]'::jsonb,true),
             metadata=jsonb_set(metadata,'{pagerdutyRecoveryRetryFingerprint}',to_jsonb($2::text),true),updated_at=clock_timestamp() WHERE id=$1`,[id,fingerprint]);
         } else await client.query("UPDATE alert_queue SET next_attempt_at=clock_timestamp()+interval '5 minutes' WHERE id=$1",[id]);
         await client.query("COMMIT"); continue;
