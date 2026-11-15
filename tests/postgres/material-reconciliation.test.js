@@ -1212,3 +1212,23 @@ test(
     }
   },
 );
+
+// This is the persisted result of the old putBinding removal, before the new edit fence.
+test("pre-upgrade removed binding permits independently approved original-job reconciliation", async () => {
+  const f = await setup();
+  await pool.query("UPDATE certops_consumer_bindings SET state='removed',authorization_revision=authorization_revision+1 WHERE workspace_id=$1 AND id=$2", [f.workspaceId, f.bindingId]);
+  const before = (await pool.query("SELECT * FROM certops_consumer_current_state WHERE workspace_id=$1 AND binding_id=$2", [f.workspaceId, f.bindingId])).rows[0];
+  await assert.rejects(operations.putBinding({...f, binding:{...f.binding,state:'active'}, actorUserId:f.actor}), {code:'CERTOPS_CONSUMER_CHANGE_REQUIRES_RECONCILIATION'});
+  const pending = await reconciliation.requestReconciliation({workspaceId:f.workspaceId,jobId:f.original.id,actorUserId:f.actor});
+  assert.equal(pending.status,'pending_approval');
+  await approveJob({workspaceId:f.workspaceId,jobId:pending.id,approverUserId:f.approver});
+  const job=(await pool.query("UPDATE certificate_jobs SET status='claimed',claim_id=$2,claimed_by_agent_id=assigned_agent_id,lease_expires_at=clock_timestamp()+interval '5 minutes' WHERE id=$1 RETURNING *",[pending.id,crypto.randomUUID()])).rows[0];
+  const intent=job.payload.materialReconciliation.intent;
+  const receipt={schemaVersion:1,workspaceId:f.workspaceId,originalJobId:f.original.id,groupId:f.groupId,bindingId:f.bindingId,materialVersionId:f.materialVersionId,generation:intent.generation,fingerprintSha256:intent.fingerprintSha256,proofKind:intent.preparationOnly?'staged':'deployed',observedAt:new Date().toISOString()};
+  await assert.rejects(operations.transaction(client=>reconciliation.acceptReceipt({client,workspaceId:f.workspaceId,agentId:crypto.randomUUID(),job,receipt})),{code:'CERTOPS_RECONCILIATION_STALE'});
+  await operations.transaction(client=>reconciliation.acceptReceipt({client,workspaceId:f.workspaceId,agentId:f.consumer,job,receipt}));
+  assert.equal((await pool.query("SELECT needs_operator_reconciliation FROM certificate_jobs WHERE id=$1",[f.original.id])).rows[0].needs_operator_reconciliation,false);
+  assert.deepEqual((await pool.query("SELECT * FROM certops_consumer_current_state WHERE workspace_id=$1 AND binding_id=$2",[f.workspaceId,f.bindingId])).rows[0],before);
+  const restored=await operations.putBinding({...f,binding:{...f.binding,state:'active'},actorUserId:f.actor});
+  assert.equal(restored.state,'active');
+});

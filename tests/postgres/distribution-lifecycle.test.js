@@ -1098,3 +1098,22 @@ for (const kind of ["activation", "staging"]) test(`reassignment refuses a termi
   await pool.query("UPDATE certificate_jobs SET needs_operator_reconciliation=false WHERE id=$1", [jobId]);
   assert.equal((await operations.putBinding(replacement)).assigned_agent_id, f.issuer);
 });
+
+test("failed repeat cannot suppress recovery of an accepted distribution incident",async()=>{
+  const f=await fixture(),crypto=require("node:crypto");
+  const incident=(await pool.query(`INSERT INTO certops_distribution_incidents(workspace_id,group_id,code,dedupe_key,severity) VALUES($1,$2,'consumer_offline',$3,'critical') RETURNING id`,[f.workspaceId,f.groupId,crypto.randomUUID()])).rows[0];
+  const hook={kind:'pagerduty',url:'https://events.pagerduty.com/v2/enqueue',routingKey:'a'.repeat(32)};
+  await pool.query(`INSERT INTO workspace_settings(workspace_id,webhook_urls) VALUES($1,$2::jsonb) ON CONFLICT(workspace_id) DO UPDATE SET webhook_urls=EXCLUDED.webhook_urls`,[f.workspaceId,JSON.stringify([hook])]);
+  const service=await import('../../apps/worker/src/shared/distributionPagerDuty.js'),calls=[];
+  const client=await pool.connect();
+  try {
+    const args={alert:{workspace_id:f.workspaceId,distributionContext:{incidentId:incident.id}},webhook:hook,payload:{event_action:'trigger'},send:async()=>({success:true})};
+    await service.deliverDistributionPagerDutyTrigger(client,args);
+    await service.deliverDistributionPagerDutyTrigger(client,{...args,send:async()=>({success:false,error:'http_429'})});
+    await pool.query("UPDATE certops_distribution_incidents SET resolved_at=clock_timestamp() WHERE id=$1",[incident.id]);
+    await service.reconcileDistributionPagerDuty(client,{send:async(url,payload)=>{calls.push(payload);return {success:true};}});
+    assert.equal(calls.length,1);assert.equal(calls[0].event_action,'resolve');assert.equal(calls[0].routing_key,hook.routingKey);
+    const row=(await pool.query("SELECT trigger_accepted_at,resolved_at FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows[0];
+    assert.ok(row.trigger_accepted_at);assert.ok(row.resolved_at);
+  } finally {client.release();}
+});

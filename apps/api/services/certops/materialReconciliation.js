@@ -70,7 +70,6 @@ async function lockedOriginal(
   ).rows[0];
   if (
     !binding ||
-    binding.state !== "active" ||
     binding.assigned_agent_id !== old.assigned_agent_id ||
     binding.current_agent !== old.assigned_agent_id ||
     binding.authorization_revision !== intent.authorizationRevision ||

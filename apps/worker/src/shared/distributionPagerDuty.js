@@ -17,7 +17,7 @@ export async function deliverDistributionPagerDutyTrigger(client, { alert, webho
     if (!active.rowCount) return { success: true, skipped: true };
     await client.query(`INSERT INTO certops_distribution_pagerduty(workspace_id,incident_id,destination_id,trigger_delivery_uncertain)
       VALUES($1,$2,$3,TRUE) ON CONFLICT(workspace_id,incident_id,destination_id)
-      DO UPDATE SET trigger_delivery_uncertain=TRUE`, [alert.workspace_id,incidentId,destinationId]);
+      DO UPDATE SET trigger_delivery_uncertain=(certops_distribution_pagerduty.trigger_accepted_at IS NULL)`, [alert.workspace_id,incidentId,destinationId]);
     let result;
     try { result = await send(String(webhook.url).trim(), payload, "pagerduty"); }
     catch { result = { success: false }; }
@@ -36,7 +36,7 @@ export async function reconcileDistributionPagerDuty(client, { send, batchSize =
   const due = await client.query(`SELECT p.workspace_id,p.incident_id,p.destination_id
     FROM certops_distribution_pagerduty p
     JOIN certops_distribution_incidents i ON i.workspace_id=p.workspace_id AND i.id=p.incident_id
-    WHERE i.resolved_at IS NOT NULL AND p.trigger_accepted_at IS NOT NULL AND NOT p.trigger_delivery_uncertain AND p.resolved_at IS NULL
+    WHERE i.resolved_at IS NOT NULL AND p.trigger_accepted_at IS NOT NULL AND (NOT p.trigger_delivery_uncertain OR p.last_error='historical_destination_unverified') AND p.resolved_at IS NULL
       AND p.next_attempt_at<=clock_timestamp() AND p.resolve_attempts<8
     ORDER BY p.next_attempt_at,p.incident_id LIMIT $1`, [Math.max(1,Math.min(500,batchSize))]);
   for (const row of due.rows) {
@@ -47,18 +47,26 @@ export async function reconcileDistributionPagerDuty(client, { send, batchSize =
         JOIN certops_distribution_incidents i ON i.workspace_id=p.workspace_id AND i.id=p.incident_id
         LEFT JOIN workspace_settings ws ON ws.workspace_id=p.workspace_id
         WHERE p.workspace_id=$1 AND p.incident_id=$2 AND p.destination_id=$3
-          AND i.resolved_at IS NOT NULL AND p.trigger_accepted_at IS NOT NULL AND NOT p.trigger_delivery_uncertain
+          AND i.resolved_at IS NOT NULL AND p.trigger_accepted_at IS NOT NULL
+          AND (NOT p.trigger_delivery_uncertain OR p.last_error='historical_destination_unverified')
           AND p.resolved_at IS NULL AND p.next_attempt_at<=clock_timestamp() AND p.resolve_attempts<8`,
       [row.workspace_id,row.incident_id,row.destination_id])).rows[0];
       if (!current) continue;
       const hook = (Array.isArray(current.webhook_urls) ? current.webhook_urls : [])
         .find(item => pagerDutyDestinationId(row.workspace_id,item) === row.destination_id);
       if (!hook) {
-        await client.query(`UPDATE certops_distribution_pagerduty SET last_error='original_destination_unavailable',
+        await client.query(`UPDATE certops_distribution_pagerduty SET last_error=CASE WHEN trigger_delivery_uncertain THEN 'historical_destination_unverified' ELSE 'original_destination_unavailable' END,
           next_attempt_at=clock_timestamp()+interval '5 minutes' WHERE workspace_id=$1 AND incident_id=$2 AND destination_id=$3`,
         [row.workspace_id,row.incident_id,row.destination_id]);
         continue;
       }
+      // Historical hashes become actionable only when they match the current
+      // tenant, endpoint, and routing-key fingerprint. URL-only hashes cannot match.
+      if (current.trigger_delivery_uncertain) await client.query(`UPDATE certops_distribution_pagerduty
+        SET trigger_delivery_uncertain=FALSE,last_error=NULL
+        WHERE workspace_id=$1 AND incident_id=$2 AND destination_id=$3
+          AND trigger_delivery_uncertain AND last_error='historical_destination_unverified'`,
+      [row.workspace_id,row.incident_id,row.destination_id]);
       const attempt = Number(current.resolve_attempts) + 1;
       await client.query(`UPDATE certops_distribution_pagerduty SET resolve_attempts=$4,
         next_attempt_at=clock_timestamp()+($5 * interval '1 millisecond'),last_error='delivery_uncertain'
