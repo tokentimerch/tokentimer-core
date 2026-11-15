@@ -8,6 +8,7 @@ import {
   IntegrationModalStep,
 } from '../../src/components/onboarding/importModalStep.jsx';
 import { importStepComponents } from '../../src/components/onboarding/OnboardingPage.jsx';
+import { hasOwnContinue } from '../../src/components/onboarding/heldSteps.js';
 import {
   FileImportStep,
   IntegrationStep,
@@ -39,6 +40,30 @@ const wrap = ui => (
   <ChakraProvider>
     <DashboardThemeProvider>{ui}</DashboardThemeProvider>
   </ChakraProvider>
+);
+
+it.each([
+  ['file_import', FileImportStep],
+  ['integration', IntegrationStep],
+])(
+  'shows the parent Continue for the completed guided %s step',
+  (stepId, Step) => {
+    const ctx = makeCtx();
+    const release = vi.fn();
+    render(
+      wrap(
+        <>
+          <Step ctx={ctx} />
+          {!hasOwnContinue(stepId, true) && (
+            <button onClick={release}>Continue</button>
+          )}
+        </>
+      )
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(release).toHaveBeenCalledOnce();
+    expect(hasOwnContinue(stepId, false)).toBe(true);
+  }
 );
 
 describe.each([
@@ -77,7 +102,9 @@ describe.each([
     const ctx = makeCtx();
     ctx.session.progress.imported = [{ step: stepId, count: 3 }];
     render(wrap(<Step ctx={ctx} reviewing />));
-    expect(screen.getByTestId('import-done')).toHaveTextContent('3 assets imported in this setup');
+    expect(screen.getByTestId('import-done')).toHaveTextContent(
+      '3 assets imported in this setup'
+    );
     expect(screen.queryByTestId('modal-open')).toBeNull();
   });
   it('does not count an import that created nothing', async () => {
