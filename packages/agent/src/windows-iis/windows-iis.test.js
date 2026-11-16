@@ -1595,11 +1595,127 @@ describe("deployIisBinding precedenceWarning wiring", () => {
   });
 });
 
+describe("wildcard DNS SAN matching", () => {
+  it("preserves the configured probe timeout within the total deadline", () => {
+    const { wildcardProbeTimeout } = require("./index");
+    assert.equal(wildcardProbeTimeout(10000, 30000, 0), 10000);
+    assert.equal(wildcardProbeTimeout(10000, 30000, 27000), 3000);
+    assert.equal(wildcardProbeTimeout(10000, 30000, 30001), 0);
+  });
+  it("accepts valid IDNA A-labels and rejects ambiguous or malformed names", () => {
+    const { isScopedDnsName } = require("./index");
+    assert.equal(isScopedDnsName("xn--bcher-kva.example"), true);
+    for (const name of ["bücher.example", "xn--.example", "a..example", "-bad.example", "foo.example."])
+      assert.equal(isScopedDnsName(name), false, name);
+  });
+  it("matches exactly one wildcard label and never sends a wildcard as SNI", () => {
+    const { dnsSanMatches } = require("./index");
+    assert.equal(dnsSanMatches("a.example.com", "*.example.com"), true);
+    assert.equal(dnsSanMatches("a.b.example.com", "*.example.com"), false);
+    assert.equal(dnsSanMatches("example.com", "*.example.com"), false);
+    assert.equal(dnsSanMatches("other.example.net", "*.example.com"), false);
+  });
+});
+
 describe("wildcard deployment and concrete HTTP.sys bindings", () => {
   const wildcard = { ...VALID_BINDING, address: "*" };
   const deploy = (execFileImpl, binding = wildcard) => deployIisBinding({
     binding, certificatePem: FIXTURE_CERT_PEM, execFileImpl,
     connectImpl: makeConnectStub({ peerDer: fixtureX509.raw }),
+  });
+  it("covers wildcard and IDNA SANs using the real certificate and concrete SNI probes", async () => {
+    const pem = fs.readFileSync(path.join(__dirname, "..", "verify", "fixtures", "wildcard-sni-test.crt.pem"), "utf8");
+    const cert = new X509Certificate(pem);
+    const thumbprint = cert.fingerprint.replace(/:/g, "");
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint },
+      { hostnamePort: "customer.example.test:443", thumbprint: OTHER_THUMBPRINT },
+    ) : {});
+    const blocked = await deployIisBinding({ binding: wildcard, certificatePem: pem, execFileImpl: exec });
+    assert.equal(blocked.code, "WILDCARD_PRECEDENCE_CONFLICT");
+    const safeExec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint },
+      { hostnamePort: "customer.example.test:443", thumbprint },
+      { hostnamePort: "nested.customer.example.test:443", thumbprint: OTHER_THUMBPRINT },
+    ) : {});
+    const connect = makeConnectStub({ peerDer: cert.raw });
+    const result = await deployIisBinding({ binding: wildcard, certificatePem: pem, execFileImpl: safeExec, connectImpl: connect });
+    assert.equal(result.ok, true);
+    assert.deepEqual(connect.seenOptions.map(item => item.servername), [undefined, "tokentimer-probe.example.test", "xn--bcher-kva.example", "customer.example.test"]);
+  });
+  it("fails closed on malformed same-port SNI selectors", async () => {
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT },
+      { hostnamePort: "bad..example:443", thumbprint: OTHER_THUMBPRINT },
+    ) : {});
+    assert.equal((await deploy(exec)).code, "QUERY_FAILED");
+  });
+  it("honors cancellation between TLS probes", async () => {
+    const controller = new AbortController();
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT },
+    ) : {});
+    const base = makeConnectStub({ peerDer: fixtureX509.raw });
+    const connect = options => { const socket = base(options); controller.abort(); return socket; };
+    const result = await deployIisBinding({ binding: wildcard, certificatePem: FIXTURE_CERT_PEM,
+      execFileImpl: exec, connectImpl: connect, signal: controller.signal });
+    assert.equal(result.code, "VERIFY_FAILED");
+    assert.match(result.detail, /cancelled/);
+    assert.equal(base.seenOptions.length, 1);
+  });
+  it("refuses a matching SNI selector on the wildcard port before mutation", async () => {
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT },
+      { hostnamePort: "WWW.Valid.Example.Com:443", thumbprint: OTHER_THUMBPRINT },
+    ) : {});
+    const result = await deploy(exec);
+    assert.equal(result.code, "WILDCARD_PRECEDENCE_CONFLICT");
+    assert.match(result.detail, /SNI binding/);
+    assert.match(result.detail, /IIS binding was not changed; the certificate may already be in the Windows store/);
+    assert.equal(exec.calls.some(call => ["add", "delete"].includes(call.args[1])), false);
+  });
+  it("permits unrelated SNI names and ports and probes every certificate name", async () => {
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT },
+      { hostnamePort: "other.example.com:443", thumbprint: OTHER_THUMBPRINT },
+      { hostnamePort: "valid.example.com:444", thumbprint: OTHER_THUMBPRINT },
+      { hostnamePort: "www.valid.example.com:443", thumbprint: FIXTURE_THUMBPRINT },
+    ) : {});
+    const connect = makeConnectStub({ peerDer: fixtureX509.raw });
+    const result = await deployIisBinding({ binding: wildcard, certificatePem: FIXTURE_CERT_PEM, execFileImpl: exec, connectImpl: connect });
+    assert.equal(result.ok, true);
+    assert.deepEqual(connect.seenOptions.map(item => item.servername), [undefined, "valid.example.com", "www.valid.example.com"]);
+  });
+  it("uses existing rollback when a named TLS probe serves a different certificate", async () => {
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint: OTHER_THUMBPRINT },
+    ) : {});
+    const good = makeConnectStub({ peerDer: fixtureX509.raw });
+    const bad = makeConnectStub({ error: new Error("named handshake failed") });
+    const connect = options => options.servername ? bad(options) : good(options);
+    const result = await deployIisBinding({ binding: wildcard, certificatePem: FIXTURE_CERT_PEM, execFileImpl: exec, connectImpl: connect });
+    assert.equal(result.code, "VERIFY_FAILED");
+    assert.equal(result.rolledBack, true);
+    assert.match(result.detail, /named handshake failed/);
+  });
+  it("detects a matching SNI selector added during verification", async () => {
+    let queries = 0;
+    const exec = makeExecStub(key => key === "query" ? (++queries < 3
+      ? bindingsOutput({ ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT })
+      : bindingsOutput({ ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT },
+        { hostnamePort: "valid.example.com:443", thumbprint: OTHER_THUMBPRINT })) : {});
+    const result = await deploy(exec);
+    assert.equal(result.code, "WILDCARD_PRECEDENCE_CONFLICT");
+    assert.equal(result.rolledBack, false);
+    assert.match(result.detail, /may already have changed/);
+  });
+  it("refuses a certificate without DNS SANs before mutation", async () => {
+    const cert = fs.readFileSync(path.join(__dirname, "..", "verify", "fixtures", "ca.crt.pem"), "utf8");
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput({ ipPort: "0.0.0.0:443", thumbprint: OTHER_THUMBPRINT }) : {});
+    const result = await deployIisBinding({ binding: wildcard, certificatePem: cert, execFileImpl: exec });
+    assert.equal(result.code, "WILDCARD_DNS_SCOPE_UNAVAILABLE");
+    assert.match(result.detail, /IIS binding was not changed; the certificate may already be in the Windows store/);
+    assert.equal(exec.calls.some(call => ["add", "delete"].includes(call.args[1])), false);
   });
   it("refuses before mutation when an IP-specific certificate would mask the wildcard", async () => {
     const exec = makeExecStub(key => key === "query" ? bindingsOutput(

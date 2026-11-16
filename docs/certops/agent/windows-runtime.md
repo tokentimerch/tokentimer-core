@@ -147,18 +147,18 @@ The agent supports native Windows service installation. Its runtime differs from
 - **The `http.sys` and certificate-store queries run under PowerShell
   Constrained Language Mode** (AppLocker or WDAC enforcement), since they
   only use constructs that mode allows.
-- **A non-SNI binding on the same port always takes precedence over an SNI
-  binding, and a deploy to an SNI binding now warns when one exists.** This
-  is `http.sys`'s own dispatch rule, not something either binding's
-  configuration can override: a client connecting to an address with its
-  own `ipport=` binding gets that certificate regardless of the SNI
-  hostname it sent. After a successful SNI (`hostnameport=`) deploy, the
-  agent checks for a shadowing `ipport=` binding on the same port -- the
-  IPv4 wildcard (`0.0.0.0`), the IPv6 wildcard (`[::]`), and any other
-  concrete IP -- and surfaces a non-fatal `precedenceWarning` in the
-  deploy-succeeded evidence when one is found, rather than staying silent
-  about a real, non-obvious gotcha. This is detection only: the agent
-  cannot change `http.sys`'s own precedence rule, only warn about it.
+- **IIS binding precedence:** an HTTP.sys SNI binding can serve a different
+  certificate from an IIS wildcard binding. For a wildcard deployment, the
+  agent checks HTTP.sys bindings against the certificate's DNS names and
+  rejects a conflicting binding. It verifies concrete DNS names and matching
+  SNI bindings over TLS; for each wildcard DNS name it probes one example.
+  Other hostnames are not verified: check them separately. Deployment fails
+  if the DNS names or HTTP.sys inventory cannot be read safely, or if more
+  than 32 DNS names and matching SNI bindings require checks. After a
+  conflict detected following a change, inspect the binding before retrying.
+  For an SNI deployment, check any
+  `precedenceWarning` about a specific-IP binding and verify the certificate
+  served at each relevant address.
 
 ## Related
 
