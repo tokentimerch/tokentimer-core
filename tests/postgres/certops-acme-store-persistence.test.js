@@ -167,6 +167,18 @@ test("internal ACME store first issue atomically binds owner, enrollment and rep
   await rejectJob({ workspaceId, jobId: rejected.job.id, approverUserId: approver });
   rejectedState = (await pool.query("SELECT e.state,j.status FROM certops_acme_store_enrollments e JOIN certificate_jobs j ON j.id=e.original_job_id WHERE j.id=$1", [rejected.job.id])).rows[0];
   assert.deepEqual(rejectedState, { state: "cancelled_no_effect", status: "rejected" });
+  const express = require("../../apps/api/node_modules/express"), request = require("supertest");
+  const app = express();
+  app.use((req, _res, next) => { req.user = { id: user }; req.authz = { workspaceRole: "admin" }; req.workspace = { id: workspaceId }; req.isAuthenticated = () => true; next(); });
+  app.use(require("../../apps/api/routes/certops-enrollments"));
+  const lookup = await request(app).get(`/api/v1/workspaces/${workspaceId}/certops/acme-store-enrollments/by-job/${rejected.job.id}`);
+  assert.equal(lookup.status, 200, JSON.stringify(lookup.body));
+  assert.equal(lookup.body.state, "cancelled_no_effect");
+  const yaml = require(require.resolve("js-yaml", { paths: [require("node:path").resolve(__dirname, "../../apps/dashboard")] }));
+  const spec = yaml.load(require("node:fs").readFileSync(require("node:path").join(__dirname, "../../packages/contracts/openapi/openapi.yaml"), "utf8"));
+  const schema = spec.paths["/api/v1/workspaces/{id}/certops/acme-store-enrollments/by-job/{jobId}"].get.responses["200"].content["application/json"].schema;
+  const validate = new (require("ajv"))({ allErrors: true, strict: false, validateFormats: false }).compile(schema);
+  assert.equal(validate(lookup.body), true, JSON.stringify(validate.errors));
   renewalOptions.idempotencyKey = randomUUID();
   const renewed = await runRenewal();
   assert.equal(renewed.created, true);
