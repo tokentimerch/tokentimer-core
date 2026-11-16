@@ -5,8 +5,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
@@ -39,6 +41,79 @@ func TestMissingTrustIsUnknownNotInvalid(t *testing.T) {
 	}
 	if result.Verdict != "unknown" || result.ChainStatus != "unknown" || result.Detail != "trust anchors unavailable" {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+func TestExplicitDistrustOnLeafAndSelectedChain(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	newKey := func() *ecdsa.PrivateKey {
+		k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k
+	}
+	encode := func(raw []byte) string {
+		return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: raw}))
+	}
+	issue := func(tpl, parent *x509.Certificate, key, parentKey *ecdsa.PrivateKey) (*x509.Certificate, string) {
+		raw, err := x509.CreateCertificate(rand.Reader, tpl, parent, &key.PublicKey, parentKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, err := x509.ParseCertificate(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cert, encode(raw)
+	}
+	ca := func(serial int64, name string) *x509.Certificate {
+		return &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: name}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	}
+	rootKey := newKey()
+	root, rootPEM := issue(ca(101, "root"), ca(101, "root"), rootKey, rootKey)
+	interKey := newKey()
+	inter, interPEM := issue(ca(102, "intermediate"), root, interKey, rootKey)
+	leafKey := newKey()
+	leaf, leafPEM := issue(&x509.Certificate{SerialNumber: big.NewInt(103), NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour)}, inter, leafKey, interKey)
+	check := func(req request) response {
+		t.Helper()
+		data, err := json.Marshal(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var buf bytes.Buffer
+		if err = run(bytes.NewReader(data), &buf, now); err != nil {
+			t.Fatal(err)
+		}
+		var out response
+		if err = json.Unmarshal(buf.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name   string
+		denied *x509.Certificate
+		detail string
+	}{
+		{"leaf", leaf, "certificate explicitly distrusted"}, {"observed intermediate", inter, "certificate chain explicitly distrusted"}, {"root", root, "certificate chain explicitly distrusted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sum := sha1.Sum(tc.denied.Raw)
+			out := check(request{Leaf: leafPEM, Roots: []string{rootPEM}, Intermediates: []string{interPEM}, DeniedFingerprints: []string{hex.EncodeToString(sum[:])}})
+			if out.Verdict != "unknown" || out.ChainStatus != "invalid" || out.Detail != tc.detail {
+				t.Fatalf("unexpected result: %+v", out)
+			}
+		})
+	}
+	rootKeyB := newKey()
+	rootB, rootPEMB := issue(ca(104, "other root"), ca(104, "other root"), rootKeyB, rootKeyB)
+	_, alternatePEM := issue(ca(105, "intermediate"), rootB, interKey, rootKeyB)
+	deniedIntermediate := sha1.Sum(inter.Raw)
+	alt := check(request{Leaf: leafPEM, Roots: []string{rootPEM, rootPEMB}, Intermediates: []string{interPEM, alternatePEM}, DeniedFingerprints: []string{hex.EncodeToString(deniedIntermediate[:])}})
+	if alt.ChainStatus != "valid" || alt.Verdict != "unknown" || alt.Detail != "revocation data unavailable or unsupported" {
+		t.Fatalf("valid alternate chain was not selected: %+v", alt)
 	}
 }
 

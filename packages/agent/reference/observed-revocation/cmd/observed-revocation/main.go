@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -20,6 +22,7 @@ type request struct {
 	SystemRoots         []string `json:"systemRoots"`
 	SystemIntermediates []string `json:"systemIntermediates"`
 	AllowedOrigins      []string `json:"allowedOrigins"`
+	DeniedFingerprints  []string `json:"deniedFingerprints"`
 }
 type response struct {
 	Verdict                        string     `json:"verdict"`
@@ -54,6 +57,26 @@ func run(r io.Reader, w io.Writer, now time.Time) error {
 	leaf, err := parseCertificate(req.Leaf)
 	if err != nil {
 		out.Detail = "invalid observed certificate"
+		return write()
+	}
+	if len(req.DeniedFingerprints) > 4096 {
+		out.Detail = "distrust material exceeds limits"
+		return write()
+	}
+	denied := make(map[[sha1.Size]byte]bool, len(req.DeniedFingerprints))
+	for _, value := range req.DeniedFingerprints {
+		decoded, err := hex.DecodeString(value)
+		if err != nil || len(decoded) != sha1.Size || value != hex.EncodeToString(decoded) {
+			out.Detail = "invalid distrust material"
+			return write()
+		}
+		var key [sha1.Size]byte
+		copy(key[:], decoded)
+		denied[key] = true
+	}
+	if denied[sha1.Sum(leaf.Raw)] {
+		out.ChainStatus = "invalid"
+		out.Detail = "certificate explicitly distrusted"
 		return write()
 	}
 	if len(req.Roots)+len(req.SystemRoots) > 512 || len(req.Intermediates)+len(req.SystemIntermediates) > 256 || len(req.AllowedOrigins) > 128 {
@@ -101,6 +124,25 @@ func run(r io.Reader, w io.Writer, now time.Time) error {
 	if err != nil {
 		out.ChainStatus = "invalid"
 		out.Detail = "certificate chain validation failed"
+		return write()
+	}
+	allowedChains := chains[:0]
+	for _, chain := range chains {
+		allowed := true
+		for _, cert := range chain {
+			if denied[sha1.Sum(cert.Raw)] {
+				allowed = false
+				break
+			}
+		}
+		if allowed {
+			allowedChains = append(allowedChains, chain)
+		}
+	}
+	chains = allowedChains
+	if len(chains) == 0 {
+		out.ChainStatus = "invalid"
+		out.Detail = "certificate chain explicitly distrusted"
 		return write()
 	}
 	if len(chains) != 1 {

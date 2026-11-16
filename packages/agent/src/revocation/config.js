@@ -103,18 +103,17 @@ async function loadTrustMaterial(config, { io = fs, systemRoots = freshSystemRoo
     // entry is an intermediate unless it is also explicitly trusted in Root.
     platformRoots = platformRoots.filter((pem) => {
       const thumbprint = new X509Certificate(pem).fingerprint.replace(/:/g, "").toLowerCase();
-      return !denied.has(thumbprint) && (!ca.has(thumbprint) || root.has(thumbprint));
+      return !ca.has(thumbprint) || root.has(thumbprint);
     });
-    roots = roots.filter((pem) => !denied.has(new X509Certificate(pem).fingerprint.replace(/:/g, "").toLowerCase()));
-    for (const [thumbprint, pem] of ca) if (!denied.has(thumbprint)) platformIntermediates.push(pem);
+    for (const pem of ca.values()) platformIntermediates.push(pem);
   }
   for (const file of config.intermediateFiles) intermediates.push(...readCertificateBundle(file, io));
   roots = [...new Set(roots)];
   const uniqueSystemRoots = [...new Set(platformRoots)].filter((pem) => !roots.includes(pem));
-  const uniqueIntermediates = [...new Set(intermediates)].filter((pem) => !denied.has(new X509Certificate(pem).fingerprint.replace(/:/g, "").toLowerCase()));
+  const uniqueIntermediates = [...new Set(intermediates)];
   const uniqueSystemIntermediates = [...new Set(platformIntermediates)].filter((pem) => !uniqueIntermediates.includes(pem));
   if ((!roots.length && !uniqueSystemRoots.length) || roots.length + uniqueSystemRoots.length > 512 || uniqueIntermediates.length + uniqueSystemIntermediates.length > 256) throw new Error("observed revocation trust material unavailable or exceeds limits");
-  return { roots, intermediates: uniqueIntermediates, systemRoots: uniqueSystemRoots, systemIntermediates: uniqueSystemIntermediates };
+  return { roots, intermediates: uniqueIntermediates, systemRoots: uniqueSystemRoots, systemIntermediates: uniqueSystemIntermediates, deniedFingerprints: [...denied.keys()] };
 }
 
 module.exports = { validateObservedRevocation, readCertificateBundle, freshSystemRoots, freshWindowsIntermediates, loadTrustMaterial };

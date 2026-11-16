@@ -56,3 +56,14 @@ test("separates operating-system trust and fails closed when an older helper rej
   const oldHelper = () => spawn(process.execPath, ["-e", "process.stdin.resume();process.stdin.on('end',()=>process.exit(1));"], { stdio: ["pipe", "pipe", "ignore"] });
   assert.equal((await checkObservedCertificate({ ...args, spawnImpl: oldHelper })).verdict, "unknown");
 });
+
+test("forwards bounded distrust fingerprints and refuses malformed entries", async () => {
+  const denied = "a".repeat(40);
+  const args = { certificatePem: pem, fingerprintSha256: fp, roots: [pem], deniedFingerprints: [denied] };
+  const spawnImpl = () => spawn(process.execPath, ["-e", `let s='';process.stdin.on('data',x=>s+=x);process.stdin.on('end',()=>{const v=JSON.parse(s);if(v.deniedFingerprints?.[0]!==${JSON.stringify(denied)})process.exit(2);console.log(JSON.stringify({verdict:'unknown',chainStatus:'invalid',detail:'certificate explicitly distrusted',checkedAt:'2026-01-01T00:00:00Z'}))});`], { stdio: ["pipe", "pipe", "ignore"] });
+  assert.equal((await checkObservedCertificate({ ...args, spawnImpl })).detail, "certificate explicitly distrusted");
+  let called = false;
+  const result = await checkObservedCertificate({ ...args, deniedFingerprints: ["bad"], spawnImpl: () => { called = true; } });
+  assert.equal(result.verdict, "unknown");
+  assert.equal(called, false);
+});

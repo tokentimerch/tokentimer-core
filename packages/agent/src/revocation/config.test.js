@@ -21,14 +21,17 @@ test("legacy configurations remain disabled and enabled checks require authorize
   assert.deepEqual(validateObservedRevocation({ enabled: true, allowedOrigins: ["http://pki.example:8080"] }).allowedOrigins, ["http://pki.example:8080"]);
 });
 
-test("system trust is reloaded and Windows disallowed certificates are excluded", async () => {
+test("system trust is reloaded and Windows distrust is preserved for chain verification", async () => {
   let calls = 0;
   const run = (_executable, _args, options) => { calls++; assert.equal(options.shell, false); return { status: 0, stdout: JSON.stringify([cert]) }; };
   const thumbprint = new X509Certificate(cert).fingerprint.replace(/:/g, "").toLowerCase();
   const config = { enabled: true, trustAnchorFiles: [], intermediateFiles: [] };
   const windowsStores = () => ({ denied: new Map([[thumbprint, "unused"]]), ca: new Map(), root: new Map() });
-  await assert.rejects(() => loadTrustMaterial(config, { systemRoots: () => freshSystemRoots({ run }), platform: "win32", windowsStores }), /unavailable/);
-  await assert.rejects(() => loadTrustMaterial(config, { systemRoots: () => freshSystemRoots({ run }), platform: "win32", windowsStores }), /unavailable/);
+  for (let i = 0; i < 2; i++) {
+    const material = await loadTrustMaterial(config, { systemRoots: () => freshSystemRoots({ run }), platform: "win32", windowsStores });
+    assert.deepEqual(material.deniedFingerprints, [thumbprint]);
+    assert.equal(material.systemRoots.length, 1);
+  }
   assert.equal(calls, 2);
 });
 
@@ -49,13 +52,14 @@ test("trust bundles accept public certificates but reject private material and s
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("Windows disallowed store also excludes explicitly configured intermediates", async () => {
+test("Windows distrust accompanies explicitly configured intermediates", async () => {
   const root = fs.readFileSync(path.join(__dirname, "../verify/fixtures/ca.crt.pem"), "utf8");
   const thumbprint = new X509Certificate(cert).fingerprint.replace(/:/g, "").toLowerCase();
   const config = { enabled: true, trustAnchorFiles: [], intermediateFiles: [path.join(__dirname, "../verify/fixtures/chain-leaf.crt.pem")] };
   const material = await loadTrustMaterial(config, { systemRoots: () => [root], platform: "win32", windowsStores: () => ({ denied: new Map([[thumbprint, cert]]), ca: new Map(), root: new Map() }) });
   assert.equal(material.systemRoots.length, 1);
-  assert.equal(material.intermediates.length, 0);
+  assert.equal(material.intermediates.length, 1);
+  assert.deepEqual(material.deniedFingerprints, [thumbprint]);
 });
 
 test("platform and explicit trust stay separate for strict helper validation", async () => {
