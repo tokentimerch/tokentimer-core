@@ -118,8 +118,8 @@ test("explicit-IP topology adoption uses fresh owner observation and one authori
   [f.workspaceId,randomUUID(),JSON.stringify({ agentId:agent.agent_id,observationOnly:true,keyPresent:true,boundAddress:'192.0.2.10' })])).rows[0];
   await pool.query(`INSERT INTO certificate_instances(workspace_id,managed_certificate_id,target_id,status,source,source_ref,
     location_kind,observed_fingerprint_sha256,observed_at,captured_at,presence_state)
-    VALUES($1,$2,$3,'discovered','agent_windows',$4,'iis_binding',$5,NOW(),NOW(),'confirmed_present')`,
-  [f.workspaceId,f.certificate.id,target.id,randomUUID(),f.certificate.fingerprint_sha256]);
+    VALUES($1,$2,$3,'discovered','agent_windows',$4,'iis_binding',$5,$6::timestamptz,$6::timestamptz,'confirmed_present')`,
+  [f.workspaceId,f.certificate.id,target.id,randomUUID(),f.certificate.fingerprint_sha256,new Date(Date.now()-10000).toISOString()]);
   const { loadWindowsRenewalTopology } = require('../../apps/api/services/certops/renewalAdoption');
   const input = { db:pool,workspaceId:f.workspaceId,certificateId:f.certificate.id,deployedAgentId:f.agentId };
   const topology = await loadWindowsRenewalTopology(input);
@@ -1127,8 +1127,8 @@ test("IIS consent requires a fresh matching Store agent and rejects existing ren
     VALUES($1,'IIS','windows-iis','agent_windows',$2,'iis_binding','My','Default Web Site',443,$3::jsonb) RETURNING id`,
     [f.workspaceId,randomUUID(),JSON.stringify({ agentId: agent.agent_id })])).rows[0];
   await pool.query(`INSERT INTO certificate_instances(workspace_id,managed_certificate_id,target_id,status,source,source_ref,
-      location_kind,observed_fingerprint_sha256,observed_at) VALUES($1,$2,$3,'discovered','agent_windows',$4,'iis_binding',$5,NOW())`,
-    [f.workspaceId,bindingCert.id,target.id,randomUUID(),f.certificate.fingerprint_sha256]);
+      location_kind,observed_fingerprint_sha256,observed_at,captured_at) VALUES($1,$2,$3,'discovered','agent_windows',$4,'iis_binding',$5,$6::timestamptz,$6::timestamptz)`,
+    [f.workspaceId,bindingCert.id,target.id,randomUUID(),f.certificate.fingerprint_sha256,new Date(Date.now()-10000).toISOString()]);
   const client = await pool.connect();
   const { enableWindowsIisConsumer } = require('../../apps/api/services/certops/windowsIisConsent');
   try {
