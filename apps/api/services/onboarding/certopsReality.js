@@ -422,7 +422,9 @@ async function loadAdcsReality(
             (SELECT COUNT(*)::int FROM certificate_enrollments e
               WHERE e.workspace_id=i.workspace_id AND e.issuer_id=i.id AND e.state='installed'
                 AND e.deploy_target->>'type'='windows-iis'
-                AND ($2::uuid IS NULL OR e.agent_id=$2::uuid)) AS installed_iis_enrollments
+                AND ($2::uuid IS NULL OR e.agent_id=$2::uuid)) AS installed_iis_enrollments,
+            (j.id IS NOT NULL AND v.confirmed_at IS NOT NULL
+              AND COALESCE(j.completed_at, j.updated_at) >= v.confirmed_at) AS checked_after_pin
        FROM certificate_issuers i
        LEFT JOIN certificate_issuer_versions v
          ON v.issuer_id = i.id AND v.version = i.current_version
