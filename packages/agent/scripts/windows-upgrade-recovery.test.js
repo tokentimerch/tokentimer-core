@@ -428,6 +428,46 @@ exit 0
 });
 
 // skip-reason: platform
+test("uninstall loads the trusted ACL module before quarantine and refuses import failure", { skip: process.platform !== "win32" }, () => {
+  const script = String.raw`
+$ErrorActionPreference='Stop'
+Import-Module ([IO.Path]::Combine($PSHOME,'Modules','Microsoft.PowerShell.Management','Microsoft.PowerShell.Management.psd1')) -NoClobber -ErrorAction Stop
+$PSModuleAutoLoadingPreference='None'
+$env:PSModulePath=Join-Path $env:TEMP 'untrusted-nonexistent-modules'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
+$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if ($script:Uninstall)')},$true))
+if ($errors.Count -or $f.Count -ne 1) { throw 'missing uninstall branch' }
+$script:Uninstall=$true; $script:DryRun=$false; $StateDir=$env:TEMP
+function Test-IsAdministrator { return $true }
+function Assert-ProtectedIntentDirectory {
+ param($Directory)
+ if ($env:TT542_MODE -eq 'failure') { throw 'ACL check ran after failed import' }
+ $module=Get-Module Microsoft.PowerShell.Security
+ $expected=[IO.Path]::Combine($PSHOME,'Modules','Microsoft.PowerShell.Security','Microsoft.PowerShell.Security.psd1')
+ if (!$module -or $module.Path -ine $expected) { throw 'untrusted ACL module' }
+ $null=Get-Acl -LiteralPath $env:TEMP -ErrorAction Stop
+}
+function Assert-NoQuarantinedLauncherIntent { param($LauncherParent) throw 'fixture quarantine retained' }
+function Fail([string]$Message) { throw $Message }
+function Invoke-Step { throw 'unsafe uninstall mutation' }
+if ($env:TT542_MODE -eq 'failure') { function Import-Module { throw 'simulated ACL module failure' } }
+try { . ([scriptblock]::Create($f[0].Extent.Text)); throw 'uninstall unexpectedly succeeded' }
+catch {
+ $expected=if($env:TT542_MODE -eq 'failure'){'recovery_required: launcher execution remains quarantined.*simulated ACL module failure'}else{'recovery_required: launcher execution remains quarantined.*fixture quarantine retained'}
+ if($_.Exception.Message -notmatch $expected){throw}; [Console]::Out.Write('guarded')
+}
+`;
+  for (const mode of ["loaded", "failure"]) {
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+      env: { ...process.env, TT542_SOURCE: __dirname, TT542_MODE: mode }, windowsHide: true, encoding: "utf8", timeout: 30000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /guarded/);
+  }
+});
+
+// skip-reason: platform
 test("uninstall refuses an existing recovery barrier even without launcher markers", { skip: process.platform !== "win32" }, () => {
   const tempParent = fs.realpathSync(os.tmpdir());
   const root = fs.mkdtempSync(path.join(tempParent, "tt537-uninstall-"));

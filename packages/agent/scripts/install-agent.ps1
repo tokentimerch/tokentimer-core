@@ -905,6 +905,7 @@ if ($script:Uninstall) {
     if (-not $script:DryRun) {
         try {
             if (-not [Environment]::Is64BitProcess) { throw 'native 64-bit PowerShell is required' }
+            Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1')) -NoClobber -ErrorAction Stop
             $launcherParent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
             Assert-ProtectedIntentDirectory -Directory $launcherParent
             Assert-NoQuarantinedLauncherIntent -LauncherParent $launcherParent
