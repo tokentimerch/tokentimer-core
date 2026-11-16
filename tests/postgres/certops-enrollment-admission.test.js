@@ -54,7 +54,8 @@ async function fixture() {
   await pool.query("INSERT INTO certificate_issuer_versions(workspace_id,issuer_id,version,ca_config,template,transport,ca_key_sha256,confirmed_at) VALUES($1,$2,1,$3,$4,'dcom',$5,NOW())", [workspaceId, issuerId, CA, TEMPLATE, KEY]);
   const agentId = (await pool.query("INSERT INTO certops_agents(workspace_id,agent_id,name,agent_version,protocol_version,credential_prefix,credential_hash,status,declared_target_selectors) VALUES($1,$2,'Admission agent','0.18.0','1.0.0',$3,$4,'active',$5::jsonb) RETURNING id",
     [workspaceId, "agent-" + randomUUID(), "ttagent_" + randomBytes(8).toString("hex"), randomBytes(32).toString("hex"), JSON.stringify([TARGET.reference])])).rows[0].id;
-  await pool.query(`UPDATE certops_agents SET platform='win32',declared_capabilities=$2::jsonb,capabilities_updated_at=NOW() WHERE id=$1`,
+  await pool.query(`UPDATE certops_agents SET platform='win32',supported_operations='["renew","adcs-preflight","continue-enrollment"]'::jsonb,
+    declared_capabilities=$2::jsonb,capabilities_updated_at=NOW() WHERE id=$1`,
     [agentId, JSON.stringify(["windows-store-only-adcs-v1", "adcs-enroll-v1", "evidence-claim-binding-v1"])]);
   await pool.query("INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,assigned_agent_id,result_metadata) VALUES($1,'external',$2,'adcs-preflight','succeeded',$3,$4::jsonb)", [workspaceId, issuerId, agentId, JSON.stringify({ preflightVerdict: { templateCheck: "safe", caCheck: "safe", caConfig: CA, template: TEMPLATE, caKeySha256s: [KEY] } })]);
   const profile = await profiles.createAdcsRenewalProfile({ dbPool: pool, workspaceId, actorUserId: actor,
