@@ -25,6 +25,19 @@ const { logger } = require("../utils/logger");
 
 const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
 
+function validateManagedIdentityMode(mode = "all") {
+  if (!["all", "exclude", "only"].includes(mode)) {
+    const error = new Error("managedIdentityMode must be all, exclude, or only");
+    error.status = 400;
+    throw error;
+  }
+  return mode;
+}
+
+function isManagedIdentity(sp) {
+  return sp.servicePrincipalType === "ManagedIdentity";
+}
+
 // Cleanup needs an independent completeness flag per credential sourceKind.
 // Each Graph type (applications / service principals) therefore contributes
 // two summary rows. `found` is extracted credentials of that kind, not the
@@ -204,7 +217,13 @@ async function listApplications({ token, maxItems = 500, authProvider }) {
   return { items: apps.slice(0, maxItems), truncated };
 }
 
-async function listServicePrincipals({ token, maxItems = 500, authProvider }) {
+async function listServicePrincipals({
+  token,
+  maxItems = 500,
+  authProvider,
+  managedIdentityMode = "all",
+}) {
+  validateManagedIdentityMode(managedIdentityMode);
   const sps = [];
   let nextLink = null;
   let pageCount = 0;
@@ -235,7 +254,13 @@ async function listServicePrincipals({ token, maxItems = 500, authProvider }) {
     }
 
     if (Array.isArray(data.value)) {
-      sps.push(...data.value);
+      sps.push(
+        ...data.value.filter((sp) => {
+          if (managedIdentityMode === "only") return isManagedIdentity(sp);
+          if (managedIdentityMode === "exclude") return !isManagedIdentity(sp);
+          return true;
+        }),
+      );
     }
 
     nextLink = data["@odata.nextLink"] || null;
@@ -256,7 +281,9 @@ async function scanAzureAD({
   tenantId: providedTenantId,
   include = { applications: true, servicePrincipals: true },
   maxItems = 500,
+  managedIdentityMode = "all",
 }) {
+  validateManagedIdentityMode(managedIdentityMode);
   if (!token) throw new Error("token is required");
 
   // Clean and validate token
@@ -286,8 +313,9 @@ async function scanAzureAD({
 
   logger.info("Starting Azure AD scan", {
     maxItems,
-    includeApps: include.applications,
-    includeSPs: include.servicePrincipals,
+    includeApps: managedIdentityMode !== "only" && include.applications,
+    includeSPs: managedIdentityMode === "only" || include.servicePrincipals,
+    managedIdentityMode,
   });
 
   const items = [];
@@ -295,7 +323,7 @@ async function scanAzureAD({
 
   try {
     // Scan Applications
-    if (include.applications) {
+    if (managedIdentityMode !== "only" && include.applications) {
       try {
         const { items: apps, truncated: appsTruncated } =
           await listApplications({
@@ -308,18 +336,12 @@ async function scanAzureAD({
         let appsBudgetExhausted = false;
 
         for (const app of apps) {
-          if (items.length >= maxItems) {
-            // The shared cross-type item budget ran out before every listed
-            // application's credentials were inspected -- some apps here
-            // were never even attempted, so this cannot be "complete" even
-            // though listApplications() itself paginated fine.
-            appsBudgetExhausted = true;
-            break;
-          }
-
           // Process passwordCredentials (client secrets)
           for (const cred of app.passwordCredentials || []) {
-            if (items.length >= maxItems) break;
+            if (items.length >= maxItems) {
+              appsBudgetExhausted = true;
+              break;
+            }
 
             const expiresAt = cred.endDateTime
               ? tryParseDate(cred.endDateTime)
@@ -348,7 +370,10 @@ async function scanAzureAD({
 
           // Process keyCredentials (certificates)
           for (const cert of app.keyCredentials || []) {
-            if (items.length >= maxItems) break;
+            if (items.length >= maxItems) {
+              appsBudgetExhausted = true;
+              break;
+            }
 
             const expiresAt = cert.endDateTime
               ? tryParseDate(cert.endDateTime)
@@ -413,27 +438,36 @@ async function scanAzureAD({
     }
 
     // Scan Service Principals
-    if (include.servicePrincipals) {
+    if (managedIdentityMode === "only" || include.servicePrincipals) {
       try {
         const { items: sps, truncated: spsTruncated } =
           await listServicePrincipals({
             token: cleanToken,
             authProvider,
             maxItems,
+            managedIdentityMode,
           });
         let secretsCount = 0;
         let certsCount = 0;
         let spsBudgetExhausted = false;
 
         for (const sp of sps) {
-          if (items.length >= maxItems) {
-            spsBudgetExhausted = true;
-            break;
-          }
+          const managedIdentity = isManagedIdentity(sp);
+          const identityMetadata = {
+            servicePrincipalType: sp.servicePrincipalType ?? null,
+            identityType: managedIdentity ? "managedIdentity" : "servicePrincipal",
+            isManagedIdentity: managedIdentity,
+          };
+          const locationType = managedIdentity
+            ? "managedIdentities"
+            : "servicePrincipals";
 
           // Process passwordCredentials (client secrets)
           for (const cred of sp.passwordCredentials || []) {
-            if (items.length >= maxItems) break;
+            if (items.length >= maxItems) {
+              spsBudgetExhausted = true;
+              break;
+            }
 
             const expiresAt = cred.endDateTime
               ? tryParseDate(cred.endDateTime)
@@ -450,7 +484,13 @@ async function scanAzureAD({
               category: "key_secret",
               type: "api_key",
               expiration: expiresAt ? formatDateYmd(expiresAt) : null,
-              location: `azure-ad:servicePrincipals/${sp.appId}/secrets/${cred.keyId}`,
+              location: `azure-ad:${locationType}/${sp.appId}/secrets/${cred.keyId}`,
+              ...identityMetadata,
+              ...(managedIdentity
+                ? {
+                    legacyLocation: `azure-ad:servicePrincipals/${sp.appId}/secrets/${cred.keyId}`,
+                  }
+                : {}),
               description: `Service Principal\nApp ID: ${sp.appId}\nKey ID: ${cred.keyId}\nCreated: ${startAt ? startAt.toISOString().split("T")[0] : "N/A"}`,
               app_id: sp.appId,
               sp_name: sp.displayName || sp.appId,
@@ -462,7 +502,10 @@ async function scanAzureAD({
 
           // Process keyCredentials (certificates)
           for (const cert of sp.keyCredentials || []) {
-            if (items.length >= maxItems) break;
+            if (items.length >= maxItems) {
+              spsBudgetExhausted = true;
+              break;
+            }
 
             const expiresAt = cert.endDateTime
               ? tryParseDate(cert.endDateTime)
@@ -479,7 +522,13 @@ async function scanAzureAD({
               category: "cert",
               type: "ssl_cert",
               expiration: expiresAt ? formatDateYmd(expiresAt) : null,
-              location: `azure-ad:servicePrincipals/${sp.appId}/certificates/${cert.keyId}`,
+              location: `azure-ad:${locationType}/${sp.appId}/certificates/${cert.keyId}`,
+              ...identityMetadata,
+              ...(managedIdentity
+                ? {
+                    legacyLocation: `azure-ad:servicePrincipals/${sp.appId}/certificates/${cert.keyId}`,
+                  }
+                : {}),
               description: `Service Principal\nApp ID: ${sp.appId}\nKey ID: ${cert.keyId}\nType: ${cert.type || "N/A"}\nUsage: ${cert.usage || "N/A"}\nCreated: ${startAt ? startAt.toISOString().split("T")[0] : "N/A"}`,
               app_id: sp.appId,
               sp_name: sp.displayName || sp.appId,
@@ -548,6 +597,7 @@ async function scanAzureAD({
 
 module.exports = {
   scanAzureAD,
+  validateManagedIdentityMode,
 };
 
 // Test-only exports for unit coverage of helpers

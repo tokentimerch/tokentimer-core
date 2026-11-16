@@ -13,6 +13,18 @@ import { FiPlus, FiTrash2 } from 'react-icons/fi';
 
 const MAX_RULES = 50;
 
+export function FilterRulesSummary({ summary }) {
+  if (!summary) return null;
+  return (
+    <HStack role='status' aria-label='Filter results' spacing={2}>
+      <Badge colorScheme='green'>{summary.matchedCount} matched</Badge>
+      <Badge colorScheme='orange'>
+        {summary.excludedCount} excluded by rules
+      </Badge>
+    </HStack>
+  );
+}
+
 // ReDoS hardening (issue #69 follow-up): mirrors the same heuristic used
 // server-side in importFilterRules.js so the UI can reject nested
 // quantifiers and overlapping quantified alternatives immediately. Keep
@@ -237,18 +249,21 @@ export function isValidFilterRule(rule) {
   return true;
 }
 
-/**
- * Returns only the complete, valid rules from the editor state, ready to be
- * sent to the API. Incomplete rows (empty value, invalid regex) are dropped.
- */
+// Drop blank editor rows only. Invalid rules must reach server validation.
 export function sanitizeFilterRules(rules) {
-  if (!Array.isArray(rules)) return [];
-  return rules.filter(isValidFilterRule).map(r => ({
-    action: r.action,
-    matchType: r.matchType,
-    field: r.field,
-    value: r.value,
-  }));
+  if (!Array.isArray(rules)) return rules ?? [];
+  return rules
+    .filter(rule => rule?.value !== '')
+    .map(rule =>
+      rule && typeof rule === 'object'
+        ? {
+            action: rule.action,
+            matchType: rule.matchType,
+            field: rule.field,
+            value: rule.value,
+          }
+        : rule
+    );
 }
 
 /**

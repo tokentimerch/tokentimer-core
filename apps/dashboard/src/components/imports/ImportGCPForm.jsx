@@ -19,6 +19,10 @@ import { gcpAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
 import LearnMorePanel from '../LearnMorePanel';
+import FilterRulesEditor, {
+  sanitizeFilterRules,
+  FilterRulesSummary,
+} from '../FilterRulesEditor';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -109,6 +113,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     extractQuotaFromError,
     contactGroups,
     onSelectionChange,
+    initialScanParams = null,
   },
   ref
 ) {
@@ -125,12 +130,24 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   const [scanSecrets, setScanSecrets] = React.useState(true);
   const [scanCertificates, setScanCertificates] = React.useState(false);
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
+  const [filterRules, setFilterRules] = React.useState([]);
+  const [filterSummary, setFilterSummary] = React.useState(null);
+  const [previewReady, setPreviewReady] = React.useState(false);
+  React.useEffect(() => {
+    if (!initialScanParams) return;
+    const sp = initialScanParams;
+    setFilterRules(Array.isArray(sp.filterRules) ? sp.filterRules : []);
+    setGcpProjectId(sp.projectId || '');
+    setScanSecrets(sp.include?.secrets ?? true);
+    setScanCertificates(sp.include?.certificates ?? false);
+  }, [initialScanParams]);
   // The backend-authoritative scan record cleanup is driven from.
   const [lastScanId, setLastScanId] = React.useState(null);
 
   React.useEffect(() => {
-    onSelectionChange && onSelectionChange(selectedRowsGcp.size);
-  }, [selectedRowsGcp.size, onSelectionChange]);
+    onSelectionChange &&
+      onSelectionChange(previewReady ? selectedRowsGcp.size : 0);
+  }, [selectedRowsGcp.size, previewReady, onSelectionChange]);
 
   const doGcpScan = async () => {
     const scanTicket = beginScanVerification();
@@ -155,17 +172,21 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     setIsScanning(true);
     setGcpItems([]);
     setGcpSummary([]);
+    setFilterSummary(null);
     try {
       const res = await gcpAPI.scan({
         workspaceId,
         projectId: gcpProjectId,
         accessToken: gcpAccessToken,
         include: { secrets: scanSecrets, certificates: scanCertificates },
+        filterRules: sanitizeFilterRules(filterRules),
         maxItems: 2000,
       });
+      if (!isScanCurrent(scanTicket)) return;
       const items = Array.isArray(res?.items) ? res.items : [];
       setGcpItems(items);
       setGcpSummary(Array.isArray(res?.summary) ? res.summary : []);
+      setFilterSummary(res?.filterSummary || null);
       setLastScanId(res?.scan_id || null);
 
       if (updateQuotaFromResponse && !updateQuotaFromResponse(res)) {
@@ -173,11 +194,15 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
       }
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
+      if (!isScanCurrent(scanTicket)) return;
       setGcpDuplicates(dups);
+      setPreviewReady(true);
       completeScanVerification(scanTicket);
     } catch (e) {
+      if (!isScanCurrent(scanTicket)) return;
       setGcpItems([]);
       setGcpSummary([]);
+      setFilterSummary(null);
       setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
@@ -188,7 +213,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
         if (refreshIntegrationQuota) await refreshIntegrationQuota();
       }
     } finally {
-      setIsScanning(false);
+      if (isScanCurrent(scanTicket)) setIsScanning(false);
     }
   };
 
@@ -201,6 +226,10 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   };
 
   const importGcpSelected = async () => {
+    if (!previewReady || isScanning) {
+      onError?.('Run a scan with the current settings before importing.');
+      return;
+    }
     try {
       const selected = gcpItems
         .filter((_, i) => selectedRowsGcp.has(i))
@@ -217,6 +246,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
       await integrationAPI.import({
         workspaceId,
         items: selected,
+        filterRules: sanitizeFilterRules(filterRules),
         defaults: contactGroupFieldsForImportDefaults(bulkContactGroupIds),
         // scan_id is sent whenever this import followed a scan, regardless
         // of whether cleanup is enabled -- provenance attribution must not
@@ -242,24 +272,35 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     scanParams: {
       projectId: gcpProjectId,
       include: { secrets: scanSecrets, certificates: scanCertificates },
+      filterRules: sanitizeFilterRules(filterRules),
     },
   });
-  const { beginScanVerification, completeScanVerification } =
+  const { beginScanVerification, completeScanVerification, isScanCurrent } =
     useScanVerification({
       identity: {
         workspaceId,
         scanContext,
         payload: getCredentials(),
-        cleanupObsolete,
+        filterRules,
       },
       provider: 'gcp',
       onScanSuccess,
-      onScanInvalidated,
+      onScanInvalidated: () => {
+        setPreviewReady(false);
+        setIsScanning(false);
+        setGcpItems([]);
+        setGcpSummary([]);
+        setFilterSummary(null);
+        setSelectedRowsGcp(new Set());
+        setGcpDuplicates(new Set());
+        setLastScanId(null);
+        onScanInvalidated?.();
+      },
     });
 
   React.useImperativeHandle(ref, () => ({
     importSelected: importGcpSelected,
-    getSelectedCount: () => selectedRowsGcp.size,
+    getSelectedCount: () => (previewReady ? selectedRowsGcp.size : 0),
     getCredentials,
   }));
 
@@ -355,6 +396,13 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
           >
             Certificates
           </Checkbox>
+          <FilterRulesEditor
+            rules={filterRules}
+            onChange={setFilterRules}
+            borderColor={borderColor}
+            helpTextColor={helpTextColor}
+          />
+          <FilterRulesSummary summary={filterSummary} />
           <Checkbox
             isChecked={cleanupObsolete}
             onChange={e => setCleanupObsolete(e.target.checked)}

@@ -1,6 +1,6 @@
 # Import assets and keep them current
 
-Use one configuration per provider connection. Core supports scheduled GitHub and GitLab scans; Enterprise adds entitled providers. Cloud performs one-time scans and does not offer scheduled provider sync.
+Use a named configuration for each provider connection and scope. Core supports scheduled GitHub and GitLab scans; Enterprise adds entitled providers, including AWS, Azure Key Vault, Entra ID and GCP. Cloud performs one-time scans and does not offer scheduled provider sync.
 
 ## Connect, preview and import
 
@@ -9,6 +9,26 @@ Use one configuration per provider connection. Core supports scheduled GitHub an
 3. Return to the same workspace inventory. Check the imported record's source, expiration and recipients before enabling unattended updates.
 
 TokenTimer tracks metadata rather than the secret value. A one-time scan does not create a saved sync connection; an explicitly enabled self-hosted sync keeps its credentials encrypted on your infrastructure.
+
+### Filter scan results
+
+AWS, Azure Key Vault, Entra ID and GCP accept `filterRules`, as do GitHub, GitLab and Vault. Choose **name**, **description** or **location**, then **include** or **exclude**, with **exact** or **regex** matching. Excludes win; if includes exist, an item must match one. Exact means case-sensitive whole-field equality. Regex uses JavaScript syntax and is case-sensitive unless explicit flags are supplied; unsafe patterns are rejected. Rules apply before import and can be saved with scheduled configurations. Filtering alone does not silence existing alerts, but enabled cleanup can remove excluded inventory after a complete scan. Keep cleanup off while changing filters; manage contact groups, recipient preferences and alert controls separately.
+
+### Separate Entra managed identities
+
+`managedIdentityMode` defaults to `all` when omitted. `all` and `exclude` honor the application/service-principal include switches. `only` forces service-principal scanning on and applications off. Managed means Graph's exact `servicePrincipalType: ManagedIdentity`, covering system-assigned and user-assigned identities, not names or missing type values. This scans their exposed credential metadata, not access tokens.
+
+Only managed-identity locations change to `azure-ad:managedIdentities/...`; canonical source identity stays stable. Saved location rules evaluate both this path and the derived old `azure-ad:servicePrincipals/...` path, keeping exact matching and regex expressions unchanged. Use the native mode for a true split. Imports prefer canonical source identity; otherwise they adopt only one unattributed record at the exact derived old location, even after a provider rename. Ambiguous matches fail instead of creating duplicates. IDs, operator metadata, alert state and associations remain intact; there is no blanket migration.
+
+### Safely split a saved Entra connection
+
+Entra schedules require Enterprise. Multiple configurations require the existing [System settings activation](#deployment-activation-and-rollback), including draining old workers.
+
+1. Create the **managed-only** configuration first with `managedIdentityMode: only` and cleanup **off**. Run/import successfully so existing matching assets gain its association.
+2. Set the remaining configuration to `exclude`, with cleanup **off**, and complete its first run.
+3. Inspect run history, configuration associations and contact-group assignments before optionally enabling cleanup.
+
+Overlapping associations prevent deletion. Manual inventory remains after detachment. Filters and scan modes do not transfer existing alert assignments to a different contact group.
 
 ## Enable a schedule
 
@@ -94,7 +114,7 @@ no single asset owner. These metrics retain their low-cardinality labels.
 
 ## Cleanup and removal
 
-Enable destructive cleanup only when it matches your retention policy. Partial, truncated, rate-limited or inaccessible scans must not be treated as proof that an asset disappeared. Complete scans reconcile only the scope actually covered.
+Destructive cleanup is explicit opt-in; leave it off while changing filters or splitting configurations. Partial, truncated, rate-limited or inaccessible scans must not be treated as proof that an asset disappeared and do not authorize cleanup of incomplete scope. Complete scans reconcile only the scope actually covered. Another configuration's association prevents deletion, and manually owned inventory survives detachment.
 
 **Disable auto-sync** deletes the selected configuration and detaches its associations; it does not blanket-delete inventory. Retained or manually adopted assets stay visible. Other configurations continue to protect their associated records. Inspect run/provenance history before deleting anything manually.
 

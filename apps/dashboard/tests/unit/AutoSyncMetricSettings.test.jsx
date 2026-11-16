@@ -627,3 +627,87 @@ it('persists an explicitly permitted global owner selection', async () => {
   );
   expect(owner).toBeChecked();
 });
+
+it.each([false, true])(
+  'saves owner selection changes under an extra-label lock (initially selected: %s)',
+  async selected => {
+    const policy = {
+      ...defaults,
+      enabled: true,
+      override_metrics: true,
+      labels: selected ? [...low, 'owner_username', 'project'] : [...low, 'project'],
+      extra_labels: ['project', 'owner_username'],
+      extra_labels_locked: true,
+    };
+    apiClient.get.mockResolvedValue({ data: policy });
+    apiClient.put.mockImplementation((_url, body) =>
+      Promise.resolve({ data: { ...policy, ...body } })
+    );
+    render(
+      <ChakraProvider>
+        <AutoSyncSystemMetricSettings />
+      </ChakraProvider>
+    );
+    const owner = await screen.findByRole('checkbox', {
+      name: 'GitLab PAT owner username',
+    });
+    expect(owner).toBeEnabled();
+    expect(owner.checked).toBe(selected);
+    expect(screen.getByRole('checkbox', { name: 'Project / repository' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'Project / repository' })).toBeChecked();
+    expect(screen.getByText(/permitted owner is optional/)).toBeVisible();
+    fireEvent.click(owner);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save auto-sync settings' })
+    );
+    await screen.findByRole('status');
+    const expected = selected
+      ? [...low, 'project']
+      : [...low, 'project', 'owner_username'];
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/api/v1/admin/auto-sync/metrics',
+      expect.objectContaining({ labels: expected })
+    );
+    expect(owner.checked).toBe(!selected);
+  }
+);
+
+it.each([
+  ['denied owner', { extra_labels: ['project'], extra_labels_locked: true }],
+  ['complete deployment lock', {
+    extra_labels: ['owner_username'],
+    extra_labels_locked: true,
+    labels_locked: true,
+  }],
+])('does not edit owner selection under %s', async (_name, restrictions) => {
+  const policy = {
+    ...defaults,
+    enabled: true,
+    override_metrics: true,
+    labels: ['kind', 'owner_username'],
+    ...restrictions,
+  };
+  apiClient.get.mockResolvedValue({ data: policy });
+  apiClient.put.mockImplementation((_url, body) =>
+    Promise.resolve({ data: { ...policy, ...body } })
+  );
+  render(
+    <ChakraProvider>
+      <AutoSyncSystemMetricSettings />
+    </ChakraProvider>
+  );
+  const owner = await screen.findByRole('checkbox', {
+    name: 'GitLab PAT owner username',
+  });
+  expect(owner).toBeDisabled();
+  expect(owner.checked).toBe(Boolean(restrictions.labels_locked));
+  fireEvent.click(owner);
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Save auto-sync settings' })
+  );
+  await screen.findByRole('status');
+  expect(apiClient.put).toHaveBeenCalledWith(
+    '/api/v1/admin/auto-sync/metrics',
+    expect.objectContaining({ labels: policy.labels })
+  );
+});

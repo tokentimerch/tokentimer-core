@@ -4,6 +4,7 @@ import {
   render,
   screen,
   fireEvent,
+  act,
   waitFor,
   within,
 } from '@testing-library/react';
@@ -97,6 +98,97 @@ function renderWithProviders(ui) {
   );
 }
 
+describe.each([
+  ['GitHub', ImportGitHubForm, githubScanMock, 'https://api.github.com'],
+  ['GitLab', ImportGitLabForm, gitlabScanMock, 'https://gitlab.com'],
+])('%s preview integrity', (_provider, Form, scan, url) => {
+  const preview = {
+    items: [{ name: 'credential', location: 'provider:credential' }],
+    summary: [],
+    scan_id: 'verified-scan',
+  };
+  const rules = [
+    { action: 'exclude', field: 'name', matchType: 'exact', value: 'ignore' },
+  ];
+  function connect() {
+    const ref = React.createRef();
+    renderWithProviders(
+      <Form
+        ref={ref}
+        workspaceId='workspace'
+        onError={vi.fn()}
+        initialFilterRules={rules}
+      />
+    );
+    fireEvent.change(screen.getByPlaceholderText(url), {
+      target: { value: url },
+    });
+    fireEvent.change(document.querySelector('input[type="password"]'), {
+      target: { value: 'synthetic-token' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+    return ref;
+  }
+  beforeEach(() => {
+    vi.clearAllMocks();
+    checkDuplicatesMock.mockResolvedValue({
+      duplicate_count: 0,
+      duplicates: [],
+    });
+    scan.mockResolvedValue(preview);
+  });
+  it('imports filters and invalidates selection after raw rule edits', async () => {
+    const ref = connect();
+    await screen.findByRole('button', { name: 'select-first-1' });
+    fireEvent.click(screen.getByRole('button', { name: 'select-first-1' }));
+    await act(async () => {
+      await ref.current.importSelected();
+    });
+    expect(integrationImportMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scanId: 'verified-scan',
+        filterRules: rules,
+      })
+    );
+    integrationImportMock.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+    expect(ref.current.getSelectedCount()).toBe(0);
+    await act(async () => {
+      await ref.current.importSelected();
+    });
+    expect(integrationImportMock).not.toHaveBeenCalled();
+  });
+  it.each(['scan', 'duplicates'])(
+    'rejects a late %s response after credentials change',
+    async stage => {
+      let finish;
+      const deferred = new Promise(resolve => {
+        finish = resolve;
+      });
+      (stage === 'scan' ? scan : checkDuplicatesMock).mockReturnValue(deferred);
+      const ref = connect();
+      if (stage === 'duplicates')
+        await screen.findByRole('button', { name: 'select-first-1' });
+      fireEvent.change(document.querySelector('input[type="password"]'), {
+        target: { value: 'changed-token' },
+      });
+      await act(async () => {
+        finish(
+          stage === 'scan' ? preview : { duplicate_count: 0, duplicates: [] }
+        );
+      });
+      expect(
+        screen.queryByRole('button', { name: 'select-first-1' })
+      ).toBeNull();
+      expect(ref.current.getSelectedCount()).toBe(0);
+      await act(async () => {
+        await ref.current.importSelected();
+      });
+      expect(integrationImportMock).not.toHaveBeenCalled();
+    }
+  );
+});
+
 describe('Dashboard import forms', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -105,6 +197,125 @@ describe('Dashboard import forms', () => {
       duplicates: [],
     });
   });
+
+  it.each([
+    ['AWS', ImportAWSForm, 'Secret Access Key'],
+    ['Azure Key Vault', ImportAzureForm, 'Key Vault URL'],
+    ['GCP', ImportGCPForm, 'Certificates'],
+    ['Vault', ImportVaultForm, 'Scan PKI'],
+  ])(
+    '%s restores saved rules below scope selectors and serializes an intentional clear',
+    async (_name, Form, scopeLabel) => {
+      const ref = React.createRef();
+      const filterRules = [
+        {
+          action: 'exclude',
+          field: 'description',
+          matchType: 'exact',
+          value: 'ignore-me',
+        },
+      ];
+      const scanParams = { filterRules };
+      renderWithProviders(
+        <Form
+          ref={ref}
+          workspaceId='ws-1'
+          onImportComplete={vi.fn()}
+          onError={vi.fn()}
+          onScanSuccess={vi.fn()}
+          onSelectionChange={vi.fn()}
+          contactGroups={[]}
+          initialScanParams={scanParams}
+          initialAutoSyncScanParams={scanParams}
+          updateQuotaFromResponse={() => true}
+          refreshIntegrationQuota={vi.fn()}
+          isQuotaExceededError={() => false}
+          extractQuotaFromError={() => false}
+          formatQuotaError={error => error.message}
+        />
+      );
+      await screen.findByDisplayValue('ignore-me');
+      expect(
+        screen
+          .getByText(scopeLabel)
+          .compareDocumentPosition(screen.getByText('Filter rules')) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+      expect(ref.current.getCredentials().scanParams.filterRules).toEqual(
+        filterRules
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Remove rule' }));
+      expect(ref.current.getCredentials().scanParams.filterRules).toEqual([]);
+    }
+  );
+
+  it.each([
+    ['AWS', ImportAWSForm, awsScanMock],
+    ['Azure', ImportAzureForm, azureScanMock],
+    ['GCP', ImportGCPForm, gcpScanMock],
+  ])(
+    '%s shows zero-match filter feedback and clears it on rule edits',
+    async (provider, Form, scan) => {
+      scan.mockResolvedValue({
+        items: [],
+        summary: [],
+        scan_id: 'empty',
+        filterSummary: { matchedCount: 0, excludedCount: 4 },
+      });
+      awsDetectRegionsMock.mockResolvedValue({
+        regionsWithSecrets: ['us-east-1'],
+        regionsWithCertificates: [],
+        iam: { keysCount: 0 },
+      });
+      renderWithProviders(
+        <Form
+          workspaceId='ws-1'
+          onError={vi.fn()}
+          onScanSuccess={vi.fn()}
+          onImportComplete={vi.fn()}
+          onSelectionChange={vi.fn()}
+          contactGroups={[]}
+          autoSyncTokenPlaceholder='scan-token'
+          updateQuotaFromResponse={() => true}
+        />
+      );
+      if (provider === 'AWS') {
+        fireEvent.change(screen.getByPlaceholderText('AKIAIOSFODNN7EXAMPLE'), {
+          target: { value: 'key' },
+        });
+        fireEvent.change(screen.getByPlaceholderText('scan-token'), {
+          target: { value: 'secret' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Detect Regions' }));
+        fireEvent.click(
+          await screen.findByRole('button', { name: /Scan us-east-1/ })
+        );
+      } else {
+        const placeholder =
+          provider === 'Azure'
+            ? 'https://my-vault.vault.azure.net'
+            : 'my-project-123';
+        fireEvent.change(screen.getByPlaceholderText(placeholder), {
+          target: {
+            value:
+              provider === 'Azure'
+                ? 'https://my-vault.vault.azure.net'
+                : 'my-project',
+          },
+        });
+        fireEvent.change(screen.getByPlaceholderText('scan-token'), {
+          target: { value: 'access-token' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+      }
+      expect(await screen.findByText('0 matched')).toBeInTheDocument();
+      expect(screen.getByText('4 excluded by rules')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+      expect(
+        screen.queryByRole('status', { name: 'Filter results' })
+      ).toBeNull();
+    }
+  );
 
   it.each([
     [

@@ -398,6 +398,7 @@ async function runAutoSync() {
                 cleanup,
                 autoSyncRun: runContext(config),
                 contactGroupIds: scan_params?.contactGroupIds,
+                filterRules: scan_params?.filterRules,
               }),
               { timeout: 60000, headers: authHeaders },
             );
@@ -469,6 +470,11 @@ async function runAutoSync() {
             status: syncStatus,
             itemsScanned: itemsCount,
             itemsImported: importedCount,
+            created: createdCount,
+            updated: updatedCount,
+            detached: detachedCount,
+            deleted: deletedCount,
+            errors: importErrorCount,
             error: syncError,
             importErrors,
           });

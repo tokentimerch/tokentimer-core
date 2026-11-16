@@ -148,6 +148,11 @@ export async function recordAutoSyncCompleted(
     status,
     itemsScanned = null,
     itemsImported = null,
+    created = null,
+    updated = null,
+    detached = null,
+    deleted = null,
+    errors = null,
     error = null,
     importErrors = null,
   },
@@ -167,6 +172,11 @@ export async function recordAutoSyncCompleted(
         status,
         items_scanned: itemsScanned,
         items_imported: itemsImported,
+        ...(created != null ? { created } : {}),
+        ...(updated != null ? { updated } : {}),
+        ...(detached != null ? { detached } : {}),
+        ...(deleted != null ? { deleted } : {}),
+        ...(errors != null ? { errors } : {}),
         ...(error ? { error } : {}),
         ...(Array.isArray(importErrors) && importErrors.length > 0
           ? { import_errors: importErrors }

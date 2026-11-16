@@ -55,6 +55,12 @@
           "status": "existing"
         },
         {
+          "id": "integration-scan-schemas-test",
+          "kind": "test",
+          "path": "tests/contract/integration-scan-schemas.test.js",
+          "status": "existing"
+        },
+        {
           "id": "swagger-runtime-source",
           "kind": "runtime",
           "path": "apps/api/index.js",
@@ -65,14 +71,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "d4b83337a11acc003e3bb0d8162a4bcedc991e9ec9585c9b8051b0af009ab620"
+          "sha256": "143ad03dae9e54d639507f904ff8942efc77bc22307be622bbea5287c9cc4f83"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "d4b83337a11acc003e3bb0d8162a4bcedc991e9ec9585c9b8051b0af009ab620"
+          "sha256": "143ad03dae9e54d639507f904ff8942efc77bc22307be622bbea5287c9cc4f83"
         },
         {
           "id": "auth-route-compat-contract",
