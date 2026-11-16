@@ -250,6 +250,7 @@ test("janitor canonical scrub works from a clean checkout without installed depe
     "infra/certops-azure-keyvault/policy.js",
     "infra/certops-azure-keyvault/lab.js",
     "scripts/certops-agent-package.js",
+    "packages/agent/scripts/windows-runtime-package.js",
     "scripts/certops-azure-keyvault-report.js",
   ]) {
     const target = path.join(checkout, file);
