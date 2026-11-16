@@ -50,15 +50,15 @@ async function recordAdcsExpectedIdentityTx({ client, agent, jobId, evidenceId }
       metadata.enrollmentId !== String(enrollment.id) || metadata.destinationSha256 !== destinationSha256 ||
       !HEX.test(metadata.fingerprintSha256 || "") || !HEX.test(metadata.csrSpkiSha256 || "") ||
       metadata.leafSpkiSha256 !== metadata.csrSpkiSha256) fail("evidence does not prove the expected leaf and CSR identity");
-  const stillLive = await client.query(`SELECT 1 FROM certificate_jobs WHERE workspace_id=$1 AND id=$2::uuid
+  const stillLive = await client.query(`SELECT lease_expires_at::text AS receipt_deadline FROM certificate_jobs WHERE workspace_id=$1 AND id=$2::uuid
     AND claim_id=$3::uuid AND attempt_count=$4 AND status IN ('claimed','running') AND lease_expires_at > clock_timestamp()`,
     [agent.workspaceId, job.id, job.claim_id, job.attempt_count]);
   if (!stillLive.rows[0]) fail("the original agent claim is no longer admissible");
   const params = [agent.workspaceId, enrollment.id, agent.id, job.id, job.claim_id, job.attempt_count, evidence.id,
-    snapshotSha256, destinationSha256, metadata.fingerprintSha256, metadata.csrSpkiSha256];
+    snapshotSha256, destinationSha256, metadata.fingerprintSha256, metadata.csrSpkiSha256, stillLive.rows[0].receipt_deadline];
   const inserted = await client.query(`INSERT INTO certops_adcs_expected_identity_receipts
-    (workspace_id,enrollment_id,agent_id,original_job_id,original_claim_id,original_attempt,evidence_id,snapshot_sha256,destination_sha256,fingerprint_sha256,csr_spki_sha256,origin_xid)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,txid_current())
+    (workspace_id,enrollment_id,agent_id,original_job_id,original_claim_id,original_attempt,evidence_id,snapshot_sha256,destination_sha256,fingerprint_sha256,csr_spki_sha256,origin_xid,receipt_claim_expires_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,txid_current(),$12::timestamptz)
     ON CONFLICT (workspace_id,enrollment_id,original_job_id,original_claim_id,original_attempt) DO NOTHING RETURNING id`, params);
   if (inserted.rows[0]) return { receiptId: inserted.rows[0].id, created: true };
   const prior = (await client.query(`SELECT id,evidence_id,snapshot_sha256,destination_sha256,fingerprint_sha256,csr_spki_sha256
@@ -70,7 +70,8 @@ async function recordAdcsExpectedIdentityTx({ client, agent, jobId, evidenceId }
 
 // Run in a new transaction after the receipt transaction has committed. Seeing
 // the receipt here while the original lease is live proves that its commit
-// preceded expiry; a missing witness never authorizes proof-only recovery.
+// preceded the receipt's immutable deadline. A later lease renewal cannot
+// make a receipt admissible retroactively; a missing witness fails closed.
 async function witnessCommittedAdcsIdentityTx({ client, agent, jobId, receiptId }) {
   tx(client); uuid(jobId); uuid(receiptId);
   await assertCurrentAgentCredential({ client, agent });
@@ -80,13 +81,16 @@ async function witnessCommittedAdcsIdentityTx({ client, agent, jobId, receiptId 
       String(job.claimed_by_agent_id) !== String(agent.id) || !["claimed", "running"].includes(job.status)) {
     fail("the original agent claim is no longer admissible");
   }
-  const seen = await client.query(`UPDATE certops_adcs_expected_identity_receipts r
-    SET committed_seen_at=COALESCE(r.committed_seen_at,clock_timestamp())
+  const seen = await client.query(`WITH observation AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
+    UPDATE certops_adcs_expected_identity_receipts r
+    SET committed_seen_at=COALESCE(r.committed_seen_at,o.observed_at)
+    FROM observation o
     WHERE r.workspace_id=$1 AND r.id=$2::uuid AND r.agent_id=$3::uuid AND r.original_job_id=$4::uuid
       AND r.original_claim_id=$5::uuid AND r.original_attempt=$6
       AND r.origin_xid IS NOT NULL AND r.origin_xid <> txid_current()
+      AND (r.committed_seen_at IS NOT NULL OR r.receipt_claim_expires_at > o.observed_at)
       AND EXISTS (SELECT 1 FROM certificate_jobs j WHERE j.workspace_id=r.workspace_id AND j.id=r.original_job_id
-        AND j.lease_expires_at > clock_timestamp()) RETURNING r.id`,
+        AND j.lease_expires_at > o.observed_at) RETURNING r.id`,
   [agent.workspaceId, receiptId, agent.id, jobId, job.claim_id, job.attempt_count]);
   if (!seen.rows[0]) fail("committed identity was not observed within the original claim");
   return true;
@@ -137,7 +141,10 @@ async function prepareAdcsProofRecoveryTx({ client, workspaceId, enrollmentId, o
 async function queueAdcsProofRecoveryTx({ client, workspaceId, intentId, actorUserId, env = process.env }) {
   tx(client); uuid(workspaceId); uuid(intentId);
   if (!Number.isInteger(actorUserId) || actorUserId <= 0) fail("operator required");
-  const candidate = (await client.query(`SELECT agent_id,proof_job_id,enrollment_id FROM certops_adcs_proof_recovery_intents WHERE workspace_id=$1 AND id=$2::uuid`, [workspaceId, intentId])).rows[0];
+  const candidate = (await client.query(`SELECT i.agent_id,i.proof_job_id,i.enrollment_id
+    FROM certops_adcs_proof_recovery_intents i
+    JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id
+    WHERE i.workspace_id=$1 AND i.id=$2::uuid AND r.committed_seen_at IS NOT NULL`, [workspaceId, intentId])).rows[0];
   if (!candidate) fail("proof recovery intent not found");
   if (candidate.proof_job_id) {
     const eligible = await client.query(`SELECT id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2::uuid

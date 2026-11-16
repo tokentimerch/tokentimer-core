@@ -404,6 +404,7 @@ function composeMigrations(migrations, recorded = []) {
       );
   }
   const dependencies = {
+    certops_adcs_receipt_deadline: ["certops_store_safety_fences"],
     agent_credential_rotation_ack: ["agent_credential_rotations"],
     recipient_member_verification: ["recipient_channel_verification"],
     certops_issuance_identity_transfer: ["certops_issuance_job_identity"],

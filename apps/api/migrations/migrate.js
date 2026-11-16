@@ -5443,6 +5443,12 @@ migrations.push({
   sql: fs.readFileSync(require("path").join(__dirname, "125-certops-store-safety-fences.sql"), "utf8"),
 });
 
+migrations.push({
+  version: 126,
+  name: "certops_adcs_receipt_deadline",
+  sql: fs.readFileSync(require("path").join(__dirname, "126-certops-adcs-receipt-deadline.sql"), "utf8"),
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);

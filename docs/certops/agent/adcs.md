@@ -208,6 +208,8 @@ reconciliation. Cleanup never deletes an unproven key to clear a failed job.
 
 ## Uncertain submission
 
+Installation-proof recovery requires an authenticated certificate-identity receipt observed committed before its recorded claim deadline. A later lease renewal cannot restore that authority. Older preview receipts without this witness remain available for investigation but cannot authorize proof-only jobs; keep the agent's protected state and use an admissible, audited reconciliation. This does not remove an installed certificate or prove service activation.
+
 If the agent restarts after it has started submit and before it has a trustworthy result, the enrollment is **Submission uncertain**. The error is `ADCS_DISPOSITION_UNKNOWN`. It is not resubmitted.
 
 On that enrollment, enter the RequestId from the CA and choose **Reconcile**. A supplied RequestId is accepted only when a retrieve returns a certificate for the key already on the host. Or choose **Abandon**, then **Free the key**. Abandon deletes the key on the host. A certificate the CA issues later for that request has no key on the agent.
