@@ -553,8 +553,8 @@ async function qualifyInstalledDiscovery(context) {
       throw error;
     }
   };
-  const checkProcess = () => {
-    const pid = identity();
+  const checkProcess = async () => {
+    const pid = await identity();
     discovery.parseUnprivilegedIdentity(
       fs.readFileSync(`/proc/${pid}/status`, "utf8"),
       uid,
@@ -579,9 +579,9 @@ async function qualifyInstalledDiscovery(context) {
     );
     return { pid, birth: processBirth(pid) };
   };
-  const stopAndDrain = () => {
+  const stopAndDrain = async () => {
     let original = null;
-    if (mainPid() > 0) original = checkProcess();
+    if (mainPid() > 0) original = await checkProcess();
     command("systemctl", ["stop", UNIT]);
     assert.equal(mainPid(), 0);
     const members = path.join(
@@ -648,7 +648,7 @@ async function qualifyInstalledDiscovery(context) {
   };
   try {
     await gate.preflight();
-    checkProcess();
+    await checkProcess();
     originalStat = fs.lstatSync(configFile, { bigint: true });
     held = retainOwnedConfig(configFile, { uid, gid });
     originalCredential = readPrivateDigest(credential);
@@ -738,7 +738,7 @@ async function qualifyInstalledDiscovery(context) {
     await gate.scenario(
       "linux-installed-systemd-public-discovery",
       async () => {
-        stopAndDrain();
+        await stopAndDrain();
         let changed;
         try {
           changed = JSON.parse(held.original);
@@ -756,10 +756,10 @@ async function qualifyInstalledDiscovery(context) {
           () => mainPid() > 0,
           "installed discovery service starts",
         );
-        checkProcess();
+        await checkProcess();
         await waitFor(
           async () => {
-            checkProcess();
+            await checkProcess();
             assertFiles();
             const rows = (
               await pool.query(
@@ -830,7 +830,7 @@ async function qualifyInstalledDiscovery(context) {
   } finally {
     try {
       if (held) {
-        stopAndDrain();
+        await stopAndDrain();
         held.restore();
         assert.ok(held.assertUnchanged().equals(held.original));
         if (fixtureDir) {
@@ -848,7 +848,7 @@ async function qualifyInstalledDiscovery(context) {
         assert.ok(before);
         command("systemctl", ["start", UNIT]);
         await waitFor(() => mainPid() > 0, "restored installed service starts");
-        const restoredProcess = checkProcess();
+        const restoredProcess = await checkProcess();
         await waitFor(async () => {
           assert.equal(mainPid(), restoredProcess.pid);
           assert.equal(

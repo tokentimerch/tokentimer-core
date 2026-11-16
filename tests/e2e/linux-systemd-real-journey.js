@@ -97,6 +97,28 @@ function processBirth(pid) {
   catch { return null; }
 }
 
+// Type=simple announces MainPID before systemd finishes sandbox/credential
+// setup and exec. Readiness waits only for exec; UID assertions still run once
+// the actual candidate Node process is observed, including if it is root.
+function executedMainPid(expectedExecutable, {
+  readMainPid = mainPid,
+  readBirth = processBirth,
+  readExecutable = (pid) => fs.realpathSync(`/proc/${pid}/exe`),
+} = {}) {
+  const pid = readMainPid();
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    const birth = readBirth(pid);
+    if (!birth || readExecutable(pid) !== expectedExecutable) return false;
+    if (readMainPid() !== pid || readBirth(pid) !== birth ||
+        readExecutable(pid) !== expectedExecutable) return false;
+    return pid;
+  } catch (error) {
+    if (["ENOENT", "ESRCH"].includes(error.code)) return false;
+    throw error;
+  }
+}
+
 module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId, userId, createBootstrap, repoRoot }) {
   assert.equal(process.platform, "linux");
   assert.equal(process.getuid(), 0, "installer qualification requires root on a disposable hosted runner");
@@ -175,8 +197,9 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     checkPermissions(credential, 0o600);
     assert.equal(config.serverUrl, baseUrl);
     assert.equal(config.workspaceId, workspaceId);
-    const identity = (afterBootstrapRestart = true, phase = null) => {
-      const pid = mainPid();
+    const identity = async (afterBootstrapRestart = true, phase = null) => {
+      const pid = await waitFor(() => executedMainPid(nodeBinary),
+        "installed service executes candidate Node", 10000);
       assert.ok(pid > 0);
       const birth = processBirth(pid);
       const status = fs.readFileSync(`/proc/${pid}/status`, "utf8");
@@ -196,7 +219,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
       if (afterBootstrapRestart) assert.equal(fs.readFileSync(`/proc/${pid}/environ`).includes(Buffer.from("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=")), false);
       return pid;
     };
-    const firstPid = identity(false, "initial");
+    const firstPid = await identity(false, "initial");
     const originalCredential = digest(credential);
     const lastSeen = async () => (await pool.query(
       "SELECT last_seen_at FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2", [workspaceId, agentId],
@@ -210,7 +233,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     fs.unlinkSync(writeFixture.allowed+"/result.json");
     command("systemctl", ["restart", UNIT]);
     await waitFor(() => mainPid() > 0 && mainPid() !== firstPid, "service restart creates a fresh process");
-    identity(true, "restart");
+    await identity(true, "restart");
     await writeGate.scenario("linux-systemd-native-writepath-allowed-peer-erofs",async()=>{
       assert.equal(serviceProperty("ProtectSystem"),"strict");const writable=serviceProperty("ReadWritePaths");assert.ok(writable.split(/\s+/).includes(writeFixture.allowed));assert.equal(writable.split(/\s+/).includes(writeFixture.denied),false);
       assert.equal(fs.statSync(writeFixture.allowed).mode&0o777,0o777);assert.equal(fs.statSync(writeFixture.denied).mode&0o777,0o777);
@@ -226,7 +249,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     const seenBeforeCrash = await lastSeen();
     process.kill(beforeCrash, "SIGKILL");
     await waitFor(() => mainPid() > 0 && mainPid() !== beforeCrash, "actual systemd crash recovery");
-    identity(true, "crash-recovery");
+    await identity(true, "crash-recovery");
     await waitFor(async () => Date.parse(await lastSeen()) > Date.parse(seenBeforeCrash), "recovered service authenticates again");
     assert.equal(digest(credential), originalCredential);
     if(published) await require("./helpers/linux-systemd-published-upgrade").qualifyPublishedUpgrade({published,pool,workspaceId,userId,agentId,baseUrl,repoRoot,nodeBinary,writeFixture,command,waitFor,mainPid,identity,lastSeen,createBootstrap,uid,gid});
@@ -297,3 +320,4 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
 };
 module.exports.assertCoreDumpLimits = assertCoreDumpLimits;
 module.exports.uidDiagnostic = uidDiagnostic;
+module.exports.executedMainPid = executedMainPid;
