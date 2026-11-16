@@ -2,13 +2,14 @@
 const {test,after}=require('node:test'),assert=require('node:assert/strict'),crypto=require('node:crypto');
 assert.equal(process.env.DB_HOST,'127.0.0.1');assert.match(process.env.DB_NAME||'',/^distribution_lifecycle_[a-f0-9]+_test$/);
 const {pool}=require('../../apps/api/db/database');const {claimJobs}=require('../../apps/api/services/certops/agentDispatch');
+const {bindAuthenticatedAgent}=require('../../apps/api/services/certops/agentCredentialFence');
 after(()=>pool.end());
 async function fixture(){
  const workspaceId=crypto.randomUUID(),user=(await pool.query("INSERT INTO users(email,display_name,password_hash,auth_method) VALUES($1,'Dispatch','fixture','local') RETURNING id",[`${crypto.randomUUID()}@example.test`])).rows[0].id;
  await pool.query("INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'Dispatch',$2,'team')",[workspaceId,user]);
  const a=(await pool.query(`INSERT INTO certops_agents(workspace_id,agent_id,name,agent_version,protocol_version,credential_prefix,credential_hash,status)
   VALUES($1,$2,'Dispatch','0.18.1','1.0.0',$3,$4,'active') RETURNING *`,[workspaceId,crypto.randomUUID(),'ttagent_'+crypto.randomBytes(8).toString('hex'),crypto.randomBytes(32).toString('hex')])).rows[0];
- return {workspaceId,agent:{id:a.id,agentId:a.agent_id,workspaceId,status:'active',protocolVersion:'1.0.0',agentVersion:'0.18.1'}};
+ return {workspaceId,agent:bindAuthenticatedAgent({id:a.id,agentId:a.agent_id,workspaceId,status:'active',protocolVersion:'1.0.0',agentVersion:'0.18.1'},a.credential_hash)};
 }
 async function certificate(f,source='agent_filesystem',ref=crypto.randomUUID()){
  const c=(await pool.query(`INSERT INTO managed_certificates(workspace_id,name,status,source,source_ref,fingerprint_sha256)
@@ -20,7 +21,14 @@ async function job(f,id,cert,when){
  VALUES($1,$2,'renew','pending','api',$3,$4,$5,$6,$7,'{}')`,[id,f.workspaceId,cert?'managed_certificate':null,cert?.id||null,f.agent.id,cert?.period||null,when]);
 }
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
-function claim(f,maxJobs){return claimJobs({dbPool:pool,agent:f.agent,body:{maxJobs,supportedActions:['renew']},env:{CERTOPS_ENABLED:'true'},deps:{assertCurrentAgentCredential:async()=>{},signJobForDispatch:async({job})=>job}});}
+function claim(f,maxJobs){return claimJobs({dbPool:pool,agent:f.agent,body:{maxJobs,supportedActions:['renew']},env:{CERTOPS_ENABLED:'true'},deps:{signJobForDispatch:async({job})=>job}});}
+test('a replaced credential cannot claim pending work',async()=>{
+ const f=await fixture();await job(f,id(41),null,'2026-01-01T00:00:00Z');
+ await pool.query('UPDATE certops_agents SET credential_hash=$2 WHERE id=$1',[f.agent.id,crypto.randomBytes(32).toString('hex')]);
+ await assert.rejects(claim(f,1),{code:'CERTOPS_AGENT_CREDENTIAL_STALE'});
+ const row=(await pool.query('SELECT status,attempt_count FROM certificate_jobs WHERE id=$1',[id(41)])).rows[0];
+ assert.equal(row.status,'pending');assert.equal(row.attempt_count,0);
+});
 test('locked leading jobs do not starve same-timestamp successors or exceed claim limits',async()=>{
  const f=await fixture(),a=await certificate(f),b=await certificate(f),owner=await pool.connect(),when='2026-01-01T00:00:00.123456Z';
  for(const [n,c] of [[1,a],[2,b],[3,null],[4,null],[5,null]])await job(f,id(n),c,n===5?'2026-01-01T00:00:00.123457Z':when);
