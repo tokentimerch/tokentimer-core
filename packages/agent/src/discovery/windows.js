@@ -483,7 +483,7 @@ async function collectWindowsDiscoveryObservations({
           siteName,
           port: parsed.port,
           sniHost,
-          ...(!sniHost ? { boundAddress: parsed.address } : {}),
+          ...(!sniHost ? { boundAddress: originalAddress } : {}),
         });
       }
     } else {
@@ -491,7 +491,7 @@ async function collectWindowsDiscoveryObservations({
         ...base,
         locationKind: "http_sys",
         locationSlot: `${originalAddress}:${parsed.port}`,
-        boundAddress: parsed.address,
+        boundAddress: originalAddress,
         port: parsed.port,
       });
     }

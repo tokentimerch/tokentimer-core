@@ -189,6 +189,13 @@ function optionalWindowsBoundAddress(value, fieldName) {
   throw observationError(`${fieldName} is invalid`);
 }
 
+function canonicalObservationIp(value) {
+  if (typeof value !== "string" || value.includes("%")) return null;
+  if (isIP(value) === 4) return value;
+  if (isIP(value) !== 6) return null;
+  try { return new URL(`http://[${value}]/`).hostname.slice(1,-1); } catch { return null; }
+}
+
 function optionalTimestamp(value, fieldName) {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
@@ -498,8 +505,10 @@ function normalizeAgentFilesystemObservation({
       if (address.includes("%") || !isIP(address) || windowsFields.sniHost || !windowsFields.siteName || !windowsFields.port) {
         throw observationError("IIS boundAddress requires an IP-keyed binding");
       }
-      const suffix = address === "0.0.0.0" ? "" : `@${address}`;
-      if (locationSlot !== `${windowsFields.siteName}:${windowsFields.port}${suffix}`) {
+      const prefix = `${windowsFields.siteName}:${windowsFields.port}`;
+      const slotAddress = locationSlot.startsWith(`${prefix}@`) ? locationSlot.slice(prefix.length+1) : null;
+      if (!(address === "0.0.0.0" && locationSlot === prefix) &&
+          !(slotAddress && canonicalObservationIp(slotAddress) === canonicalObservationIp(address))) {
         throw observationError("IIS boundAddress does not match locationSlot");
       }
     }
@@ -585,6 +594,14 @@ function normalizeAgentFilesystemObservation({
     keyPresent,
     publicCertificate,
     observedRevocation: normalizeObservedRevocation(clientMeta, serverObservedAt),
+    iisTopologyProof: locationKind === "iis_binding" && !windowsFields.sniHost && keyPresent === true &&
+      windowsFields.storeLocation === "LocalMachine" && String(windowsFields.storeName || "").toLowerCase() === "my" && windowsFields.thumbprint &&
+      canonicalObservationIp(windowsFields.boundAddress) &&
+      !["0.0.0.0", "::"].includes(canonicalObservationIp(windowsFields.boundAddress)) &&
+      !canonicalObservationIp(windowsFields.boundAddress).startsWith("::ffff:") &&
+      typeof evidenceItem.observedAt === "string" && Date.parse(serverObservedAt) - Date.parse(observedAt) >= 0 &&
+      Date.parse(serverObservedAt) - Date.parse(observedAt) <= 120000 &&
+      clientMeta.iisTopologyProof === "v1" ? "v1" : null,
     summary: optionalText(evidenceItem.summary || clientMeta.summary, "summary"),
     clientMetadata: clientMeta,
     observedAt,
@@ -803,6 +820,19 @@ async function upsertInventoryForObservation(client, observation) {
 
   const target = await upsertTargetForObservation(client, observation);
 
+  // Agent sequence/credential fencing serializes observations from this
+  // source. A delayed or equal-timestamp proof must not certify the capture
+  // retained by the instance trigger for a different observation.
+  let topologyProof = observation.iisTopologyProof;
+  if (topologyProof) {
+    const previous = await client.query(`SELECT captured_at FROM certificate_instances
+      WHERE workspace_id=$1 AND target_id=$2 AND managed_certificate_id=$3 AND observed_fingerprint_sha256=$4 FOR UPDATE`,
+    [observation.workspaceId, target.id, managedCertificate.id, observation.fingerprintSha256]);
+    const age = Date.now() - Date.parse(observation.observedAt);
+    if (age < 0 || age > 120000 || (previous.rows[0] && (!previous.rows[0].captured_at ||
+        Date.parse(observation.observedAt) <= new Date(previous.rows[0].captured_at).getTime()))) topologyProof = null;
+  }
+
   const instance = await upsertAgentFilesystemInstance(client, {
     workspaceId: observation.workspaceId,
     managedCertificateId: managedCertificate.id,
@@ -826,6 +856,7 @@ async function upsertInventoryForObservation(client, observation) {
       locationSlot: observation.locationSlot,
       evidenceId: observation.evidenceId,
       observedAtServer: observation.observedAtServer,
+      ...(topologyProof ? { iisTopologyProof: topologyProof, iisTopologyProofObservedAt: observation.observedAt } : {}),
       ...(observation.observedRevocation ? { observedRevocation: observation.observedRevocation } : {}),
     },
   });

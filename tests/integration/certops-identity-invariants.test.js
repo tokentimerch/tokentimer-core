@@ -4,6 +4,8 @@
 // no mocks or timing guesses are used for the transaction/trigger assertions.
 const assert = require("node:assert/strict");
 const { randomUUID } = require("node:crypto");
+const { fork } = require("node:child_process");
+const path = require("node:path");
 const { Pool, Client } = require("pg");
 const {
   migrations,
@@ -3202,6 +3204,104 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       }
     });
   }
+  it("shows the prior HTTP.sys classification under the newer IIS observation without erasing either", async () => {
+    const ws = await workspace(), mc = await source(ws, A), identityA = await identity(ws, A);
+    const target = async (kind, address, reference, site = null) => (await db.query(
+      `INSERT INTO certificate_targets(workspace_id,name,target_type,source,source_ref,hostname,location_kind,windows_port,windows_site,public_metadata,deployment_reference)
+       VALUES($1,'Observed host','agent-host','agent_windows',$2,'gpo-outside',$3,18450,$4,$5::jsonb,$6) RETURNING id`,
+      [ws, `test-agent/gpo-outside/${kind}/${kind==='http_sys'?'::1:18450':`${site}:18450${address==='::1'?'@::1':''}`}`, kind, site, JSON.stringify({agentId:'test-agent', ...(address ? {boundAddress:address} : {})}),reference],
+    )).rows[0].id;
+    const httpTarget=await target('http_sys',null,'http-sys://[::1]:18450');
+    const iisTarget=await target('iis_binding','::1','iis://Default Web Site:18450@[::1]','Default Web Site');
+    const wildcardTarget=await target('iis_binding','0.0.0.0','iis://Default Web Site:18450','Default Web Site');
+    const http=await observation(ws,mc,A,time(0),{targetId:httpTarget,source:'agent_windows',sourceRef:'test-agent/gpo-outside/http_sys/::1:18450',locationKind:'http_sys',locationRef:'http-sys://[::1]:18450'});
+    const iis=await observation(ws,mc,A,time(10),{targetId:iisTarget,source:'agent_windows',sourceRef:'test-agent/gpo-outside/iis_binding/Default Web Site:18450@::1',locationKind:'iis_binding',locationRef:'iis://Default Web Site:18450@[::1]'});
+    const wildcard=await observation(ws,mc,A,time(5),{targetId:wildcardTarget,source:'agent_windows',sourceRef:'test-agent/gpo-outside/iis_binding/Default Web Site:18450',locationKind:'iis_binding',locationRef:'iis://Default Web Site:18450'});
+    const unverified=(await listCertificateIdentities({workspaceId:ws,identityId:identityA.id,client:db})).items[0];
+    assert.equal(unverified.locationCount,3,'older agents without proof must not be reclassified');
+    const attest=()=>db.query(`UPDATE certificate_instances SET public_metadata=public_metadata ||
+      jsonb_build_object('iisTopologyProof','v1','iisTopologyProofObservedAt',
+        to_char(captured_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) WHERE id=$1`,[iis.id]);
+    await attest();
+    const detail=(await listCertificateIdentities({workspaceId:ws,identityId:identityA.id,client:db})).items[0];
+    assert.equal(detail.locationCount,2);
+    assert.deepEqual(new Set(detail.locations.map(location=>location.id)),new Set([iis.id,wildcard.id]));
+    const active=detail.locations.find(location=>location.id===iis.id);
+    assert.equal(active.previousObservationCount,1);
+    assert.equal(active.previousObservations[0].id,http.id);
+    assert.equal(active.previousObservations[0].locationKind,'http_sys');
+    assert.equal((await db.query('SELECT COUNT(*)::int n FROM certificate_instances WHERE workspace_id=$1',[ws])).rows[0].n,3);
+    await db.query("UPDATE certificate_instances SET public_metadata=public_metadata-'iisTopologyProof' WHERE id=$1",[iis.id]);
+    assert.equal((await listCertificateIdentities({workspaceId:ws,identityId:identityA.id,client:db})).items[0].locationCount,3,'a later observation without proof must not retain the grouping');
+    await attest();
+    await db.query(`UPDATE certificate_instances SET public_metadata=jsonb_set(public_metadata,'{iisTopologyProofObservedAt}','"2026-01-01T00:00:00.000Z"'::jsonb) WHERE id=$1`,[iis.id]);
+    assert.equal((await listCertificateIdentities({workspaceId:ws,identityId:identityA.id,client:db})).items[0].locationCount,3,'a proof bound to another observation must not be reused');
+    await attest();
+    await db.query("UPDATE certificate_instances SET captured_at=captured_at+INTERVAL '1 microsecond' WHERE id=$1",[iis.id]);
+    assert.equal((await listCertificateIdentities({workspaceId:ws,identityId:identityA.id,client:db})).items[0].locationCount,3,'sub-millisecond changes must not reuse a proof');
+    await db.query("UPDATE certificate_instances SET captured_at=captured_at-INTERVAL '1 microsecond' WHERE id=$1",[iis.id]);
+    const server=fork(path.join(__dirname,'helpers/certops-identity-projection-http-server.js'),[],{
+      env:{...process.env,DB_HOST:dbConfig.host,DB_PORT:String(dbConfig.port),DB_USER:dbConfig.user,DB_PASSWORD:dbConfig.password,DB_NAME:dbName,CERTOPS_ENABLED:'true',NODE_ENV:'test',TT_PROJECTION_WORKSPACE:ws,TT_PROJECTION_USER:String(userId)},
+      stdio:['ignore','ignore','pipe','ipc'],
+    });
+    let stderr='';server.stderr.on('data',chunk=>{stderr+=chunk});
+    try {
+      const port=await new Promise((resolve,reject)=>{server.once('message',message=>resolve(message.port));server.once('exit',code=>reject(new Error(`HTTP fixture exited ${code}: ${stderr}`)))});
+      for(const role of ['manager','viewer']){
+        const response=await fetch(`http://127.0.0.1:${port}/api/v1/workspaces/${ws}/certops/certificate-identities/${identityA.id}`,{headers:{'X-Test-Role':role}});
+        const text=await response.text();assert.equal(response.status,200,text);
+        const certificate=JSON.parse(text).certificate,previous=certificate.locations.find(location=>location.id===iis.id).previousObservations[0];
+        assert.equal(previous.id,http.id);
+        if(role==='manager')assert.equal(previous.deploymentReference,'http-sys://[::1]:18450');
+        else {assert.equal(previous.deploymentReference,undefined);assert.equal(previous.sourceRef,undefined);assert.equal(previous.targetHostname,undefined);assert(!text.includes('gpo-outside'));assert(!text.includes('::1'));}
+      }
+    } finally {server.send('close');await new Promise(resolve=>server.once('exit',resolve));}
+    const slot=(await db.query(`INSERT INTO certops_slot_observations(workspace_id,target_id,fingerprint_sha256,location_ref,source,location_kind,source_ref,captured_at)
+      SELECT workspace_id,target_id,observed_fingerprint_sha256,deployment_reference,source,location_kind,source_ref,captured_at
+      FROM certificate_instances WHERE id=$1 RETURNING id`,[iis.id])).rows[0];
+    const tied=(await listCertificateIdentities({workspaceId:ws,identityId:identityA.id,client:db})).items[0];
+    assert.equal(tied.locationCount,2,'an equal-time slot cannot displace the authoritative IIS instance');
+    assert(tied.locations.find(location=>location.id===iis.id).previousObservations.some(previous=>previous.id===http.id));
+    await db.query('DELETE FROM certops_slot_observations WHERE id=$1',[slot.id]);
+    await db.query("UPDATE certificate_instances SET captured_at=NOW()-INTERVAL '30 minutes',scan_interval_seconds=60 WHERE id=$1",[http.id]);
+    const oldSlot=(await db.query(`INSERT INTO certops_slot_observations(workspace_id,target_id,fingerprint_sha256,location_ref,source,location_kind,source_ref,captured_at)
+      SELECT workspace_id,target_id,observed_fingerprint_sha256,deployment_reference,source,location_kind,source_ref,captured_at
+      FROM certificate_instances WHERE id=$1 RETURNING id`,[http.id])).rows[0];
+    const stoppedSlot=(await listCertificateIdentities({workspaceId:ws,identityId:identityA.id,client:db})).items[0];
+    assert.equal(stoppedSlot.visibilityUnknown,true,'an equal-time slot cannot make a stale instance appear fresh');
+    assert.equal(stoppedSlot.locations.find(location=>location.id===iis.id).previousObservations.find(previous=>previous.id===http.id).observationReason,'stale');
+    await db.query('DELETE FROM certops_slot_observations WHERE id=$1',[oldSlot.id]);
+    await db.query('UPDATE certificate_instances SET scan_interval_seconds=NULL WHERE id=$1',[http.id]);
+    await db.query("UPDATE certificate_instances SET captured_at=NOW()-INTERVAL '2 days' WHERE id=$1",[http.id]);
+    const stale=(await listCertificateIdentities({workspaceId:ws,identityId:identityA.id,client:db})).items[0];
+    assert.equal(stale.visibilityUnknown,true,'folding must not hide an underlying visibility gap');
+    assert.equal(stale.locations.find(location=>location.id===iis.id).previousObservations[0].observationReason,'stale');
+    await db.query("UPDATE certificate_instances SET captured_at=date_trunc('milliseconds',NOW()-INTERVAL '1 day') WHERE id=$1",[iis.id]);
+    await attest();
+    const stopped=(await listCertificateIdentities({workspaceId:ws,identityId:identityA.id,client:db})).items[0];
+    assert.equal(stopped.locationCount,2);
+    assert.equal(stopped.visibilityUnknown,true);
+    assert.equal(stopped.locations.find(location=>location.id===iis.id).observationReason,'stale');
+    await db.query('UPDATE certificate_instances SET captured_at=NOW() WHERE id=$1',[http.id]);
+    const newerHttp=(await listCertificateIdentities({workspaceId:ws,identityId:identityA.id,client:db})).items[0];
+    assert.equal(newerHttp.locationCount,3,'a newer HTTP.sys observation must be shown again');
+    await db.query('UPDATE certificate_instances SET captured_at=$2 WHERE id=$1',[http.id,time(0)]);
+    await db.query('UPDATE certificate_instances SET captured_at=$2 WHERE id=$1',[iis.id,time(10)]);
+    await attest();
+    for(let n=0;n<25;n++) await observation(ws,mc,A,time(20+n),{source:'cert_manager',locationRef:`file:///other-${n}.pem`});
+    const limited=(await listCertificateIdentities({workspaceId:ws,identityId:identityA.id,client:db})).items[0];
+    assert.equal(limited.locations.length,20);
+    assert.equal(limited.locationCount,27,'reconciliation must precede the 20-location response limit');
+    const other=await source(ws,B,{name:'Other certificate'});
+    const competitor=await target('iis_binding','::1','iis://Second Site:18450@[::1]','Second Site');
+    await observation(ws,other,B,time(11),{targetId:competitor,source:'agent_windows',sourceRef:'test-agent/gpo-outside/iis_binding/Second Site:18450@::1',locationKind:'iis_binding',locationRef:'iis://Second Site:18450@[::1]'});
+    const ambiguous=(await listCertificateIdentities({workspaceId:ws,identityId:identityA.id,client:db})).items[0];
+    assert.equal(ambiguous.locationCount,28,'a competing site or certificate prevents folding');
+    for(let n=0;n<37;n++) await observation(ws,mc,A,time(45+n),{source:'cert_manager',locationRef:`file:///overflow-${n}.pem`});
+    const overflow=(await listCertificateIdentities({workspaceId:ws,identityId:identityA.id,client:db})).items[0];
+    assert.equal(overflow.locationCount,65,'an incomplete candidate set must never be reconciled');
+    assert.equal(overflow.locations.length,20);
+  });
   it("groups recreated endpoint monitors before pagination without hiding genuine visibility gaps", async () => {
     const ws = await workspace(),
       mc = await source(ws, A);

@@ -197,7 +197,7 @@ const {
   sweepLedger,
   normalizeThumbprint: normalizeRetentionThumbprint,
 } = require("./windows-retention");
-const { listMachineStoreCertificates, listHttpSysBindings } = require("./windows-discovery");
+const { listMachineStoreCertificates, listHttpSysBindings, canonicalIisAddress } = require("./windows-discovery");
 const { inspectMachineKeySurvivors } = require("./windows-key-survivors");
 const {
   resolveTrustStorePrerequisites,
@@ -6994,6 +6994,8 @@ async function runWindowsDiscoveryScan({
   checkRevocation = null,
   observationRevision = null,
   onObservations = null,
+  readIisProofSnapshot = readStableAbsenceSnapshot,
+  signal = null,
 }) {
   const warnings = [];
   const observations = await collect({
@@ -7002,6 +7004,26 @@ async function runWindowsDiscoveryScan({
     onWarning: (message) => warnings.push(message),
   });
   for (const warning of warnings) emitLog(log, warning);
+
+  // A single bounded strict snapshot can attest the current IIS topology.
+  // Failure, ambiguity or an oversized scan leaves all observations unproved.
+  const candidates = observations.filter(item => {
+    const address = canonicalIisAddress(item.boundAddress);
+    return item.locationKind === "iis_binding" && !item.sniHost && item.storeLocation === "LocalMachine" &&
+      String(item.storeName || "").toLowerCase() === "my" && item.keyPresent === true && address &&
+      !["*", "0.0.0.0", "::"].includes(address) && !address.startsWith("::ffff:");
+  });
+  const proved = new Set();
+  if (candidates.length > 0 && candidates.length <= 64 && !signal?.aborted) {
+    const started = Date.now();
+    try {
+      const snapshot = await readIisProofSnapshot({ signal });
+      if (!signal?.aborted && Date.now() - started <= 30000) {
+        for (const item of candidates) if (provesWildcardAbsent(item, snapshot.iis, snapshot.http, snapshot.certificates)) proved.add(item);
+        if (signal?.aborted || Date.now() - started > 30000) proved.clear();
+      }
+    } catch (error) { proved.clear(); emitLog(log, `IIS topology observation proof unavailable: ${error.message}`); }
+  }
 
   const targetHost = os.hostname();
   const items = [];
@@ -7050,6 +7072,7 @@ async function runWindowsDiscoveryScan({
       metadata.push({ name: "port", value: String(observation.port) });
       if (observation.sniHost) metadata.push({ name: "sniHost", value: observation.sniHost });
       if (observation.boundAddress) metadata.push({ name: "boundAddress", value: observation.boundAddress });
+      if (proved.has(observation)) metadata.push({ name: "iisTopologyProof", value: "v1" });
     }
     if (observation.locationKind === "http_sys") {
       metadata.push({ name: "port", value: String(observation.port) });
@@ -7719,6 +7742,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
             stores: config.windowsDiscovery.stores,
             observationRevision,
             checkRevocation,
+            signal: controller.signal,
             ...(iisProofEnabled ? { onObservations: observations => { iisProofCandidates = observations.filter(item => item.locationKind === "iis_binding" && item.boundAddress && !["0.0.0.0", "::"].includes(item.boundAddress)); } } : {}),
           }),
         }),

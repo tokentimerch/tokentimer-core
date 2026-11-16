@@ -899,6 +899,28 @@ it('keeps restart renewal choices independent for each registration', async () =
   );
 });
 
+it('shows the previous HTTP.sys classification only in location history', async () => {
+  const identity = {
+    identityId: 'identity-ipv6', locationCount: 2, sources: [],
+    locations: [
+      { id: 'iis', locationKind: 'iis_binding', deploymentReference: 'iis://Site:18450@[::1]', presenceState: 'confirmed_present',
+        previousObservationCount: 1, previousObservations: [{ id: 'http', locationKind: 'http_sys',
+          deploymentReference: 'http-sys://[::1]:18450', presenceState: 'confirmed_present' }] },
+      { id: 'wildcard', locationKind: 'iis_binding', deploymentReference: 'iis://Site:18450', presenceState: 'confirmed_present' },
+    ],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  render(<ChakraProvider><CertificateIdentityDetailModal workspaceId='workspace-1' certificate={identity} isOpen onClose={vi.fn()} /></ChakraProvider>);
+  const table = await screen.findByRole('table', { name: 'Observed locations' });
+  expect(within(table).getAllByRole('row')).toHaveLength(3);
+  expect(within(table).queryByText('http-sys://[::1]:18450')).not.toBeInTheDocument();
+  expect(within(table).getByText('iis://Site:18450')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Show previous observations' }));
+  expect(within(table).getAllByRole('row')).toHaveLength(4);
+  expect(within(table).getByText('http-sys://[::1]:18450')).toBeInTheDocument();
+  expect(within(table).getByText('Previous observation')).toBeInTheDocument();
+});
+
 it('keeps previous monitors out of current locations and explains visibility gaps', async () => {
   const identity = {
     identityId: 'identity-1',

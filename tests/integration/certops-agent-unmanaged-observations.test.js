@@ -74,6 +74,52 @@ describe("Quota-blocked agent observations on real PostgreSQL", function () {
     return (await db.query(`SELECT * FROM ${table} WHERE workspace_id=$1`, [workspaceId])).rows;
   }
 
+  it("retains a versioned topology attestation only on the current compatible IIS observation", async () => {
+    const principal=await agent(1);
+    const base=[{name:"locationKind",value:"iis_binding"},{name:"locationSlot",value:"Default Web Site:18450@0:0:0:0:0:0:0:1"},
+      {name:"siteName",value:"Default Web Site"},{name:"port",value:18450},{name:"boundAddress",value:"::1"},
+      {name:"storeLocation",value:"LocalMachine"},{name:"storeName",value:"My"},{name:"thumbprint",value:"AA".repeat(20)},
+      {name:"keyPresent",value:true},{name:"certificatePem",value:pem}];
+    const now=Date.now(), make=(metadata,offset=0)=>observation(null,{evidenceId:randomUUID(),observedAt:new Date(now+offset).toISOString(),metadata});
+    await send(principal,1,[make(base,-3000)]);
+    let found=await rows("certificate_instances",principal.workspaceId);assert.equal(found.length,1);
+    assert.equal(found[0].public_metadata.iisTopologyProof,undefined,"old agent must remain unproved");
+    await send(principal,2,[make([...base,{name:"iisTopologyProof",value:"v1"}],-3000)]);
+    found=await rows("certificate_instances",principal.workspaceId);assert.equal(found[0].public_metadata.iisTopologyProof,undefined,"equal timestamps cannot transfer proof to another capture");
+    await send(principal,3,[make([...base,{name:"iisTopologyProof",value:"v1"}],-2000)]);
+    found=await rows("certificate_instances",principal.workspaceId);assert.equal(found.length,1,"equivalent IPv6 must preserve the native slot");
+    assert.equal(found[0].public_metadata.iisTopologyProof,"v1");
+    assert.equal(new Date(found[0].public_metadata.iisTopologyProofObservedAt).toISOString(),new Date(found[0].captured_at).toISOString());
+    await send(principal,4,[make(base,-2000)]);
+    found=await rows("certificate_instances",principal.workspaceId);assert.equal(found[0].public_metadata.iisTopologyProof,undefined,"unproved observation at the same timestamp clears proof");
+    await send(principal,5,[make([...base,{name:"iisTopologyProof",value:"v1"}],-1000)]);
+    found=await rows("certificate_instances",principal.workspaceId);assert.equal(found[0].public_metadata.iisTopologyProof,"v1");
+    await send(principal,6,[make(base)]);
+    found=await rows("certificate_instances",principal.workspaceId);assert.equal(found[0].public_metadata.iisTopologyProof,undefined,"newer unproved observation clears the proof");
+    const late=make([...base,{name:"iisTopologyProof",value:"v1"}]);late.observedAt=new Date(Date.now()-30000).toISOString();
+    await send(principal,7,[late]);
+    found=await rows("certificate_instances",principal.workspaceId);
+    assert.equal(found[0].public_metadata.iisTopologyProof,undefined,"late proof must not certify the newer instance capture");
+    const missingTimestamp=make([...base,{name:"iisTopologyProof",value:"v1"}]);missingTimestamp.observedAt=null;
+    await send(principal,8,[missingTimestamp]);
+    found=await rows("certificate_instances",principal.workspaceId);assert.equal(found[0].public_metadata.iisTopologyProof,undefined,"server fallback timestamp cannot attest an agent proof");
+    const bad=base.map(entry=>entry.name==="boundAddress"?{...entry,value:"::2"}:entry);
+    await assert.rejects(()=>send(principal,9,[make(bad)]));
+    const simultaneousAt=new Date().toISOString();
+    const olderAgent=make(base);olderAgent.observedAt=simultaneousAt;
+    const proofAgent=make([...base,{name:"iisTopologyProof",value:"v1"}]);proofAgent.observedAt=simultaneousAt;
+    const concurrent=await Promise.allSettled([send(principal,9,[olderAgent]),send(principal,10,[proofAgent])]);
+    found=await rows("certificate_instances",principal.workspaceId);
+    if(concurrent.every(result=>result.status==="fulfilled"))assert.equal(found[0].public_metadata.iisTopologyProof,undefined,"same-timestamp concurrent old/new reports cannot transfer proof");
+    else assert.equal(concurrent[1].status,"fulfilled","only the later sequence may win the race");
+    const fresh=await agent(1), firstAt=new Date().toISOString(), firstOld=make(base), firstProof=make([...base,{name:"iisTopologyProof",value:"v1"}]);
+    firstOld.observedAt=firstAt;firstProof.observedAt=firstAt;
+    const inserts=await Promise.allSettled([send(fresh,1,[firstOld]),send(fresh,2,[firstProof])]);
+    const freshInstances=await rows("certificate_instances",fresh.workspaceId);assert.equal(freshInstances.length,1);
+    if(inserts.every(result=>result.status==="fulfilled"))assert.equal(freshInstances[0].public_metadata.iisTopologyProof,undefined,"concurrent first inserts cannot transfer equal-timestamp proof");
+    else assert.equal(inserts[1].status,"fulfilled");
+  });
+
   it("retains two locations and evidence without tokens or management, fences replays, and later enrolls the same identity", async () => {
     const principal = await agent();
     const one = observation("/etc/ssl/one.pem"), two = observation("/etc/ssl/two.pem");

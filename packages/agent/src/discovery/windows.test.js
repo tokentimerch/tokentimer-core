@@ -493,7 +493,7 @@ describe("collectWindowsDiscoveryObservations", () => {
     });
     const observations=await collectWindowsDiscoveryObservations({execFileImpl,spawn:()=>fakeSpawnResult({stdout:rawDataJson(thumbprint,certificate.raw.toString("base64"))})});
     const binding=observations.find(value=>value.locationKind==="iis_binding");
-    assert.ok(binding);assert.equal(binding.boundAddress,"::1");assert.equal(binding.locationSlot,"Default Web Site:18450@0:0:0:0:0:0:0:1");
+    assert.ok(binding);assert.equal(binding.boundAddress,"0:0:0:0:0:0:0:1");assert.equal(binding.locationSlot,"Default Web Site:18450@0:0:0:0:0:0:0:1");
     assert.equal(observations.filter(value=>value.locationKind==="http_sys").length,0);
     const {parseIisSnapshot,provesWildcardAbsent}=require("./iis-absence-proof");
     const iis=parseIisSnapshot(JSON.stringify({sites:["Default Web Site"],items:[{site:"Default Web Site",binding:"[::1]:18450:",flags:0}]}));
@@ -511,7 +511,7 @@ describe("collectWindowsDiscoveryObservations", () => {
     const http=observations.filter(value=>value.locationKind==="http_sys");
     assert.equal(http.length,1);
     assert.equal(http[0].locationSlot,"0:0:0:0:0:0:0:1:18450","preserve the pre-upgrade HTTP.sys identity");
-    assert.equal(http[0].boundAddress,"::1");
+    assert.equal(http[0].boundAddress,"0:0:0:0:0:0:0:1");
   });
 
   it("keeps the legacy IIS identity for an IPv4 wildcard binding", async () => {

@@ -891,7 +891,7 @@ export default function CertificateIdentityDetailModal({
           ) ? (
             <Text fontSize='xs' color='dashboard.modal.muted' mt={2}>
               Showing up to 20 previous observations per location. All records
-              remain in the audit history.
+              remain in Observation history.
             </Text>
           ) : null}
         </SectionContent>

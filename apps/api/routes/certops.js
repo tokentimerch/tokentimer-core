@@ -302,7 +302,9 @@ function redactIdentityLocationsForViewers(req, items) {
     sources: item.sources.map((source) => ({ ...source, sourceRef: undefined, targetHostname: undefined })),
     restartableSources: (item.restartableSources || []).map((source) => ({ ...source, sourceRef: undefined, targetHostname: undefined })),
     locations: item.locations.map((location) => ({ ...location,
-      sourceRef: undefined, deploymentReference: undefined, targetHostname: undefined })),
+      sourceRef: undefined, deploymentReference: undefined, targetHostname: undefined,
+      previousObservations: (location.previousObservations || []).map((previous) => ({ ...previous,
+        sourceRef: undefined, deploymentReference: undefined, targetHostname: undefined })) })),
   }));
 }
 

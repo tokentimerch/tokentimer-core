@@ -14,6 +14,7 @@ const {
 
 const { resolveListSort } = require("./listSorting");
 const { classifyCertificateSecurity, observedRevocationKnownSql, observedRevocationPrioritySql, issuerEvidenceSql } = require("./certificateSecurity");
+const { foldWindowsLocations } = require("./windowsLocationProjection");
 
 const FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/;
 const UUID_PATTERN =
@@ -635,7 +636,17 @@ async function listCertificateIdentities({
                   THEN 'agent:' || observed.source || ':' || COALESCE(observed.target_id::text, observed.source_ref) || ':' ||
                     COALESCE(NULLIF(observed.deployment_reference, ''), observed.id::text)
                   ELSE observed.id::text END AS location_key,
-                target.hostname AS target_hostname
+                target.hostname AS target_hostname, target.id AS target_id,
+                target.public_metadata->>'agentId' AS target_agent_id,
+                target.public_metadata->>'boundAddress' AS target_address,
+                target.windows_port AS target_port, target.windows_site AS target_site,
+                target.windows_sni_host AS target_sni, target.source_ref AS target_source_ref,
+                target.deployment_reference AS target_reference,
+                (observed.source = 'agent_windows' AND observed.location_kind IN ('iis_binding','http_sys')) AS authoritative_instance,
+                COALESCE(observed.public_metadata->>'iisTopologyProof' = 'v1'
+                  AND observed.captured_at = date_trunc('milliseconds', observed.captured_at)
+                  AND observed.public_metadata->>'iisTopologyProofObservedAt' =
+                    to_char(observed.captured_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), FALSE) AS iis_attribution_verified
            FROM certops_certificate_identities identity
            JOIN certificate_instances observed
              ON observed.workspace_id = identity.workspace_id
@@ -655,7 +666,8 @@ async function listCertificateIdentities({
                 'service_binding', observed.captured_at,
                 observed.domain_monitor_id IS NULL,
                 observed.captured_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW(),
-                'endpoint:' || COALESCE(NULLIF(BTRIM(observed.source_ref), ''), observed.id::text), NULL
+                'endpoint:' || COALESCE(NULLIF(BTRIM(observed.source_ref), ''), observed.id::text), NULL,
+                NULL::uuid, NULL::text, NULL::text, NULL::integer, NULL::text, NULL::text, NULL::text, NULL::text, FALSE, FALSE
            FROM certops_certificate_identities identity
            JOIN certops_unmanaged_observations observed
              ON observed.workspace_id = identity.workspace_id
@@ -679,7 +691,10 @@ async function listCertificateIdentities({
                   WHEN observed.source IN ('agent_filesystem', 'agent_windows')
                     AND observed.source_ref IS NOT NULL
                   THEN 'agent:' || observed.source || ':' || COALESCE(observed.target_id::text, observed.source_ref) || ':' || observed.location_ref
-                  ELSE observed.id::text END, target.hostname
+                  ELSE observed.id::text END, target.hostname, target.id,
+                target.public_metadata->>'agentId', target.public_metadata->>'boundAddress',
+                target.windows_port, target.windows_site, target.windows_sni_host,
+                target.source_ref, target.deployment_reference, FALSE, FALSE
            FROM certops_certificate_identities identity
            JOIN certops_slot_observations observed
              ON observed.workspace_id = identity.workspace_id
@@ -708,7 +723,7 @@ async function listCertificateIdentities({
                ) AS previous_observations
            FROM reasoned
            WINDOW location_order AS (PARTITION BY identity_id, location_key
-             ORDER BY monitoring_ended, captured_at DESC NULLS LAST, id)
+             ORDER BY monitoring_ended, captured_at DESC NULLS LAST, authoritative_instance DESC, id)
          ), ranked AS (
            SELECT location_observations.*,
              COUNT(*) OVER (PARTITION BY identity_id)::int AS total,
@@ -716,13 +731,45 @@ async function listCertificateIdentities({
              ROW_NUMBER() OVER (PARTITION BY identity_id
                ORDER BY captured_at DESC NULLS LAST, id) AS rn
            FROM location_observations WHERE location_rank = 1
-         ) SELECT * FROM ranked WHERE rn <= 20`,
+         ) SELECT * FROM ranked WHERE rn <= CASE WHEN total <= 64 THEN 64 ELSE 20 END
+           ORDER BY identity_id, rn`,
       [ids, workspaceId],
     );
-    const locationMap = new Map();
+    const windowsCandidates = locations.rows.filter((location) =>
+      Number(location.total) <= 64 && location.source === "agent_windows" &&
+      ["http_sys", "iis_binding"].includes(location.location_kind) &&
+      location.target_agent_id && location.target_hostname && Number.isInteger(location.target_port),
+    );
+    let targets = null;
+    if (windowsCandidates.length > 1) {
+      const targetResult = await client.query(
+        `SELECT id, hostname, windows_port, windows_sni_host, location_kind,
+                source_ref, deployment_reference, public_metadata->>'agentId' AS agent_id,
+                public_metadata->>'boundAddress' AS bound_address
+           FROM certificate_targets
+          WHERE workspace_id=$1 AND windows_port=ANY($2::integer[])
+            AND (LOWER(hostname)=ANY($3::text[]) OR hostname IS NULL OR BTRIM(hostname)='')
+            AND location_kind IN ('http_sys','iis_binding')
+          LIMIT 4097`,
+        [workspaceId, [...new Set(windowsCandidates.map((row) => row.target_port))],
+          [...new Set(windowsCandidates.map((row) => row.target_hostname.toLowerCase()))]],
+      );
+      if (targetResult.rows.length <= 4096) targets = targetResult.rows;
+    }
+    const groupedLocations = new Map();
     for (const location of locations.rows) {
-      const group = locationMap.get(location.identity_id) || [];
-      group.push({
+      const group = groupedLocations.get(location.identity_id) || [];
+      group.push(location);
+      groupedLocations.set(location.identity_id, group);
+    }
+    const locationMap = new Map();
+    const locationTotals = new Map();
+    for (const [identityId, original] of groupedLocations) {
+      const folded = targets && Number(original[0].total) <= 64
+        ? foldWindowsLocations(original, targets) : original;
+      locationTotals.set(identityId, Number(original[0].total) - (original.length - folded.length));
+      const group = [];
+      for (const location of folded.slice(0, 20)) group.push({
         id: location.id,
         source: location.source,
         sourceRef: location.source_ref,
@@ -737,7 +784,7 @@ async function listCertificateIdentities({
         previousObservationCount: Number(location.previous_count || 0),
         previousObservations: location.previous_observations || [],
       });
-      locationMap.set(location.identity_id, group);
+      locationMap.set(identityId, group);
     }
     for (const row of rows) {
       row.sources = sourceMap.get(row.id) || [];
@@ -753,7 +800,7 @@ async function listCertificateIdentities({
       const locationSummary = locations.rows.find(
         (location) => location.identity_id === row.id,
       );
-      row.location_count = Number(locationSummary?.total || 0);
+      row.location_count = locationTotals.get(row.id) ?? Number(locationSummary?.total || 0);
       row.visibility_unknown = locationSummary?.visibility_unknown ?? true;
     }
   }
