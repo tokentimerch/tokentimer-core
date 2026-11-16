@@ -1267,9 +1267,7 @@ export const vaultAPI = {
         ...(Array.isArray(categories) && categories.length > 0
           ? { categories }
           : {}),
-        ...(Array.isArray(filterRules) && filterRules.length > 0
-          ? { filterRules }
-          : {}),
+        ...(Array.isArray(filterRules) ? { filterRules } : {}),
       };
       const res = await apiClient.post(
         API_ENDPOINTS.VAULT_SCAN(workspaceId),
@@ -1317,13 +1315,21 @@ export const vaultAPI = {
       throw new Error(handleApiError(e, 'Failed to load mounts'));
     }
   },
-  import: async ({ workspaceId, items, defaults = {}, cleanup, scanId }) => {
+  import: async ({
+    workspaceId,
+    items,
+    defaults = {},
+    filterRules,
+    cleanup,
+    scanId,
+  }) => {
     try {
       const payload = attachContactGroupImportDefaults(
         {
           items,
           default_category: defaults.category,
           default_type: defaults.type,
+          ...(Array.isArray(filterRules) ? { filterRules } : {}),
           // scan_id is sent independently of cleanup so every scan-backed
           // import gets provenance attribution, whether or not the user opted
           // into deletion this time -- otherwise a later cleanup-enabled
@@ -1380,9 +1386,7 @@ export const gitlabAPI = {
         include,
         maxItems,
         filters,
-        ...(Array.isArray(filterRules) && filterRules.length > 0
-          ? { filterRules }
-          : {}),
+        ...(Array.isArray(filterRules) ? { filterRules } : {}),
       };
 
       // Use axios.request with explicit config to ensure timeout is applied
@@ -1430,9 +1434,7 @@ export const githubAPI = {
         token,
         include,
         maxItems,
-        ...(Array.isArray(filterRules) && filterRules.length > 0
-          ? { filterRules }
-          : {}),
+        ...(Array.isArray(filterRules) ? { filterRules } : {}),
       };
       // Use axios.request with explicit config to ensure timeout is applied
       const res = await apiClient.request({
@@ -1498,6 +1500,7 @@ export const awsAPI = {
     regions = null,
     scanMode = null,
     include = { secrets: true, iam: true, certificates: true },
+    filterRules = [],
     maxItems = 500,
     isContinuation = false, // For multi-region scans, set true after first scan
   }) => {
@@ -1511,6 +1514,7 @@ export const awsAPI = {
         sessionToken,
         region,
         include,
+        filterRules,
         maxItems,
       };
       if (scanMode) payload.scanMode = scanMode;
@@ -1545,6 +1549,7 @@ export const azureAPI = {
     clientId,
     clientSecret,
     include = { secrets: true, certificates: true, keys: true },
+    filterRules = [],
     maxItems = 500,
   }) => {
     if (!workspaceId) {
@@ -1554,6 +1559,7 @@ export const azureAPI = {
       const payload = {
         vaultUrl,
         include,
+        filterRules,
         maxItems,
       };
       if (authMethod === 'client_credentials') {
@@ -1590,6 +1596,7 @@ export const gcpAPI = {
     projectId,
     accessToken,
     include = { secrets: true },
+    filterRules = [],
     maxItems = 500,
   }) => {
     if (!workspaceId) {
@@ -1600,6 +1607,7 @@ export const gcpAPI = {
         projectId,
         accessToken,
         include,
+        filterRules,
         maxItems,
       };
       const res = await apiClient.post(
@@ -1631,6 +1639,8 @@ export const azureADAPI = {
     clientId,
     clientSecret,
     include = { applications: true, servicePrincipals: true },
+    managedIdentityMode = 'all',
+    filterRules = [],
     maxItems = 500,
   }) => {
     if (!workspaceId) {
@@ -1638,7 +1648,12 @@ export const azureADAPI = {
     }
     try {
       const payload = {
-        include,
+        include:
+          managedIdentityMode === 'only'
+            ? { applications: false, servicePrincipals: true }
+            : include,
+        managedIdentityMode,
+        filterRules,
         maxItems,
       };
       if (authMethod === 'client_credentials') {
@@ -1684,9 +1699,7 @@ export const integrationAPI = {
           items,
           default_category: defaults.category,
           default_type: defaults.type,
-          ...(Array.isArray(filterRules) && filterRules.length > 0
-            ? { filterRules }
-            : {}),
+          ...(Array.isArray(filterRules) ? { filterRules } : {}),
           // scan_id is sent independently of cleanup so every scan-backed
           // import gets provenance attribution, whether or not the user opted
           // into deletion this time -- otherwise a later cleanup-enabled

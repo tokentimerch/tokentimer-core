@@ -145,6 +145,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
   // The backend-authoritative scan record cleanup is driven from.
   const [lastScanId, setLastScanId] = React.useState(null);
+  const [previewReady, setPreviewReady] = React.useState(false);
 
   // Restore persisted rules from auto-sync scan_params
   React.useEffect(() => {
@@ -237,6 +238,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
         },
         filterRules: sanitizeFilterRules(filterRules),
       });
+      if (!isScanCurrent(scanTicket)) return;
       const items = Array.isArray(res?.items) ? res.items : [];
       setGitlabItems(items);
       setGitlabSummary(Array.isArray(res?.summary) ? res.summary : []);
@@ -251,9 +253,11 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
       }
 
       const dups = await checkDuplicatesForItems(items, workspaceId);
+      if (!isScanCurrent(scanTicket)) return;
       setGitlabDuplicates(dups);
       completeScanVerification(scanTicket);
     } catch (e) {
+      if (!isScanCurrent(scanTicket)) return;
       setGitlabItems([]);
       setGitlabSummary([]);
       setFilterSummary(null);
@@ -267,7 +271,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
         if (refreshIntegrationQuota) await refreshIntegrationQuota();
       }
     } finally {
-      setIsScanning(false);
+      if (isScanCurrent(scanTicket)) setIsScanning(false);
     }
   };
 
@@ -313,6 +317,10 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
   };
 
   const importGitlabSelected = async () => {
+    if (!previewReady || isScanning) {
+      onError?.('Run a scan with the current settings before importing.');
+      return;
+    }
     try {
       const selected = gitlabItems
         .filter((_, i) => selectedRowsGitlab.has(i))
@@ -329,6 +337,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
       await integrationAPI.import({
         workspaceId,
         items: selected,
+        filterRules: sanitizeFilterRules(filterRules),
         defaults: contactGroupFieldsForImportDefaults(bulkContactGroupIds),
         // scan_id is sent whenever this import followed a scan, regardless
         // of whether cleanup is enabled -- provenance attribution must not
@@ -372,17 +381,31 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
       cleanupObsolete,
     },
   });
-  const { beginScanVerification, completeScanVerification } =
+  const { beginScanVerification, completeScanVerification, isScanCurrent } =
     useScanVerification({
       identity: {
         workspaceId,
         scanContext,
+        filterRules,
         payload: getCredentials(),
         rawBaseUrl: gitlabBaseUrl,
       },
       provider: 'gitlab',
-      onScanSuccess,
-      onScanInvalidated,
+      onScanSuccess: provider => {
+        setPreviewReady(true);
+        onScanSuccess?.(provider);
+      },
+      onScanInvalidated: () => {
+        setPreviewReady(false);
+        setIsScanning(false);
+        setGitlabItems([]);
+        setGitlabSummary([]);
+        setFilterSummary(null);
+        setSelectedRowsGitlab(new Set());
+        setGitlabDuplicates(new Set());
+        setLastScanId(null);
+        onScanInvalidated?.();
+      },
     });
 
   React.useImperativeHandle(ref, () => ({

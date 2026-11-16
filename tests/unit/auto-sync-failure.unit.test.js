@@ -78,6 +78,11 @@ describe("autoSyncFailure helpers", () => {
       status: "success",
       itemsScanned: 7,
       itemsImported: 7,
+      created: 1,
+      updated: 0,
+      detached: 6,
+      deleted: 0,
+      errors: 0,
     });
 
     const insert = calls.find((c) =>
@@ -92,6 +97,11 @@ describe("autoSyncFailure helpers", () => {
     assert.strictEqual(metadata.status, "success");
     assert.strictEqual(metadata.items_scanned, 7);
     assert.strictEqual(metadata.items_imported, 7);
+    assert.strictEqual(metadata.created, 1);
+    assert.strictEqual(metadata.updated, 0);
+    assert.strictEqual(metadata.detached, 6);
+    assert.strictEqual(metadata.deleted, 0);
+    assert.strictEqual(metadata.errors, 0);
     assert.strictEqual(metadata.config_id, "cfg-1");
     assert.ok(!("error" in metadata));
   });
@@ -132,6 +142,8 @@ describe("autoSyncFailure helpers", () => {
       metadata.error,
       "2 of 5 scanned item(s) failed to import.",
     );
+    assert.ok(!("detached" in metadata));
+    assert.ok(!("errors" in metadata));
   });
 
   it("recordAutoSyncCompleted never throws when the audit insert fails", async () => {
