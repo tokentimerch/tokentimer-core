@@ -7,7 +7,7 @@ $installer=Join-Path $PSScriptRoot '..\packages\agent\scripts\install-agent.ps1'
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $installer).Path,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'Production installer parser errors'}
-foreach($name in @('Assert-WindowsPeImage','Assert-WindowsPackageHelpers','Get-PackageDirectoryIdentity','Remove-OwnedPackageStaging','Copy-PackageTree')){
+foreach($name in @('Assert-WindowsPeImage','Assert-WindowsPackageHelpers','Get-PackageDirectoryIdentity','Remove-OwnedPackageStaging','Test-PackageCopyExclusion','Copy-PackageTree')){
  $functions=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true))
  if($functions.Count -ne 1){throw 'Expected one production preactivation function'}
  Invoke-Expression $functions[0].Extent.Text
@@ -15,7 +15,7 @@ foreach($name in @('Assert-WindowsPeImage','Assert-WindowsPackageHelpers','Get-P
 $calls=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Assert-WindowsPackageHelpers'},$true))
 $activation=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Activate-StagedPackage'},$true))
 $copy=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Copy-PackageTree' -and $node.Extent.Text.Contains('$script:AppStaging')},$true))
-$rootCreation=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'New-Item' -and $node.Extent.Text.Contains('-Path $InstallRoot')},$true))
+$rootCreation=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Initialize-ProtectedPackageRoot' -and $node.Extent.Text.Contains('-Path $InstallRoot')},$true))
 if($calls.Count -ne 2 -or $copy.Count -ne 1 -or $activation.Count -ne 1 -or $rootCreation.Count -ne 1){throw 'Production preactivation hook cardinality mismatch'}
 if($calls[0].Extent.StartOffset -ge $rootCreation[0].Extent.StartOffset -or $calls[1].Extent.StartOffset -le $copy[0].Extent.StartOffset -or $calls[1].Extent.StartOffset -ge $activation[0].Extent.StartOffset){throw 'PE checks must precede source mutation and staged activation'}
 if(!$activation[0].Extent.Text.Contains('-ExpectedStagingIdentity $stagingIdentity')){throw 'Activation must bind the measured staging identity'}
@@ -97,6 +97,7 @@ try {
  }
  # Execute the actual top-level staging try/catch without installer top-level setup.
  # Only Fail is replaced by a throwing adapter; copy, PE checks and cleanup stay real.
+ $script:AuthorizedLauncherTransaction=$null
  $stagingTry=$copy[0].Parent
  while($stagingTry -and $stagingTry -isnot [Management.Automation.Language.TryStatementAst]){$stagingTry=$stagingTry.Parent}
  if(!$stagingTry){throw 'Production staging recovery boundary missing'}
