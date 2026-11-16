@@ -565,11 +565,14 @@ test("runtime package marker selects bundled Node and rejects incomplete bundles
     fs.mkdirSync(legacy);
     const runtime = path.join(bundle, "runtime", "amd64", "node.exe");
     fs.copyFileSync(process.execPath, runtime);
+    // Force a fixture digest distinct from the release binary on every runner.
+    fs.appendFileSync(runtime, Buffer.from([0]));
     const pkg = { engines: { node: ">=22.0.0 <25.0.0" }, windowsBundledRuntime: true };
     fs.writeFileSync(path.join(bundle, "package.json"), JSON.stringify(pkg));
     fs.writeFileSync(path.join(legacy, "package.json"), JSON.stringify({ engines: pkg.engines }));
     const manifestPath = path.join(bundle, "runtime", "manifest.json");
     const manifest = { version: process.version.slice(1), architecture: "amd64", path: "runtime/amd64/node.exe", sha256: crypto.createHash("sha256").update(fs.readFileSync(runtime)).digest("hex") };
+    const fixtureHash = manifest.sha256;
     fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     const script = String.raw`
 $ErrorActionPreference='Stop'
@@ -579,6 +582,12 @@ function Assert-ProtectedBundleTree { param([string]$Root) }
 function Assert-ProtectedNodeExecutable { param([string]$Path) }
 $ttTokens=$null; $ttErrors=$null
 $ttSource=[IO.File]::ReadAllText((Join-Path $env:TT542_SOURCE 'install-agent.ps1'))
+if ($env:TT542_FIXTURE_PIN -eq '1') {
+  $releaseHash="'$($env:TT542_RELEASE_HASH)'"; $fixtureHash="'$($env:TT542_FIXTURE_HASH)'"
+  $releaseVersion="'$($env:TT542_RELEASE_VERSION)'"; $fixtureVersion="'$($env:TT542_FIXTURE_VERSION)'"
+  if (!$ttSource.Contains($releaseHash) -or !$ttSource.Contains($releaseVersion)) { throw 'Release runtime pin not found' }
+  $ttSource=$ttSource.Replace($releaseHash,$fixtureHash).Replace($releaseVersion,$fixtureVersion)
+}
 $ttAst=[Management.Automation.Language.Parser]::ParseInput($ttSource,[ref]$ttTokens,[ref]$ttErrors)
 $ttFunction=@($ttAst.FindAll({ param($ttNode) $ttNode -is [Management.Automation.Language.FunctionDefinitionAst] -and $ttNode.Name -eq 'Invoke-PackagedNode' },$true))
 if ($ttErrors.Count -or $ttFunction.Count -ne 1) { throw 'Missing Node helper' }
@@ -599,16 +608,23 @@ if ($ttStart -lt 0 -or $ttEnd -le $ttStart) { throw 'Missing runtime validation'
 Invoke-Expression $ttSource.Substring($ttStart,$ttEnd-$ttStart)
 `;
     const trapMarker = path.join(fixture, "node-executed");
-    const run = (packageDir, trap = false, version = "") => spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
-      env: { ...process.env, TT542_SOURCE: __dirname, TT542_PACKAGE: packageDir, TT542_EXPECT_BUNDLE: packageDir === bundle ? '1' : '0', TT542_TRAP_NODE: trap ? '1' : '0', TT542_TRAP_MARKER: trapMarker, TT542_FAKE_VERSION: version },
+    const pin = require("./windows-runtime-package");
+    const run = (packageDir, trap = false, version = "", fixturePin = true) => spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+      env: { ...process.env, TT542_SOURCE: __dirname, TT542_PACKAGE: packageDir, TT542_EXPECT_BUNDLE: packageDir === bundle ? '1' : '0', TT542_TRAP_NODE: trap ? '1' : '0', TT542_TRAP_MARKER: trapMarker, TT542_FAKE_VERSION: version,
+        TT542_FIXTURE_PIN: fixturePin ? '1' : '0', TT542_RELEASE_HASH: pin.RUNTIMES.amd64.sha256, TT542_RELEASE_VERSION: pin.VERSION, TT542_FIXTURE_HASH: fixtureHash, TT542_FIXTURE_VERSION: process.version.slice(1) },
       windowsHide: true, encoding: "utf8", timeout: 15000,
     });
-    let result = run(bundle);
+    let result = run(bundle, true, "", false);
+    assert.notEqual(result.status, 0, "the actual release pin must reject the altered fixture");
+    assert.match(result.stderr, /runtime manifest does not match the release pin/);
+    assert.equal(fs.existsSync(trapMarker), false);
+    result = run(bundle);
     assert.equal(result.status, 0, result.stderr || result.stdout);
     manifest.sha256 = "0".repeat(64);
     fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     result = run(bundle, true);
     assert.notEqual(result.status, 0, "a bad runtime hash must fail even with system Node available");
+    assert.match(result.stderr, /runtime manifest does not match the release pin/);
     assert.equal(fs.existsSync(trapMarker), false, "substituted runtime must fail before Node invocation");
     fs.unlinkSync(manifestPath);
     result = run(bundle);
