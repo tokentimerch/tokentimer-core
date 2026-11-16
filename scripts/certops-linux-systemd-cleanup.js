@@ -26,7 +26,9 @@ function cleanup() {
   assert.equal(stat.isSymbolicLink(), false);
   assert.equal(stat.uid, 0);
   assert.equal(stat.mode & 0o777, 0o600);
-  const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+  const ownership=require("./certops-linux-systemd-ownership"),held=ownership.captureOwnershipReceipt(receiptPath);
+  try {
+  const receipt = JSON.parse(held.original.toString("utf8"));
   assert.equal(receipt.root, "/opt/tokentimer-agent");
   assert.equal(receipt.unit, "tokentimer-agent.service");
   assert.equal(receipt.user, "tokentimer-agent");
@@ -34,11 +36,11 @@ function cleanup() {
   assert.equal(receipt.fixtureSha256, crypto.createHash("sha256").update(fs.readFileSync(
     path.resolve(__dirname, "../tests/e2e/linux-systemd-real-journey.js"))).digest("hex"));
   const writeFixture=require("./certops-linux-systemd-ownership").validateWriteFixture(receipt.writeFixture);
-  // The immutable original plan requires positive restoration, even if a later
-  // active marker disappears. Missing completion is never permission to erase
-  // a private config backup or unknown installed-service state.
-  require("../tests/e2e/helpers/certops-linux-installed-discovery").assertCompletion(receipt,process.env.RUNNER_TEMP);
+  // Require bound proof of pre-start or completed restoration.
+  const discovery = require("../tests/e2e/helpers/certops-linux-installed-discovery");
+  const discoveryState=discovery.assertCleanupSafe(receipt,process.env.RUNNER_TEMP);
   assert.equal(writeFixture.probeSha256,crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../tests/e2e/helpers/linux-systemd-write-probe.js"))).digest("hex"));
+  held.assertUnchanged();
   require("./certops-linux-systemd-ownership").assertNoSymlinkTargets([receipt.root,`/etc/systemd/system/${receipt.unit}`,`/etc/systemd/system/${receipt.unit}.d`,"/etc/polkit-1/rules.d/50-tokentimer-agent.rules",writeFixture.root]);
   const uninstall = spawnSync("sh", [receipt.installer, "--uninstall"], { stdio: "ignore", timeout: 60000 });
   assert.equal(uninstall.status, 0);
@@ -63,7 +65,10 @@ function cleanup() {
   }
   assert.equal(fs.existsSync(receipt.root), false);
   assert.equal(fs.existsSync(writeFixture.root),false);
-  fs.unlinkSync(receiptPath);
+  held.assertUnchanged();
+  discovery.removePreDiscovery(receipt, process.env.RUNNER_TEMP, discoveryState);
+  ownership.removeOwnershipReceipt(receiptPath,held);
+  } finally { held.close(); }
 }
 module.exports = { cleanup };
 if (require.main === module) { try { cleanup(); } catch { console.error("Owned Linux installer cleanup failed"); process.exitCode = 1; } }
