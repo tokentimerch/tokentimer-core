@@ -83,9 +83,9 @@ test("persisted ACME state accepts only the current owner claim and idempotent r
     deps: { enforceAgentSequence: async () => { advanced = true; }, assertEvidenceClaimOwnership: async () => ({ claimId }),
       createCertificateEvidence: async () => { throw new Error("must not persist"); } } };
   await pool.query("UPDATE certops_agents SET credential_hash=$2 WHERE id=$1", [agentId, "f".repeat(64)]);
-  await assert.rejects(persistAgentJobEvidenceBatch(batch), { code: "CERTOPS_AGENT_CREDENTIAL_INVALID" });
+  await assert.rejects(persistAgentJobEvidenceBatch(batch), { code: "CERTOPS_AGENT_CREDENTIAL_STALE" });
   await pool.query("UPDATE certops_agents SET credential_hash=$2,status='retired',retired_at=NOW() WHERE id=$1", [agentId, digest]);
-  await assert.rejects(persistAgentJobEvidenceBatch(batch), { code: "CERTOPS_AGENT_CREDENTIAL_INVALID" });
+  await assert.rejects(persistAgentJobEvidenceBatch(batch), { code: "CERTOPS_AGENT_RETIRED" });
   assert.equal(advanced, false);
 }, { timeout: 120000 });
 
@@ -146,6 +146,28 @@ test("internal ACME store first issue atomically binds owner, enrollment and rep
     operation: "renew", source: "api", mode: "real", requestedByUserId: user, transactionOwned: true, payload: {} };
   const runRenewal = async (changes = {}) => { const client = await pool.connect(); try { await client.query("BEGIN"); const result = await renew({ ...renewalOptions, ...changes, client }); await client.query("COMMIT"); return result; } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); } };
   await assert.rejects(runRenewal({ assignedAgentId: randomUUID() }), /owned by the selected agent/);
+  // Exercise the bulk handler's generated key against the real ACME store service.
+  const bulk = require("../../apps/api/routes/certops")._test.bulkRenewCertificatesHandler({
+    certificateLoader: async () => ({ id: first.job.subjectId, status: "active" }),
+    manualJobCreator: async ({ idempotencyKey }) => runRenewal({ idempotencyKey }),
+  });
+  const response = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
+  await bulk({ workspace: { id: workspaceId }, user: { id: user }, body: { certificateIds: [first.job.subjectId] } }, response);
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.results[0].ok, true);
+  const bulkJob = response.body.results[0].jobId;
+  assert.match((await pool.query("SELECT idempotency_key FROM certificate_jobs WHERE id=$1", [bulkJob])).rows[0].idempotency_key, /^bulk-renew:[a-f0-9-]{36}:[a-f0-9-]{36}$/);
+  await pool.query("UPDATE certificate_jobs SET status='cancelled' WHERE id=$1", [bulkJob]);
+  assert.equal((await pool.query("SELECT state FROM certops_acme_store_enrollments WHERE original_job_id=$1", [bulkJob])).rows[0].state, "cancelled_no_effect");
+  const rejected = await runRenewal({ requiresApproval: true });
+  const rejectJob = require("../../apps/api/services/certops/jobApprovals").rejectJob;
+  await assert.rejects(rejectJob({ workspaceId, jobId: rejected.job.id, approverUserId: approver, logAppender: async () => { throw new Error("log failed"); } }), /log failed/);
+  let rejectedState = (await pool.query("SELECT e.state,j.status FROM certops_acme_store_enrollments e JOIN certificate_jobs j ON j.id=e.original_job_id WHERE j.id=$1", [rejected.job.id])).rows[0];
+  assert.deepEqual(rejectedState, { state: "keygen_intent", status: "pending_approval" });
+  await rejectJob({ workspaceId, jobId: rejected.job.id, approverUserId: approver });
+  rejectedState = (await pool.query("SELECT e.state,j.status FROM certops_acme_store_enrollments e JOIN certificate_jobs j ON j.id=e.original_job_id WHERE j.id=$1", [rejected.job.id])).rows[0];
+  assert.deepEqual(rejectedState, { state: "cancelled_no_effect", status: "rejected" });
+  renewalOptions.idempotencyKey = randomUUID();
   const renewed = await runRenewal();
   assert.equal(renewed.created, true);
   const binding = (await pool.query("SELECT request_bytes FROM certops_acme_store_enrollments WHERE original_job_id=$1", [renewed.job.id])).rows[0];
@@ -153,6 +175,39 @@ test("internal ACME store first issue atomically binds owner, enrollment and rep
   assert.equal(JSON.parse(binding.request_bytes.toString("utf8")).eabAccountRef, "account-main");
   assert.equal((await runRenewal()).created, false);
   await pool.query("UPDATE certops_agents SET capabilities_updated_at=NOW()-interval '2 days' WHERE id=$1", [agentId]);
+  await assert.rejects(runRenewal({ idempotencyKey: randomUUID() }), /already open or uncertain/);
+  await pool.query("UPDATE certificate_jobs SET attempt_count=1 WHERE id=$1", [renewed.job.id]);
+  await pool.query("UPDATE certificate_jobs SET status='cancelled' WHERE id=$1", [renewed.job.id]);
+  assert.equal((await pool.query("SELECT state FROM certops_acme_store_enrollments WHERE original_job_id=$1", [renewed.job.id])).rows[0].state, "keygen_intent");
+  await pool.query("UPDATE certops_agents SET capabilities_updated_at=NOW() WHERE id=$1", [agentId]);
+  const createPreview = async () => { const client = await pool.connect(); try { await client.query("BEGIN");
+    const result = await issue({ ...options, idempotencyKey: randomUUID(), requiresApproval: true, client });
+    await client.query("COMMIT"); return result.job.id;
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); } };
+  const safePreview = await createPreview(), attemptedPreview = await createPreview(), preparedPreview = await createPreview(), evidencedPreview = await createPreview();
+  const previewTx = await pool.connect();
+  try {
+    await previewTx.query("BEGIN");
+    await previewTx.query("ALTER TABLE certificate_jobs DISABLE TRIGGER certops_cancel_unclaimed_acme_store");
+    await previewTx.query("UPDATE certificate_jobs SET status='rejected' WHERE id=ANY($1::uuid[])", [[safePreview, attemptedPreview, preparedPreview, evidencedPreview]]);
+    await previewTx.query("UPDATE certificate_jobs SET attempt_count=1 WHERE id=$1", [attemptedPreview]);
+    await previewTx.query("UPDATE certops_acme_store_enrollments SET state='prepared',csr_sha256=$2 WHERE original_job_id=$1", [preparedPreview, "a".repeat(64)]);
+    await previewTx.query("INSERT INTO certificate_evidence(workspace_id,job_id,evidence_type,metadata) VALUES($1,$2,'validation.passed','{}'::jsonb)", [workspaceId, evidencedPreview]);
+    await previewTx.query("ALTER TABLE certificate_jobs ENABLE TRIGGER certops_cancel_unclaimed_acme_store");
+    await previewTx.query("COMMIT");
+  } finally { previewTx.release(); }
+  const migrationSql = require("node:fs").readFileSync(require("node:path").join(__dirname, "../../apps/api/migrations/125-certops-store-safety-fences.sql"), "utf8");
+  const rows = () => pool.query("SELECT original_job_id,state,updated_at FROM certops_acme_store_enrollments WHERE original_job_id=ANY($1::uuid[]) ORDER BY original_job_id", [[safePreview, attemptedPreview, preparedPreview, evidencedPreview]]);
+  const beforeMigration = (await rows()).rows;
+  await pool.query(migrationSql);
+  const beforeReplay = (await rows()).rows;
+  for (const row of beforeReplay) assert.deepEqual(row.updated_at, beforeMigration.find(prior => prior.original_job_id === row.original_job_id).updated_at);
+  assert.equal(beforeReplay.find(row => row.original_job_id === safePreview).state, "cancelled_no_effect");
+  assert.equal(beforeReplay.find(row => row.original_job_id === attemptedPreview).state, "keygen_intent");
+  assert.equal(beforeReplay.find(row => row.original_job_id === preparedPreview).state, "prepared");
+  assert.equal(beforeReplay.find(row => row.original_job_id === evidencedPreview).state, "keygen_intent");
+  await pool.query(migrationSql);
+  assert.deepEqual((await rows()).rows, beforeReplay);
   await assert.rejects(runRenewal({ idempotencyKey: randomUUID() }), /already open or uncertain/);
 });
 

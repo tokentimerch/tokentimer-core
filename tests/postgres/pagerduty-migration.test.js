@@ -349,6 +349,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     { version: 122, name: "distribution_pagerduty_recovery" },
     { version: 123, name: "agent_credential_rotations" },
     { version: 124, name: "agent_credential_rotation_ack" },
+    { version: 125, name: "certops_store_safety_fences" },
   ]);
   assert.equal(
     (

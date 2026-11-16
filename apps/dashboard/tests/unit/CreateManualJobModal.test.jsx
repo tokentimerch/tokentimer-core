@@ -394,6 +394,7 @@ describe('CreateManualJobModal renew payload fields', () => {
         operation: 'renew',
         subjectType: 'managed_certificate',
         subjectId: 'cert-1',
+        idempotencyKey: expect.any(String),
         payload: { reason: 'manual renewal requested by ops' },
       });
     });
@@ -418,8 +419,29 @@ describe('CreateManualJobModal renew payload fields', () => {
         operation: 'renew',
         subjectType: 'managed_certificate',
         subjectId: 'cert-1',
+        idempotencyKey: expect.any(String),
       });
     });
+  });
+
+  it('reuses a renewal key after a lost response and changes it for a new intent', async () => {
+    createJobMock.mockRejectedValue(new Error('response lost'));
+    renderModal();
+    selectOperation('renew');
+    fireEvent.change(screen.getByLabelText(/^Subject type/), { target: { value: 'managed_certificate' } });
+    fireEvent.change(screen.getByLabelText(/^Subject ID/), { target: { value: 'cert-1' } });
+    const submit = () => fireEvent.click(screen.getByRole('button', { name: 'Create job' }));
+    submit();
+    await waitFor(() => expect(createJobMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create job' })).not.toBeDisabled());
+    submit();
+    await waitFor(() => expect(createJobMock).toHaveBeenCalledTimes(2));
+    expect(createJobMock.mock.calls[1][1].idempotencyKey).toBe(createJobMock.mock.calls[0][1].idempotencyKey);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create job' })).not.toBeDisabled());
+    fireEvent.change(screen.getByLabelText(/^Reason/), { target: { value: 'new intent' } });
+    submit();
+    await waitFor(() => expect(createJobMock).toHaveBeenCalledTimes(3));
+    expect(createJobMock.mock.calls[2][1].idempotencyKey).not.toBe(createJobMock.mock.calls[0][1].idempotencyKey);
   });
 });
 

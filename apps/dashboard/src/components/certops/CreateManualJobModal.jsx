@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -374,6 +374,7 @@ export default function CreateManualJobModal({
   const [subjectId, setSubjectId] = useState('');
   const [adcsRenewalState, setAdcsRenewalState] = useState('idle');
   const [idempotencyKey, setIdempotencyKey] = useState('');
+  const renewalIntent = useRef(null);
   const [assignedAgentId, setAssignedAgentId] = useState('');
   const [payloadMode, setPayloadMode] = useState('fields');
   const [payloadText, setPayloadText] = useState('');
@@ -587,6 +588,7 @@ export default function CreateManualJobModal({
     !(isDistributeTrust && trustOwnerMode === 'new' && !trustNewOwner.trim());
 
   const resetForm = () => {
+    renewalIntent.current = null;
     setOperation('');
     setJobMode('real');
     setExecutor('agent');
@@ -891,6 +893,13 @@ export default function CreateManualJobModal({
       const effectiveRequiresApproval =
         requiresApproval || certOpsRequireApprovalAlways === true;
       if (effectiveRequiresApproval) body.requiresApproval = true;
+      if (operation === 'renew' && !body.idempotencyKey) {
+        const intent = JSON.stringify(body);
+        if (renewalIntent.current?.intent !== intent) {
+          renewalIntent.current = { intent, key: crypto.randomUUID() };
+        }
+        body.idempotencyKey = renewalIntent.current.key;
+      }
       const { job } = await createJob(workspaceId, body);
       showSuccess(
         'Job created',
@@ -1479,7 +1488,9 @@ export default function CreateManualJobModal({
                 <FormHelperText>
                   {isIssue
                     ? 'Required for issue: a retried request with the same key returns the existing job instead of provisioning a second certificate.'
-                    : 'Optional. Reusing a key returns the existing job instead of creating a duplicate.'}
+                    : isRenew
+                      ? 'Optional. A key is generated when blank and reused while retrying the same request.'
+                      : 'Optional. Reusing a key returns the existing job instead of creating a duplicate.'}
                 </FormHelperText>
               </FormControl>
               {isControllerIssue ? null : (

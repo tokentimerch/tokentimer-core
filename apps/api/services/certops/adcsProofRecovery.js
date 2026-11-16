@@ -57,8 +57,8 @@ async function recordAdcsExpectedIdentityTx({ client, agent, jobId, evidenceId }
   const params = [agent.workspaceId, enrollment.id, agent.id, job.id, job.claim_id, job.attempt_count, evidence.id,
     snapshotSha256, destinationSha256, metadata.fingerprintSha256, metadata.csrSpkiSha256];
   const inserted = await client.query(`INSERT INTO certops_adcs_expected_identity_receipts
-    (workspace_id,enrollment_id,agent_id,original_job_id,original_claim_id,original_attempt,evidence_id,snapshot_sha256,destination_sha256,fingerprint_sha256,csr_spki_sha256)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    (workspace_id,enrollment_id,agent_id,original_job_id,original_claim_id,original_attempt,evidence_id,snapshot_sha256,destination_sha256,fingerprint_sha256,csr_spki_sha256,origin_xid)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,txid_current())
     ON CONFLICT (workspace_id,enrollment_id,original_job_id,original_claim_id,original_attempt) DO NOTHING RETURNING id`, params);
   if (inserted.rows[0]) return { receiptId: inserted.rows[0].id, created: true };
   const prior = (await client.query(`SELECT id,evidence_id,snapshot_sha256,destination_sha256,fingerprint_sha256,csr_spki_sha256
@@ -66,6 +66,30 @@ async function recordAdcsExpectedIdentityTx({ client, agent, jobId, evidenceId }
   if (!prior || String(prior.evidence_id) !== String(evidence.id) || prior.snapshot_sha256 !== snapshotSha256 || prior.destination_sha256 !== destinationSha256 ||
       prior.fingerprint_sha256 !== metadata.fingerprintSha256 || prior.csr_spki_sha256 !== metadata.csrSpkiSha256) fail("receipt replay differs from the committed identity");
   return { receiptId: prior.id, created: false };
+}
+
+// Run in a new transaction after the receipt transaction has committed. Seeing
+// the receipt here while the original lease is live proves that its commit
+// preceded expiry; a missing witness never authorizes proof-only recovery.
+async function witnessCommittedAdcsIdentityTx({ client, agent, jobId, receiptId }) {
+  tx(client); uuid(jobId); uuid(receiptId);
+  await assertCurrentAgentCredential({ client, agent });
+  const job = (await client.query(`SELECT id,claim_id,attempt_count,assigned_agent_id,claimed_by_agent_id,status
+    FROM certificate_jobs WHERE workspace_id=$1 AND id=$2::uuid FOR UPDATE`, [agent.workspaceId, jobId])).rows[0];
+  if (!job || !job.claim_id || String(job.assigned_agent_id) !== String(agent.id) ||
+      String(job.claimed_by_agent_id) !== String(agent.id) || !["claimed", "running"].includes(job.status)) {
+    fail("the original agent claim is no longer admissible");
+  }
+  const seen = await client.query(`UPDATE certops_adcs_expected_identity_receipts r
+    SET committed_seen_at=COALESCE(r.committed_seen_at,clock_timestamp())
+    WHERE r.workspace_id=$1 AND r.id=$2::uuid AND r.agent_id=$3::uuid AND r.original_job_id=$4::uuid
+      AND r.original_claim_id=$5::uuid AND r.original_attempt=$6
+      AND r.origin_xid IS NOT NULL AND r.origin_xid <> txid_current()
+      AND EXISTS (SELECT 1 FROM certificate_jobs j WHERE j.workspace_id=r.workspace_id AND j.id=r.original_job_id
+        AND j.lease_expires_at > clock_timestamp()) RETURNING r.id`,
+  [agent.workspaceId, receiptId, agent.id, jobId, job.claim_id, job.attempt_count]);
+  if (!seen.rows[0]) fail("committed identity was not observed within the original claim");
+  return true;
 }
 
 /** Records a non-executable recovery intent; never dispatches CA work. */
@@ -83,7 +107,7 @@ async function prepareAdcsProofRecoveryTx({ client, workspaceId, enrollmentId, o
   if (!enrollment || String(enrollment.agent_id) !== String(owner.agent_id) || enrollment.original_status !== "orphaned_unknown_effect" || enrollment.needs_operator_reconciliation !== true || !enrollment.original_claim_id) fail("the exact orphaned enrollment job is required");
   if (String(enrollment.current_job_id) !== originalJobId) fail("another enrollment attempt already superseded this job");
   const receipt = (await client.query(`SELECT id,snapshot_sha256,destination_sha256 FROM certops_adcs_expected_identity_receipts WHERE workspace_id=$1 AND enrollment_id=$2::uuid
-    AND original_job_id=$3::uuid AND original_claim_id=$4::uuid AND original_attempt=$5 AND agent_id=$6::uuid`,
+    AND original_job_id=$3::uuid AND original_claim_id=$4::uuid AND original_attempt=$5 AND agent_id=$6::uuid AND committed_seen_at IS NOT NULL`,
     [workspaceId, enrollmentId, originalJobId, enrollment.original_claim_id, enrollment.original_attempt, enrollment.agent_id])).rows[0];
   if (!receipt) {
     await client.query(`UPDATE managed_certificates SET reconciliation_reason='expected_identity_unavailable',updated_at=NOW()
@@ -133,7 +157,7 @@ async function queueAdcsProofRecoveryTx({ client, workspaceId, intentId, actorUs
   const intent = (await client.query(`SELECT i.id,i.agent_id,i.enrollment_id,i.receipt_id,i.state,i.proof_job_id,e.certificate_id,e.deploy_target,e.snapshot_bytes,
       e.snapshot_sha256 AS current_snapshot_sha256,r.snapshot_sha256,r.destination_sha256
     FROM certops_adcs_proof_recovery_intents i JOIN certificate_enrollments e ON e.workspace_id=i.workspace_id AND e.id=i.enrollment_id
-    JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id AND r.enrollment_id=e.id AND r.agent_id=i.agent_id
+    JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id AND r.enrollment_id=e.id AND r.agent_id=i.agent_id AND r.committed_seen_at IS NOT NULL
     JOIN certificate_jobs original ON original.workspace_id=r.workspace_id AND original.id=r.original_job_id
     WHERE i.workspace_id=$1 AND i.id=$2::uuid AND e.current_job_id=original.id AND original.enrollment_id=e.id
       AND e.state NOT IN ('cancelled','expired','abandoned')
@@ -169,7 +193,7 @@ async function loadAdcsProofJobBindingTx({ client, workspaceId, jobId, agentId }
       r.snapshot_sha256,r.destination_sha256,r.fingerprint_sha256,r.csr_spki_sha256,e.snapshot_bytes,e.snapshot_sha256 AS current_snapshot_sha256,e.deploy_target,
       j.subject_id,j.assigned_agent_id,j.enrollment_id AS job_enrollment_id,j.payload
     FROM certops_adcs_proof_recovery_intents i
-    JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id
+    JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id AND r.committed_seen_at IS NOT NULL
     JOIN certificate_enrollments e ON e.workspace_id=i.workspace_id AND e.id=i.enrollment_id
     JOIN certificate_jobs j ON j.workspace_id=i.workspace_id AND j.id=i.proof_job_id
     JOIN certificate_jobs original ON original.workspace_id=r.workspace_id AND original.id=r.original_job_id
@@ -195,4 +219,4 @@ async function loadAdcsProofJobBindingTx({ client, workspaceId, jobId, agentId }
     fingerprintSha256: row.fingerprint_sha256, csrSpkiSha256: row.csr_spki_sha256 };
 }
 
-module.exports = { recordAdcsExpectedIdentityTx, prepareAdcsProofRecoveryTx, queueAdcsProofRecoveryTx, loadAdcsProofJobBindingTx };
+module.exports = { recordAdcsExpectedIdentityTx, witnessCommittedAdcsIdentityTx, prepareAdcsProofRecoveryTx, queueAdcsProofRecoveryTx, loadAdcsProofJobBindingTx };

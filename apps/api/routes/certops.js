@@ -438,6 +438,12 @@ async function attachAgentContactGroupIds(client, workspaceId, agents) {
 }
 
 function handleCertOpsError(res, err) {
+  if (err?.code === "CERTOPS_ACME_STORE_INVALID") {
+    return res.status(400).json({ error: err.message, code: err.code });
+  }
+  if (err?.code === "CERTOPS_ACME_STORE_ORDER_UNCERTAIN") {
+    return res.status(409).json({ error: err.message, code: err.code });
+  }
   if (err?.code === "CERTOPS_WINDOWS_CONSENT_REFUSED") return res.status(409).json({ error:err.message,code:err.code });
   if (err?.statusCode && /^CERTOPS_(MATERIAL|DISTRIBUTION|PUBLICATION)_/.test(err.code || "")) {
     return res.status(err.statusCode).json({ error: err.code, code: err.code });
@@ -1165,7 +1171,7 @@ function bulkRenewItemIdempotencyKey(idempotencyKey, certificateId) {
   // No auto-derived fallback: the jobs table's (workspace_id,
   // idempotency_key) uniqueness has no time component, so a key derived from
   // the certificate id alone would make that certificate renewable exactly
-  // once, forever. Retry safety is opt-in instead, via a caller-supplied key.
+  // once, forever. The handler generates a fresh key when none is supplied.
   if (idempotencyKey) {
     return `bulk-renew:${idempotencyKey}:${certificateId}`;
   }
@@ -1263,8 +1269,7 @@ function parseBulkRenewRequest(body) {
  * An optional request-level idempotencyKey makes retries safe: each item is
  * created with a derived "bulk-renew:<key>:<certificateId>" job key, so a
  * replayed batch returns the already-created jobs (marked replayed: true)
- * instead of enqueueing duplicates. Omitting the key leaves items without
- * one, so a replayed POST enqueues fresh jobs.
+ * instead of enqueueing duplicates. Without one, each request gets a fresh key.
  *
  * Dry run preflights each certificate without writing: existence, renewable
  * inventory status, resolution of that certificate's stored renewal profile
@@ -1288,6 +1293,7 @@ function bulkRenewCertificatesHandler({
         code: CERTOPS_JOB_INVALID,
       });
     }
+    const requestIdempotencyKey = parsed.idempotencyKey || require("node:crypto").randomUUID();
 
     // The payload is a whole-request field shared as an override on top of
     // each certificate's stored renewal profile; validate it once up front
@@ -1363,7 +1369,7 @@ function bulkRenewCertificatesHandler({
           jobCreator: manualRenewalJobCreator({ certificateId }),
           requiresApproval: parsed.requiresApproval,
           idempotencyKey: bulkRenewItemIdempotencyKey(
-            parsed.idempotencyKey,
+            requestIdempotencyKey,
             certificateId,
           ),
           // Same session-write source posture as single manual job creation.

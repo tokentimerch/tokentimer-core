@@ -15936,7 +15936,9 @@ components:
             key reused for a different operation or a different
             trust-anchor/agent/store/owner target is treated as an unrelated
             request, since the key is scoped to its full target tuple rather than
-            shared workspace-wide. Optional for every other operation."
+            shared workspace-wide. Required for ACME Windows-store renewals; the
+            dashboard generates and retains a key when none is supplied. Optional
+            for all other operations."
         requiresApproval:
           type: boolean
           default: false
@@ -15981,12 +15983,9 @@ components:
           maxLength: 64
           pattern: '^[A-Za-z0-9._-]{1,64}$'
           description: >-
-            Optional request-level idempotency key. Combined with each
-            certificateId to derive a per-item key
-            (bulk-renew:<idempotencyKey>:<certificateId>), so retrying the
-            same bulk request is safe. When omitted, items are created with
-            no idempotency key at all, so a replayed request enqueues fresh
-            renew jobs; pass a key if you need retry safety.
+            Optional request-level key. Reuse it for retries of the same request
+            and use a new key for a new attempt. If omitted, a fresh key is
+            generated for each request, so retries may create new jobs.
         payload:
           allOf:
             - $ref: "#/components/schemas/CertOpsPublicObject"

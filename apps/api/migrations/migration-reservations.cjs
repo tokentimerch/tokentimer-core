@@ -47,6 +47,7 @@ const reservations = Object.freeze({
   122: "distribution_pagerduty_recovery",
   123: "agent_credential_rotations",
   124: "agent_credential_rotation_ack",
+  125: "certops_store_safety_fences",
 });
 
 function validateMigrationReservations(migrations) {

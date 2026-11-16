@@ -181,7 +181,7 @@ function composeMigrations(migrations, recorded = []) {
     const later = new Set(["certops_retirement_dossiers", "certops_material_reconciliation",
       "certops_observed_revocation", "store_issuance_explicit_renewal_consent", "certops_acme_store_enrollment_identity",
       "certops_adcs_expected_identity_receipts", "certops_windows_iis_consent", "certops_material_adcs_operation_union",
-      "certops_iis_absence_proofs", "certops_enrollment_jobs_index", "distribution_pagerduty_recovery"]);
+      "certops_iis_absence_proofs", "certops_enrollment_jobs_index", "distribution_pagerduty_recovery", "certops_store_safety_fences"]);
     const oldRegistry = migrations.filter((entry) => !later.has(entry.name))
       .map((entry) => entry.name === "agent_credential_rotations" ? { ...entry, version: 114 }
         : entry.name === "agent_credential_rotation_ack" ? { ...entry, version: 115 } : entry);
@@ -305,7 +305,7 @@ function composeMigrations(migrations, recorded = []) {
     "certops_observed_revocation", "store_issuance_explicit_renewal_consent",
     "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts",
     "certops_windows_iis_consent", "certops_material_adcs_operation_union",
-    "certops_iis_absence_proofs", "certops_enrollment_jobs_index", "distribution_pagerduty_recovery",
+    "certops_iis_absence_proofs", "certops_enrollment_jobs_index", "distribution_pagerduty_recovery", "certops_store_safety_fences",
   ]);
   if (contiguous && rotation114 && migrations.some((entry) => newIndependentNames.has(entry.name))) {
     const legacyRegistry = migrations.filter((entry) => !newIndependentNames.has(entry.name))
