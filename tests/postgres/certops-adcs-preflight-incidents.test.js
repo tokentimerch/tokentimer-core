@@ -990,6 +990,57 @@ test("automatic preflight finds eligible agent 101 among 125 declarations", asyn
     agents.find((a) => a.name === "Large fixture 101").id,
   );
   assert.equal(calls[0].unavailableTarget, undefined);
+  // Heartbeats may move an unseen eligible row ahead of the page cursor.
+  // Selection must retain one database snapshot across all bounded pages.
+  const selected = agents.find((a) => a.name === "Large fixture 101").id;
+  await pool.query(
+    "UPDATE certops_agents SET declared_capabilities='[]'::jsonb WHERE workspace_id=$1 AND id<>$2",
+    [f.workspaceId, selected],
+  );
+  let moved = false;
+  async function observedQuery(connection, sql, params) {
+    const result = await connection.query(sql, params);
+    if (
+      !moved &&
+      sql.includes("cursor_seen_at") &&
+      result.rows.length === 100
+    ) {
+      moved = true;
+      await pool.query(
+        "UPDATE certops_agents SET last_seen_at=NOW() WHERE id=$1",
+        [selected],
+      );
+    }
+    return result;
+  }
+  const observed = {
+    idleCount: pool.idleCount,
+    query: (sql, params) => observedQuery(pool, sql, params),
+    connect: async () => {
+      const client = await pool.connect();
+      return {
+        query: (sql, params) => observedQuery(client, sql, params),
+        release: () => client.release(),
+      };
+    },
+  };
+  const candidate =
+    await require("../../apps/api/services/certops/adcsPreflightGate").findEligibleAdcsPreflightAgent(
+      {
+        db: observed,
+        workspaceId: f.workspaceId,
+        reference:
+          certificate.profile_public_metadata.renewalProfile.target.reference,
+        target: certificate.profile_public_metadata.renewalProfile.target,
+        env: process.env,
+      },
+    );
+  assert.ok(moved);
+  assert.equal(
+    candidate?.id,
+    selected,
+    "a concurrent heartbeat must not hide the only eligible later-page agent",
+  );
 });
 
 test("paged selection keeps ownership, capability, compatibility and exact cursor boundaries", async () => {

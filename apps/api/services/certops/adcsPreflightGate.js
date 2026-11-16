@@ -50,6 +50,31 @@ async function findEligibleAdcsPreflightAgent({
   env = process.env,
   now = Date.now(),
 }) {
+  // A heartbeat changes last_seen_at, the ordering key. Pool callers need a
+  // single read snapshot so an unseen row cannot move into an already read page.
+  // A supplied transaction client retains its caller-owned transaction.
+  if (typeof db.connect === "function" && typeof db.idleCount === "number") {
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const candidate = await findEligibleAdcsPreflightAgent({
+        db: client,
+        workspaceId,
+        reference,
+        target,
+        ownerId,
+        env,
+        now,
+      });
+      await client.query("COMMIT");
+      return candidate;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
   let cursor = null;
   for (;;) {
     const result = await db.query(
