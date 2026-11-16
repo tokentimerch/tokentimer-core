@@ -102,6 +102,62 @@ async function main() {
       path: path.join(dir, "browser-renewed.png"),
       fullPage: true,
     });
+    await page.goto(
+      `http://localhost:55174/certops/jobs?workspace=${state.workspaceId}`,
+      { waitUntil: "networkidle" },
+    );
+    assert.ok(
+      (await page.locator("body").innerText()).match(/Succeeded/g)?.length > 1,
+      "actual job history must contain successful rows",
+    );
+    await page.screenshot({
+      path: path.join(dir, "browser-jobs.png"),
+      fullPage: true,
+    });
+    await page.goto(
+      `http://localhost:55174/certops/certificates?workspace=${state.workspaceId}`,
+      { waitUntil: "networkidle" },
+    );
+    await page
+      .getByPlaceholder(
+        "Search certificate IDs, names, SANs, serials, issuers...",
+      )
+      .fill("success-1.example.test");
+    await page
+      .getByText(/Showing 1 to 1 of 1 certificate/)
+      .waitFor({ timeout: 30000 });
+    assert.ok(
+      (await page.locator("body").innerText()).includes(
+        String(new Date(Date.now() + 365 * 86400000).getUTCFullYear()),
+      ),
+      "reconciled synthetic public expiry must be visible",
+    );
+    await page.screenshot({
+      path: path.join(dir, "browser-renewed-certificate.png"),
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Notifications", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem")
+      .filter({ hasText: "AD CS automatic renewal needs attention" })
+      .first()
+      .waitFor();
+    await page.screenshot({
+      path: path.join(dir, "browser-notifications.png"),
+      fullPage: true,
+    });
+    await page
+      .getByRole("menuitem")
+      .filter({ hasText: "AD CS automatic renewal needs attention" })
+      .first()
+      .click();
+    await page.waitForURL(
+      (url) =>
+        url.pathname === "/certops/renewals" &&
+        url.searchParams.get("workspace") === state.workspaceId,
+    );
     await page.goto("http://localhost:18025", {
       waitUntil: "networkidle",
       timeout: 30000,
@@ -127,6 +183,9 @@ async function main() {
           realSmtpCatcher: true,
           native: false,
           manualServerOwnedContext: true,
+          jobsHistory: true,
+          renewedPublicMetadata: true,
+          bellNavigation: true,
           workspaceId: state.workspaceId,
         },
         null,

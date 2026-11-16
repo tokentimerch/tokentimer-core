@@ -143,6 +143,8 @@ actual SMTP contents, five-attempt exhaustion, manual recovery and independent
 concurrent schedulers. It leaves cycles paused for inspection. Browser checks
 follow the link extracted from an actual received message, inspect the issuer,
 queue a manual check and capture renewed-state/mailbox screenshots.
+They also inspect successful Jobs history, the reconciled certificate expiry,
+and navigation from an actual bell incident.
 
 The **AD CS simulated integration lab** CI job runs startup, verification,
 browser validation, ownership-checked cleanup and sanitized artifact upload.
@@ -176,6 +178,9 @@ pnpm adcs:lab clean
 `stop` terminates the owned supervisor/services and removes only this Compose
 project's containers/network; its database volume and credentials persist.
 `up` resumes that session. `reset` performs owned cleanup and a fresh start/seed.
+MailHog's mailbox is in memory: `stop` clears captured messages while database
+delivery receipts persist. Use `reset` followed by `verify` for a fresh capture;
+already acknowledged messages are not resent merely to refill the catcher.
 `clean` stops services, removes this project's database volume, then deletes the
 private state file. Logs/screenshots remain for review. Before any Docker
 teardown, container and volume labels must match this lab and checkout's owner

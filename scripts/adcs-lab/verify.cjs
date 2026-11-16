@@ -213,6 +213,15 @@ async function main() {
         assert.equal(rows[0].severity, "critical");
         assert.equal(rows[0].metadata.affectedCount, 3);
         assert.ok(rows[0].email_sent_at);
+        const request = await login(state);
+        const bell = await request(
+          `/api/v1/workspaces/${state.workspaceId}/notifications`,
+        );
+        assert.equal(
+          bell.items.find((item) => item.id === rows[0].id)?.href,
+          rows[0].metadata.href,
+          "actual bell API must preserve the scoped issuer destination",
+        );
         const mail = await (
           await fetch("http://localhost:18025/api/v2/messages?limit=100")
         ).json();
