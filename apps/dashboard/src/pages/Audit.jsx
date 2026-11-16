@@ -1591,6 +1591,11 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.items_scanned != null) parts.push(`Scanned: ${md.items_scanned}`);
       if (md.items_imported != null)
         parts.push(`Imported: ${md.items_imported}`);
+      if (md.created != null) parts.push(`Created: ${md.created}`);
+      if (md.updated != null) parts.push(`Updated: ${md.updated}`);
+      if (md.detached != null) parts.push(`Detached: ${md.detached}`);
+      if (md.deleted != null) parts.push(`Deleted: ${md.deleted}`);
+      if (md.errors != null) parts.push(`Errors: ${md.errors}`);
       if (md.error) parts.push(`Error: ${md.error}`);
       if (Array.isArray(md.import_errors) && md.import_errors.length > 0)
         parts.push(

@@ -470,6 +470,11 @@ async function runAutoSync() {
             status: syncStatus,
             itemsScanned: itemsCount,
             itemsImported: importedCount,
+            created: createdCount,
+            updated: updatedCount,
+            detached: detachedCount,
+            deleted: deletedCount,
+            errors: importErrorCount,
             error: syncError,
             importErrors,
           });
