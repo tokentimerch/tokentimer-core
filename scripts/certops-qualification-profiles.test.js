@@ -37,9 +37,11 @@ test("profiles partition the complete matrix without hiding missing or blocked h
   const full = subject.selectProfile(matrix),
     hosted = subject.selectProfile(matrix, "standard-hosted"),
     domain = subject.selectProfile(matrix, "adcs"),
-    extended = subject.selectProfile(matrix, "extended-adcs");
-  assert.equal(full.omittedSlotIds.length, 0);
-  assert.equal(full.selectedSlotIds.length, matrix.slots.length);
+    extended = subject.selectProfile(matrix, "extended-adcs"),
+    cleanup = subject.selectProfile(matrix, "vault-cleanup");
+  assert.deepEqual(cleanup.selectedSlotIds, ["linux-vault-cleanup-restart"]);
+  assert.deepEqual(full.omittedSlotIds, cleanup.selectedSlotIds);
+  assert.equal(full.selectedSlotIds.length, matrix.slots.length - 1);
   assert.deepEqual(
     new Set([
       ...hosted.selectedSlotIds,
@@ -83,11 +85,6 @@ test("profiles partition the complete matrix without hiding missing or blocked h
       { fullMatrixQualified: profile !== "full" },
       { qualificationScope: "all-features" },
     ]) {
-      if (
-        JSON.stringify(patch) === JSON.stringify({ omittedSlotIds: [] }) &&
-        profile === "full"
-      )
-        continue;
       assert.ok(validateQualificationSummary({ ...summary, ...patch }).length);
     }
   }

@@ -6,6 +6,7 @@ DOMAIN = {"enterprise-adcs-real", "enterprise-adcs-hierarchy-real", "native-adcs
 EXTENDED = {"enterprise-adcs-elapsed-pending-real", "windows-domain-adcs-retention24h", "windows-domain-adcs-default-ttl24h", "windows-domain-installed-retention-default-timer"}
 ADCS_NATIVE = {"enterprise-adcs-real", "enterprise-adcs-hierarchy-real", "native-adcs-issuer-reassignment", "adcs-browser-enrollment", "adcs-uncertain-abandon"}
 PROFILES = {"full": {"hosted", "domain-adcs", "extended-domain-adcs"}, "standard-hosted": {"hosted"}, "adcs": {"domain-adcs"}, "adcs-native": {"domain-adcs"}, "extended-adcs": {"extended-domain-adcs"}}
+PROFILES["vault-cleanup"] = {"vault-cleanup"}
 
 
 def select_profile(matrix, profile="full", capabilities=None):
@@ -20,6 +21,7 @@ def select_profile(matrix, profile="full", capabilities=None):
     if any(not isinstance(identity,str) or not identity for identity in ids) or len(set(ids)) != len(ids):
         raise ValueError("Unique committed qualification slot IDs required")
     def category(slot):
+        if slot.get("suite") == "linux-vault-cleanup-restart": return "vault-cleanup"
         if slot.get("suite") in DOMAIN: return "domain-adcs"
         if slot.get("suite") in EXTENDED: return "extended-domain-adcs"
         if "domain" in capabilities.get(slot.get("suite"),[]):
