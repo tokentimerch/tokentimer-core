@@ -170,7 +170,10 @@ function removePreDiscovery(receipt, runnerTemp, proof) {
   assert.ok(proof && ["pre", "completed"].includes(proof.state));
   if (proof.state === "pre") {
     assertPreDiscovery(receipt, runnerTemp);
-    fs.unlinkSync(prePath(runnerTemp));
+    const file = prePath(runnerTemp), stat = fs.lstatSync(file, { bigint: true });
+    const held = retainOwnedFile(file, { uid: 0, gid: Number(stat.gid), mode: 0o600, expectedDev: receipt.installedDiscoveryPreDev, expectedIno: receipt.installedDiscoveryPreIno });
+    try { assert.equal(hash(held.assertUnchanged()), receipt.installedDiscoveryPreHash); fs.unlinkSync(file); }
+    finally { held.disposeHandle(); }
     syncDirectory(runnerTemp);
   } else {
     assert.equal(fs.lstatSync(prePath(runnerTemp), { throwIfNoEntry: false }), undefined);
