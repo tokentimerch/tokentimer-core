@@ -267,7 +267,7 @@ async function reconcileIssuerPreflightIncident({
     code: risk.code,
     failureCode: risk.failureCode,
     errorCode: risk.errorCode,
-    href: `/certops/adcs?workspace=${workspaceId}`,
+    href: `/certops/renewals?${new URLSearchParams({ workspace: workspaceId, action: "check-adcs-issuer", issuerId })}`,
     action: risk.action,
   };
   const result = await db.query(

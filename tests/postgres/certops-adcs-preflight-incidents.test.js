@@ -16,6 +16,7 @@ const CA = "ca.example.test\\Disposable CA",
   KEY = "ab".repeat(32);
 const received = [];
 let rejectAddress = null,
+  rejectCode = 450,
   onData = null,
   onGreeting = null;
 function docker(args) {
@@ -115,8 +116,8 @@ before(
           else if (/^RCPT TO/i.test(line)) {
             to = line.match(/<([^>]+)>/)?.[1];
             socket.write(
-              to === rejectAddress
-                ? "450 temporary rejection\r\n"
+              to === rejectAddress || rejectAddress === "*"
+                ? `${rejectCode} disposable rejection\r\n`
                 : "250 recipient ok\r\n",
             );
           } else if (/^DATA$/i.test(line)) {
@@ -326,7 +327,7 @@ async function realSender(options = {}) {
 }
 async function crashedDelivery(f, phase) {
   const row = await f.row();
-  const script = `(async()=>{const {pool}=require('./apps/api/db/database');const m=await import('./apps/worker/src/shared/adcsPreflightEmails.js');const e=await import('./apps/worker/src/notify/email.js');const c=await pool.connect();const query=c.query.bind(c);c.query=async(sql,params)=>{const result=await query(sql,params);if((${JSON.stringify(phase)}==='claim'&&sql.includes('RETURNING title')&&result.rows.length)||(${JSON.stringify(phase)}==='receipt'&&sql.includes('jsonb_set(metadata')))process.exit(86);return result;};await m.sendAdcsPreflightIncidentEmail(c,${JSON.stringify({ notificationId: row.id, workspaceId: f.workspaceId })},async input=>{const result=await e.sendEmailNotification(input);if(result.success&&${JSON.stringify(phase)}==='accepted')process.exit(86);return result;});process.exit(87);})().catch(()=>process.exit(88));`;
+  const script = `(async()=>{const {pool}=require('./apps/api/db/database');const m=await import('./apps/worker/src/shared/adcsPreflightEmails.js');const e=await import('./apps/worker/src/notify/email.js');const c=await pool.connect();const query=c.query.bind(c);c.query=async(sql,params)=>{const result=await query(sql,params);if((${JSON.stringify(phase)}==='before-claim'&&sql.includes('AS issuer_id'))||(${JSON.stringify(phase)}==='claim'&&sql.includes('RETURNING title')&&result.rows.length)||(${JSON.stringify(phase)}==='receipt'&&sql.includes('jsonb_set(metadata')))process.exit(86);return result;};await m.sendAdcsPreflightIncidentEmail(c,${JSON.stringify({ notificationId: row.id, workspaceId: f.workspaceId })},async input=>{const result=await e.sendEmailNotification(input);if(result.success&&${JSON.stringify(phase)}==='accepted')process.exit(86);return result;});process.exit(87);})().catch(()=>process.exit(88));`;
   await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["-e", script], {
       env: { ...process.env, NODE_ENV: "development" },
@@ -351,6 +352,13 @@ async function crashedDelivery(f, phase) {
 test(
   "real process death releases workspace locks; live claims stay fenced and expired claims recover",
   async () => {
+    const unclaimed = await fixture(),
+      before = received.length;
+    await crashedDelivery(unclaimed, "before-claim");
+    assert.equal((await unclaimed.row()).email_claim_id, null);
+    assert.equal(received.length, before);
+    await send(unclaimed, await realSender());
+    assert.equal(received.length - before, 2);
     for (const phase of ["claim", "accepted", "receipt"]) {
       const f = await fixture(),
         start = received.length;
@@ -465,6 +473,40 @@ test("actual SMTP acknowledgement loss has the same ambiguous acceptance limitat
   assert.equal(received.length - start, 3);
   assert.ok((await f.row()).email_sent_at);
 });
+test("real SMTP connection failure, handshake timeout and 450/550 rejection remain retryable without resolving the incident", async () => {
+  for (const failure of ["connection", "timeout", 450, 550]) {
+    const f = await fixture(),
+      start = received.length;
+    if (typeof failure === "number") {
+      rejectAddress = "*";
+      rejectCode = failure;
+    }
+    if (failure === "timeout")
+      onGreeting = () => new Promise((resolve) => setTimeout(resolve, 250));
+    try {
+      await send(
+        f,
+        await realSender(
+          failure === "connection"
+            ? { port: 1 }
+            : failure === "timeout"
+              ? { socketTimeout: 75 }
+              : {},
+        ),
+      );
+    } finally {
+      rejectAddress = null;
+      rejectCode = 450;
+      onGreeting = null;
+    }
+    assert.equal(received.length, start);
+    assert.equal((await f.row()).email_sent_at, null);
+    assert.equal((await f.row()).resolved_at, null);
+    await send(f, await realSender());
+    assert.equal(received.length - start, 2);
+    assert.ok((await f.row()).email_sent_at);
+  }
+});
 
 async function runProcesses(script, count = 3) {
   await Promise.all(
@@ -572,6 +614,11 @@ test("large shared issuer counts every due certificate without unbounded inciden
 test("real shared issuer SQL preserves earliest risk, count, downgrade, retirement and recovery", async () => {
   const f = await fixture();
   const initial = await f.row();
+  const link = new URL(initial.metadata.href, "http://disposable.example.test");
+  assert.equal(link.pathname, "/certops/renewals");
+  assert.equal(link.searchParams.get("action"), "check-adcs-issuer");
+  assert.equal(link.searchParams.get("workspace"), f.workspaceId);
+  assert.equal(link.searchParams.get("issuerId"), f.issuerId);
   assert.equal(initial.metadata.affectedCount, 3);
   assert.equal(initial.metadata.mostUrgentCertificateId, f.certs[0].id);
   assert.equal(initial.severity, "critical");
