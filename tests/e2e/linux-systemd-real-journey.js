@@ -119,6 +119,22 @@ function executedMainPid(expectedExecutable, {
   }
 }
 
+async function retireInstalledAgent({ pool, workspaceId, agentId, userId },
+  retire = require("../../apps/api/services/certops/agentRegistry").retireAgent) {
+  // Config stores the public protocol identity; retirement takes the row UUID.
+  const { rows } = await pool.query(
+    "SELECT id FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2",
+    [workspaceId, agentId],
+  );
+  assert.equal(rows.length, 1, "Installed agent must resolve uniquely in its owned workspace");
+  const result = await retire({ client: pool, workspaceId, agentId: rows[0].id,
+    retiredBy: userId, reason: "disposable installer qualification" });
+  assert.equal(result.retiredNow, true);
+  assert.equal(result.agent.id, rows[0].id);
+  assert.equal(result.agent.agentId, agentId);
+  return result;
+}
+
 module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId, userId, createBootstrap, repoRoot }) {
   assert.equal(process.platform, "linux");
   assert.equal(process.getuid(), 0, "installer qualification requires root on a disposable hosted runner");
@@ -256,8 +272,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     else await require("./helpers/linux-systemd-reapply").qualifyReapply({pool,workspaceId,agentId,baseUrl,repoRoot,installer,nodeBinary,writeFixture,command,waitFor,mainPid,serviceProperty,identity,lastSeen,createBootstrap,uid,gid});
     await installedDiscovery.qualifyInstalledDiscovery({pool,workspaceId,agentId,baseUrl,repoRoot,writeFixture,uid,gid,command,waitFor,mainPid,identity,serviceProperty,registerResource:resource=>discoveryResources.push(resource)});
     installedDiscovery.assertCompletion(ownershipPlan,process.env.RUNNER_TEMP);
-    const { retireAgent } = require("../../apps/api/services/certops/agentRegistry");
-    await retireAgent({ client: pool, workspaceId, agentId, retiredBy: userId, reason: "disposable installer qualification" });
+    await retireInstalledAgent({ pool, workspaceId, agentId, userId });
     await waitFor(() => mainPid() === 0, "actual API retirement stops the installed service");
     assert.equal(serviceProperty("ExecMainStatus"), "86");
     assert.equal(serviceProperty("Result"), "success");
@@ -321,3 +336,4 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
 module.exports.assertCoreDumpLimits = assertCoreDumpLimits;
 module.exports.uidDiagnostic = uidDiagnostic;
 module.exports.executedMainPid = executedMainPid;
+module.exports.retireInstalledAgent = retireInstalledAgent;
