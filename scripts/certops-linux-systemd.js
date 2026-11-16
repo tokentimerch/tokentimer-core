@@ -16,6 +16,7 @@ async function main() {
   assert.equal(process.getuid(), 0);
   require("./certops-linux-systemd-ownership").validateHostedEnvironment(process.env);
   assert.equal(process.env.CERTOPS_PROTOCOL_DISPOSABLE_STACK, "1");
+  assert.equal(process.env.CERTOPS_CSR_DISPOSABLE_STACK, "1", "Installed discovery requires disposable API fixture authorization before host mutation");
   assert.equal(process.env.CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST, "1");
   const ownershipChecks = spawnSync(process.execPath, ["--test", "scripts/certops-linux-pre-discovery.test.js", "scripts/certops-linux-ownership-receipt.test.js"], { stdio: "inherit", timeout: 60000 });
   assert.equal(ownershipChecks.status, 0, "Linux ownership checks failed");

@@ -95,6 +95,10 @@ test("both installed workflows always attempt cleanup and require successful hos
         );
       if (!database) continue;
       checked++;
+      assert.equal(job.env.CERTOPS_CSR_DISPOSABLE_STACK, "1");
+      const qualification = job.steps.find((step) => step.run?.includes('"$candidate_node" scripts/certops-linux-systemd.js'));
+      assert.ok(qualification);
+      assert.match(qualification.run, /CERTOPS_CSR_DISPOSABLE_STACK=1/);
       assert.equal(host.if, "always()");
       assert.equal(database.if, "always()");
       assert.ok(job.steps.indexOf(host) < job.steps.indexOf(database));
@@ -114,6 +118,20 @@ test("both installed workflows always attempt cleanup and require successful hos
       1,
       "Exactly one installed-host database cleanup must be checked",
     );
+  }
+});
+
+test("installed discovery API fixture still refuses absent disposable authorization", async () => {
+  const previous = process.env.CERTOPS_CSR_DISPOSABLE_STACK;
+  delete process.env.CERTOPS_CSR_DISPOSABLE_STACK;
+  try {
+    await assert.rejects(
+      require("../tests/e2e/helpers/certops-api-fixture").createApiFixture("http://127.0.0.1:1"),
+      /Disposable API stack authorization required/,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.CERTOPS_CSR_DISPOSABLE_STACK;
+    else process.env.CERTOPS_CSR_DISPOSABLE_STACK = previous;
   }
 });
 
