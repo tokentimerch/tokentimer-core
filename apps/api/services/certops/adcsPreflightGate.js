@@ -37,7 +37,50 @@ const QUALIFYING_AGENTS_SQL = `
    WHERE a.workspace_id = $1
      AND a.status = 'active'
      AND a.declared_target_selectors @> jsonb_build_array($2::text)
-   ORDER BY a.last_seen_at DESC NULLS LAST`;
+   ORDER BY a.last_seen_at DESC NULLS LAST, a.id`;
+
+// Bounded keyset pages preserve the authoritative JS eligibility predicate
+// without silently excluding valid declarations beyond the first page.
+async function findEligibleAdcsPreflightAgent({
+  db,
+  workspaceId,
+  reference,
+  target,
+  ownerId = null,
+  env = process.env,
+  now = Date.now(),
+}) {
+  let cursor = null;
+  for (;;) {
+    const result = await db.query(
+      `SELECT id,status,platform,agent_version,protocol_version,supported_operations,
+      declared_target_selectors,declared_capabilities,capabilities_updated_at,agent_kind,last_seen_at,
+      last_seen_at::text AS cursor_seen_at
+      FROM certops_agents WHERE workspace_id=$1 AND status='active' AND platform='win32'
+        AND declared_target_selectors @> jsonb_build_array($2::text)
+        AND supported_operations @> '["renew","adcs-preflight"]'::jsonb
+        AND ($3::uuid IS NULL OR id=$3::uuid)
+        AND ($6::boolean OR ($4::timestamptz IS NOT NULL AND
+          (last_seen_at<$4 OR last_seen_at IS NULL OR (last_seen_at=$4 AND id>$5::uuid)))
+          OR ($4::timestamptz IS NULL AND last_seen_at IS NULL AND id>$5::uuid))
+      ORDER BY last_seen_at DESC NULLS LAST,id LIMIT 100`,
+      [
+        workspaceId,
+        reference,
+        ownerId,
+        cursor?.cursor_seen_at || null,
+        cursor?.id || null,
+        !cursor,
+      ],
+    );
+    const candidate = result.rows.find((row) =>
+      eligibleRenewalAgent(row, { target, ownerId, env, now }),
+    );
+    if (candidate) return candidate;
+    if (result.rows.length < 100) return null;
+    cursor = result.rows[result.rows.length - 1];
+  }
+}
 
 async function loadCurrentAdcsIssuerVersion({ db, workspaceId, issuerId }) {
   const result = await db.query(
@@ -142,4 +185,5 @@ module.exports = {
   qualifiesAdcsPreflight,
   eligibleRenewalAgent,
   renewalAgentEligibility,
+  findEligibleAdcsPreflightAgent,
 };

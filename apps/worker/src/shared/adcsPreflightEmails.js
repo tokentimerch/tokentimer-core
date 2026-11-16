@@ -148,6 +148,8 @@ export async function sendAdcsPreflightIncidentEmail(
     if (!recipients.length) return;
     const content = buildOperationalIncidentEmail({
       category: "certops",
+      type: ADCS_PREFLIGHT_INCIDENT_TYPE,
+      workspaceId,
       title: incident.title,
       message: incident.message,
       metadata: incident.metadata,

@@ -146,6 +146,8 @@ async function loadIssuerPreflightReadiness({
   now = Date.now(),
   version,
   agents,
+  certificates,
+  enabled,
 }) {
   if (!version) {
     version = (
@@ -161,7 +163,7 @@ async function loadIssuerPreflightReadiness({
   if (
     !version ||
     version.certops_paused ||
-    !(await isCertOpsEnabled({ dbPool: db, env }))
+    !(enabled ?? await isCertOpsEnabled({ dbPool: db, env }))
   )
     return { ...summarizeReadiness([], now), agents: [] };
   // Keep the latest observation across versions, just like the final renewal
@@ -188,7 +190,7 @@ async function loadIssuerPreflightReadiness({
     findCertificatesDueForRenewal,
     RENEWAL_JOB_TERMINAL_STATUSES,
   } = require("./renewalScheduler");
-  const certificates = await findCertificatesDueForRenewal({
+  certificates ??= await findCertificatesDueForRenewal({
     db,
     workspaceId,
     issuerId,
@@ -203,6 +205,92 @@ async function loadIssuerPreflightReadiness({
     ),
     agents,
   };
+}
+
+// One page-scoped read of each fact set. The per-certificate projection remains
+// identical to incident reconciliation; unrelated workspaces/issuers are absent.
+async function loadIssuerPreflightReadinessBatch({
+  db,
+  workspaceId,
+  issuers,
+  env = process.env,
+  now = Date.now(),
+}) {
+  const result = new Map();
+  if (!issuers.length) return result;
+  const enabled = await isCertOpsEnabled({ dbPool: db, env });
+  const active = issuers.filter((row) => !row.certops_paused && enabled);
+  if (!active.length) {
+    for (const row of issuers)
+      result.set(row.id, { ...summarizeReadiness([], now), agents: [] });
+    return result;
+  }
+  const ids = active.map((row) => row.id);
+  const {
+    findCertificatesDueForRenewal,
+    RENEWAL_JOB_TERMINAL_STATUSES,
+  } = require("./renewalScheduler");
+  const [agentRows, historyRows, certificates] = await Promise.all([
+    db.query(
+      `SELECT id,status,platform,agent_version,protocol_version,declared_capabilities,
+      capabilities_updated_at,agent_kind,supported_operations,declared_target_selectors,last_seen_at
+      FROM certops_agents WHERE workspace_id=$1 ORDER BY last_seen_at DESC NULLS LAST,id`,
+      [workspaceId],
+    ),
+    db.query(
+      `SELECT scope.issuer_id AS subject_id,a.id AS assigned_agent_id,history.jobs
+      FROM certops_agents a CROSS JOIN unnest($2::text[]) scope(issuer_id)
+      CROSS JOIN LATERAL (SELECT jsonb_agg(j ORDER BY j.preflight_seq DESC NULLS LAST,j.created_at DESC,j.id DESC) AS jobs FROM (
+        SELECT id,status,source,error_code,result_metadata,created_at,completed_at,updated_at,preflight_seq
+        FROM certificate_jobs WHERE workspace_id=a.workspace_id AND assigned_agent_id=a.id
+          AND subject_id=scope.issuer_id AND operation='adcs-preflight'
+        ORDER BY preflight_seq DESC NULLS LAST,created_at DESC,id DESC LIMIT 6
+      ) j) history WHERE a.workspace_id=$1 AND history.jobs IS NOT NULL`,
+      [workspaceId, ids],
+    ),
+    findCertificatesDueForRenewal({
+      db,
+      workspaceId,
+      issuerIds: ids,
+      ...resolveRenewalThresholdPolicy(env),
+      batchSize: null,
+      terminalStatuses: RENEWAL_JOB_TERMINAL_STATUSES,
+    }),
+  ]);
+  const history = new Map(
+    historyRows.rows.map((row) => [
+      `${row.subject_id}:${row.assigned_agent_id}`,
+      row.jobs,
+    ]),
+  );
+  const byIssuer = new Map(ids.map((id) => [id, []]));
+  for (const certificate of certificates)
+    byIssuer.get(certificate.profile_issuer_id)?.push(certificate);
+  for (const row of issuers) {
+    const version = {
+      ...row,
+      version: row.current_version,
+      ca_key_sha256: row.confirmed_key_sha256,
+    };
+    result.set(
+      row.id,
+      await loadIssuerPreflightReadiness({
+        db,
+        workspaceId,
+        issuerId: row.id,
+        version,
+        env,
+        now,
+        enabled,
+        certificates: byIssuer.get(row.id) || [],
+        agents: agentRows.rows.map((agent) => ({
+          ...agent,
+          preflight_jobs: history.get(`${row.id}:${agent.id}`) || [],
+        })),
+      }),
+    );
+  }
+  return result;
 }
 
 async function reconcileIssuerPreflightIncident({
@@ -320,6 +408,7 @@ module.exports = {
   projectRenewalPath,
   summarizeReadiness,
   loadIssuerPreflightReadiness,
+  loadIssuerPreflightReadinessBatch,
   reconcileIssuerPreflightIncident,
   reconcilePendingPreflightIncidents,
 };

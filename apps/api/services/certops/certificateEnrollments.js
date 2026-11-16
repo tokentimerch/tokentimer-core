@@ -1560,6 +1560,10 @@ async function listIssuers({
       [workspaceId],
     ),
   ]);
+  const readinessService = require("./adcsPreflightIncidents");
+  const readinessByIssuer = readinessLoader === readinessService.loadIssuerPreflightReadiness
+    ? await readinessService.loadIssuerPreflightReadinessBatch({db,workspaceId,issuers:rows.rows.filter(row=>row.kind==="adcs"),env})
+    : null;
   return {
     items: await Promise.all(rows.rows.map(async (row) => {
       const version = {
@@ -1568,7 +1572,7 @@ async function listIssuers({
         revalidation_required: row.revalidation_required, certops_paused: row.certops_paused,
       };
       const readiness = row.kind === "adcs"
-        ? await readinessLoader({ db, workspaceId, issuerId: row.id, version, env })
+        ? (readinessByIssuer?.get(row.id) || await readinessLoader({ db, workspaceId, issuerId: row.id, version, env }))
         : { checks: [], agents: [] };
       const history = issuerRefreshStates(row.refresh_jobs, version).map((check) => {
         const agent = readiness.agents.find((a) => String(a.id) === String(check.agentId));

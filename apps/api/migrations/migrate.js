@@ -5433,6 +5433,16 @@ migrations.push({
     ON certificate_jobs(workspace_id, enrollment_id) WHERE enrollment_id IS NOT NULL`,
 });
 
+// Bound each issuer/agent lookup to its ordered preflight history.
+migrations.push({
+  version: 125,
+  name: "certops_adcs_preflight_lookup_index",
+  sql: `CREATE INDEX IF NOT EXISTS idx_certificate_jobs_adcs_preflight_lookup
+    ON certificate_jobs(workspace_id,subject_id,assigned_agent_id,
+      preflight_seq DESC NULLS LAST,created_at DESC,id DESC)
+    WHERE operation='adcs-preflight'`,
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);

@@ -62,7 +62,7 @@ const { validateAdcsRenewalProfile } = require("./adcsRenewalRules");
 const {
   loadCurrentAdcsIssuerVersion,
   loadQualifyingAdcsAgents,
-  eligibleRenewalAgent,
+  findEligibleAdcsPreflightAgent,
 } = require("./adcsPreflightGate");
 
 const {
@@ -289,11 +289,13 @@ async function findCertificatesDueForRenewal({
   terminalStatuses,
   workspaceId = null,
   issuerId = null,
+  issuerIds = null,
 } = {}) {
   const params = [String(thresholdDays),terminalStatuses,batchSize,AUTO_RENEW_DISABLED_PROFILE_STATUSES];
   let scope = "";
   if (workspaceId != null) { params.push(workspaceId); scope += ` AND mc.workspace_id=$${params.length}`; }
   if (issuerId != null) { params.push(issuerId); scope += ` AND cp.issuer_id=$${params.length}`; }
+  if (issuerIds != null) { params.push(issuerIds); scope += ` AND cp.issuer_id=ANY($${params.length}::uuid[])`; }
   const result = await db.query(
     `SELECT mc.id,
             mc.workspace_id,
@@ -531,22 +533,9 @@ async function createAutomaticAdcsRenewal({
     ? eligibleAgents.find(candidate => String(candidate.id) === String(certificate.deployed_agent_id))
     : eligibleAgents[0];
   if (!agent) {
-    const declared = await dbPool.query(
-      `SELECT id,status,platform,agent_version,protocol_version,supported_operations,
-              declared_target_selectors,declared_capabilities,capabilities_updated_at,agent_kind
-         FROM certops_agents
-        WHERE workspace_id = $1
-          AND status = 'active'
-          AND platform = 'win32'
-          AND declared_target_selectors @> jsonb_build_array($2::text)
-          AND supported_operations @> '["adcs-preflight"]'::jsonb
-          AND ($3::uuid IS NULL OR id = $3::uuid)
-        ORDER BY last_seen_at DESC NULLS LAST, id
-        LIMIT 100`,
-      [certificate.workspace_id, fields.target.reference, storeOnly || explicitIp ? certificate.deployed_agent_id : null],
-    );
-    const candidate = declared.rows.find(row => eligibleRenewalAgent(row,{ target: fields.target,
-      ownerId: storeOnly || explicitIp ? certificate.deployed_agent_id : null,env }));
+    const candidate = await findEligibleAdcsPreflightAgent({db:dbPool,
+      workspaceId:certificate.workspace_id,reference:fields.target.reference,target:fields.target,
+      ownerId:storeOnly || explicitIp ? certificate.deployed_agent_id : null,env});
     if (version?.confirmed_at && version?.ca_key_sha256 && version?.ca_config && version?.template) {
       await preflightDispatcher({
         client: dbPool,

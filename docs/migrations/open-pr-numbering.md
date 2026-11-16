@@ -51,6 +51,7 @@ are reservations, not no-op migrations. They do not install another feature.
 | 120 | certops_material_adcs_operation_union | Preserve both material and AD CS job operations |
 | 121 | certops_iis_absence_proofs | Reconcile proven IIS observations |
 | 122 | certops_enrollment_jobs_index | Index enrollment jobs |
+| 125 | certops_adcs_preflight_lookup_index | #714 adds a partial index for issuer/agent preflight history. Leave reservations 123–124 unapplied here. |
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.

@@ -146,7 +146,7 @@ describe("AD CS automatic renewal agent readiness", () => {
       message: /owning agent/,
     });
     assert.deepEqual(stale.queries.find(q => q.sql.includes("SELECT id") && q.sql.includes("FROM certops_agents")).params,
-      ["ws-1", "www.example.com", "agent-a"]);
+      ["ws-1", "www.example.com", "agent-a", null, null, true]);
 
     const refreshed = fakePool({
       agentRows: [

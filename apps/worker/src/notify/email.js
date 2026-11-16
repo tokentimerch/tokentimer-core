@@ -314,6 +314,8 @@ ${getEmailFooterText()}
 // are managed from the integration import panel.
 export function buildOperationalIncidentEmail({
   category,
+  type,
+  workspaceId: authoritativeWorkspaceId,
   title,
   message,
   metadata,
@@ -324,6 +326,22 @@ export function buildOperationalIncidentEmail({
   );
   const meta = metadata || {};
   const isAutoSync = category === "auto_sync";
+  // Only the explicit server-owned AD CS incident route may select this CTA.
+  // Never follow metadata.href or interpolate metadata into a URL path/origin.
+  const uuid =
+    /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
+  const isAdcs =
+    category === "certops" &&
+    type === "adcs_preflight_blocked" &&
+    uuid.test(String(authoritativeWorkspaceId)) &&
+    uuid.test(String(meta.issuerId));
+  const adcsQuery = isAdcs
+    ? new URLSearchParams({
+        workspace: authoritativeWorkspaceId,
+        action: "check-adcs-issuer",
+        issuerId: meta.issuerId,
+      }).toString()
+    : null;
   const contextValue = (value) => {
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
@@ -340,8 +358,14 @@ export function buildOperationalIncidentEmail({
     : "";
   const buttonUrl = isAutoSync
     ? `${frontendUrl}/dashboard?${autoSyncQuery}${exactConfigQuery}`
-    : `${frontendUrl}/control-center`;
-  const buttonText = isAutoSync ? "Manage Auto-Sync" : "Open Control Center";
+    : isAdcs
+      ? `${frontendUrl}/certops/renewals?${adcsQuery}`
+      : `${frontendUrl}/control-center`;
+  const buttonText = isAutoSync
+    ? "Manage Auto-Sync"
+    : isAdcs
+      ? "Review AD CS Readiness"
+      : "Open Control Center";
 
   const contextLines = [];
   if (isAutoSync) {
@@ -391,7 +415,7 @@ export function buildOperationalIncidentEmail({
     "",
     message || "",
     ...contextLines,
-    ...(isAutoSync ? ["", `${buttonText}: ${buttonUrl}`] : []),
+    ...(isAutoSync || isAdcs ? ["", `${buttonText}: ${buttonUrl}`] : []),
   ].join("\n");
 
   const { html, text } = generateEmailTemplate({

@@ -900,6 +900,7 @@ export default function CertOpsAdcs({
   const [enrollments, setEnrollments] = useState([]);
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadedWorkspaceId, setLoadedWorkspaceId] = useState(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [issuerPrefill, setIssuerPrefill] = useState(null);
   const [busyKey, setBusyKey] = useState(null);
@@ -947,6 +948,7 @@ export default function CertOpsAdcs({
       );
       setAgents(agentPage.items || []);
       setIssuerTotal(Number(issuerPage.pagination?.total || 0));
+      setLoadedWorkspaceId(workspaceId);
       setEnrollmentTotal(Number(enrollmentPage.pagination?.total || 0));
       setLoadError('');
     },
@@ -1045,13 +1047,27 @@ export default function CertOpsAdcs({
   // A deep link names one issuer to open, for a re-check. Once the list is
   // loaded the issuer is expanded and the request is handed back.
   useEffect(() => {
-    if (!focusIssuerId || loading || roleStatus === 'loading') return;
+    if (
+      !focusIssuerId ||
+      loading ||
+      roleStatus === 'loading' ||
+      loadedWorkspaceId !== workspaceId
+    )
+      return;
     if (issuers.some(item => item.id === focusIssuerId)) {
       issuerListReady.current = true;
       setOpenIssuerId(focusIssuerId);
     }
     onFocusHandled?.();
-  }, [focusIssuerId, loading, roleStatus, issuers, onFocusHandled]);
+  }, [
+    focusIssuerId,
+    loading,
+    roleStatus,
+    issuers,
+    onFocusHandled,
+    loadedWorkspaceId,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     issuerListReady.current = false;

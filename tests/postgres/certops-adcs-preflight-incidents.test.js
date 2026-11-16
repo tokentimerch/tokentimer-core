@@ -926,3 +926,333 @@ test("recipient authorization is rechecked after the SMTP handshake before messa
   assert.equal(received.length, start);
   assert.equal((await f.row()).email_sent_at, null);
 });
+
+test("SMTP AD CS email preserves authoritative workspace and issuer destination", async () => {
+  const f = await fixture(),
+    start = received.length;
+  const original = process.env.NODE_ENV;
+  process.env.NODE_ENV = "development";
+  try {
+    await send(f);
+  } finally {
+    process.env.NODE_ENV = original;
+  }
+  assert.equal(received.length - start, 2);
+  for (const mail of received.slice(start)) {
+    const decoded = mail.body
+      .replace(/=\r?\n/g, "")
+      .replace(/=([0-9A-F]{2})/gi, (_, hex) =>
+        String.fromCharCode(parseInt(hex, 16)),
+      );
+    assert.ok(
+      decoded.includes("/certops/renewals?workspace=" + f.workspaceId),
+      "actual SMTP message must link to Renewals",
+    );
+    assert.ok(decoded.includes(f.issuerId));
+    assert.ok(decoded.includes("check-adcs-issuer"));
+  }
+});
+test("automatic preflight finds eligible agent 101 among 125 declarations", async () => {
+  const f = await fixture();
+  await pool.query("UPDATE certops_agents SET status='offline' WHERE id=$1", [
+    f.agentId,
+  ]);
+  const agents = (
+    await pool.query(
+      `INSERT INTO certops_agents(workspace_id,agent_id,name,agent_version,protocol_version,credential_prefix,credential_hash,status,platform,supported_operations,declared_target_selectors,declared_capabilities,capabilities_updated_at,last_seen_at)
+    SELECT $1,gen_random_uuid(),'Large fixture '||n,'0.18.0','1.0.0','ttagent_'||substr(replace(gen_random_uuid()::text,'-',''),1,16),md5(gen_random_uuid()::text)||md5(gen_random_uuid()::text),'active','win32','["renew","adcs-preflight"]',$2::jsonb,
+      CASE WHEN n>100 THEN '["adcs-enroll-v1"]'::jsonb ELSE '[]'::jsonb END,NOW(),NOW()-n*interval '1 second'
+    FROM generate_series(1,125) n RETURNING id,name`,
+      [f.workspaceId, JSON.stringify(f.certs.map((c) => c.domain))],
+    )
+  ).rows;
+  const certificate = (
+    await pool.query(
+      `SELECT mc.*,cp.issuer_id AS profile_issuer_id,cp.public_metadata AS profile_public_metadata FROM managed_certificates mc JOIN certificate_profiles cp ON cp.id=mc.profile_id WHERE mc.id=$1`,
+      [f.certs[0].id],
+    )
+  ).rows[0];
+  const calls = [];
+  await assert.rejects(
+    require("../../apps/api/services/certops/renewalScheduler").createAutomaticAdcsRenewal(
+      {
+        dbPool: pool,
+        certificate,
+        mode: "execute",
+        env: process.env,
+        preflightDispatcher: async (value) => calls.push(value),
+      },
+    ),
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(
+    calls[0].agentId,
+    agents.find((a) => a.name === "Large fixture 101").id,
+  );
+  assert.equal(calls[0].unavailableTarget, undefined);
+});
+
+test("paged selection keeps ownership, capability, compatibility and exact cursor boundaries", async () => {
+  const f = await fixture(),
+    gate = require("../../apps/api/services/certops/adcsPreflightGate");
+  const target = {
+    type: "windows-iis",
+    reference: f.certs[0].domain,
+    store: "My",
+    binding: { site: "QA", port: 443 },
+  };
+  const choose = async (ownerId = null, selectedTarget = target) =>
+    gate.findEligibleAdcsPreflightAgent({
+      db: pool,
+      workspaceId: f.workspaceId,
+      reference: target.reference,
+      target: selectedTarget,
+      ownerId,
+      env: process.env,
+    });
+  assert.equal((await choose()).id, f.agentId);
+  assert.equal(await choose(randomUUID()), null);
+  for (const [column, value] of [
+    ["status", "offline"],
+    ["agent_version", "0.0.1"],
+    ["declared_capabilities", "[]"],
+    ["supported_operations", '["adcs-preflight"]'],
+  ]) {
+    const old = (
+      await pool.query(
+        "SELECT " + column + " FROM certops_agents WHERE id=$1",
+        [f.agentId],
+      )
+    ).rows[0][column];
+    await pool.query(
+      "UPDATE certops_agents SET " + column + "=$2 WHERE id=$1",
+      [f.agentId, value],
+    );
+    assert.equal(await choose(), null, column);
+    await pool.query(
+      "UPDATE certops_agents SET " + column + "=$2 WHERE id=$1",
+      [f.agentId, Array.isArray(old) ? JSON.stringify(old) : old],
+    );
+  }
+  await pool.query(
+    "UPDATE certops_agents SET capabilities_updated_at=NOW()-interval '1 day' WHERE id=$1",
+    [f.agentId],
+  );
+  assert.equal(await choose(), null);
+  await pool.query(
+    "UPDATE certops_agents SET capabilities_updated_at=NOW(),status='retired',retired_at=NOW() WHERE id=$1",
+    [f.agentId],
+  );
+  assert.equal(await choose(), null);
+  await pool.query(
+    "UPDATE certops_agents SET status='active',retired_at=NULL WHERE id=$1",
+    [f.agentId],
+  );
+  const store = {
+    type: "windows-cert-store",
+    reference: target.reference,
+    store: "My",
+  };
+  assert.equal(await choose(f.agentId, store), null);
+  await pool.query(
+    "UPDATE certops_agents SET declared_capabilities=$2::jsonb WHERE id=$1",
+    [
+      f.agentId,
+      JSON.stringify([
+        "adcs-enroll-v1",
+        "windows-store-only-adcs-v1",
+        "evidence-claim-binding-v1",
+        "iis-explicit-ip-v1",
+      ]),
+    ],
+  );
+  assert.equal((await choose(f.agentId, store)).id, f.agentId);
+  assert.equal(
+    (
+      await choose(f.agentId, {
+        ...target,
+        binding: { ...target.binding, address: "192.0.2.10" },
+      })
+    ).id,
+    f.agentId,
+  );
+  // >100 identical microsecond timestamps and NULL timestamps must not lose a row to JS Date rounding.
+  for (const timestamp of [
+    "TIMESTAMPTZ '2026-11-16 12:00:00.123456+00'",
+    "NULL",
+  ]) {
+    await pool.query(
+      "UPDATE certops_agents SET status='offline' WHERE workspace_id=$1",
+      [f.workspaceId],
+    );
+    const ids = Array.from({ length: 125 }, () => randomUUID()).sort();
+    await pool.query(
+      `INSERT INTO certops_agents(id,workspace_id,agent_id,name,agent_version,protocol_version,credential_prefix,credential_hash,status,platform,supported_operations,declared_target_selectors,declared_capabilities,capabilities_updated_at,last_seen_at)
+      SELECT id,$1,gen_random_uuid(),'Cursor fixture','0.18.0','1.0.0','ttagent_'||substr(md5(id::text),1,16),md5(id::text)||md5(id::text),'active','win32','["renew","adcs-preflight"]',$3::jsonb,
+        CASE WHEN id=$4::uuid THEN '["adcs-enroll-v1"]'::jsonb ELSE '[]'::jsonb END,NOW(),${timestamp} FROM unnest($2::uuid[]) id`,
+      [f.workspaceId, ids, JSON.stringify([target.reference]), ids[100]],
+    );
+    assert.equal((await choose()).id, ids[100]);
+  }
+});
+
+test(
+  "issuer list batches readiness for 100 issuers and 1000 certificates",
+  { timeout: 180000 },
+  async () => {
+    const f = await fixture(),
+      ids = Array.from({ length: 100 }, () => randomUUID());
+    const extra = (
+      await pool.query(
+        `INSERT INTO certops_agents(workspace_id,agent_id,name,agent_version,protocol_version,credential_prefix,credential_hash,status,platform,supported_operations,declared_target_selectors,declared_capabilities,capabilities_updated_at,last_seen_at)
+      SELECT workspace_id,gen_random_uuid(),'Scale agent '||n,agent_version,protocol_version,'ttagent_'||substr(md5(gen_random_uuid()::text),1,16),md5(gen_random_uuid()::text)||md5(gen_random_uuid()::text),'active',platform,supported_operations,declared_target_selectors,declared_capabilities,NOW(),NOW()
+      FROM certops_agents CROSS JOIN generate_series(1,2) n WHERE id=$1 RETURNING id`,
+        [f.agentId],
+      )
+    ).rows.map((row) => row.id);
+    await pool.query(
+      `INSERT INTO certificate_issuers(id,workspace_id,kind,name,current_version,revalidation_required)
+    SELECT id,$1,'adcs','000-scale-'||id,1,false FROM unnest($2::uuid[]) id`,
+      [f.workspaceId, ids],
+    );
+    await pool.query(
+      `INSERT INTO certificate_issuer_versions(workspace_id,issuer_id,version,ca_config,template,transport,ca_key_sha256,confirmed_at)
+    SELECT $1,id,1,$3,$4,'dcom',$5,NOW()-interval '7 days' FROM unnest($2::uuid[]) id`,
+      [f.workspaceId, ids, CA, TEMPLATE, KEY],
+    );
+    const profiles = (
+      await pool.query(
+        `INSERT INTO certificate_profiles(workspace_id,name,status,source,source_ref,issuer_id,renew_before_days,key_mode,public_metadata,created_by)
+    SELECT $1,'Scale '||i.id,'active','manual',i.id::text,i.id,30,'os-store-managed',cp.public_metadata,cp.created_by FROM unnest($2::uuid[]) i(id)
+    CROSS JOIN certificate_profiles cp WHERE cp.id=$3 RETURNING id,issuer_id`,
+        [f.workspaceId, ids, f.certs[0].profileId],
+      )
+    ).rows;
+    await pool.query(
+      `INSERT INTO managed_certificates(workspace_id,status,source,source_ref,name,common_name,subject_alt_names,key_mode,key_reference,public_metadata,deployed_agent_id,profile_id,not_after,fingerprint_sha256)
+    SELECT $1,'active','agent_issuance',gen_random_uuid()::text,'Scale certificate',mc.common_name,mc.subject_alt_names,mc.key_mode,mc.key_reference,mc.public_metadata,mc.deployed_agent_id,p.id,NOW()+(1+n%25)*interval '1 day',md5(gen_random_uuid()::text)||md5(gen_random_uuid()::text)
+    FROM unnest($2::uuid[]) p(id) CROSS JOIN generate_series(1,10) n CROSS JOIN managed_certificates mc WHERE mc.id=$3`,
+      [f.workspaceId, profiles.map((p) => p.id), f.certs[0].id],
+    );
+    await pool.query(
+      `UPDATE certops_management_periods p SET renewal_profile_id=mc.profile_id,automation_enabled=TRUE FROM managed_certificates mc WHERE p.managed_certificate_id=mc.id AND mc.workspace_id=$1 AND p.ended_at IS NULL`,
+      [f.workspaceId],
+    );
+    await pool.query(
+      `INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status,source,assigned_agent_id,error_code,created_at)
+      SELECT $1,'external',id::text,'adcs-preflight','failed','automation',agent,'ADCS_TEMPLATE_UNSAFE',NOW()-n*interval '1 second' FROM unnest($2::uuid[]) id CROSS JOIN unnest($3::uuid[]) agent CROSS JOIN generate_series(1,100) n`,
+      [f.workspaceId, ids, [f.agentId, ...extra]],
+    );
+    // Upgrade an already populated history, then replay the same DDL. No rows
+    // or ledger identities may be rewritten to install this lookup index.
+    const migration =
+      require("../../apps/api/migrations/migrate").migrations.find(
+        (m) => m.name === "certops_adcs_preflight_lookup_index",
+      );
+    assert.equal(migration.version, 125);
+    const countBefore = (
+      await pool.query(
+        "SELECT count(*)::int AS n FROM certificate_jobs WHERE workspace_id=$1",
+        [f.workspaceId],
+      )
+    ).rows[0].n;
+    await pool.query("DROP INDEX idx_certificate_jobs_adcs_preflight_lookup");
+    await pool.query(migration.sql);
+    await pool.query(migration.sql);
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS n FROM certificate_jobs WHERE workspace_id=$1",
+          [f.workspaceId],
+        )
+      ).rows[0].n,
+      countBefore,
+    );
+    const queries = [];
+    const db = {
+      query: async (sql, params) => {
+        queries.push({ sql, params });
+        return pool.query(sql, params);
+      },
+    };
+    const start = performance.now(),
+      heapBefore = process.memoryUsage().heapUsed;
+    const result =
+      await require("../../apps/api/services/certops/certificateEnrollments").listIssuers(
+        { client: db, workspaceId: f.workspaceId, limit: 100 },
+      );
+    const metric = {
+      issuers: result.items.length,
+      certificates: 1000,
+      historyJobs: 30000,
+      agentsPerIssuer: 3,
+      queries: queries.length,
+      elapsedMs: Math.round(performance.now() - start),
+      heapDeltaBytes: process.memoryUsage().heapUsed - heapBefore,
+      heapUsedBytes: process.memoryUsage().heapUsed,
+    };
+    console.log("READINESS_PERFORMANCE " + JSON.stringify(metric));
+    let referenceQueries = 0;
+    const referenceStart = performance.now();
+    const reference =
+      await require("../../apps/api/services/certops/certificateEnrollments").listIssuers(
+        {
+          client: {
+            query: async (sql, params) => {
+              referenceQueries++;
+              return pool.query(sql, params);
+            },
+          },
+          workspaceId: f.workspaceId,
+          limit: 100,
+          readinessLoader: (args) =>
+            incidents.loadIssuerPreflightReadiness(args),
+        },
+      );
+    Object.assign(metric, {
+      referenceQueries,
+      referenceElapsedMs: Math.round(performance.now() - referenceStart),
+      lockWaiters: (
+        await pool.query(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'",
+        )
+      ).rows[0].n,
+    });
+    assert.deepEqual(
+      result,
+      reference,
+      "batching must preserve every public readiness and history field",
+    );
+    for (const item of result.items) {
+      assert.equal(item.renewalReadiness.dueCount, 10);
+      assert.equal(item.renewalReadiness.affectedCount, 10);
+    }
+    if (process.env.ADCS_QUALIFICATION_PERF_OUT) {
+      const plans = [];
+      for (const q of queries
+        .filter(
+          (q) =>
+            q.sql.includes("FROM managed_certificates mc") ||
+            q.sql.includes("preflight_jobs") ||
+            q.sql.includes("scope.issuer_id"),
+        )
+        .slice(0, 2))
+        plans.push(
+          (
+            await pool.query(
+              "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) " + q.sql,
+              q.params,
+            )
+          ).rows[0],
+        );
+      require("fs").writeFileSync(
+        process.env.ADCS_QUALIFICATION_PERF_OUT,
+        JSON.stringify({ metric, plans }, null, 2),
+      );
+    }
+    assert.ok(
+      queries.length <= 6,
+      "issuer page readiness must not run per-issuer SQL: " + queries.length,
+    );
+  },
+);
