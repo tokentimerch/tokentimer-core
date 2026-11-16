@@ -221,6 +221,38 @@ test("internal ACME store first issue atomically binds owner, enrollment and rep
   await pool.query(migrationSql);
   assert.deepEqual((await rows()).rows, beforeReplay);
   await assert.rejects(runRenewal({ idempotencyKey: randomUUID() }), /already open or uncertain/);
+
+  // Simulate a pre-migration writer still active when the migration starts.
+  const beforeLock = await createPreview(), afterLock = await createPreview();
+  await pool.query("DROP TRIGGER certops_cancel_unclaimed_acme_store ON certificate_jobs");
+  const oldWriter = await pool.connect(), migrator = await pool.connect(), newWriter = await pool.connect();
+  const waitForBlock = async (pid) => {
+    for (let i = 0; i < 100; i++) {
+      if ((await pool.query("SELECT cardinality(pg_blocking_pids($1)) AS blockers", [pid])).rows[0].blockers > 0) return;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    throw new Error("expected PostgreSQL writer to wait on the migration fence");
+  };
+  try {
+    await oldWriter.query("BEGIN");
+    await oldWriter.query("UPDATE certificate_jobs SET status='rejected' WHERE id=$1", [beforeLock]);
+    await migrator.query("BEGIN");
+    const migration = migrator.query(migrationSql);
+    await waitForBlock(migrator.processID);
+    await oldWriter.query("COMMIT");
+    await migration;
+    await newWriter.query("BEGIN");
+    const laterCancellation = newWriter.query("UPDATE certificate_jobs SET status='rejected' WHERE id=$1", [afterLock]);
+    await waitForBlock(newWriter.processID);
+    await migrator.query("COMMIT");
+    await laterCancellation;
+    await newWriter.query("COMMIT");
+    const caught = (await pool.query("SELECT original_job_id,state FROM certops_acme_store_enrollments WHERE original_job_id=ANY($1::uuid[])", [[beforeLock, afterLock]])).rows;
+    assert.equal(caught.length, 2);
+    assert.ok(caught.every(row => row.state === "cancelled_no_effect"));
+  } finally {
+    for (const client of [oldWriter, migrator, newWriter]) { await client.query("ROLLBACK").catch(() => {}); client.release(); }
+  }
 });
 
 

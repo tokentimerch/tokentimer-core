@@ -1,3 +1,7 @@
+-- Drain existing job writers before the backfill snapshot, and prevent new
+-- writers until the cancellation trigger becomes visible at commit.
+LOCK TABLE certificate_jobs IN SHARE ROW EXCLUSIVE MODE;
+
 -- A receipt is usable only after another transaction has observed its commit
 -- while its original claim is still live. Existing receipts remain unverified.
 ALTER TABLE certops_adcs_expected_identity_receipts
