@@ -131,7 +131,7 @@ test("coverage workflow is manual dispatch only", () => {
   assert.equal(/^\s*pull_request:/m.test(source), false);
   assert.match(source, /contents:\s*read/);
   assert.match(source, /exit 1\s*\n {6}- name: Preserve failed coverage evidence/);
-  assert.match(source, /if: always\(\)\s+uses: actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
+  assert.match(source, /if: always\(\)\s+uses: actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9/);
   assert.match(source, /retention-days: 7\s+if-no-files-found: error/);
 });
 

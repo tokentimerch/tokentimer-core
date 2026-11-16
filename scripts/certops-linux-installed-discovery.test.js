@@ -216,9 +216,9 @@ test("actual independent cleanup refuses missing completion even after its activ
         acceptRestoration &&
         name === "../tests/e2e/helpers/certops-linux-installed-discovery"
       )
-        return { ...helper, assertCompletion() {} };
-      if (acceptRestoration && name === "./certops-linux-systemd-ownership")
-        return { ...require(name), assertNoSymlinkTargets() {} };
+        return { ...helper, assertCleanupSafe() { return { state: "completed" }; } };
+      if (name === "./certops-linux-systemd-ownership")
+        return { ...require(name), captureOwnershipReceipt(file) { return { original: fs.readFileSync(file), assertUnchanged() {}, close() {} }; }, ...(acceptRestoration ? { assertNoSymlinkTargets() {} } : {}) };
       return require(name);
     };
     const localModule = { exports: {} };
@@ -357,6 +357,8 @@ test("actual parent finally preserves private roots, accounts and database after
     "USER",
     "serviceProperty",
     "ownershipReceipt",
+    "ownershipHandle",
+    "ownershipVerified",
     "agentId",
     "pool",
     "workspaceId",
@@ -370,6 +372,9 @@ test("actual parent finally preserves private roots, accounts and database after
     { livePid: true },
     { cgroupLive: true },
     { discoveryUnknown: true },
+    { receiptMissing: true },
+    { receiptChanged: true },
+    { receiptMismatch: true },
   ]) {
     const calls = [],
       errors = [],
@@ -386,9 +391,11 @@ test("actual parent finally preserves private roots, accounts and database after
         },
       ],
       {
-        assertCompletion() {
+        assertCleanupSafe() {
           calls.push("completion");
+          return { state: "completed" };
         },
+        removePreDiscovery() {},
       },
       {},
       { env: { RUNNER_TEMP: "/owned/temp" } },
@@ -396,6 +403,9 @@ test("actual parent finally preserves private roots, accounts and database after
       () => ({
         assertNoSymlinkTargets() {
           calls.push("ownership");
+        },
+        removeOwnershipReceipt() {
+          calls.push("receipt-delete");
         },
       }),
       "/owned/root",
@@ -434,6 +444,8 @@ test("actual parent finally preserves private roots, accounts and database after
       "owned-user",
       () => "not-found",
       "/owned/receipt",
+      state.receiptMissing ? undefined : { assertUnchanged() { if (state.receiptChanged) throw Error("controlled receipt replacement"); } },
+      !state.receiptMismatch,
       "owned-agent",
       {
         async query() {
