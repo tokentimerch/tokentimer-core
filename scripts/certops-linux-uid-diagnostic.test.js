@@ -26,4 +26,16 @@ test("UID diagnostics retain comparisons and PID stability without exposing proc
   assert.equal(malformed.uidRowParsed, false);
   for (const field of ["realMatches", "effectiveMatches", "savedMatches", "filesystemMatches"]) assert.equal(malformed[field], null);
   assert.doesNotMatch(JSON.stringify(malformed), /private-sentinel/);
+  const root = uidDiagnostic("Uid:\t0\t0\t0\t0", uid, true, {phase:"restart", executableMatches:false, birthUnchanged:true, serviceState:"activating"});
+  assert.equal(root.phase, "restart");
+  assert.deepEqual([root.realIsRoot, root.effectiveIsRoot, root.savedIsRoot, root.filesystemIsRoot], [true, true, true, true]);
+  assert.equal(root.executableMatches, false);
+  assert.equal(root.birthUnchanged, true);
+  assert.equal(root.serviceState, "activating");
+  const untrusted = uidDiagnostic("Uid: private-sentinel", uid, null, {phase:"private-sentinel", executableMatches:"private-sentinel", birthUnchanged:"private-sentinel", serviceState:"private-sentinel"});
+  assert.equal(untrusted.phase, null);
+  assert.equal(untrusted.executableMatches, null);
+  assert.equal(untrusted.birthUnchanged, null);
+  assert.equal(untrusted.serviceState, null);
+  assert.doesNotMatch(JSON.stringify(untrusted), /private-sentinel/);
 });
