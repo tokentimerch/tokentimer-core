@@ -129,7 +129,8 @@
     "files": [
       "certops-inventory.test.js",
       "certops-inventory-import-helpers.test.js",
-      "certops-agent-unmanaged-observations.test.js"
+      "certops-agent-unmanaged-observations.test.js",
+      "certops-iis-topology-ingestion-projection.test.js"
     ],
     "requiredTestsByFile": [
       {
@@ -192,6 +193,7 @@
       {
         "file": "certops-agent-unmanaged-observations.test.js",
         "names": [
+          "retains a versioned topology attestation only on the current compatible IIS observation",
           "retains two locations and evidence without tokens or management, fences replays, and later enrolls the same identity",
           "retains unmanaged service bindings, blocks decommission, and preserves revoked lifecycle on rediscovery",
           "keeps existing-source rotation admissible while over quota",
@@ -205,6 +207,12 @@
           "retains unmanaged agent revocation and exposes it without topology access",
           "does not hide an unchecked or revoked location behind a good location",
           "rolls back the sequence and retained observations on non-admission database failures"
+        ]
+      },
+      {
+        "file": "certops-iis-topology-ingestion-projection.test.js",
+        "names": [
+          "folds an old HTTP.sys location only while the newer IIS capture is attested"
         ]
       }
     ]
@@ -383,6 +391,7 @@
           "preserves an existing reconciliation reason across revocation and completion",
           "does not flag dry-run or read-only work as a retirement mutation conflict",
           "records revocation without deadlocking a completion that already owns the token",
+          "shows the prior HTTP.sys classification under the newer IIS observation without erasing either",
           "groups recreated endpoint monitors before pagination without hiding genuine visibility gaps",
           "previous deleted monitors do not make a freshly observed endpoint uncertain",
           "visibility is known when all 21 locations are fresh in list and detail",
