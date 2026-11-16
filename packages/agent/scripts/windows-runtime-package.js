@@ -40,7 +40,7 @@ function markBundledInstaller(packageRoot) {
   }
   fs.writeFileSync(filename, source.replace(markers[0], markers[0].replace("$false", "$true")));
 }
-function buildWindowsArchives(genericArchive, zipDirectory, outputDirectory, version) {
+function buildWindowsArchives(genericArchive, zipDirectory, outputDirectory, version, normalizeArchive) {
   const outputs = [];
   for (const [architecture, pin] of Object.entries(RUNTIMES)) {
     const zipName = `node-v${VERSION}-win-${pin.upstream}.zip`;
@@ -65,6 +65,8 @@ function buildWindowsArchives(genericArchive, zipDirectory, outputDirectory, ver
       const filename = `tokentimer-agent-${version}-windows-${architecture}.tgz`;
       const archive = path.join(outputDirectory, filename);
       run("tar", ["-czf", archive, "-C", tmp, "package"]);
+      if (typeof normalizeArchive !== "function") throw new Error("Archive mode normalization is required");
+      normalizeArchive(archive);
       const hash = digest(fs.readFileSync(archive));
       fs.writeFileSync(`${archive}.sha256`, `${hash}  ${filename}\n`);
       outputs.push({ archive, sha256: hash, architecture });

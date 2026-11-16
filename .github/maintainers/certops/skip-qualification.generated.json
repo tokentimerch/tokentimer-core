@@ -366,7 +366,7 @@
     {
       "id": "a0b75f0de8c699728470",
       "file": "packages/agent/scripts/pack-release.test.js",
-      "line": 228,
+      "line": 252,
       "name": "tracks install-agent.sh as executable in git (mode 100755)",
       "environment": "linux-filesystem",
       "workflowJob": "backend_quality"
@@ -374,7 +374,7 @@
     {
       "id": "efaa1f1fb388b4cd75cb",
       "file": "packages/agent/scripts/pack-release.test.js",
-      "line": 237,
+      "line": 261,
       "name": "assertExecutableEntries rejects a tarball whose installer lost the exec bit",
       "reason": "platform",
       "environment": "linux-filesystem",

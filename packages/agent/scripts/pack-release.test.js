@@ -82,6 +82,30 @@ describe("pack-release (H10)", () => {
     } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
   });
 
+  it("restores all executable modes after a Windows-style archive repack", () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "tt-agent-repacked-modes-"));
+    try {
+      const input = path.join(scratch, "input"), packageDir = path.join(input, "package");
+      const entries = ["scripts/install-agent.sh", "bin/dns_certops.sh", "bin/tokentimer-observed-revocation-linux-amd64", "bin/tokentimer-observed-revocation-linux-arm64"];
+      for (const entry of entries) {
+        const file = path.join(packageDir, entry);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, "test");
+        fs.chmodSync(file, 0o644);
+      }
+      const archive = path.join(scratch, "repacked.tgz");
+      const packed = spawnSync("tar", ["-czf", archive, "-C", input, "package"], { encoding: "utf8" });
+      assert.equal(packed.status, 0, packed.stderr);
+      setArchiveExecutableEntries(archive);
+      const listing = spawnSync("tar", ["-tvzf", archive], { encoding: "utf8" });
+      assert.equal(listing.status, 0, listing.stderr);
+      for (const entry of entries) {
+        const line = listing.stdout.split(/\r?\n/).find(value => value.endsWith(` package/${entry}`));
+        assert.match(line || "", /^-rwxr-xr-x/, entry);
+      }
+    } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+  });
+
   it("ships Windows service host binaries under package/bin, not --out-dir", () => {
     // Regression for pack-agent writing tokentimer-agent-host-*.exe into
     // agent-dist/ (inherited --out-dir) so released tarballs omitted them

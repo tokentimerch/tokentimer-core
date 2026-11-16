@@ -314,7 +314,7 @@
           "kind": "spec",
           "path": "packages/contracts/api/certops-route-compat.contract.json",
           "status": "existing",
-          "sha256": "4bb3e907e87bc234b72bcfe77a61ca4cec7a32cf8a96e4c3d22377609a573c98"
+          "sha256": "489a25f250fc6a2ad97ef19670464cdfdbbde5de627e81ba173f0b9fb86c7a8c"
         },
         {
           "id": "certops-material-distribution-schema",

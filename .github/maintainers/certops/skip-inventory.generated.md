@@ -24,8 +24,8 @@ Total skips found: 211
 | `packages/agent/scripts/installer-revocation-default.test.js` | 30 | Linux installer writes the requested default only to a new config | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/installer-revocation-default.test.js` | 57 | Windows installer writes the requested default only to a new config | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/installer-smoke.test.js` | 373 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `packages/agent/scripts/pack-release.test.js` | 228 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `packages/agent/scripts/pack-release.test.js` | 237 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/scripts/pack-release.test.js` | 252 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `packages/agent/scripts/pack-release.test.js` | 261 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `platform` |
 | `packages/agent/scripts/windows-node-preflight.test.js` | 9 | checks external Node trust before any runtime probe | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/windows-service-ca.test.js` | 23 | Windows service CA environment | describe(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/windows-upgrade-recovery.test.js` | 130 | restores the original application after a process dies between renames | test(..., { skip }) option-object | `platform` |

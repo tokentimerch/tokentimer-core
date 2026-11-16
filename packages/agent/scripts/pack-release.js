@@ -127,6 +127,7 @@ function assertNoPrivateKeyMaterial(tarballPath) {
 /** Entries operators run directly after extracting the tarball. */
 const EXECUTABLE_TARBALL_ENTRIES = Object.freeze([
   "package/scripts/install-agent.sh",
+  "package/bin/dns_certops.sh",
   "package/bin/tokentimer-observed-revocation-linux-amd64",
   "package/bin/tokentimer-observed-revocation-linux-arm64",
 ]);
@@ -299,7 +300,7 @@ function main(argv = process.argv.slice(2)) {
   fs.writeFileSync(checksumPath, `${digest}  ${tarballName}\n`, "utf8");
 
   const windowsArchives = windowsRuntimeDir
-    ? buildWindowsArchives(tarballPath, windowsRuntimeDir, outDir, pkg.version)
+    ? buildWindowsArchives(tarballPath, windowsRuntimeDir, outDir, pkg.version, setArchiveExecutableEntries)
     : [];
   for (const artifact of windowsArchives) {
     assertNoPrivateKeyMaterial(artifact.archive);
