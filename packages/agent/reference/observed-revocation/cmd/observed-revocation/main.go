@@ -41,6 +41,16 @@ func parseCertificate(input string) (*x509.Certificate, error) {
 	return x509.ParseCertificate(block.Bytes)
 }
 
+func statusTLSRoots(roots []*x509.Certificate, denied map[[sha1.Size]byte]bool) []*x509.Certificate {
+	var allowed []*x509.Certificate
+	for _, root := range roots {
+		if !denied[sha1.Sum(root.Raw)] {
+			allowed = append(allowed, root)
+		}
+	}
+	return allowed
+}
+
 func run(r io.Reader, w io.Writer, now time.Time) error {
 	var req request
 	decoder := json.NewDecoder(io.LimitReader(r, 2<<20))
@@ -152,13 +162,7 @@ func run(r io.Reader, w io.Writer, now time.Time) error {
 	out.ChainStatus = "valid"
 	// Distrusted roots must not authorize the HTTPS connection used to fetch
 	// status, even when the observed certificate has another valid chain.
-	var tlsRoots []*x509.Certificate
-	for _, root := range roots {
-		if !denied[sha1.Sum(root.Raw)] {
-			tlsRoots = append(tlsRoots, root)
-		}
-	}
-	result := revocation.CheckChain(context.Background(), chains[0], req.AllowedOrigins, tlsRoots, now)
+	result := revocation.CheckChainWithDistrust(context.Background(), chains[0], req.AllowedOrigins, statusTLSRoots(roots, denied), denied, now)
 	out.Verdict = result.Verdict
 	out.Detail = result.Detail
 	out.RevokedIssuerFingerprintSha256 = result.RevokedIssuerFingerprintSha256
