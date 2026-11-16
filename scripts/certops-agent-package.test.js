@@ -2,7 +2,8 @@
 // Exercise archive extraction and immutable installed bytes, not a mocked tar
 // listing. The packaging regression in packages/agent covers the real Go files.
 const { test } = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), os = require("node:os"), path = require("node:path"), { spawnSync } = require("node:child_process");
-const { extractVerified, verifyInstalled, digest, verifyAdcsAcceptance, verifyOperatorScope, ADCS_ACCEPTANCE_SCENARIOS } = require("./certops-agent-package");
+const { extractVerified, verifyInstalled, verifyBundledArchive, verifyBundledRuntimeEvidence, digest, verifyAdcsAcceptance, verifyOperatorScope, ADCS_ACCEPTANCE_SCENARIOS } = require("./certops-agent-package");
+const { RUNTIMES, VERSION: BUNDLED_NODE_VERSION } = require("../packages/agent/scripts/windows-runtime-package");
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "certops-package-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -14,6 +15,33 @@ function fixture(t) {
   assert.equal(spawnSync("tar", ["-czf", "agent.tgz", "package"], { cwd: root }).status, 0);
   return { root, archive };
 }
+
+test("bundled AD CS fixture requires the pinned runtime, metadata and license", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "certops-bundled-fixture-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "runtime"));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ windowsBundledRuntime: true }));
+  const manifest = { version: BUNDLED_NODE_VERSION, architecture: "amd64", path: "runtime/amd64/node.exe", sha256: RUNTIMES.amd64.sha256 };
+  const manifestPath = path.join(root, "runtime", "manifest.json");
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+  const artifact = { archiveKind: "windows-bundled-amd64", runtimeNodeSha256: RUNTIMES.amd64.sha256 };
+  const files = { "runtime/amd64/node.exe": RUNTIMES.amd64.sha256, "runtime/LICENSE": "a".repeat(64) };
+  assert.equal(verifyBundledArchive(root, files, artifact), true);
+  assert.throws(() => verifyBundledArchive(root, { ...files, "runtime/amd64/node.exe": "0".repeat(64) }, artifact));
+  assert.throws(() => verifyBundledArchive(root, { "runtime/amd64/node.exe": RUNTIMES.amd64.sha256 }, artifact));
+  fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, architecture: "arm64" }));
+  assert.throws(() => verifyBundledArchive(root, files, artifact));
+});
+
+test("bundled AD CS receipt requires the real LocalSystem child and matching pinned bytes", () => {
+  const artifact = { archiveKind: "windows-bundled-amd64", runtimeNodeSha256: RUNTIMES.amd64.sha256 };
+  const evidence = { serviceAccount: "LocalSystem", childCount: 1, childPath: "C:\\ProgramData\\TokenTimerAgent\\app\\runtime\\amd64\\node.exe", childSha256: RUNTIMES.amd64.sha256.toUpperCase() };
+  assert.equal(verifyBundledRuntimeEvidence(evidence, artifact), true);
+  for (const change of [{ serviceAccount: "Other" }, { childCount: 0 }, { childPath: "C:\\Program Files\\nodejs\\node.exe" }, { childSha256: "0".repeat(64) }]) {
+    assert.throws(() => verifyBundledRuntimeEvidence({ ...evidence, ...change }, artifact));
+  }
+  assert.throws(() => verifyBundledRuntimeEvidence(evidence, { ...artifact, runtimeNodeSha256: "0".repeat(64) }));
+});
 
 test("AD CS package receipt rejects missing execution, skipped scenarios and release promotion", () => {
   const candidateSha = "a".repeat(40), artifact = { candidateSha, sha256: "b".repeat(64), buildMode: "qualification-only-not-release" };
@@ -31,6 +59,7 @@ test("AD CS package receipt rejects missing execution, skipped scenarios and rel
   const browser=require("../tests/e2e/helpers/certops-adcs-browser-journey");
   report.nativeBrowserAdcs={scope:browser.SCOPE,lifecycle:"renew-existing-inventory-not-first-issue-or-manual-job",scheduler:"production-maintenance-worker",browserEngine:"chromium",browserMutationCount:6,successfulEnrollments:1,fingerprints:["1".repeat(64),"2".repeat(64)],spkiFingerprints:["3".repeat(64),"4".repeat(64)],requestId:"41",...Object.fromEntries(["enrollmentId","jobId","profileId","issuerId"].map((field,i)=>[field,`${i+1}1111111-1111-4111-8111-111111111111`])),...Object.fromEntries(browser.FLAGS.map(flag=>[flag,true]))};
   assert.equal(verifyAdcsAcceptance(report, artifact, candidateSha), true);
+  assert.throws(() => verifyAdcsAcceptance(report, artifact, candidateSha, true), /Expected|equal|actual/i);
   const previousSha=process.env.GITHUB_SHA;
   try{
     process.env.GITHUB_SHA=candidateSha;

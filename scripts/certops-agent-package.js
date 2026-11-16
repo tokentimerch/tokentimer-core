@@ -6,6 +6,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const assert = require("node:assert/strict");
+const { RUNTIMES, VERSION: BUNDLED_NODE_VERSION } = require("../packages/agent/scripts/windows-runtime-package");
 const digest = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const ADCS_ACCEPTANCE_SCENARIOS = Object.freeze([
   "adcs-package-native-server-language-and-system-identity",
@@ -29,7 +30,7 @@ function verifyNativeEnvironment(native) {
   if(expectedLanguage)assert.equal(native.language,expectedLanguage);
   return true;
 }
-function verifyAdcsAcceptance(report, artifact, expectedSha) {
+function verifyAdcsAcceptance(report, artifact, expectedSha, requireBundled = false) {
   assert.match(expectedSha || "", /^[a-f0-9]{40}$/);
   assert.equal(report.suite, "adcs-package-operator-acceptance");
   assert.equal(report.status, "passed"); assert.equal(report.strict, true);
@@ -38,6 +39,7 @@ function verifyAdcsAcceptance(report, artifact, expectedSha) {
   assert.equal(report.buildMode, artifact.buildMode);
   assert.match(artifact.sha256, /^[a-f0-9]{64}$/); assert.equal(report.packageSha256, artifact.sha256);
   assert.equal(report.qualificationStatus, "not-qualified"); assert.equal(report.publishedReleaseQualified, false);
+  if (requireBundled || artifact.archiveKind !== undefined) verifyBundledRuntimeEvidence(report.bundledRuntime, artifact);
   assert.equal(report.certificateDatabaseInjection, false); assert.equal(report.workerDriven, true);
   assert.equal(report.cleanup?.status, "passed");
   verifyNativeEnvironment(report.nativeEnvironment);
@@ -50,6 +52,26 @@ function verifyAdcsAcceptance(report, artifact, expectedSha) {
     assert.equal(rows.length, 1); assert.equal(rows[0].status, "passed");
   }
   assert.ok(report.scenarios.every(row => row.status === "passed"));
+  return true;
+}
+function verifyBundledRuntimeEvidence(evidence, artifact) {
+  assert.equal(artifact.archiveKind, "windows-bundled-amd64");
+  assert.equal(artifact.runtimeNodeSha256, RUNTIMES.amd64.sha256);
+  assert.equal(evidence?.serviceAccount, "LocalSystem");
+  assert.equal(evidence?.childCount, 1);
+  assert.equal(evidence?.childPath?.toLowerCase(), "c:\\programdata\\tokentimeragent\\app\\runtime\\amd64\\node.exe");
+  assert.equal(evidence?.childSha256?.toLowerCase(), artifact.runtimeNodeSha256);
+  return true;
+}
+function verifyBundledArchive(root, files, artifact) {
+  assert.equal(artifact.archiveKind, "windows-bundled-amd64");
+  assert.equal(artifact.runtimeNodeSha256, RUNTIMES.amd64.sha256);
+  const metadata = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "runtime", "manifest.json"), "utf8"));
+  assert.equal(metadata.windowsBundledRuntime, true);
+  assert.deepEqual(manifest, { version: BUNDLED_NODE_VERSION, architecture: "amd64", path: "runtime/amd64/node.exe", sha256: RUNTIMES.amd64.sha256 });
+  assert.equal(files["runtime/amd64/node.exe"], RUNTIMES.amd64.sha256);
+  assert.ok(files["runtime/LICENSE"]);
   return true;
 }
 function verifyOperatorScope(infrastructure,report) {
@@ -130,7 +152,7 @@ function verifyInstalled(files, installedRoot) {
   assert.ok(stat.isDirectory() && !stat.isSymbolicLink(), "Installed package root must be a real directory");
   assert.deepEqual(inventory(installedRoot), files, "Installed files differ from the verified package");
 }
-function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha }) {
+function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha, windowsRuntimeDir }) {
   assert.match(candidateSha || "", /^[a-f0-9]{40}$/);
   fs.mkdirSync(outputRoot); // Never reuse an artifact from another run.
   const staging = path.join(outputRoot, "build"), artifacts = path.join(outputRoot, "artifacts");
@@ -140,21 +162,26 @@ function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha 
   const selected = [...new Set([...original.qualified, ...capabilities])];
   fs.writeFileSync(input, JSON.stringify({ qualified: selected }));
   run(process.execPath, [path.join(staging, "scripts/build-qualified-capabilities.js")]);
-  run(process.execPath, [path.join(staging, "scripts/pack-release.js"), "--out-dir", artifacts]);
+  const args = [path.join(staging, "scripts/pack-release.js"), "--out-dir", artifacts];
+  if (windowsRuntimeDir) args.push("--windows-runtime-dir", path.resolve(windowsRuntimeDir));
+  run(process.execPath, args);
   const names = fs.readdirSync(artifacts).filter(name => name.endsWith(".tgz"));
-  assert.equal(names.length, 1, "Expected one candidate agent archive");
-  const archive = names[0], sha256 = digest(path.join(artifacts, archive));
+  const version = JSON.parse(fs.readFileSync(path.join(staging, "package.json"), "utf8")).version;
+  const expected = windowsRuntimeDir ? [`tokentimer-agent-${version}.tgz`, `tokentimer-agent-${version}-windows-amd64.tgz`, `tokentimer-agent-${version}-windows-arm64.tgz`] : [`tokentimer-agent-${version}.tgz`];
+  assert.deepEqual(names.sort(), expected.sort(), "Unexpected candidate archive set");
+  const archive = windowsRuntimeDir ? `tokentimer-agent-${version}-windows-amd64.tgz` : expected[0], sha256 = digest(path.join(artifacts, archive));
   assert.equal(fs.readFileSync(path.join(artifacts, archive + ".sha256"), "utf8").trim(), `${sha256}  ${archive}`);
   const receipt = { candidateSha, archive, sha256, sourceKind: process.env.GITHUB_ACTIONS === "true" ? "workflow-checkout" : "local-worktree", buildMode: "qualification-only-not-release", capabilities: selected, packagerSha256: digest(path.join(sourcePackage, "scripts/pack-release.js")) };
+  if (windowsRuntimeDir) Object.assign(receipt, { archiveKind: "windows-bundled-amd64", runtimeNodeSha256: RUNTIMES.amd64.sha256 });
   fs.writeFileSync(path.join(outputRoot, "artifact.json"), JSON.stringify(receipt, null, 2));
   return receipt;
 }
-module.exports = { buildCandidate, extractVerified, verifyInstalled, inventory, digest, verifyAdcsAcceptance, verifyOperatorScope, ADCS_ACCEPTANCE_SCENARIOS };
+module.exports = { buildCandidate, extractVerified, verifyInstalled, verifyBundledArchive, verifyBundledRuntimeEvidence, inventory, digest, verifyAdcsAcceptance, verifyOperatorScope, ADCS_ACCEPTANCE_SCENARIOS };
 if (require.main === module) {
   try {
-    const [sourcePackage, outputRoot, candidateSha, capabilityList] = process.argv.slice(2);
-    if (sourcePackage === "verify-adcs") verifyAdcsAcceptance(JSON.parse(fs.readFileSync(outputRoot, "utf8")), JSON.parse(fs.readFileSync(candidateSha, "utf8")), capabilityList);
+    const [sourcePackage, outputRoot, candidateSha, capabilityList, windowsRuntimeDir] = process.argv.slice(2);
+    if (sourcePackage === "verify-adcs") verifyAdcsAcceptance(JSON.parse(fs.readFileSync(outputRoot, "utf8")), JSON.parse(fs.readFileSync(candidateSha, "utf8")), capabilityList, windowsRuntimeDir === "bundled");
     else if(sourcePackage === "verify-operator-scope")verifyOperatorScope(JSON.parse(fs.readFileSync(outputRoot,"utf8")),JSON.parse(fs.readFileSync(candidateSha,"utf8")));
-    else buildCandidate({ sourcePackage, outputRoot, candidateSha, capabilities: capabilityList.split(",") });
+    else buildCandidate({ sourcePackage, outputRoot, candidateSha, capabilities: capabilityList.split(","), windowsRuntimeDir });
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

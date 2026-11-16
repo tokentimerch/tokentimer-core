@@ -12,6 +12,7 @@
 const crypto = require("node:crypto");
 const client = require("prom-client");
 const { pool } = require("../../db/database");
+const { assertCurrentAgentCredential } = require("./agentCredentialFence");
 const { writeAudit } = require("../audit");
 const { logger } = require("../../utils/logger");
 const {
@@ -627,7 +628,7 @@ async function ingestAgentJobLogs({
       return { httpStatus: 409, body: { error: "Claim is not valid", code: CERTOPS_AGENT_LOG_CLAIM_INVALID } };
     }
     const result = await withTransaction(dbPool, async (client) => {
-      await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
+      await (deps.assertCurrentAgentCredential || assertCurrentAgentCredential)({ client, agent });
       return applyIngest(client, {
         workspaceId: agent.workspaceId,
         agentRowId: agent.id,

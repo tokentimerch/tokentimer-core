@@ -541,6 +541,7 @@ jobs:
               await client.query('CREATE DATABASE distribution_lifecycle_c1_test');
               await client.query('CREATE DATABASE distribution_lifecycle_c2_test');
               await client.query('CREATE DATABASE recovery_preview_c1_test');
+              await client.query('CREATE DATABASE rotation_mcp_preview_c1_test');
             } finally {
               await client.end();
             }
@@ -570,6 +571,18 @@ jobs:
         run: |
           node apps/api/migrations/migrate.js
           node --test --test-force-exit tests/postgres/certops-dispatch-composition.test.cjs
+      - name: Upgrade applied MCP rotation preview and replay
+        env:
+          DB_NAME: rotation_mcp_preview_c1_test
+          CERTOPS_ENABLED: "true"
+        run: node --test --test-force-exit tests/postgres/agent-rotation-mcp-preview-upgrade.test.js
+      - name: Validate OAuth retention migration history
+        env:
+          RV_TEST_DB_HOST: ${{ env.DB_HOST }}
+          RV_TEST_DB_PORT: ${{ env.DB_PORT }}
+          RV_TEST_DB_USER: ${{ env.DB_USER }}
+          RV_TEST_DB_PASSWORD: ${{ env.DB_PASSWORD }}
+        run: node --test --test-force-exit tests/postgres/operator-oauth-retention-history.test.js
       - name: Verify alert date serialization across host timezones
         run: node --test tests/postgres/alert-queue-timezones.test.js
       - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability

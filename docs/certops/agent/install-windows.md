@@ -12,7 +12,7 @@ Enable CertOps and provision the signing and registration encryption keys. In th
 
 ## Install
 
-Download the matching agent release and verify its checksum before running the installer. Recent Windows versions include `tar.exe`; check with `Get-Command tar.exe` and use another trusted extractor if it is missing. Extract the `.tgz` with `tar -xzf <archive>` into a new protected directory, such as one under Program Files. Set the owner of the extracted tree to the Administrators group and allow only Administrators and SYSTEM to modify it. Use the protected directory for installation and elevated dry runs. From that directory:
+Download the matching agent release and verify its checksum before running the installer. Recent Windows versions include `tar.exe`; check with `Get-Command tar.exe` and use another trusted extractor if it is missing. Extract the `.tgz` with `tar -xzf <archive>` into a new protected directory, such as one under Program Files. Set the owner of the extracted tree to the Administrators group and allow only Administrators and SYSTEM to modify it. Use the protected directory for installation and elevated dry runs. From that directory: For the generic archive, use a system Node installation protected from unprivileged changes; an unsafe Node path is refused even for `--dry-run`.
 
 ```powershell
 $workspaceId = Read-Host 'Workspace ID'
@@ -36,6 +36,10 @@ Windows state is protected with `icacls` ACLs. Local Administrators can access a
 For a protected config that even an elevated editor cannot change, follow [Windows configuration maintenance](../windows-maintenance.md). Never delete enrolled identity or keys to get past an access error.
 
 For a controlled reinstall of an enrolled agent, use `--prepare-only` from the verified package extracted into a protected directory. This mode requires a verified state restore, matching API URL and workspace, and an empty application and service slot. It preserves the restored state and leaves the new LocalSystem service disabled for inspection. The prepared service uses the verified API origin at startup. After an interruption, preserve the staged files and inspect the disabled registration before recovery. Enable the service only after verifying the installed candidate and its state.
+
+If the verified installer reports `recovery_required` or retained staging, stop retries and contact support. Preserve the staging directories, their `.intent` records and `state\upgrade-recovery.json`: they are needed to assess the operation. A launcher-backed upgrade retains its backup and journal even after a successful health check; a failed check requires review rather than automatic rollback. Do not manually remove or move these files to resume installation. Process checks alone cannot establish that services or other persistent Windows components will not act later. An administrator can run the authenticated launcher with `--inspect-upgrade-recovery` to collect a read-only local report for support; the report does not authorize recovery. If a different account installed the agent and its access is still present, inspection may refuse; contact support.
+
+The authenticated launcher can inspect retained staging using `--inspect-quarantine`. Use `--inspect-scm-recovery` to show the service's current failure actions without exposing their command. Keep the staging directories, intent records and any upgrade recovery journal, and contact support before retrying. Releasing quarantine is currently unavailable: Windows may execute a previously queued service recovery command even after the service is disabled or its configuration changes, and an operator acknowledgement cannot establish that no action remains queued.
 
 ## Verify
 
