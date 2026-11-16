@@ -11,11 +11,18 @@ const { spawnSync } = require("node:child_process");
 const { verify } = require("./certops-stack-report");
 const required = require("../tests/e2e/agent-protocol-required-tests.json").requiredTests;
 const journey = "real Linux systemd: installer registers non-root agent protects credentials recovers and retires without restart";
+function assertOwnedDatabaseTarget(env) {
+  for (const [key, expected] of Object.entries({ DB_HOST: "127.0.0.1", DB_PORT: "5432", DB_NAME: "tokentimer", DB_USER: "tokentimer" })) {
+    assert.equal(env[key], expected, "Installed qualification requires the owned loopback Compose database");
+  }
+}
 async function main() {
   assert.equal(process.platform, "linux");
   assert.equal(process.getuid(), 0);
   require("./certops-linux-systemd-ownership").validateHostedEnvironment(process.env);
   assert.equal(process.env.CERTOPS_PROTOCOL_DISPOSABLE_STACK, "1");
+  assert.equal(process.env.CERTOPS_CSR_DISPOSABLE_STACK, "1", "Installed discovery requires disposable API fixture authorization before host mutation");
+  assertOwnedDatabaseTarget(process.env);
   assert.equal(process.env.CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST, "1");
   const ownershipChecks = spawnSync(process.execPath, ["--test", "scripts/certops-linux-pre-discovery.test.js", "scripts/certops-linux-ownership-receipt.test.js"], { stdio: "inherit", timeout: 60000 });
   assert.equal(ownershipChecks.status, 0, "Linux ownership checks failed");
@@ -38,5 +45,5 @@ async function main() {
   }
   console.log(JSON.stringify(verify(fs.readFileSync(report, "utf8"), [...required, journey], "certops-agent-e2e.test.js", scope)));
 }
-module.exports = { main, journey };
+module.exports = { main, journey, assertOwnedDatabaseTarget };
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });

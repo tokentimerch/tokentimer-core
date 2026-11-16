@@ -95,6 +95,17 @@ test("both installed workflows always attempt cleanup and require successful hos
         );
       if (!database) continue;
       checked++;
+      assert.equal(job.env.CERTOPS_CSR_DISPOSABLE_STACK, "1");
+      assert.equal(job.env.DB_HOST, "127.0.0.1");
+      assert.equal(job.env.DB_PORT, "5432");
+      assert.equal(job.env.TT_TEST_DB_PORT, "5432");
+      const qualification = job.steps.find((step) => step.run?.includes('"$candidate_node" scripts/certops-linux-systemd.js'));
+      assert.ok(qualification);
+      assert.match(qualification.run, /CERTOPS_CSR_DISPOSABLE_STACK=1/);
+      assert.match(qualification.run, /DB_HOST=127\.0\.0\.1 DB_PORT=5432 DB_NAME=tokentimer DB_USER=tokentimer DB_PASSWORD=password/);
+      const provision = job.steps.find((step) => step.name === "Provision disposable migrated API database");
+      assert.equal(provision.run, "docker compose -f deploy/compose/docker-compose.test.yml up -d --build");
+      assert.ok(job.steps.indexOf(provision) < job.steps.indexOf(qualification));
       assert.equal(host.if, "always()");
       assert.equal(database.if, "always()");
       assert.ok(job.steps.indexOf(host) < job.steps.indexOf(database));
@@ -114,6 +125,32 @@ test("both installed workflows always attempt cleanup and require successful hos
       1,
       "Exactly one installed-host database cleanup must be checked",
     );
+  }
+});
+
+test("installed discovery API fixture still refuses absent disposable authorization", async () => {
+  const previous = process.env.CERTOPS_CSR_DISPOSABLE_STACK;
+  delete process.env.CERTOPS_CSR_DISPOSABLE_STACK;
+  try {
+    await assert.rejects(
+      require("../tests/e2e/helpers/certops-api-fixture").createApiFixture("http://127.0.0.1:1"),
+      /Disposable API stack authorization required/,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.CERTOPS_CSR_DISPOSABLE_STACK;
+    else process.env.CERTOPS_CSR_DISPOSABLE_STACK = previous;
+  }
+});
+
+test("installed qualification refuses external or foreign database targets before host mutation", () => {
+  const { assertOwnedDatabaseTarget } = require("./certops-linux-systemd");
+  const owned = { DB_HOST: "127.0.0.1", DB_PORT: "5432", DB_NAME: "tokentimer", DB_USER: "tokentimer" };
+  assert.doesNotThrow(() => assertOwnedDatabaseTarget(owned));
+  for (const key of Object.keys(owned)) {
+    assert.throws(() => assertOwnedDatabaseTarget({ ...owned, [key]: "foreign" }), /owned loopback Compose database/);
+    const missing = { ...owned };
+    delete missing[key];
+    assert.throws(() => assertOwnedDatabaseTarget(missing), /owned loopback Compose database/);
   }
 });
 
