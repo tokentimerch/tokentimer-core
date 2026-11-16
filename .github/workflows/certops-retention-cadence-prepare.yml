@@ -43,7 +43,7 @@ jobs:
         run: node scripts/certops-retention-cadence-azure.js seal
       - name: Upload immutable original receipt before any extension
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: retention-cadence-original-${{ github.run_attempt }}-${{ env.CERTOPS_RETENTION_CADENCE_NONCE }}
           path: qualification-results/retention-cadence-original.json
@@ -53,7 +53,7 @@ jobs:
         run: node scripts/certops-retention-cadence-azure.js handoff
       - name: Seal immutable controller ownership receipt
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: retention-cadence-ownership-${{ github.run_attempt }}-${{ env.CERTOPS_RETENTION_CADENCE_NONCE }}
           path: qualification-results/retention-cadence-ownership.json
@@ -61,7 +61,7 @@ jobs:
           retention-days: 7
       - name: Preserve bounded controller and cost diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: retention-cadence-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

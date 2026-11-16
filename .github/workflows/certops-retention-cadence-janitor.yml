@@ -36,7 +36,7 @@ jobs:
         run: node scripts/certops-retention-cadence-azure.js janitor
       - name: Preserve bounded cleanup failure receipts
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: retention-cadence-janitor-${{ github.run_id }}-${{ github.run_attempt }}
           path: qualification-results/retention-cadence-controller-failure-janitor-*.json

@@ -99,6 +99,91 @@ function assertReceiptPlan(receipt, runnerTemp) {
     completionPath(runnerTemp),
   );
 }
+// Root-owned inode-bound proof that discovery has not yet started.
+function prePath(runnerTemp) { return path.join(runnerTemp, "certops-linux-systemd-discovery-pre.json"); }
+function syncDirectory(dir) {
+  const fd = fs.openSync(dir, fs.constants.O_RDONLY);
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+function preparePreDiscovery(receipt, runnerTemp) {
+  assertReceiptPlan(receipt, runnerTemp);
+  for (const file of [prePath(runnerTemp), guardPath(runnerTemp), completionPath(runnerTemp)])
+    assert.equal(fs.lstatSync(file, { throwIfNoEntry: false }), undefined);
+  const bytes = Buffer.from(JSON.stringify({schemaVersion: 1, nonce: receipt.installedDiscoveryNonce, ownerPid: process.pid}));
+  const fd = fs.openSync(prePath(runnerTemp), "wx", 0o600);
+  try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  syncDirectory(runnerTemp);
+  const stat = fs.lstatSync(prePath(runnerTemp), { bigint: true });
+  assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.uid === 0n && (stat.mode & 0o777n) === 0o600n && stat.nlink === 1n);
+  receipt.installedDiscoveryPreDev = stat.dev.toString();
+  receipt.installedDiscoveryPreIno = stat.ino.toString();
+  receipt.installedDiscoveryPreHash = hash(bytes);
+}
+function assertPreDiscovery(receipt, runnerTemp) {
+  assertReceiptPlan(receipt, runnerTemp);
+  for (const file of [guardPath(runnerTemp), completionPath(runnerTemp)])
+    assert.equal(fs.lstatSync(file, { throwIfNoEntry: false }), undefined, "Ambiguous discovery state");
+  assert.match(receipt.installedDiscoveryPreDev, /^\d+$/);
+  assert.match(receipt.installedDiscoveryPreIno, /^\d+$/);
+  assert.match(receipt.installedDiscoveryPreHash, /^[a-f0-9]{64}$/);
+  const file = prePath(runnerTemp), stat = fs.lstatSync(file, { bigint: true });
+  assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.uid === 0n && (stat.mode & 0o777n) === 0o600n && stat.nlink === 1n && stat.size > 0n && stat.size <= 4096n);
+  assert.equal(stat.dev.toString(), receipt.installedDiscoveryPreDev);
+  assert.equal(stat.ino.toString(), receipt.installedDiscoveryPreIno);
+  const held = retainOwnedFile(file, {uid: 0, gid: Number(stat.gid), mode: 0o600, expectedDev: receipt.installedDiscoveryPreDev, expectedIno: receipt.installedDiscoveryPreIno});
+  let bytes;
+  try { bytes = held.original; held.close(); } catch (error) { held.disposeHandle(); throw error; }
+  assert.equal(hash(bytes), receipt.installedDiscoveryPreHash);
+  const data = JSON.parse(bytes);
+  assert.deepEqual(Object.keys(data).sort(), ["nonce", "ownerPid", "schemaVersion"]);
+  assert.equal(data.schemaVersion, 1);
+  assert.equal(data.nonce, receipt.installedDiscoveryNonce);
+  assert.ok(Number.isSafeInteger(data.ownerPid) && data.ownerPid > 0);
+  return bytes;
+}
+function startPreDiscovery(receipt, runnerTemp) {
+  const bytes = assertPreDiscovery(receipt, runnerTemp);
+  // Exclusive link creates a fail-closed intermediate state on interruption.
+  fs.linkSync(prePath(runnerTemp), guardPath(runnerTemp));
+  syncDirectory(runnerTemp);
+  fs.unlinkSync(prePath(runnerTemp));
+  syncDirectory(runnerTemp);
+  const stat = fs.lstatSync(guardPath(runnerTemp), { bigint: true });
+  assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.uid === 0n && (stat.mode & 0o777n) === 0o600n && stat.nlink === 1n);
+  assert.equal(stat.dev.toString(), receipt.installedDiscoveryPreDev);
+  assert.equal(stat.ino.toString(), receipt.installedDiscoveryPreIno);
+  assert.ok(fs.readFileSync(guardPath(runnerTemp)).equals(bytes));
+  return bytes;
+}
+function assertCleanupSafe(receipt, runnerTemp) {
+  if (fs.lstatSync(prePath(runnerTemp), { throwIfNoEntry: false })) { assertPreDiscovery(receipt, runnerTemp); return { state: "pre" }; }
+  assert.equal(fs.lstatSync(guardPath(runnerTemp), { throwIfNoEntry: false }), undefined, "Active discovery guard preserves installed state");
+  const file = completionPath(runnerTemp), before = fs.lstatSync(file, { bigint: true });
+  const validated = assertCompletion(receipt, runnerTemp);
+  const stat = fs.lstatSync(file, { bigint: true });
+  assert.ok(stat.dev === before.dev && stat.ino === before.ino, "Discovery completion identity changed");
+  const held = retainOwnedFile(file, { uid: 0, gid: Number(stat.gid), mode: 0o600, expectedDev: stat.dev.toString(), expectedIno: stat.ino.toString() });
+  try { assert.deepEqual(JSON.parse(held.original), validated); const snapshot = { state: "completed", dev: stat.dev.toString(), ino: stat.ino.toString(), sha256: hash(held.original) }; held.close(); return snapshot; }
+  catch (error) { held.disposeHandle(); throw error; }
+}
+function removePreDiscovery(receipt, runnerTemp, proof) {
+  assert.ok(proof && ["pre", "completed"].includes(proof.state));
+  if (proof.state === "pre") {
+    assertPreDiscovery(receipt, runnerTemp);
+    const file = prePath(runnerTemp), stat = fs.lstatSync(file, { bigint: true });
+    const held = retainOwnedFile(file, { uid: 0, gid: Number(stat.gid), mode: 0o600, expectedDev: receipt.installedDiscoveryPreDev, expectedIno: receipt.installedDiscoveryPreIno });
+    try { assert.equal(hash(held.assertUnchanged()), receipt.installedDiscoveryPreHash); fs.unlinkSync(file); }
+    finally { held.disposeHandle(); }
+    syncDirectory(runnerTemp);
+  } else {
+    assert.equal(fs.lstatSync(prePath(runnerTemp), { throwIfNoEntry: false }), undefined);
+    assert.equal(fs.lstatSync(guardPath(runnerTemp), { throwIfNoEntry: false }), undefined);
+    const file = completionPath(runnerTemp), stat = fs.lstatSync(file, { bigint: true });
+    const held = retainOwnedFile(file, { uid: 0, gid: Number(stat.gid), mode: 0o600, expectedDev: proof.dev, expectedIno: proof.ino });
+    try { assert.equal(hash(held.original), proof.sha256); held.close(); }
+    catch (error) { held.disposeHandle(); throw error; }
+  }
+}
 function assertCompletion(receipt, runnerTemp) {
   assertReceiptPlan(receipt, runnerTemp);
   assert.equal(
@@ -167,13 +252,15 @@ function assertCompletion(receipt, runnerTemp) {
   return value;
 }
 
-function retainOwnedFile(file, { uid, gid, mode }) {
+function retainOwnedFile(file, { uid, gid, mode, expectedDev, expectedIno }) {
   assert.equal(
     fs.realpathSync.native(file),
     path.resolve(file),
     "Retained file ancestors must not be aliases",
   );
   const before = fs.lstatSync(file, { bigint: true });
+  if (expectedDev !== undefined) assert.equal(before.dev.toString(), expectedDev);
+  if (expectedIno !== undefined) assert.equal(before.ino.toString(), expectedIno);
   assert.ok(
     before.isFile() &&
       !before.isSymbolicLink() &&
@@ -380,7 +467,6 @@ async function qualifyInstalledDiscovery(context) {
       );
     },
   };
-  registerResource(resource);
   assert.equal(process.platform, "linux");
   assert.equal(process.getuid(), 0);
   const runnerTemp = fs.realpathSync.native(process.env.RUNNER_TEMP);
@@ -404,23 +490,8 @@ async function qualifyInstalledDiscovery(context) {
     throw error;
   }
   assertReceiptPlan(receipt, runnerTemp);
-  for (const file of [guardPath(runnerTemp), completionPath(runnerTemp)])
-    assert.equal(
-      fs.lstatSync(file, { throwIfNoEntry: false }),
-      undefined,
-      "Discovery receipt must not be adopted",
-    );
-  const guardBytes = Buffer.from(
-    JSON.stringify({
-      schemaVersion: 1,
-      nonce: receipt.installedDiscoveryNonce,
-      ownerPid: process.pid,
-    }),
-  );
-  fs.writeFileSync(guardPath(runnerTemp), guardBytes, {
-    flag: "wx",
-    mode: 0o600,
-  });
+  const guardBytes = startPreDiscovery(receipt, runnerTemp);
+  registerResource(resource);
   const guardStat = fs.lstatSync(guardPath(runnerTemp), { bigint: true });
   const {
     createHostGate,
@@ -888,6 +959,12 @@ module.exports = {
   retainOwnedConfig,
   retainOwnedFile,
   assertReceiptPlan,
+  preparePreDiscovery,
+  assertPreDiscovery,
+  startPreDiscovery,
+  assertCleanupSafe,
+  removePreDiscovery,
+  prePath,
   assertCompletion,
   completionPath,
   guardPath,
