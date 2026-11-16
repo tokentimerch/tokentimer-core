@@ -47,20 +47,20 @@ function values(version, existing = [], token = "") {
 
 test("Windows service uses supported system CA controls without changing older Node", () => {
   for (const version of ["22.19.0", "24.6.0", "24.22.2"]) assert.ok(values(version).includes("NODE_USE_SYSTEM_CA=1"), version);
-  for (const version of ["22.15.0", "22.18.0", "23.8.0", "24.0.0", "24.5.0"]) assert.ok(values(version).includes("NODE_OPTIONS=--use-system-ca"), version);
+  for (const version of ["22.15.0", "22.18.0", "23.8.0", "24.0.0", "24.5.0"]) assert.ok(!values(version).some((v) => v.startsWith("NODE_OPTIONS=")), version);
   for (const version of ["22.0.0", "22.14.0", "23.7.0"]) assert.ok(!values(version).some((v) => /NODE_(USE_SYSTEM_CA|OPTIONS)=/.test(v)), version);
 });
 
 test("upgrade preserves explicit service settings and replaces managed bootstrap", () => {
   const previous = ["OTHER=value", "NODE_EXTRA_CA_CERTS=C:\\private.pem", "NODE_OPTIONS=--trace-warnings", "TOKENTIMER_AGENT_CONFIG_DIR=old", "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=old"];
   const initial = values("22.18.0", previous, "new-token");
-  assert.ok(initial.includes("NODE_OPTIONS=--trace-warnings --use-system-ca"));
+  assert.ok(initial.includes("NODE_OPTIONS=--trace-warnings"));
   assert.ok(initial.includes("NODE_EXTRA_CA_CERTS=C:\\private.pem"));
   assert.ok(initial.includes("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=new-token"));
   assert.ok(!initial.includes("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=old"));
   const rollback = values("22.18.0", initial);
   assert.ok(!rollback.some((v) => v.startsWith("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=")));
-  assert.equal(rollback.filter((v) => v.includes("--use-system-ca")).length, 1);
+  assert.ok(rollback.includes("NODE_OPTIONS=--trace-warnings"));
   assert.ok(rollback.includes("OTHER=value"));
 });
 

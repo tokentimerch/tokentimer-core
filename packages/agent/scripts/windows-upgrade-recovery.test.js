@@ -48,7 +48,7 @@ $ttTokens=$null
 $ttErrors=$null
 $ttAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PackageDir 'install-agent.ps1'),[ref]$ttTokens,[ref]$ttErrors)
 if ($ttErrors.Count) { throw 'Installer parser errors' }
-foreach ($ttName in @('Get-PackageDirectoryIdentity','Remove-OwnedPackageStaging','Get-UpgradeRecoveryPath','Get-ServiceNodePath','Assert-NoQuarantinedLauncherIntent','Recover-InterruptedUpgrade','Write-UpgradeRecoveryRecord')) {
+foreach ($ttName in @('Get-PackageDirectoryIdentity','Remove-OwnedPackageStaging','Get-UpgradeRecoveryPath','Get-ServiceCommandNodeInfo','Get-ServiceNodePath','Assert-NoQuarantinedLauncherIntent','Recover-InterruptedUpgrade','Write-UpgradeRecoveryRecord')) {
     $ttMatches=@($ttAst.FindAll({ param($ttNode) $ttNode -is [Management.Automation.Language.FunctionDefinitionAst] -and $ttNode.Name -eq $ttName },$true))
     if ($ttMatches.Count -ne 1) { throw "Missing recovery function $ttName" }
     Invoke-Expression $ttMatches[0].Extent.Text

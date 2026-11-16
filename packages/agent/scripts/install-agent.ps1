@@ -316,17 +316,66 @@ function Read-RestoredPreparationConfig {
     return $config
 }
 
+function Test-DirectSystemCa {
+    param([string[]]$Existing, [version]$NodeVersion)
+    $needsDirectFlag = ($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.15.0' -and $NodeVersion -lt [version]'22.19.0') -or
+        ($NodeVersion.Major -eq 23 -and $NodeVersion -ge [version]'23.8.0') -or
+        ($NodeVersion.Major -eq 24 -and $NodeVersion -lt [version]'24.6.0')
+    if (-not $needsDirectFlag) { return $false }
+    if (@($Existing | Where-Object { $_ -match '^(?i:NODE_USE_SYSTEM_CA)=' }).Count -gt 0) { return $false }
+    $options = @($Existing | Where-Object { $_ -match '^(?i:NODE_OPTIONS)=' })
+    if ($options.Count -gt 1) { return $false }
+    if ($options.Count -eq 1 -and $options[0] -match '(?i)--(?:no-)?use-(?:system|bundled|openssl)-ca') {
+        $value = $options[0].Substring($options[0].IndexOf('=') + 1)
+        $tokens = @($value.Split(' ') | Where-Object { $_ -ne '' })
+        if (@($tokens | Where-Object { $_ -cne '--use-system-ca' -and $_ -cne '--trace-warnings' }).Count -gt 0) { return $false }
+        return @($tokens | Where-Object { $_ -ceq '--use-system-ca' }).Count -gt 0
+    }
+    return $true
+}
+
 function Get-WindowsServiceBinPath {
-    param([string]$AppDirectory, [string]$NodeExecutable, [string]$Architecture, [string]$PreparedServerUrl)
+    param([string]$AppDirectory, [string]$NodeExecutable, [string]$Architecture, [string]$PreparedServerUrl, [switch]$DirectSystemCa)
     $hostExe = Join-Path $AppDirectory "bin\tokentimer-agent-host-$($Architecture.ToLowerInvariant()).exe"
     $entry = Join-Path $AppDirectory 'bin\tokentimer-agent.js'
     if ($PreparedServerUrl) {
         if ($PreparedServerUrl -cnotmatch '^https?://[^/?#@"\\\s]+$') {
             throw 'the prepared server URL must be a bare origin'
         }
-        return '"{0}" --prepared-server-url "{1}" "{2}" "{3}"' -f $hostExe, $PreparedServerUrl, $NodeExecutable, $entry
+        $nodeFlag = if ($DirectSystemCa) { ' --use-system-ca' } else { '' }
+        return '"{0}" --prepared-server-url "{1}" "{2}"{3} "{4}"' -f $hostExe, $PreparedServerUrl, $NodeExecutable, $nodeFlag, $entry
     }
-    return '"{0}" "{1}" "{2}"' -f $hostExe, $NodeExecutable, $entry
+    $nodeFlag = if ($DirectSystemCa) { ' --use-system-ca' } else { '' }
+    return '"{0}" "{1}"{2} "{3}"' -f $hostExe, $NodeExecutable, $nodeFlag, $entry
+}
+
+function Get-ServiceCommandNodeInfo {
+    param([Parameter(Mandatory)][string]$ServiceCommand)
+    $parts = [regex]::Matches($ServiceCommand, '"([^"]+)"|([^\s"]+)')
+    $rest = [regex]::Replace($ServiceCommand, '"([^"]+)"|([^\s"]+)', '')
+    if (-not [string]::IsNullOrWhiteSpace($rest)) { throw 'previous service command has unsupported quoting' }
+    if ($ServiceCommand -match '\\"') { throw 'previous service command has unsupported escaping' }
+    for ($i = 1; $i -lt $parts.Count; $i++) {
+        $gapStart = $parts[$i - 1].Index + $parts[$i - 1].Length
+        $gap = $ServiceCommand.Substring($gapStart, $parts[$i].Index - $gapStart)
+        if ($gap -notmatch '^\s+$') { throw 'previous service command has unsupported token boundaries' }
+    }
+    $tokens = @($parts | ForEach-Object { if ($_.Groups[1].Success) { $_.Groups[1].Value } else { $_.Groups[2].Value } })
+    $nodeIndex = 1
+    if ($tokens.Count -gt 1 -and $tokens[1] -ceq '--prepared-server-url') { $nodeIndex = 3 }
+    $expected = $nodeIndex + 2
+    $direct = $tokens.Count -eq $expected + 1 -and $tokens[$nodeIndex + 1] -ceq '--use-system-ca'
+    if ($direct) { $expected++ }
+    if ($tokens.Count -ne $expected) { throw 'previous service command is not a supported host, runtime and entrypoint command' }
+    if ($nodeIndex -eq 3 -and [string]::IsNullOrWhiteSpace($tokens[2])) { throw 'previous service command has no prepared origin' }
+    $node = $tokens[$nodeIndex]
+    if (-not [IO.Path]::IsPathRooted($node) -or [IO.Path]::GetFileName($node) -ine 'node.exe') { throw 'previous service runtime path is invalid' }
+    return [pscustomobject]@{ NodePath = [IO.Path]::GetFullPath($node); DirectSystemCa = $direct }
+}
+
+function Get-ServiceNodePath {
+    param([Parameter(Mandatory)][string]$ServiceCommand)
+    return (Get-ServiceCommandNodeInfo -ServiceCommand $ServiceCommand).NodePath
 }
 
 # Preserve operator-supplied service variables on upgrades and rollback. The
@@ -345,11 +394,6 @@ function Get-WindowsServiceEnvironmentValues {
     if (-not $systemCaOverride -and -not $explicitCaOption) {
         if (($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.19.0') -or $NodeVersion -ge [version]'24.6.0') {
             $values.Add('NODE_USE_SYSTEM_CA=1')
-        } elseif (($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.15.0') -or ($NodeVersion.Major -eq 23 -and $NodeVersion -ge [version]'23.8.0') -or ($NodeVersion.Major -eq 24 -and $NodeVersion -lt [version]'24.6.0')) {
-            if ($nodeOptions.Count -gt 0) {
-                [void]$values.Remove($nodeOptions[0])
-                $values.Add($nodeOptions[0] + ' --use-system-ca')
-            } else { $values.Add('NODE_OPTIONS=--use-system-ca') }
         }
     }
     return $values.ToArray()
@@ -1163,9 +1207,10 @@ function Get-ExistingServiceEnvironment {
 # not replace files or start the service with an older runtime that rejects
 # that option; retain the operator's settings and report the problem instead.
 function Test-UnsupportedSystemCaOption {
-    param([string[]]$Existing, [version]$NodeVersion)
+    param([string[]]$Existing, [version]$NodeVersion, [string]$ServiceCommand)
     $supportsFlag = ($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.15.0') -or ($NodeVersion.Major -eq 23 -and $NodeVersion -ge [version]'23.8.0') -or $NodeVersion.Major -ge 24
     if ($supportsFlag) { return $false }
+    if ($ServiceCommand -and (Get-ServiceCommandNodeInfo -ServiceCommand $ServiceCommand).DirectSystemCa) { return $true }
     return @($Existing | Where-Object { $_ -match '^(?i:NODE_OPTIONS)=' -and $_ -match '(?i)(?:^|[=\s])--use-system-ca(?:\s|$)' }).Count -gt 0
 }
 
@@ -1186,7 +1231,10 @@ $nodeVersionMatch = [regex]::Match($nodeVersionRaw, '^v([0-9]+)\.([0-9]+)\.([0-9
 if (-not $nodeVersionMatch.Success) { Fail "could not parse installed Node version from 'node -v' (got '$nodeVersionRaw')" }
 $script:NodeVersion = [version]("{0}.{1}.{2}" -f $nodeVersionMatch.Groups[1].Value, $nodeVersionMatch.Groups[2].Value, $nodeVersionMatch.Groups[3].Value)
 $serviceEnvironment = @(Get-ExistingServiceEnvironment -ServiceKey "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName")
-if (Test-UnsupportedSystemCaOption -Existing @($serviceEnvironment) -NodeVersion $script:NodeVersion) {
+$script:UseDirectSystemCa = Test-DirectSystemCa -Existing $serviceEnvironment -NodeVersion $script:NodeVersion
+$serviceAtVersionGate = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
+$priorCommandAtVersionGate = if ($serviceAtVersionGate) { [string]$serviceAtVersionGate.PathName } else { '' }
+if (Test-UnsupportedSystemCaOption -Existing @($serviceEnvironment) -NodeVersion $script:NodeVersion -ServiceCommand $priorCommandAtVersionGate) {
     Fail "Node $nodeVersionRaw does not support the existing service option --use-system-ca. Upgrade Node or remove that option and configure --ca-bundle before reinstalling."
 }
 if (($script:NodeVersion.Major -eq 22 -and $script:NodeVersion -lt [version]'22.15.0') -or ($script:NodeVersion.Major -eq 23 -and $script:NodeVersion -lt [version]'23.8.0')) {
@@ -1458,17 +1506,6 @@ function Activate-StagedPackage {
 # filesystem identity as well as their bounded, installer-generated names.
 function Get-UpgradeRecoveryPath {
     return (Join-Path $StateDir "upgrade-recovery.json")
-}
-
-function Get-ServiceNodePath {
-    param([Parameter(Mandatory)][string]$ServiceCommand)
-    $parts = [regex]::Matches($ServiceCommand, '"([^"]+)"|([^\s"]+)')
-    if ($parts.Count -ne 3) { throw 'previous service command is not a supported host, runtime and entrypoint command' }
-    $node = if ($parts[1].Groups[1].Success) { $parts[1].Groups[1].Value } else { $parts[1].Groups[2].Value }
-    if (-not [IO.Path]::IsPathRooted($node) -or [IO.Path]::GetFileName($node) -ine 'node.exe') {
-        throw 'previous service runtime path is invalid'
-    }
-    return [IO.Path]::GetFullPath($node)
 }
 
 function Test-ServiceChildStable {
@@ -1751,7 +1788,7 @@ if ($script:DryRun) {
     if ($script:PrepareOnly) {
         try {
             $binPath = Get-WindowsServiceBinPath -AppDirectory $AppDir -NodeExecutable $script:InstalledNodeExe -Architecture $arch `
-                -PreparedServerUrl $script:ApiUrl
+                -PreparedServerUrl $script:ApiUrl -DirectSystemCa:$script:UseDirectSystemCa
             Complete-PreparedInstall -Stage $script:AppStaging -StagingIdentity $stagingIdentity -BinaryPath $binPath
         } catch { Fail "preparation incomplete; preserve the staged application and state ($($_.Exception.Message))" }
         Write-Log "Prepared the disabled service. Verify the installed candidate before enabling it."
@@ -1931,7 +1968,7 @@ if (-not $script:DryRun -and -not (Test-Path -LiteralPath $serviceHostExe)) {
         "or was not built with 'pnpm run build:windows-service-host' before packaging"
     )
 }
-$binPath = Get-WindowsServiceBinPath -AppDirectory $AppDir -NodeExecutable $script:InstalledNodeExe -Architecture $arch
+$binPath = Get-WindowsServiceBinPath -AppDirectory $AppDir -NodeExecutable $script:InstalledNodeExe -Architecture $arch -DirectSystemCa:$script:UseDirectSystemCa
 
 # sc.exe's binPath= value here is three separately-quoted path segments
 # (host exe, node.exe, entry script). An earlier fix wrapped the whole
