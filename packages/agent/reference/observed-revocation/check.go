@@ -2,6 +2,7 @@ package revocation
 
 import (
 	"context"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/asn1"
@@ -23,6 +24,12 @@ type ChainResult struct {
 // Missing, invalid, unsupported or unauthorized revocation data stays unknown.
 func CheckChain(ctx context.Context, chain []*x509.Certificate, allowedOrigins []string, tlsRoots []*x509.Certificate, now time.Time) ChainResult {
 	return checkChain(ctx, chain, allowedOrigins, tlsRoots, now, FetchPublicStatus)
+}
+
+func CheckChainWithDistrust(ctx context.Context, chain []*x509.Certificate, allowedOrigins []string, tlsRoots []*x509.Certificate, denied map[[sha1.Size]byte]bool, now time.Time) ChainResult {
+	return checkChain(ctx, chain, allowedOrigins, tlsRoots, now, func(ctx context.Context, endpoint string, allowed []string, post []byte, roots []*x509.Certificate) ([]byte, error) {
+		return FetchPublicStatusWithDistrust(ctx, endpoint, allowed, post, roots, denied)
+	})
 }
 
 type statusFetcher func(context.Context, string, []string, []byte, []*x509.Certificate) ([]byte, error)

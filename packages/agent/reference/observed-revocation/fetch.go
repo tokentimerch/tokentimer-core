@@ -3,6 +3,7 @@ package revocation
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -19,6 +20,30 @@ import (
 // once, checked, and the connection is pinned to that result. Redirects and
 // environment proxies are disabled. Signatures must be verified separately.
 func FetchPublicStatus(ctx context.Context, raw string, allowedOrigins []string, post []byte, tlsRoots []*x509.Certificate) ([]byte, error) {
+	return FetchPublicStatusWithDistrust(ctx, raw, allowedOrigins, post, tlsRoots, nil)
+}
+
+func statusTLSConfig(pool *x509.CertPool, denied map[[sha1.Size]byte]bool) *tls.Config {
+	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, VerifyConnection: func(state tls.ConnectionState) error {
+		for _, chain := range state.VerifiedChains {
+			allowed := len(chain) > 0
+			for _, cert := range chain {
+				if cert == nil || denied[sha1.Sum(cert.Raw)] {
+					allowed = false
+					break
+				}
+			}
+			if allowed {
+				return nil
+			}
+		}
+		return fmt.Errorf("HTTPS responder certificate chain explicitly distrusted")
+	}}
+}
+
+// FetchPublicStatusWithDistrust preserves normal TLS verification and refuses
+// explicitly distrusted certificates in every eligible responder chain.
+func FetchPublicStatusWithDistrust(ctx context.Context, raw string, allowedOrigins []string, post []byte, tlsRoots []*x509.Certificate, denied map[[sha1.Size]byte]bool) ([]byte, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.User != nil || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
 		return nil, fmt.Errorf("invalid responder URL")
@@ -80,7 +105,7 @@ func FetchPublicStatus(ctx context.Context, raw string, allowedOrigins []string,
 			return nil, fmt.Errorf("responder resolves to denied address")
 		}
 	}
-	transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+	transport := &http.Transport{Proxy: nil, TLSClientConfig: statusTLSConfig(pool, denied), DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 		var last error
 		for _, ip := range ips {
 			var d net.Dialer
