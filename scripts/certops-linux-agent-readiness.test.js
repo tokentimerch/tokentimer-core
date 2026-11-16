@@ -29,6 +29,11 @@ test("exact executable and script identify the agent without returning argv",()=
   assert.throws(()=>identifyAgentProcess({...input,exe:"/unexpected"}),/unexpected executable/);
   assert.throws(()=>identifyAgentProcess({...input,args:Buffer.from("/node\0/agent.js")}),/truncated/);
 });
+test("an observed agent script with unexpected leading arguments fails closed",()=>{
+  const input={pid:42,birth:"100",exe:"/node",args:Buffer.from("/node\0--inspect\0/agent.js\0"),nodeBinary:"/node",agentScript:"/agent.js"};
+  assert.throws(()=>identifyAgentProcess(input),/unexpected arguments/);
+  assert.throws(()=>identifyAgentProcess({...input,args:Buffer.from("/agent.js\0")}),/unexpected command/);
+});
 test("a changed process before agent identification fails instead of retrying",async()=>{
   const samples=[{pid:42,birth:"100",identified:false},{pid:43,birth:"101",identified:true}];let verified=0;
   await assert.rejects(waitForAgentIdentity({observe:()=>samples.shift(),verify:()=>{verified++;},timeoutMs:1000,sleep:async()=>{}}),/changed before identification/);

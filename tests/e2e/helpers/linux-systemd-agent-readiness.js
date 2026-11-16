@@ -12,10 +12,10 @@ function identifyAgentProcess({pid,birth,exe,args,nodeBinary,agentScript}){
   assert.equal(args[args.length-1],0,"Agent command observation truncated");
   const parts=args.toString("utf8").split("\0");
   if(parts.at(-1)==="")parts.pop();
-  if(parts[1]!==agentScript)return {pid,birth,identified:false};
+  if(!parts.includes(agentScript))return {pid,birth,identified:false};
   assert.equal(exe,nodeBinary,"Confirmed agent has unexpected executable");
   assert.equal(parts[0],nodeBinary,"Confirmed agent has unexpected command");
-  assert.equal(parts.length,2,"Confirmed agent has unexpected arguments");
+  assert.ok(parts.length===2&&parts[1]===agentScript,"Confirmed agent has unexpected arguments");
   return {pid,birth,identified:true};
 }
 // An observation is produced only after exe and argv identify the actual agent.
