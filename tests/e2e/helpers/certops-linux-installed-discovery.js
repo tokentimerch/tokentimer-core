@@ -48,6 +48,7 @@ const REQUIRED_SOURCES = Object.freeze([
     ...discovery.REQUIRED_SOURCES,
     "tests/e2e/helpers/certops-linux-installed-discovery.js",
     "tests/e2e/linux-systemd-real-journey.js",
+    "tests/e2e/helpers/linux-systemd-agent-readiness.js",
     "tests/e2e/helpers/certops-api-fixture.js",
     "scripts/certops-linux-systemd.js",
     "scripts/certops-linux-systemd-cleanup.js",
@@ -450,6 +451,7 @@ async function qualifyInstalledDiscovery(context) {
     gid,
     command,
     waitFor,
+    waitForAgent,
     mainPid,
     identity,
     serviceProperty,
@@ -752,10 +754,7 @@ async function qualifyInstalledDiscovery(context) {
         const cutoff = (await pool.query("SELECT clock_timestamp() AS now"))
           .rows[0].now;
         command("systemctl", ["start", UNIT]);
-        await waitFor(
-          () => mainPid() > 0,
-          "installed discovery service starts",
-        );
+        await waitForAgent(0, true, "discovery-start");
         checkProcess();
         await waitFor(
           async () => {
@@ -847,7 +846,7 @@ async function qualifyInstalledDiscovery(context) {
         ).rows[0];
         assert.ok(before);
         command("systemctl", ["start", UNIT]);
-        await waitFor(() => mainPid() > 0, "restored installed service starts");
+        await waitForAgent(0, true, "discovery-restore");
         const restoredProcess = checkProcess();
         await waitFor(async () => {
           assert.equal(mainPid(), restoredProcess.pid);

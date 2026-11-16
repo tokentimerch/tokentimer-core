@@ -5319,7 +5319,8 @@
     ],
     "linux-systemd-reapply": [
       "packages/agent/scripts/install-agent.sh",
-      "tests/e2e/linux-systemd-real-journey.js"
+      "tests/e2e/linux-systemd-real-journey.js",
+      "tests/e2e/helpers/linux-systemd-agent-readiness.js"
     ],
     "windows-historical-source-upgrade": [
       "tests/e2e/windows-real-journey.js",
@@ -5328,6 +5329,7 @@
     "linux-systemd-published-upgrade": [
       "scripts/certops-linux-published-package.js",
       "tests/e2e/linux-systemd-real-journey.js",
+      "tests/e2e/helpers/linux-systemd-agent-readiness.js",
       "packages/agent/scripts/install-agent.sh",
       "packages/agent/scripts/pack-release.js"
     ],
@@ -5470,6 +5472,7 @@
       "apps/api/routes/certops.js",
       "tests/e2e/helpers/certops-linux-installed-discovery.js",
       "tests/e2e/linux-systemd-real-journey.js",
+      "tests/e2e/helpers/linux-systemd-agent-readiness.js",
       "tests/e2e/helpers/certops-api-fixture.js",
       "scripts/certops-linux-systemd.js",
       "scripts/certops-linux-systemd-cleanup.js",

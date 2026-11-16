@@ -32,6 +32,7 @@ test("UID diagnostics retain comparisons and PID stability without exposing proc
   assert.equal(root.executableMatches, false);
   assert.equal(root.birthUnchanged, true);
   assert.equal(root.serviceState, "activating");
+  for (const phase of ["reapply", "reapply-restart", "reapply-restore", "published-start", "published-upgrade", "published-restart", "published-restore", "discovery-start", "discovery-restore"]) assert.equal(uidDiagnostic(`Uid:\t${uid}\t${uid}\t${uid}\t${uid}`,uid,true,{phase}).phase,phase);
   const untrusted = uidDiagnostic("Uid: private-sentinel", uid, null, {phase:"private-sentinel", executableMatches:"private-sentinel", birthUnchanged:"private-sentinel", serviceState:"private-sentinel"});
   assert.equal(untrusted.phase, null);
   assert.equal(untrusted.executableMatches, null);

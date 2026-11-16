@@ -76,7 +76,7 @@ function uidDiagnostic(status, expectedUid, mainPidUnchanged, options = {}) {
   const expected = String(expectedUid);
   const booleanOrNull = (value) => typeof value === "boolean" ? value : null;
   return {
-    phase: ["initial", "restart", "crash-recovery"].includes(options.phase) ? options.phase : null,
+    phase: ["initial", "restart", "crash-recovery", "reapply", "reapply-restart", "reapply-restore", "published-start", "published-upgrade", "published-restart", "published-restore", "discovery-start", "discovery-restore"].includes(options.phase) ? options.phase : null,
     uidRowParsed: parsed,
     realMatches: parsed ? match[1] === expected : null,
     effectiveMatches: parsed ? match[2] === expected : null,
@@ -118,6 +118,20 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
   const firstInstaller = published ? path.join(published.baseline.directory,"scripts/install-agent.sh") : installer;
   const nodeBinary = fs.realpathSync(process.execPath);
   assert.equal(nodeBinary.includes("\n") || nodeBinary.includes('"'), false);
+  const readiness=require("./helpers/linux-systemd-agent-readiness");
+  const observeAgent=()=>{
+    const pid=mainPid();if(!Number.isSafeInteger(pid)||pid<=1)return null;
+    const birth=processBirth(pid);assert.ok(birth,"Agent process birth unavailable");
+    let exe,args;
+    try{exe=fs.realpathSync(`/proc/${pid}/exe`);args=fs.readFileSync(`/proc/${pid}/cmdline`);}
+    catch(error){if(["ENOENT","ESRCH"].includes(error.code)){assert.equal(mainPid(),pid,"Agent MainPID changed during observation");assert.equal(processBirth(pid),birth,"Agent process changed during observation");return {pid,birth,identified:false};}throw error;}
+    let observation;
+    try{observation=readiness.identifyAgentProcess({pid,birth,exe,args,nodeBinary,agentScript:`${ROOT}/app/bin/tokentimer-agent.js`});}
+    finally{args.fill(0);}
+    assert.equal(mainPid(),pid,"Agent MainPID changed during observation");
+    assert.equal(processBirth(pid),birth,"Agent process changed during observation");
+    return observation;
+  };
   const stateDir = `${ROOT}/state`;
   const credential = `${stateDir}/credential`;
   const ownershipReceipt = path.join(process.env.RUNNER_TEMP, "certops-linux-systemd-owned.json");
@@ -175,13 +189,14 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     checkPermissions(credential, 0o600);
     assert.equal(config.serverUrl, baseUrl);
     assert.equal(config.workspaceId, workspaceId);
-    const identity = (afterBootstrapRestart = true, phase = null) => {
+    const identity = (afterBootstrapRestart = true, phase = null, observed = null) => {
       const pid = mainPid();
       assert.ok(pid > 0);
       const birth = processBirth(pid);
+      if(observed){assert.equal(pid,observed.pid,"Agent PID changed before identity verification");assert.equal(birth,observed.birth,"Agent process changed before identity verification");}
       const status = fs.readFileSync(`/proc/${pid}/status`, "utf8");
       try {
-        assert.match(status, new RegExp(`^Uid:\\s+${uid}\\s+${uid}\\s+${uid}\\s+${uid}$`, "m"));
+        readiness.assertExpectedAgentUid(status,uid);
       } catch (error) {
         let stable = null, executableMatches = null, serviceState = null;
         try { stable = mainPid() === pid; } catch {}
@@ -194,8 +209,11 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
       assertCoreDumpLimits(fs.readFileSync(`/proc/${pid}/limits`, "utf8"));
       assert.equal(fs.realpathSync(`/proc/${pid}/exe`), nodeBinary);
       if (afterBootstrapRestart) assert.equal(fs.readFileSync(`/proc/${pid}/environ`).includes(Buffer.from("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=")), false);
+      if(observed){assert.equal(mainPid(),pid,"Agent PID changed during identity verification");assert.equal(processBirth(pid),birth,"Agent process changed during identity verification");}
       return pid;
     };
+    const waitForAgent=async(previousPid=0,afterBootstrapRestart=true,phase=null)=>readiness.waitForAgentIdentity({observe:observeAgent,previousPid,verify:observed=>identity(afterBootstrapRestart,phase,observed)});
+    const revalidateAgent=observed=>{const current=observeAgent();assert.ok(current&&current.identified&&current.pid===observed.pid&&current.birth===observed.birth,"Agent changed before heartbeat verification");identity(true,null,observed);const last=observeAgent();assert.ok(last&&last.identified&&last.pid===observed.pid&&last.birth===observed.birth,"Agent changed after heartbeat verification");};
     const firstPid = identity(false, "initial");
     const originalCredential = digest(credential);
     const lastSeen = async () => (await pool.query(
@@ -209,8 +227,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     // left by initial installation before the independent host DAC proof.
     fs.unlinkSync(writeFixture.allowed+"/result.json");
     command("systemctl", ["restart", UNIT]);
-    await waitFor(() => mainPid() > 0 && mainPid() !== firstPid, "service restart creates a fresh process");
-    identity(true, "restart");
+    const restartedAgent=await waitForAgent(firstPid,true,"restart");
     await writeGate.scenario("linux-systemd-native-writepath-allowed-peer-erofs",async()=>{
       assert.equal(serviceProperty("ProtectSystem"),"strict");const writable=serviceProperty("ReadWritePaths");assert.ok(writable.split(/\s+/).includes(writeFixture.allowed));assert.equal(writable.split(/\s+/).includes(writeFixture.denied),false);
       assert.equal(fs.statSync(writeFixture.allowed).mode&0o777,0o777);assert.equal(fs.statSync(writeFixture.denied).mode&0o777,0o777);
@@ -221,17 +238,18 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
       writeGate.report.nativeWritePath={service:UNIT,installerWritePath:true,mainExecutableCandidate:true,probe:"bounded ExecStartPre Node fixture",probeSha256:writeFixture.probeSha256,samePeerDacMode:"0777",nonRootUid:uid,allowedWrite:true,deniedError:"EROFS",hostDacWriteVerified:true,freshExecStartPreEvidence:true};
     });
     await waitFor(async () => Date.parse(await lastSeen()) > Date.parse(beforeRestart), "fresh authenticated heartbeat after restart");
+    revalidateAgent(restartedAgent);
     assert.equal(digest(credential), originalCredential, "restart must reuse the stored credential");
     const beforeCrash = mainPid();
     const seenBeforeCrash = await lastSeen();
     process.kill(beforeCrash, "SIGKILL");
-    await waitFor(() => mainPid() > 0 && mainPid() !== beforeCrash, "actual systemd crash recovery");
-    identity(true, "crash-recovery");
+    const recoveredAgent=await waitForAgent(beforeCrash,true,"crash-recovery");
     await waitFor(async () => Date.parse(await lastSeen()) > Date.parse(seenBeforeCrash), "recovered service authenticates again");
+    revalidateAgent(recoveredAgent);
     assert.equal(digest(credential), originalCredential);
-    if(published) await require("./helpers/linux-systemd-published-upgrade").qualifyPublishedUpgrade({published,pool,workspaceId,userId,agentId,baseUrl,repoRoot,nodeBinary,writeFixture,command,waitFor,mainPid,identity,lastSeen,createBootstrap,uid,gid});
-    else await require("./helpers/linux-systemd-reapply").qualifyReapply({pool,workspaceId,agentId,baseUrl,repoRoot,installer,nodeBinary,writeFixture,command,waitFor,mainPid,serviceProperty,identity,lastSeen,createBootstrap,uid,gid});
-    await installedDiscovery.qualifyInstalledDiscovery({pool,workspaceId,agentId,baseUrl,repoRoot,writeFixture,uid,gid,command,waitFor,mainPid,identity,serviceProperty,registerResource:resource=>discoveryResources.push(resource)});
+    if(published) await require("./helpers/linux-systemd-published-upgrade").qualifyPublishedUpgrade({published,pool,workspaceId,userId,agentId,baseUrl,repoRoot,nodeBinary,writeFixture,command,waitFor,waitForAgent,revalidateAgent,mainPid,identity,lastSeen,createBootstrap,uid,gid});
+    else await require("./helpers/linux-systemd-reapply").qualifyReapply({pool,workspaceId,agentId,baseUrl,repoRoot,installer,nodeBinary,writeFixture,command,waitFor,waitForAgent,revalidateAgent,mainPid,serviceProperty,identity,lastSeen,createBootstrap,uid,gid});
+    await installedDiscovery.qualifyInstalledDiscovery({pool,workspaceId,agentId,baseUrl,repoRoot,writeFixture,uid,gid,command,waitFor,waitForAgent,mainPid,identity,serviceProperty,registerResource:resource=>discoveryResources.push(resource)});
     installedDiscovery.assertCompletion(ownershipPlan,process.env.RUNNER_TEMP);
     const { retireAgent } = require("../../apps/api/services/certops/agentRegistry");
     await retireAgent({ client: pool, workspaceId, agentId, retiredBy: userId, reason: "disposable installer qualification" });

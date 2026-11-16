@@ -38,7 +38,7 @@ function verifyProof(value) {
   assert.ok(Number.isInteger(value.nativeUid)&&value.nativeUid>0);return true;
 }
 async function qualifyReapply(context) {
-  const {pool,workspaceId,agentId,baseUrl,repoRoot,installer,nodeBinary,writeFixture,command,waitFor,mainPid,serviceProperty,identity,lastSeen,createBootstrap,uid,gid}=context;
+  const {pool,workspaceId,agentId,baseUrl,repoRoot,installer,nodeBinary,writeFixture,command,waitFor,waitForAgent,revalidateAgent,mainPid,serviceProperty,identity,lastSeen,createBootstrap,uid,gid}=context;
   assert.equal(process.platform,"linux");assert.equal(process.getuid(),0);
   require("../../../scripts/certops-linux-systemd-ownership").validateHostedEnvironment(process.env);
   const state="/opt/tokentimer-agent/state",configFile=path.join(state,"config.json"),credential=path.join(state,"credential"),dropin="/etc/systemd/system/tokentimer-agent.service.d/99-qualification.conf";
@@ -46,7 +46,7 @@ async function qualifyReapply(context) {
   const source="tests/e2e/helpers/linux-systemd-reapply.js";
   const gate=createHostGate({suite:"linux-systemd-reapply",strict:true,evidenceLevel:"real-host",reportPath:path.join(repoRoot,"qualification-results/linux-systemd-reapply.json"),fixtureSource:{file:source,sha256:digest(__filename)},requiredCapabilities:["linux","systemd"],probeCapabilities:()=>({linux:{available:process.platform==="linux"},systemd:{available:mainPid()>0&&serviceProperty("LoadState")==="loaded"}})});
   gate.report.executionScope="Actual same-candidate installer rerun over existing supported operator settings and registration; not a cross-version or released-package upgrade";
-  gate.report.fixtureSources=["packages/agent/scripts/install-agent.sh","tests/e2e/linux-systemd-real-journey.js"].map(file=>({file,sha256:digest(path.join(repoRoot,file))}));
+  gate.report.fixtureSources=["packages/agent/scripts/install-agent.sh","tests/e2e/linux-systemd-real-journey.js","tests/e2e/helpers/linux-systemd-agent-readiness.js"].map(file=>({file,sha256:digest(path.join(repoRoot,file))}));
   assert.equal(fs.existsSync(path.join(state,"bootstrap.env")),false,"Initial registration must have removed bootstrap material");
   const original=fs.readFileSync(configFile),credentialHash=digest(credential),dropinHash=digest(dropin),beforePid=identity();
   const registrations=async()=>(await pool.query("SELECT id,agent_id,credential_prefix,created_at FROM certops_agents WHERE workspace_id=$1 ORDER BY id",[workspaceId])).rows;
@@ -61,8 +61,8 @@ async function qualifyReapply(context) {
       fs.writeFileSync(configFile,JSON.stringify(operator,null,2)+"\n",{mode:0o600});changed=true;operatorConfigHash=digest(configFile);
       spare=await createBootstrap();
       command("sh",[installer,"--api-url",baseUrl,"--workspace-id",workspaceId,"--allow-insecure-local-http","--no-trust-store","--write-path",writeFixture.allowed],{env:{...process.env,PATH:`${path.dirname(nodeBinary)}:/usr/sbin:/usr/bin:/sbin:/bin`,TOKENTIMER_AGENT_BOOTSTRAP_TOKEN:spare.plaintextToken}});
-      await waitFor(()=>mainPid()>0&&mainPid()!==beforePid&&!fs.existsSync(path.join(state,"bootstrap.env")),"same-candidate installer starts a fresh registered process");
-      reappliedPid=identity(false);assert.equal(digest(configFile),operatorConfigHash);assert.equal(digest(credential),credentialHash);assert.equal(digest(dropin),dropinHash);
+      await waitFor(()=>!fs.existsSync(path.join(state,"bootstrap.env")),"same-candidate installer scrubs bootstrap");
+      reappliedPid=(await waitForAgent(beforePid,false,"reapply")).pid;assert.equal(digest(configFile),operatorConfigHash);assert.equal(digest(credential),credentialHash);assert.equal(digest(dropin),dropinHash);
       for(const relative of ["package.json","bin/tokentimer-agent.js","src/index.js","src/config/index.js"])assert.equal(digest(path.join("/opt/tokentimer-agent/app",relative)),digest(path.join(repoRoot,"packages/agent",relative)),"Installed candidate file mismatch");
       for(const [file,mode] of [[state,0o700],[configFile,0o600],[credential,0o600]]){const stat=fs.statSync(file);assert.equal(stat.uid,uid);assert.equal(stat.gid,gid);assert.equal(stat.mode&0o777,mode);}
       const writable=serviceProperty("ReadWritePaths").split(/\s+/);assert.ok(writable.includes(writeFixture.allowed));assert.equal(writable.includes(writeFixture.denied),false);
@@ -70,8 +70,9 @@ async function qualifyReapply(context) {
     });
     await gate.scenario(SCENARIOS[1],async()=>{
       const seen=await lastSeen();command("systemctl",["restart","tokentimer-agent.service"]);
-      await waitFor(()=>mainPid()>0&&mainPid()!==reappliedPid,"restart after spare bootstrap removal");freshRestartPid=identity();
+      const restarted=await waitForAgent(reappliedPid,true,"reapply-restart");freshRestartPid=restarted.pid;
       await waitFor(async()=>Date.parse(await lastSeen())>Date.parse(seen),"same registered identity authenticates after reapplication");
+      revalidateAgent(restarted);
       assert.deepEqual(await registrations(),beforeRows,"Installer rerun must not create or replace a registration");
       const token=(await pool.query("SELECT status,used_at,used_by_agent_id FROM certops_agent_bootstrap_tokens WHERE workspace_id=$1 AND id=$2",[workspaceId,spare.token.id])).rows[0];assert.ok(token);assert.equal(token.status,"active");assert.equal(token.used_at,null);assert.equal(token.used_by_agent_id,null);
       assert.equal(digest(credential),credentialHash);assert.equal(digest(configFile),operatorConfigHash);
@@ -83,7 +84,7 @@ async function qualifyReapply(context) {
       const errors=[];
       if(changed){
         try{command("systemctl",["stop","tokentimer-agent.service"]);assert.equal(mainPid(),0);const bootstrap=path.join(state,"bootstrap.env");if(fs.existsSync(bootstrap)){assert.ok(spare&&fs.readFileSync(bootstrap).equals(Buffer.from(`TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=${spare.plaintextToken}\n`)),"Refuse cleanup of unrecognized bootstrap file");fs.unlinkSync(bootstrap);}fs.writeFileSync(configFile,original,{mode:0o600});assert.deepEqual(fs.readFileSync(configFile),original);}catch(error){errors.push(error);}
-        try{command("systemctl",["start","tokentimer-agent.service"]);await waitFor(()=>mainPid()>0,"restore original owned service configuration");identity();}catch(error){errors.push(error);}
+        try{command("systemctl",["start","tokentimer-agent.service"]);await waitForAgent(0,true,"reapply-restore");}catch(error){errors.push(error);}
       }
       if(spare){try{await pool.query("UPDATE certops_agent_bootstrap_tokens SET status='revoked',revoked_at=NOW() WHERE workspace_id=$1 AND id=$2 AND status='active'",[workspaceId,spare.token.id]);}catch(error){errors.push(error);}}
       if(errors.length)throw new AggregateError(errors,"Same-candidate reapply configuration restoration failed");
