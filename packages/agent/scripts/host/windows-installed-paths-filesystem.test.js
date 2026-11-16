@@ -44,14 +44,14 @@ test("installer isolates Node environment without changing the caller", { skip: 
 $tokens=$null; $errors=$null;
 $ast=[Management.Automation.Language.Parser]::ParseFile('${installer}',[ref]$tokens,[ref]$errors);
 if($errors.Count){throw 'Installer parse failed'};
-$definition=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-InstallerNode'},$true);
+$definition=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-PackagedNode'},$true);
 if(!$definition){throw 'Node adapter absent'};
 . ([scriptblock]::Create($definition.Extent.Text));
 $script:NodeExe='${process.execPath.replace(/'/g, "''")}';
 $env:NODE_OPTIONS='--invalid-regression-option'; $env:NODE_PATH='sentinel';
-$value=Invoke-InstallerNode -NodeArguments @('-p','!process.env.NODE_OPTIONS&&!process.env.NODE_PATH');
+$value=Invoke-PackagedNode -NodeArguments @('-p','!process.env.NODE_OPTIONS&&!process.env.NODE_PATH');
 if($value -ne 'true' -or $env:NODE_OPTIONS -ne '--invalid-regression-option' -or $env:NODE_PATH -ne 'sentinel'){throw 'Node environment was not isolated and restored'};
-Invoke-InstallerNode -NodeArguments @('-e','process.exit(23)');
+Invoke-PackagedNode -NodeArguments @('-e','process.exit(23)');
 if($LASTEXITCODE -ne 23){throw 'Node exit status was not preserved'};`;
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { encoding: "utf8", timeout: 30000 });
   assert.equal(result.status, 0, result.stderr);
@@ -79,12 +79,18 @@ foreach($name in @('Get-UnlinkedInstallItem','Assert-TrustedInstallAccess','Asse
 }
 $sourceGate=@($ast.EndBlock.Statements | Where-Object {$_.Extent.Text -like 'if ($isElevated)*' -and
   $_.Extent.Text.Contains('Get-ProtectedPackageFingerprint -Directory $PackageDir -SourceTree')})
-$sourceExecution=$ast.Find({param($n)$n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Invoke-InstallerNode'},$true)
+$sourceExecution=$ast.Find({param($n)$n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Invoke-PackagedNode'},$true)
 if($sourceGate.Count -ne 1 -or !$sourceExecution -or $sourceGate[0].Extent.StartOffset -ge $sourceExecution.Extent.StartOffset){throw 'Source check must precede package execution'}
+$sourceGateEnd=$sourceGate[0].Extent.EndOffset
 $sourceGate=[scriptblock]::Create($sourceGate[0].Extent.Text)
-$nodeGate=@($ast.EndBlock.Statements | Where-Object {$_.Extent.Text -like 'if ($isElevated)*' -and
-  $_.Extent.Text.Contains('select a Node installation protected')})
-if($nodeGate.Count -ne 1 -or $nodeGate[0].Extent.EndOffset -ge $sourceExecution.Extent.StartOffset){throw 'Elevated dry-run must also check Node before invoking it'}
+$nodeGate=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Assert-ProtectedNodeExecutable' -and $n.Extent.Text -ceq 'Assert-ProtectedNodeExecutable -Path $script:NodeExe'},$true))
+if($nodeGate.Count -ne 1 -or $nodeGate[0].Extent.StartOffset -le $sourceGateEnd -or $nodeGate[0].Extent.EndOffset -ge $sourceExecution.Extent.StartOffset){throw 'Runtime must be checked before invoking Node'}
+$runtimeTry=$nodeGate[0].Parent
+while($runtimeTry -and $runtimeTry -isnot [Management.Automation.Language.TryStatementAst]){
+  if($runtimeTry -is [Management.Automation.Language.IfStatementAst]){throw 'Runtime guard must be unconditional'}
+  $runtimeTry=$runtimeTry.Parent
+}
+if(!$runtimeTry -or $sourceExecution.Extent.EndOffset -gt $runtimeTry.Body.Extent.EndOffset){throw 'Runtime guard and execution must share the validation boundary'}
 $stageGate=$ast.Find({param($n)$n -is [Management.Automation.Language.IfStatementAst] -and
   $n.Extent.Text.StartsWith('if ($fingerprint -cne $sourceFingerprint)')},$true)
 if(!$stageGate){throw 'Mandatory source/stage comparison absent'}
