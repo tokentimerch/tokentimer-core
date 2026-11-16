@@ -1,4 +1,6 @@
 ALTER TABLE certops_adcs_expected_identity_receipts
+  ADD COLUMN IF NOT EXISTS origin_xid BIGINT,
+  ADD COLUMN IF NOT EXISTS committed_seen_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS receipt_claim_expires_at TIMESTAMPTZ;
 
 -- Preserve the identity, but never reconstruct old authority from a newer lease.
