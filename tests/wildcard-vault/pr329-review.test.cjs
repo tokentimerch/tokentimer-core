@@ -480,6 +480,8 @@ test("optional authorization changes concurrent with successful receipts yield a
           client, workspaceId: f.workspaceId, agentId: f.consumer, job: child, receipt, jobStatus: "succeeded",
         });
         assert.equal(accepted.historicalOnly, false);
+        // Production persists the successful job and its receipt in one transaction.
+        await client.query("UPDATE certificate_jobs SET status='succeeded',completed_at=NOW() WHERE id=$1", [child.id]);
         competing = operations.putBinding({ ...f, binding: { ...f.binding, profileRevision: 2 }, actorUserId: f.actor });
       }
       await client.query("COMMIT");
