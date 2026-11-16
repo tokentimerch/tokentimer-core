@@ -4,6 +4,7 @@
 const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto"), net = require("node:net");
 const { spawn, spawnSync } = require("node:child_process");
 const { readProtectedFile, writeProtectedJson } = require("../packages/agent/src/material-store/index");
+const { stopOwnedChildren, waitForStartup } = require("./certops-completion-ui-processes.cjs");
 const root = path.resolve(__dirname, "..");
 const evidence = path.resolve(process.argv[2] || "");
 if (!evidence.startsWith(path.join(root, "qualification-results") + path.sep)) throw new Error("Expected this checkout's acceptance evidence directory");
@@ -42,31 +43,31 @@ async function main() {
   const env = { ...process.env, ...config.env, HOST: "127.0.0.1", PORT: String(apiPort), SESSION_SECRET: crypto.randomBytes(32).toString("hex"),
     APP_URL: dashboardUrl, API_URL: apiUrl, VITE_API_URL: apiUrl };
   const children = [];
-  for (const [label, args, cwd] of [
-    ["api", ["apps/api/index.js"], root],
-    ["dashboard", [path.join(root, "apps/dashboard/node_modules/vite/bin/vite.js"), "--host", "127.0.0.1", "--port", String(dashboardPort)], path.join(root,"apps/dashboard")],
-  ]) {
-    const fd = fs.openSync(path.join(path.dirname(configFile), `${label}.log`), "a");
-    const child = spawn(process.execPath, args, { cwd, env, windowsHide: true, stdio: ["ignore", fd, fd] });
-    fs.closeSync(fd); children.push(child);
-  }
-  const stop = () => { for (const child of children) child.kill(); process.exit(0); };
-  process.on("SIGINT", stop); process.on("SIGTERM", stop);
-  process.stdin.on("data", value => { if (String(value).trim() === "stop") stop(); });
-  const deadline = Date.now() + 60000;
-  while (Date.now() < deadline) {
-    try {
+  const stop = () => { stopOwnedChildren(children); process.exit(0); };
+  const onInput = value => { if (String(value).trim() === "stop") stop(); };
+  try {
+    for (const [label, args, cwd] of [
+      ["api", ["apps/api/index.js"], root],
+      ["dashboard", [path.join(root, "apps/dashboard/node_modules/vite/bin/vite.js"), "--host", "127.0.0.1", "--port", String(dashboardPort)], path.join(root,"apps/dashboard")],
+    ]) {
+      const fd = fs.openSync(path.join(path.dirname(configFile), `${label}.log`), "a");
+      try { children.push(spawn(process.execPath, args, { cwd, env, windowsHide: true, stdio: ["ignore", fd, fd] })); }
+      finally { fs.closeSync(fd); }
+    }
+    process.on("SIGINT", stop); process.on("SIGTERM", stop);
+    process.stdin.on("data", onInput);
+    await waitForStartup(children, async () => {
       const responses = await Promise.all([fetch(apiUrl),fetch(dashboardUrl)]);
-      if (responses.every(response=>response.ok)) {
-        fs.writeFileSync(path.join(evidence,"ui-environment.json"),JSON.stringify({apiUrl,dashboardUrl,workspaceId:proof.workspaceId,groupId:group,
-          scope:"real-api-and-dashboard-on-disposable-fixtures",limitation:"Synthetic publication metadata; cleanup receipt and provider deletion are genuine. This is not fleet or native artifact qualification."},null,2)+"\n");
-        console.log(JSON.stringify({apiUrl,dashboardUrl,workspaceId:proof.workspaceId,groupId:group,privateUi}));
-        return;
-      }
-    } catch { /* startup */ }
-    if (children.some(child=>child.exitCode!==null)) throw new Error("Fixture application exited; inspect protected local startup logs");
-    await new Promise(resolve=>setTimeout(resolve,500));
+      return responses.every(response=>response.ok);
+    });
+    fs.writeFileSync(path.join(evidence,"ui-environment.json"),JSON.stringify({apiUrl,dashboardUrl,workspaceId:proof.workspaceId,groupId:group,
+      scope:"real-api-and-dashboard-on-disposable-fixtures",limitation:"Synthetic publication metadata; cleanup receipt and provider deletion are genuine. This is not fleet or native artifact qualification."},null,2)+"\n");
+    console.log(JSON.stringify({apiUrl,dashboardUrl,workspaceId:proof.workspaceId,groupId:group,privateUi}));
+  } catch (error) {
+    stopOwnedChildren(children);
+    process.off("SIGINT", stop); process.off("SIGTERM", stop);
+    process.stdin.off("data", onInput); process.stdin.pause();
+    throw error;
   }
-  throw new Error("Fixture UI startup timed out; inspect protected local startup logs");
 }
 main().catch(error=>{console.error(error.message);process.exitCode=1;});

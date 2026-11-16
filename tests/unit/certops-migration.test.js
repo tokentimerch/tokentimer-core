@@ -37,7 +37,7 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 74).name, "certops_material_distribution");
     assert.equal(migrations.find((entry) => entry.version === 75).name, "certops_distribution_review");
     assert.equal(migrations.find((entry) => entry.version === 76).name, "certops_distribution_transfer");
-    assert.equal(migrations.at(-1).version, 114);
+    assert.equal(migrations.at(-1).version, 122);
     assert.equal(migrations.find((entry) => entry.version === 82).name, "auto_sync_system_metrics");
     assert.equal(
       migrations.find((entry) => entry.version === 78).name,
@@ -54,6 +54,8 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 109).name, "certops_period_creator_delete");
     assert.equal(migrations.find((entry) => entry.version === 110).name, "recipient_member_verification");
     assert.equal(migrations.find((entry) => entry.version === 111).name, "auto_sync_owner_username");
+    assert.equal(migrations.find(entry => entry.version === 113).name, "certops_material_reconciliation");
+    assert.equal(migrations.find(entry => entry.version === 114).name, "distribution_pagerduty_recovery");
     assert.equal(migrations.at(-1).name, "certops_observed_revocation");
     assert.equal(migrations.find(entry => entry.version === 95).name, "remove_pagerduty_rest_lookup");
     assert.throws(() => validateMigrationHistory([
@@ -64,7 +66,7 @@ describe("operational notifications migration", () => {
     assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 114 }, (_, index) => index + 1),
+      [...Array.from({ length: 114 }, (_, index) => index + 1), 122],
     );
     assert.equal(migrations.find(entry => entry.version === 73).name, "certops_job_alert_context");
     assert.match(migrations.find(entry => entry.version === 72).sql, /ON DELETE SET NULL \(issuer_id\)/);
@@ -441,11 +443,11 @@ describe("CertOps inventory migration", () => {
     const expectedTailVersions = Array.from(
       { length: Math.max(...tailVersions) - 10 },
       (_, index) => 11 + index,
-    ).filter((version) => (notificationCount === 4 || !notificationVersions.includes(version)));
+    ).filter((version) => (notificationCount === 4 || !notificationVersions.includes(version)) && !(version >= 115 && version <= 121));
     assert.deepEqual(
       tailVersions,
       expectedTailVersions,
-      "migration versions from 11 onward may omit only PR #140's reserved 56-59",
+      "migration versions from 11 onward may omit only explicit reserved slots",
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -1901,7 +1903,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     assert.doesNotMatch(migration.sql, /DROP COLUMN/i);
   });
 
-  it("keeps migration versions sequential except PR #140's reserved 56-59", () => {
+  it("keeps migration versions ordered with only explicit reserved gaps", () => {
     const versions = migrations.map((entry) => entry.version);
     const sorted = [...versions].sort((a, b) => a - b);
     assert.deepEqual(versions, sorted, "migrations array must be declared in version order");
@@ -1909,9 +1911,9 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const notificationCount = notificationVersions.filter((version) => sorted.includes(version)).length;
     assert.ok(notificationCount === 0 || notificationCount === 4);
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
-      .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
+      .filter((version) => (notificationCount === 4 || !notificationVersions.includes(version)) && !(version >= 115 && version <= 121));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 114);
+    assert.equal(sorted[sorted.length - 1], 122);
   });
 });
 

@@ -751,7 +751,8 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     waitingDone &&
     (nav.viewing
       ? true
-      : activeHeldId === shownStep.id && !hasOwnContinue(shownStep.id));
+      : activeHeldId === shownStep.id &&
+        !hasOwnContinue(shownStep.id, GUIDED_IMPORT_STEPS));
   const continueFromStep = () => {
     if (!nav.viewing) releaseStep();
     else if (nav.nextId) goToStep(nav.nextId);

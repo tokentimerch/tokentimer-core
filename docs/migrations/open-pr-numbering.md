@@ -38,7 +38,9 @@ are reservations, not no-op migrations. They do not install another feature.
 | 106 | operator_issuance | MCP certificate issuance (#406) |
 | 109 | certops_period_creator_delete | Main; unchanged |
 | 110 | recipient_member_verification | Reuse exact verified workspace-member email proof |
-| 114 | certops_observed_revocation | Observed certificate revocation (#541) |
+| 114 | distribution_pagerduty_recovery | Main; unchanged |
+| 115–121 | Store issuance and IIS schemas | Reserved by independent open PRs; no SQL installed here |
+| 122 | certops_observed_revocation | Observed certificate revocation (#541) |
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.

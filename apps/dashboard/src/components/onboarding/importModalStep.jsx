@@ -38,15 +38,24 @@ export function ImportModalStep({ ctx, stepId, reviewing = false }) {
   const copy = COPY[stepId];
   const [open, setOpen] = useState(!reviewing);
   const [imported, setImported] = useState(0);
+  const [confirmed, setConfirmed] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const target = useRef(0);
+  const queue = useRef(Promise.resolve());
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
 
-  const onImported = useCallback(
-    async rows => {
-      const count = Array.isArray(rows) ? rows.length : 0;
-      if (count === 0) return;
-      setImported(n => n + count);
+  const saveProgress = useCallback(() => {
+    setSaving(true);
+    const next = queue.current.then(async () => {
       try {
+        const summary = await ctxRef.current.refresh();
+        const total = summary?.assets?.total;
+        if (!Number.isInteger(total) || total < 1)
+          throw new Error('missing asset count');
+        const requested = target.current;
+        const count = Math.min(requested, total);
         await ctxRef.current.controller.update(session => ({
           progress: {
             ...session.progress,
@@ -57,29 +66,59 @@ export function ImportModalStep({ ctx, stepId, reviewing = false }) {
               {
                 step: stepId,
                 provider: null,
-                count:
-                  count +
-                  (session.progress?.imported || [])
-                    .filter(i => i.step === stepId)
-                    .reduce((sum, i) => sum + (i.count || 0), 0),
+                count: Math.min(
+                  total,
+                  Math.max(
+                    count,
+                    (session.progress?.imported || [])
+                      .filter(i => i.step === stepId)
+                      .reduce((sum, i) => sum + (i.count || 0), 0)
+                  )
+                ),
                 at: new Date().toISOString(),
               },
             ],
           },
         }));
         await ctxRef.current.refresh();
-      } catch (_) {
-        // The count above still shows; the planner re-checks against the server.
+        if (target.current === requested) {
+          target.current = count;
+          setImported(count);
+        }
+        setConfirmed(count);
+        setSaveError('');
+      } catch {
+        setSaveError(
+          'The import completed, but setup progress could not be confirmed. Retry to continue.'
+        );
       }
+    });
+    queue.current = next;
+    next.finally(() => {
+      if (queue.current === next) setSaving(false);
+    });
+    return next;
+  }, [stepId]);
+
+  const onImported = useCallback(
+    rows => {
+      const count = Array.isArray(rows) ? rows.length : 0;
+      if (!count) return;
+      const saved = (ctxRef.current.session?.progress?.imported || [])
+        .filter(item => item.step === stepId)
+        .reduce((sum, item) => sum + (item.count || 0), 0);
+      target.current = Math.max(target.current, saved) + count;
+      setImported(target.current);
+      return saveProgress();
     },
-    [stepId]
+    [saveProgress, stepId]
   );
 
   const savedCount = (ctx.session?.progress?.imported || [])
     .filter(item => item.step === stepId)
     .reduce((sum, item) => sum + (item.count || 0), 0);
   const importedCount = Math.max(imported, savedCount);
-  const done = importedCount > 0;
+  const done = Math.max(confirmed, savedCount) > 0 && !saveError && !saving;
   // Keep the finished step on screen until the person chooses to continue,
   // so the dialog is never pulled away mid-flow.
   useEffect(() => {
@@ -135,6 +174,14 @@ export function ImportModalStep({ ctx, stepId, reviewing = false }) {
           button below.
         </StatusPanel>
       )}
+      {saveError ? (
+        <StatusPanel status='warning' title='Setup progress not confirmed'>
+          {saveError}{' '}
+          <DashboardActionButton onClick={saveProgress} isLoading={saving}>
+            Retry
+          </DashboardActionButton>
+        </StatusPanel>
+      ) : null}
       <ImportTokensModal
         hideDocs
         embeddedWorkspaceId={ctx.workspaceId}

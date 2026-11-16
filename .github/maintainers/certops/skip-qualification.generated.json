@@ -590,7 +590,7 @@
     {
       "id": "f95b49bb19f40cd2479e",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 482,
+      "line": 498,
       "name": "unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -599,7 +599,7 @@
     {
       "id": "37eb38150afcae9c2681",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 535,
+      "line": 551,
       "name": "reports an http.sys binding with no matching IIS site as http_sys, not iis_binding",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -608,7 +608,7 @@
     {
       "id": "896b620b80b9c787229a",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 623,
+      "line": 639,
       "name": "reports real subjectAltNames end-to-end from the certificate's raw bytes",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -1623,7 +1623,7 @@
     {
       "id": "22201f4e045161486b0e",
       "file": "tests/postgres/material-reconciliation.test.js",
-      "line": 694,
+      "line": 768,
       "name": "real login approval and Linux agent inspect installed legacy evidence through lost-ack recovery",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",

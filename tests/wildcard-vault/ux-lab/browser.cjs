@@ -38,11 +38,11 @@ async function inspect({
         r.status() === 200,
     );
     await certificateRow.getByRole("button", { name: /^Open certificate deployments:/ }).click();
-    await loaded;
+    const response = await loaded;
+    const rows = (await response.json()).consumers;
     const dialog = page.getByRole("dialog");
     const table = dialog.getByRole("table", { name: "Certificate deployment consumers" });
     await table.waitFor();
-    const rows = await matrix();
     for (const b of state.bindings) {
       const actual = rows.find((r) => r.binding_id === b.id);
       assert.ok(actual);

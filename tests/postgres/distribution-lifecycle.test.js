@@ -49,6 +49,25 @@ test("concurrent/restarted publication handling creates exactly one genuine pend
   await approve(f,jobs[0].id);await publish(f,policy.revision);
   assert.equal((await pool.query("SELECT 1 FROM certops_distribution_rollouts WHERE workspace_id=$1",[f.workspaceId])).rowCount,1);
 });
+test("a departed policy configurator cannot create a doomed approval request and a handoff authorizes future publications",async()=>{
+  const f=await fixture(),policy=structuredClone(lifecycle.DEFAULT_POLICY);policy.mode="approval_request";
+  const configured=await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f.approver});
+  await pool.query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",[f.workspaceId,f.approver]);
+  assert.equal((await publish(f,configured.revision)).reason,"authorization_stale");
+  assert.equal((await pool.query("SELECT 1 FROM certificate_jobs WHERE workspace_id=$1 AND payload ? 'distributionRollout'",[f.workspaceId])).rowCount,0);
+  assert.equal((await pool.query("SELECT outcome FROM certops_distribution_automations WHERE workspace_id=$1 AND material_version_id=$2",[f.workspaceId,f.materialVersionId])).rows[0].outcome,"authorization_stale");
+  const other=await fixture();await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'workspace_manager')",[f.workspaceId,other.approver]);
+  const renewed=await lifecycle.putPolicy({...f,policy,expectedRevision:configured.revision,actorUserId:f.actor});
+  const id=require("node:crypto").randomUUID();
+  const issuing=await require("../../apps/api/services/certops/jobs").createCertificateJob({workspaceId:f.workspaceId,operation:"noop",source:"api",subjectType:"managed_certificate",subjectId:f.certificateId});
+  await pool.query("INSERT INTO certops_material_versions(id,workspace_id,group_id,management_period_id,publishing_job_id,profile_revision,state,certificate_identity_id,provider_version,fingerprint_sha256,valid_to,published_at,publishing_claim_id) SELECT $1,workspace_id,group_id,management_period_id,$2,profile_revision,'published',certificate_identity_id,2,fingerprint_sha256,valid_to,clock_timestamp(),$3 FROM certops_material_versions WHERE workspace_id=$4 AND id=$5",[id,issuing.id,require("node:crypto").randomUUID(),f.workspaceId,f.materialVersionId]);
+  await pool.query("UPDATE certops_distribution_groups SET latest_material_version_id=$3 WHERE workspace_id=$1 AND id=$2",[f.workspaceId,f.groupId,id]);
+  assert.equal((await publish({...f,materialVersionId:id},renewed.revision)).reason,"approval_requested");
+  const job=(await pool.query("SELECT * FROM certificate_jobs WHERE workspace_id=$1 AND payload ? 'distributionRollout'",[f.workspaceId])).rows[0];
+  assert.equal(job.status,"pending_approval");assert.equal(job.requested_by_user_id,f.actor);
+  await approveJob({workspaceId:f.workspaceId,jobId:job.id,approverUserId:other.approver});
+  assert.equal((await operations.transaction(client=>operations.processDistributionIntent({client,row:{workspace_id:f.workspaceId,event_type:"distribution_approval_granted"},payload:{jobId:job.id}}))).queued,true);
+});
 test("preauthorized mode needs a real bounded policy review; workspace mandatory approval cannot be bypassed",async()=>{
   for(const requireApproval of [false,true]){
     const f=await fixture({requireApproval}),policy=await configure(f,"preauthorized");
@@ -109,6 +128,21 @@ test("concurrent recurring schedulers create one read-only exact desired-version
     assert.equal(job.status,requireApproval?"pending_approval":"succeeded");
   }
 });
+for(const mode of ["manual","approval_request"]) test(`unchanged ${mode} policy can be reauthorized after its configurator leaves`,async()=>{
+  const f=await fixture();
+  const initial=await operations.requestRollout({...f,actorUserId:f.actor});
+  await pool.query("UPDATE certops_distribution_rollouts SET state='verified' WHERE approval_job_id=$1",[initial.id]);
+  const policy=structuredClone(lifecycle.DEFAULT_POLICY);policy.mode=mode;policy.verification.enabled=true;
+  const configured=await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f.approver});
+  const same=await lifecycle.putPolicy({...f,policy,expectedRevision:configured.revision,actorUserId:f.actor});
+  assert.equal(same.revision,configured.revision);assert.equal(same.configured_by_user_id,f.approver);
+  await pool.query("DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",[f.workspaceId,f.approver]);
+  assert.equal((await operations.transaction(client=>scheduler.scheduleGroup({client,workspaceId:f.workspaceId,groupId:f.groupId}))).reason,"verification_authorization_stale");
+  const renewed=await lifecycle.putPolicy({...f,policy,expectedRevision:configured.revision,actorUserId:f.actor});
+  assert.equal(renewed.revision,configured.revision+1);assert.equal(renewed.configured_by_user_id,f.actor);
+  await pool.query("UPDATE certops_distribution_schedules SET next_run_at=clock_timestamp()-interval '1 second' WHERE workspace_id=$1",[f.workspaceId]);
+  assert.equal((await operations.transaction(client=>scheduler.scheduleGroup({client,workspaceId:f.workspaceId,groupId:f.groupId}))).scheduled,true);
+});
 test("offline recurring verification backs off without creating jobs or stealing live work",async()=>{
   const f=await fixture();const initial=await operations.requestRollout({...f,actorUserId:f.actor});
   await pool.query("UPDATE certops_distribution_rollouts SET state='verified' WHERE approval_job_id=$1",[initial.id]);
@@ -118,6 +152,88 @@ test("offline recurring verification backs off without creating jobs or stealing
   assert.equal((await operations.transaction(client=>scheduler.scheduleGroup({client,workspaceId:f.workspaceId,groupId:f.groupId}))).reason,"required_agent_offline");
   const schedule=(await pool.query("SELECT * FROM certops_distribution_schedules WHERE workspace_id=$1",[f.workspaceId])).rows[0];
   assert.equal(schedule.failures,1);assert.ok(new Date(schedule.next_run_at).getTime()>Date.now()+3600000);
+});
+test("pending verification preserves fresh proof without hiding expired evidence",async()=>{
+  const f=await fixture();await operations.putBinding({...f,binding:{...f.binding,freshnessSeconds:604800},actorUserId:f.actor});
+  await operations.requestRollout({...f,actorUserId:f.actor});await proveConsumer(f);
+  const policy=structuredClone(lifecycle.DEFAULT_POLICY);policy.alerts.enabled=true;
+  await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f.actor});
+  await operations.requestRollout({...f,verificationOnly:true,actorUserId:f.actor});
+  const monitor=()=>operations.transaction(client=>monitoring.monitorGroup({client,workspaceId:f.workspaceId,groupId:f.groupId,now:Date.now()+2*86400000}));
+  await monitor();
+  let incidents=(await pool.query("SELECT code FROM certops_distribution_incidents WHERE workspace_id=$1 AND resolved_at IS NULL",[f.workspaceId])).rows.map(row=>row.code);
+  assert.ok(!incidents.includes('unknown_coverage'));assert.ok(!incidents.includes('renewal_not_converged'));
+  await pool.query("UPDATE certops_consumer_current_state SET observed_at=clock_timestamp()-interval '8 days' WHERE workspace_id=$1 AND binding_id=$2",[f.workspaceId,f.bindingId]);
+  await monitor();
+  incidents=(await pool.query("SELECT code FROM certops_distribution_incidents WHERE workspace_id=$1 AND resolved_at IS NULL",[f.workspaceId])).rows.map(row=>row.code);
+  assert.ok(incidents.includes('renewal_not_converged'));
+});
+test("failed verification does not recover stale proof when the job is retried",async()=>{
+  const f=await fixture();await operations.requestRollout({...f,actorUserId:f.actor});await proveConsumer(f);
+  await pool.query("UPDATE certops_consumer_current_state SET observed_at=clock_timestamp()+interval '20 seconds' WHERE workspace_id=$1 AND binding_id=$2",[f.workspaceId,f.bindingId]);
+  await operations.requestRollout({...f,verificationOnly:true,actorUserId:f.actor});
+  const verification=(await pool.query("SELECT id FROM certops_distribution_rollouts WHERE workspace_id=$1 AND verification_only ORDER BY generation DESC LIMIT 1",[f.workspaceId])).rows[0];
+  await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,verification.id));
+  const job=(await pool.query(`SELECT d.job_id FROM certops_consumer_deployments d JOIN certops_distribution_rollouts r ON r.id=d.rollout_id
+    WHERE d.workspace_id=$1 AND d.binding_id=$2 AND r.verification_only ORDER BY r.generation DESC LIMIT 1`,[f.workspaceId,f.bindingId])).rows[0].job_id;
+  await pool.query(`INSERT INTO certificate_job_log(workspace_id,job_id,event_type,status,message)
+    VALUES($1,$2,'job.failed','failed','material_drift_detected')`,[f.workspaceId,job]);
+  const matrix=await require("../../apps/api/services/certops/materialDistribution").consumerMatrix({client:pool,workspaceId:f.workspaceId,groupId:f.groupId});
+  assert.equal(matrix[0].converged,false);
+});
+
+test("an inconclusive maintenance forecast is unknown, while a missed expiry remains critical",async()=>{
+  const now=Date.now(),day=86400000;
+  for(const validDays of [90,10]){
+  const f=await fixture({validDays});
+  const activation={method:"reload",disruptive:true,requiresApproval:true,timezone:"UTC",
+    windows:[{days:[0,1,2,3,4,5,6],start:"00:00",end:"23:59"}],
+    blackouts:[{start:new Date(now-day).toISOString(),end:new Date(now+40*day).toISOString()}],validUntil:null,emergency:null};
+  await maintenance.putConsumerPolicy({...f,policy:activation,expectedAuthorizationRevision:1,actorUserId:f.actor});
+  await pool.query(`INSERT INTO certops_consumer_current_state(workspace_id,group_id,binding_id,desired_material_version_id,desired_generation)
+    VALUES($1,$2,$3,$4,1)`,[f.workspaceId,f.groupId,f.bindingId,f.materialVersionId]);
+  const policy=structuredClone(lifecycle.DEFAULT_POLICY);policy.alerts.enabled=true;
+  await lifecycle.putPolicy({...f,policy,expectedRevision:0,actorUserId:f.actor});
+  const monitor=()=>operations.transaction(client=>monitoring.monitorGroup({client,workspaceId:f.workspaceId,groupId:f.groupId}));
+  await monitor();
+  const incidents=await pool.query("SELECT 1 FROM certops_distribution_incidents WHERE workspace_id=$1 AND code=$2 AND severity=$3",[f.workspaceId,"maintenance_window_missed","critical"]);
+  assert.equal(incidents.rowCount,validDays===90?0:1);
+  const diagnostics=(await administration.preflight({workspaceId:f.workspaceId,groupId:f.groupId})).consumers[0].diagnostics;
+  const expected=validDays===90?{code:"CERTOPS_ACTIVATION_WINDOW_FORECAST_UNKNOWN",status:"unknown",reason:"maintenance_search_horizon_exceeded"}:
+    {code:"CERTOPS_ACTIVATION_WINDOW_UNAVAILABLE",status:"blocked",reason:"no_window_before_expiry"};
+  assert.deepEqual(diagnostics.find(d=>d.reason===expected.reason),expected);
+  }
+});
+test("distribution PagerDuty recovery uses only the accepted original integration",async()=>{
+  const f=await fixture(),crypto=require("node:crypto");
+  const incident=(await pool.query(`INSERT INTO certops_distribution_incidents(workspace_id,group_id,code,dedupe_key,severity)
+    VALUES($1,$2,'consumer_offline',$3,'critical') RETURNING id`,[f.workspaceId,f.groupId,crypto.randomUUID()])).rows[0];
+  const a={kind:'pagerduty',url:'https://events.pagerduty.com/v2/enqueue',routingKey:'a'.repeat(32)},
+    b={...a,routingKey:'b'.repeat(32)};
+  await pool.query(`INSERT INTO workspace_settings(workspace_id,webhook_urls) VALUES($1,$2::jsonb)
+    ON CONFLICT(workspace_id) DO UPDATE SET webhook_urls=EXCLUDED.webhook_urls`,[f.workspaceId,JSON.stringify([a,b])]);
+  await pool.query("UPDATE workspace_settings SET webhooks_alerts_enabled=true WHERE workspace_id=$1",[f.workspaceId]);
+  const recoveryPolicy=structuredClone(lifecycle.DEFAULT_POLICY);recoveryPolicy.alerts.enabled=true;
+  await lifecycle.putPolicy({...f,policy:recoveryPolicy,expectedRevision:0,actorUserId:f.actor});
+  const service=await import('../../apps/worker/src/shared/distributionPagerDuty.js'),calls=[];
+  const send=async(url,payload)=>{calls.push({url,payload});return {success:true};};
+  const client=await pool.connect();
+  try {
+    await service.deliverDistributionPagerDutyTrigger(client,{alert:{workspace_id:f.workspaceId,distributionContext:{incidentId:incident.id}},webhook:a,
+      payload:{event_action:'trigger',routing_key:a.routingKey,dedup_key:`distribution:${incident.id}`},send});
+    await pool.query("UPDATE certops_distribution_incidents SET resolved_at=clock_timestamp() WHERE id=$1",[incident.id]);
+    await pool.query("UPDATE workspace_settings SET webhook_urls=$2::jsonb WHERE workspace_id=$1",[f.workspaceId,JSON.stringify([b])]);
+    await service.reconcileDistributionPagerDuty(client,{send});
+    assert.equal(calls.length,1);
+    const parked=(await pool.query("SELECT * FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows[0];
+    assert.equal(parked.last_error,'original_destination_unavailable');assert.equal(parked.resolve_attempts,0);
+    await pool.query("UPDATE workspace_settings SET webhook_urls=$2::jsonb WHERE workspace_id=$1",[f.workspaceId,JSON.stringify([a,b])]);
+    await pool.query("UPDATE certops_distribution_pagerduty SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE incident_id=$1",[incident.id]);
+    await service.reconcileDistributionPagerDuty(client,{send});
+    assert.equal(calls.length,2);assert.equal(calls[1].payload.routing_key,a.routingKey);
+    assert.equal(calls[1].payload.event_action,'resolve');assert.equal(calls[1].payload.dedup_key,`distribution:${incident.id}`);
+    assert.ok((await pool.query("SELECT resolved_at FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows[0].resolved_at);
+  } finally { client.release(); }
 });
 test("consumer incidents deduplicate, survive source publication, and resolve only on fresh consumer proof",async()=>{
   const f=await fixture();await operations.requestRollout({...f,actorUserId:f.actor});await proveConsumer(f);
@@ -327,10 +443,13 @@ async function proveVerification(f,{skipBindingIds=[]}={}){
     if(skipBindingIds.includes(child.binding_id))continue;
     if(child.job_status==="pending_approval")await approveJob({workspaceId:f.workspaceId,jobId:child.job_id,approverUserId:f.approver});
     const job=(await pool.query("UPDATE certificate_jobs SET status='claimed',claim_id=$2,claimed_by_agent_id=assigned_agent_id,lease_expires_at=clock_timestamp()+interval '5 minutes',attempt_count=1 WHERE workspace_id=$1 AND id=$3 RETURNING *",[f.workspaceId,crypto.randomUUID(),child.job_id])).rows[0];
+    // Use the database clock so a small host/database skew cannot make fresh
+    // proof appear older than the incident it is meant to resolve.
+    const observedAt=(await pool.query("SELECT clock_timestamp()+interval '5 milliseconds' AS observed_at")).rows[0].observed_at.toISOString();
     const receipt={schemaVersion:1,workspaceId:f.workspaceId,groupId:f.groupId,bindingId:child.binding_id,materialVersionId:version.id,
       generation:Number(rollout.generation),fetched:true,installed:true,bound:child.verification_policy!=="installed",
       servedVerified:child.verification_policy!=="installed",trustValidated:child.verification_policy==="trust",
-      fingerprintSha256:version.fingerprint_sha256,validTo:new Date(version.valid_to).toISOString(),observedAt:new Date().toISOString()};
+      fingerprintSha256:version.fingerprint_sha256,validTo:new Date(version.valid_to).toISOString(),observedAt};
     await operations.transaction(client=>material.acceptDeploymentReceipt({client,workspaceId:f.workspaceId,agentId:child.assigned_agent_id,job,receipt,jobStatus:"succeeded"}));
     await pool.query("UPDATE certificate_jobs SET status='succeeded',completed_at=clock_timestamp() WHERE id=$1",[job.id]);
   }
@@ -559,11 +678,27 @@ test("fresh later proof cannot clear an older job's unresolved operator reconcil
   const f=await prepareVerification();await verificationTick(f);
   const failed=await failVerification(f,{status:"orphaned_unknown_effect",reconciliation:true});
   await operations.setRolloutState({...f,rolloutId:failed.rollout.id,state:"retired",actorUserId:f.actor});
+  // Model a newer rollout accepted before unresolved work was fenced.
+  await pool.query("UPDATE certificate_jobs SET needs_operator_reconciliation=FALSE WHERE id=$1",[failed.child.job_id]);
   await operations.requestRollout({...f,verificationOnly:true,actorUserId:f.actor});await proveVerification(f);
+  await pool.query("UPDATE certificate_jobs SET needs_operator_reconciliation=TRUE WHERE id=$1",[failed.child.job_id]);
   await verificationDue(f);assert.equal((await verificationTick(f)).reason,"unresolved_uncertain_effects");
   const original=(await pool.query("SELECT status,needs_operator_reconciliation FROM certificate_jobs WHERE id=$1",[failed.child.job_id])).rows[0];
   assert.equal(original.status,"orphaned_unknown_effect");assert.equal(original.needs_operator_reconciliation,true);
   assert.equal((await verificationJobs(f)).length,1);
+});
+test("proof of an orphaned inspection allows recurring verification to resume",async()=>{
+  const f=await prepareVerification();await verificationTick(f);
+  const failed=await failVerification(f,{status:"orphaned_unknown_effect",reconciliation:true});
+  const reconciliation=require("../../apps/api/services/certops/materialReconciliation"),crypto=require("node:crypto");
+  const inspection=await reconciliation.requestReconciliation({workspaceId:f.workspaceId,jobId:failed.child.job_id,actorUserId:f.actor});
+  await approveJob({workspaceId:f.workspaceId,jobId:inspection.id,approverUserId:f.approver});
+  const job=(await pool.query("UPDATE certificate_jobs SET status='claimed',claim_id=$2,claimed_by_agent_id=assigned_agent_id,lease_expires_at=clock_timestamp()+interval '5 minutes' WHERE id=$1 RETURNING *",[inspection.id,crypto.randomUUID()])).rows[0];
+  const intent=job.payload.materialReconciliation.intent;
+  await operations.transaction(client=>reconciliation.acceptReceipt({client,workspaceId:f.workspaceId,agentId:f.consumer,job,receipt:{schemaVersion:1,workspaceId:f.workspaceId,originalJobId:failed.child.job_id,groupId:f.groupId,bindingId:f.bindingId,materialVersionId:f.materialVersionId,generation:intent.generation,fingerprintSha256:intent.fingerprintSha256,proofKind:"deployed",observedAt:new Date().toISOString()}}));
+  await pool.query("UPDATE certificate_jobs SET status='succeeded' WHERE id=$1",[inspection.id]);
+  await verificationDue(f);
+  assert.notEqual((await verificationTick(f)).reason,"unresolved_uncertain_effects");
 });
 test("recovery pins the current authorized desired version rather than an unapproved newer publication",async()=>{
   const f=await prepareVerification();await verificationTick(f);await failVerification(f);await verificationDue(f);await verificationTick(f);
@@ -1035,4 +1170,26 @@ for (const kind of ["activation", "staging"]) test(`reassignment refuses a termi
   assert.equal((await pool.query("SELECT assigned_agent_id FROM certops_consumer_bindings WHERE id=$1", [f.bindingId])).rows[0].assigned_agent_id, f.consumer);
   await pool.query("UPDATE certificate_jobs SET needs_operator_reconciliation=false WHERE id=$1", [jobId]);
   assert.equal((await operations.putBinding(replacement)).assigned_agent_id, f.issuer);
+});
+
+test("failed repeat cannot suppress recovery of an accepted distribution incident",async()=>{
+  const f=await fixture(),crypto=require("node:crypto");
+  const incident=(await pool.query(`INSERT INTO certops_distribution_incidents(workspace_id,group_id,code,dedupe_key,severity) VALUES($1,$2,'consumer_offline',$3,'critical') RETURNING id`,[f.workspaceId,f.groupId,crypto.randomUUID()])).rows[0];
+  const hook={kind:'pagerduty',url:'https://events.pagerduty.com/v2/enqueue',routingKey:'a'.repeat(32)};
+  await pool.query(`INSERT INTO workspace_settings(workspace_id,webhook_urls) VALUES($1,$2::jsonb) ON CONFLICT(workspace_id) DO UPDATE SET webhook_urls=EXCLUDED.webhook_urls`,[f.workspaceId,JSON.stringify([hook])]);
+  await pool.query("UPDATE workspace_settings SET webhooks_alerts_enabled=true WHERE workspace_id=$1",[f.workspaceId]);
+  const recoveryPolicy=structuredClone(lifecycle.DEFAULT_POLICY);recoveryPolicy.alerts.enabled=true;
+  await lifecycle.putPolicy({...f,policy:recoveryPolicy,expectedRevision:0,actorUserId:f.actor});
+  const service=await import('../../apps/worker/src/shared/distributionPagerDuty.js'),calls=[];
+  const client=await pool.connect();
+  try {
+    const args={alert:{workspace_id:f.workspaceId,distributionContext:{incidentId:incident.id}},webhook:hook,payload:{event_action:'trigger'},send:async()=>({success:true})};
+    await service.deliverDistributionPagerDutyTrigger(client,args);
+    await service.deliverDistributionPagerDutyTrigger(client,{...args,send:async()=>({success:false,error:'http_429'})});
+    await pool.query("UPDATE certops_distribution_incidents SET resolved_at=clock_timestamp() WHERE id=$1",[incident.id]);
+    await service.reconcileDistributionPagerDuty(client,{send:async(url,payload)=>{calls.push(payload);return {success:true};}});
+    assert.equal(calls.length,1);assert.equal(calls[0].event_action,'resolve');assert.equal(calls[0].routing_key,hook.routingKey);
+    const row=(await pool.query("SELECT trigger_accepted_at,resolved_at FROM certops_distribution_pagerduty WHERE incident_id=$1",[incident.id])).rows[0];
+    assert.ok(row.trigger_accepted_at);assert.ok(row.resolved_at);
+  } finally {client.release();}
 });

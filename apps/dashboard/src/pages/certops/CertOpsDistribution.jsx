@@ -967,8 +967,8 @@ function Management({
   const [preflight, setPreflight] = useState(null),
     [retention, setRetention] = useState(null),
     [confirmation, setConfirmation] = useState(null);
+  const [pendingRollout, setPendingRollout] = useState(null);
   const cancelRef = useRef(null),
-    keys = useRef(new Map()),
     modalReturnFocusRef = useRef(null);
   const { data } = state,
     disabled =
@@ -1079,28 +1079,28 @@ function Management({
                   ? 'Choose an available published version before requesting a rollout.'
                   : 'Publish a certificate before requesting a rollout. You can run a safe preflight now.'
                 : 'Review the exact version and destinations, then request a rollout or verify what is already installed.';
-  const requestRollout = verificationOnly => {
-    const signature = `${groupId}:${selectedVersion}:${verificationOnly}:${data.group.generation}`;
-    if (!keys.current.has(signature))
-      keys.current.set(signature, crypto.randomUUID());
-    const key = keys.current.get(signature);
+  const requestRollout = (verificationOnly, retry = null) => {
+    const request = retry || {
+      key: crypto.randomUUID(),
+      workspaceId,
+      groupId,
+      body: {
+        materialVersionId: selectedVersion,
+        maxParallel: data.policy?.policy.maxParallel || 1,
+        verificationOnly,
+        requiresApproval: !verificationOnly && retained,
+      },
+    };
+    setPendingRollout(request);
     return run(
       async () => {
         const result = await distributionApi.rollout(
-          workspaceId,
-          groupId,
-          {
-            materialVersionId: selectedVersion,
-            maxParallel: data.policy?.policy.maxParallel || 1,
-            verificationOnly,
-            requiresApproval: !verificationOnly && retained,
-          },
-          key
+          request.workspaceId,
+          request.groupId,
+          request.body,
+          request.key
         );
-        // Keep the key after an uncertain failure so the operator can retry
-        // safely. A confirmed response completes this intent; a later request
-        // for the same version must create a fresh job.
-        if (keys.current.get(signature) === key) keys.current.delete(signature);
+        setPendingRollout(null);
         return result;
       },
       result =>
@@ -1162,6 +1162,43 @@ function Management({
         >
           <AlertIcon />
           {error}
+        </Alert>
+      ) : null}
+      {pendingRollout ? (
+        <Alert status='warning' variant='warning' alignItems='flex-start'>
+          <AlertIcon />
+          <Stack spacing={2}>
+            <Text>
+              The previous{' '}
+              {pendingRollout.body.verificationOnly
+                ? 'verification'
+                : 'rollout'}{' '}
+              request for version {pendingRollout.body.materialVersionId} may
+              have succeeded. Retry it with the original settings or inspect
+              Jobs before starting another request.
+            </Text>
+            <HStack>
+              <Button
+                size='sm'
+                isDisabled={disabled}
+                onClick={() =>
+                  requestRollout(
+                    pendingRollout.body.verificationOnly,
+                    pendingRollout
+                  )
+                }
+              >
+                Retry previous request
+              </Button>
+              <Button
+                size='sm'
+                isDisabled={busy}
+                onClick={() => setPendingRollout(null)}
+              >
+                Start a different request
+              </Button>
+            </HStack>
+          </Stack>
         </Alert>
       ) : null}
       {notice ? (
@@ -1326,7 +1363,11 @@ function Management({
                     {canManage ? (
                       <>
                         <DashboardActionButton
-                          isDisabled={disabled || !selectedPublishedVersion}
+                          isDisabled={
+                            disabled ||
+                            Boolean(pendingRollout) ||
+                            !selectedPublishedVersion
+                          }
                           colorScheme='blue'
                           onClick={() =>
                             confirm(
@@ -1344,7 +1385,11 @@ function Management({
                         </DashboardActionButton>
                         <DashboardActionButton
                           variant='outline'
-                          isDisabled={disabled || !selectedPublishedVersion}
+                          isDisabled={
+                            disabled ||
+                            Boolean(pendingRollout) ||
+                            !selectedPublishedVersion
+                          }
                           onClick={() => requestRollout(true)}
                         >
                           Verify only

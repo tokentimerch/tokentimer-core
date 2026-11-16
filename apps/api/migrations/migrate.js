@@ -5005,8 +5005,14 @@ migrations.push({
 
 migrations.push({
   version: 114,
+  name: "distribution_pagerduty_recovery",
+  sql: fs.readFileSync(require("path").join(__dirname, "114-distribution-pagerduty-recovery.sql"), "utf8"),
+});
+
+migrations.push({
+  version: 122,
   name: "certops_observed_revocation",
-  sql: fs.readFileSync(require("path").join(__dirname, "114-certops-observed-revocation.sql"), "utf8"),
+  sql: fs.readFileSync(require("path").join(__dirname, "122-certops-observed-revocation.sql"), "utf8"),
 });
 
 const { composeMigrations } = require("./compose-migrations");

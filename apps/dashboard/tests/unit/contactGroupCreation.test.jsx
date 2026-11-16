@@ -637,6 +637,60 @@ describe('onboarding shared group editor', () => {
 });
 
 describe('webhook creation inside the shared group modal', () => {
+  it('keeps a verified webhook draft open when saving is forbidden and allows retry', async () => {
+    settings.webhook_urls = [
+      {
+        name: 'Original',
+        kind: 'generic',
+        url: 'https://hooks.example.invalid/ops',
+        verified: true,
+        verifiedUrl: 'https://hooks.example.invalid/ops',
+      },
+    ];
+    workspaceAPI.updateAlertSettings.mockRejectedValueOnce({
+      response: { status: 403, data: { error: 'Permission denied' } },
+    });
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <AlertPreferences />
+          </MemoryRouter>
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    await screen.findByText('Original');
+    const edit = within(document.getElementById('webhooks')).getByRole(
+      'button',
+      { name: 'Edit', exact: true }
+    );
+    await waitFor(() => expect(edit).toBeEnabled());
+    fireEvent.click(edit);
+    const dialog = await screen.findByRole('dialog', { name: /^Edit webhook/ });
+    const save = within(dialog).getByRole('button', { name: 'Save webhook' });
+    fireEvent.change(within(dialog).getByPlaceholderText('https://...'), {
+      target: { value: 'https://hooks.example.invalid/updated' },
+    });
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Test', exact: true })
+    );
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    expect(
+      await within(dialog).findByText(
+        /saving was not confirmed.*Permission denied/
+      )
+    ).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('Original')).toBeInTheDocument();
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: /^Edit webhook/ })
+      ).not.toBeInTheDocument()
+    );
+    expect(workspaceAPI.updateAlertSettings).toHaveBeenCalledTimes(2);
+  });
+
   it('renames a verified webhook and its group references without sending another test notification', async () => {
     settings.webhook_urls = [
       {

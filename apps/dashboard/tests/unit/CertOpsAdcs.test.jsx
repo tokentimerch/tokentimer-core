@@ -435,6 +435,21 @@ describe('CertOpsAdcs', () => {
     ).toBeInTheDocument();
   });
 
+  it('stops waiting when a later preflight supersedes the completed check', async () => {
+    canManageMock.mockReturnValue(true);
+    listAgentsMock.mockResolvedValue({items:[{id:'agent-1',name:'member-1'}]});
+    listIssuersMock.mockResolvedValue({items:[issuer({lastPreflightJobId:'job-later'})]});
+    dispatchIssuerPreflightMock.mockResolvedValue({job:{id:'job-older'}});
+    getJobMock.mockResolvedValue({job:{status:'succeeded'}});
+    renderPage();
+    await screen.findByRole('button',{name:/Run check for Issuing CA/});
+    fireEvent.change(screen.getByLabelText('Agent for Issuing CA'),{target:{value:'agent-1'}});
+    fireEvent.submit(screen.getByRole('button',{name:/Run check for Issuing CA/}).closest('form'));
+    expect(await screen.findByText(/verdict is not the current result/,{},{timeout:6000})).toBeInTheDocument();
+    expect(screen.queryByText(/Waiting for Issuing CA to report/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:/Run check for Issuing CA/})).toBeEnabled();
+  },12000);
+
   it('does not offer a new CA or template on a confirmed issuer', async () => {
     canManageMock.mockReturnValue(true);
     listIssuersMock.mockResolvedValue({

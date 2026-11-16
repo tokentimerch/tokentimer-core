@@ -882,7 +882,7 @@ async function scanGitLab({
     if (include.tokens && filters.includePATs) {
       try {
         let patsFound = 0;
-        const isAdmin = currentUser?.is_admin || false;
+        const isAdmin = currentUser?.is_admin === true;
 
         let skippedRevoked = 0; // Declare at function scope for admin scanning
         let skippedExpired = 0; // Track expired tokens that are skipped
@@ -890,6 +890,8 @@ async function scanGitLab({
         let skippedBotUserPATs = 0; // Track bot user PATs that are duplicates of group/project tokens
         let adminScanFailed = false; // Admin PAT pagination raised mid-scan (not just 404/403 at start)
         let patsTruncated = false; // maxItems cap hit before pagination was exhausted
+        let unclassifiedUserPATs = 0; // Unknown owners cannot satisfy the user-exclusion filter.
+        let ownerClassificationIncomplete = false;
         let ownScanError;
 
         // Build a set of bot user IDs from group and project tokens to avoid duplicates
@@ -945,7 +947,7 @@ async function scanGitLab({
             for (const user of users) {
               userCache.set(user.id, {
                 username: user.username,
-                is_admin: user.is_admin || false,
+                is_admin: typeof user.is_admin === "boolean" ? user.is_admin : null,
               });
             }
 
@@ -972,7 +974,7 @@ async function scanGitLab({
                 if (user?.id === userId && typeof user.username === "string") {
                   userCache.set(userId, {
                     username: user.username,
-                    is_admin: user.is_admin === true,
+                    is_admin: typeof user.is_admin === "boolean" ? user.is_admin : null,
                   });
                 }
               } catch (error) {
@@ -1041,16 +1043,24 @@ async function scanGitLab({
 
                 // Lookup user from cache
                 const user = await resolveOwner(pat.user_id);
-                const username = user?.username || null;
-                const isUserAdmin = user?.is_admin || false;
+                const username = typeof user?.username === "string" && user.username.trim()
+                  ? user.username : null;
+                const isUserAdmin = user?.is_admin === true;
+                const isServiceOwner = username && isServiceAccount(username);
 
                 // Skip user PATs if excludeUserPATs filter is enabled
                 // (keep administrator and service-account PATs)
+                if (filters.excludeUserPATs && !isUserAdmin && !isServiceOwner &&
+                    (!username || user?.is_admin !== false)) {
+                  unclassifiedUserPATs++;
+                  ownerClassificationIncomplete = true;
+                  continue;
+                }
                 if (
                   filters.excludeUserPATs &&
                   username &&
                   !isUserAdmin &&
-                  !isServiceAccount(username)
+                  !isServiceOwner
                 ) {
                   skippedUserPATs++;
                   continue;
@@ -1104,7 +1114,11 @@ async function scanGitLab({
         } else {
           // Regular user mode: Only scan own PATs
           // If excludeUserPATs is enabled, check if current user is a service account
-          const currentUsername = currentUser?.username;
+          const currentUsername = typeof currentUser?.username === "string" && currentUser.username.trim()
+            ? currentUser.username : null;
+          if (filters.excludeUserPATs && (!currentUsername ||
+              currentUser?.is_admin !== false && !isServiceAccount(currentUsername)))
+            ownerClassificationIncomplete = true;
           const shouldScanOwnPATs =
             !filters.excludeUserPATs ||
             (currentUsername && isServiceAccount(currentUsername));
@@ -1196,9 +1210,10 @@ async function scanGitLab({
             ? skippedUserPATs
             : undefined,
           skippedBotUserPATs,
+          unclassifiedUserPATs,
           ...(ownScanError ? { error: ownScanError.message, status: ownScanError.status } : {}),
-          truncated: adminScanFailed || patsTruncated || Boolean(ownScanError),
-          complete: !adminScanFailed && !patsTruncated && !ownScanError,
+          truncated: adminScanFailed || patsTruncated || Boolean(ownScanError) || ownerClassificationIncomplete,
+          complete: !adminScanFailed && !patsTruncated && !ownScanError && !ownerClassificationIncomplete,
         });
       } catch (e) {
         // On self-hosted instances with older versions, this endpoint may not exist

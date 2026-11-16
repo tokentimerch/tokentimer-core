@@ -248,9 +248,29 @@ describe('Distribution Management',()=>{
     api.rollout.mockRejectedValueOnce(new Error('network interrupted')).mockResolvedValueOnce({status:'pending'});page();
     fireEvent.click(await screen.findByRole('button',{name:'Verify only'}));
     await screen.findByText(/Operation failed/);
-    fireEvent.click(screen.getByRole('button',{name:'Verify only'}));
+    fireEvent.click(screen.getByRole('button',{name:'Retry previous request'}));
     await waitFor(()=>expect(api.rollout).toHaveBeenCalledTimes(2));
     expect(api.rollout.mock.calls[1][3]).toBe(api.rollout.mock.calls[0][3]);
+  });
+  it('retries the same verification after a refreshed generation and policy',async()=>{
+    const now=vi.spyOn(Date,'now');
+    try {
+      const started=Date.now();
+      api.management.mockImplementation(()=>Promise.resolve(structuredClone(data)));
+      api.rollout.mockRejectedValueOnce(new Error('network interrupted')).mockResolvedValueOnce({status:'pending'});page();
+      fireEvent.click(await screen.findByRole('button',{name:'Verify only'}));
+      await screen.findByText(/Operation failed/);
+      data.group.generation=2;
+      data.policy={policy:{...structuredClone(policy),maxParallel:2}};
+      now.mockReturnValue(started+31_000);
+      document.dispatchEvent(new Event('visibilitychange'));
+      await waitFor(()=>expect(api.management).toHaveBeenCalledTimes(2));
+      await waitFor(()=>expect(screen.getByText(/maximum parallel deployments: 2/)).toBeInTheDocument());
+      fireEvent.click(screen.getByRole('button',{name:'Retry previous request'}));
+      await waitFor(()=>expect(api.rollout).toHaveBeenCalledTimes(2));
+      expect(api.rollout.mock.calls[1][2]).toEqual(api.rollout.mock.calls[0][2]);
+      expect(api.rollout.mock.calls[1][3]).toBe(api.rollout.mock.calls[0][3]);
+    } finally { now.mockRestore(); }
   });
   it('adds a consumer using a registered agent and a customer-local alias',async()=>{
     page();await openView('Destinations');fireEvent.click(await screen.findByRole('button',{name:'Add consumer'}));fireEvent.change(screen.getByLabelText('Registered agent'),{target:{value:'agent'}});
@@ -317,6 +337,11 @@ describe('Distribution Management',()=>{
   it('shows actionable preflight and protected retention reasons without creating a deployment',async()=>{
     page();fireEvent.click(await screen.findByRole('button',{name:'Run safe preflight'}));await screen.findByText(/Bring the registered agent online/);
     await openView('Policy');fireEvent.click(screen.getByRole('button',{name:'Preview retained versions'}));await screen.findByText(/desired consumer version/);expect(api.rollout).not.toHaveBeenCalled();
+  });
+  it('explains when the maintenance forecast is inconclusive',async()=>{
+    api.preflight.mockResolvedValue({consumers:[{bindingId:'binding',diagnostics:[{code:'CERTOPS_ACTIVATION_WINDOW_FORECAST_UNKNOWN',status:'unknown'}]}]});
+    page();fireEvent.click(await screen.findByRole('button',{name:'Run safe preflight'}));
+    expect(await screen.findByText(/beyond the forecast horizon/)).toBeInTheDocument();
   });
   it('disables mutations when workspace operations are paused',async()=>{
     page({paused:true});expect(await screen.findByRole('button',{name:'Request rollout'})).toBeDisabled();await openView('Policy');fireEvent.click(screen.getByRole('button',{name:'Edit policy settings'}));expect(screen.getByRole('button',{name:'Save distribution policy'})).toBeDisabled();

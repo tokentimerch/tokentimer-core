@@ -11,6 +11,8 @@ export const distributionDiagnostics = {
     'Inspect and reconcile the customer-local deployment journal. Preserve live locks and retry the original signed job.',
   CERTOPS_ACTIVATION_WINDOW_UNAVAILABLE:
     'Review allowed windows, blackouts and authorization expiry before the deployed certificate expires.',
+  CERTOPS_ACTIVATION_WINDOW_FORECAST_UNKNOWN:
+    'The next window is beyond the forecast horizon. Review the calendar and certificate expiry, then check again later.',
   CERTOPS_CUSTOMER_LOCAL_PREFLIGHT_REQUIRED:
     'Run customer-local preflight to check store access, exact material, local policy, permissions, service configuration and probes.',
 };

@@ -423,7 +423,7 @@ async function monitorGroup({
       ).rows[0]?.valid_to;
       const deadline=activationDeadline(expiry,row.observed_valid_to);
       const next = plan(row.activation_policy, deadline);
-      if (!next.at)
+      if (!next.at && next.reason !== "maintenance_search_horizon_exceeded")
         conditions.push({
           bindingId: row.binding_id,
           code: "maintenance_window_missed",

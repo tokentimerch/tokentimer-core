@@ -142,11 +142,11 @@ async function scheduleGroup({
   const uncertain = await client.query(
     `SELECT 1 FROM certops_consumer_deployments d JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND j.id=COALESCE(d.job_id,d.staging_job_id)
     WHERE d.workspace_id=$1 AND d.group_id=$2 AND (d.stage='orphaned_unknown_effect' OR j.status='orphaned_unknown_effect' OR j.needs_operator_reconciliation)
-      AND (j.needs_operator_reconciliation OR NOT EXISTS(SELECT 1 FROM certops_consumer_deployments later
+      AND (j.needs_operator_reconciliation OR (j.result_metadata->>'reconciliationJobId' IS NULL AND NOT EXISTS(SELECT 1 FROM certops_consumer_deployments later
         JOIN certops_distribution_rollouts lr ON lr.workspace_id=later.workspace_id AND lr.id=later.rollout_id
         JOIN certops_distribution_rollouts dr ON dr.workspace_id=d.workspace_id AND dr.id=d.rollout_id
         WHERE later.workspace_id=d.workspace_id AND later.binding_id=d.binding_id AND lr.generation>dr.generation
-          AND later.stage IN ('installed','served_verified','trust_validated'))) LIMIT 1`,
+          AND later.stage IN ('installed','served_verified','trust_validated')))) LIMIT 1`,
     [workspaceId, groupId],
   );
   if (uncertain.rowCount) return defer("unresolved_uncertain_effects", true);

@@ -1,6 +1,6 @@
 # Agent operations and troubleshooting
 
-Use this guide after installation for upgrades, compatibility, logs, failed jobs, and retirement. Preserve the state directory: it contains the agent credential, pinned signing key, custody state, and recovery journals.
+Use this guide after installation for upgrades, compatibility, logs, failed jobs, and retirement. Preserve the state directory: it contains the agent credential, pinned signing key, custody state, and recovery journals. Issuer bundles under `material-artifacts` and consumer staging under `material-consumer-staging` can contain private keys and persist across renewals or generations. Restrict access and manage their retention as sensitive recovery evidence; resolve uncertain jobs and preserve needed evidence before disposal.
 
 ## Registration replacement and declaration refresh
 
