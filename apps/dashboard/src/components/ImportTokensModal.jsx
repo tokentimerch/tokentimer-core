@@ -3794,10 +3794,11 @@ function ImportTokensModalContent({
                       <option value='only'>Managed identities only</option>
                     </Select>
                     <Text fontSize='xs'>
-                      Managed identities only scans service principals
-                      regardless of scope switches. Filtering alone does not
-                      disable existing alerts, but cleanup can remove excluded
-                      inventory. Keep cleanup off while changing filters.
+                      Managed identities only scans service principals and
+                      ignores the switches above. Name and location filters do
+                      not turn existing alerts off. Cleanup can still delete
+                      inventory those filters hide, so leave cleanup off while
+                      you change them.
                     </Text>
                   </FormControl>
                   <FilterRulesEditor
@@ -3807,8 +3808,11 @@ function ImportTokensModalContent({
                   <FilterRulesSummary summary={azureADFilterSummary} />
                   {managedIdentityMode !== 'all' && (
                     <Text fontSize='xs' color={muted}>
-                      Manual obsolete-item cleanup skips service principals when
-                      an identity class is selected.
+                      Exclude managed identities and Managed identities only do
+                      not delete previously imported service principals.
+                      Managed identities only also leaves app registrations in
+                      place. Choose All identities before cleanup if missing
+                      credentials should be removed.
                     </Text>
                   )}
                   {!autoSyncManageMode ? renderErrorAlert() : null}
@@ -3864,11 +3868,16 @@ function ImportTokensModalContent({
                           _light={{ color: 'red.800', bg: 'red.50' }}
                           _dark={{ color: 'red.100', bg: 'red.900' }}
                         >
-                          <strong>Permanent deletion:</strong> Permanently
-                          deletes previously imported secrets and certificates
-                          missing from the scanned App Registrations or Service
-                          Principals, regardless of selections below. Incomplete
-                          types are excluded. This cannot be undone.
+                          <strong>Permanent deletion:</strong> This runs when
+                          you import, not when you scan. It deletes previously
+                          imported secrets and certificates that a finished App
+                          Registration or Service Principal scan did not find
+                          again, including rows left unchecked in the table. A
+                          type that failed or was cut short is left in place.
+                          Exclude managed identities and Managed identities
+                          only do not delete service principals, and Managed
+                          identities only does not scan app registrations. This
+                          cannot be undone.
                         </Text>
                       ) : null}
                     </VStack>
