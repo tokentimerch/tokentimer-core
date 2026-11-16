@@ -216,7 +216,7 @@ test("actual independent cleanup refuses missing completion even after its activ
         acceptRestoration &&
         name === "../tests/e2e/helpers/certops-linux-installed-discovery"
       )
-        return { ...helper, assertCompletion() {} };
+        return { ...helper, assertCleanupSafe() { return { state: "completed" }; } };
       if (acceptRestoration && name === "./certops-linux-systemd-ownership")
         return { ...require(name), assertNoSymlinkTargets() {} };
       return require(name);
@@ -386,9 +386,11 @@ test("actual parent finally preserves private roots, accounts and database after
         },
       ],
       {
-        assertCompletion() {
+        assertCleanupSafe() {
           calls.push("completion");
+          return { state: "completed" };
         },
+        removePreDiscovery() {},
       },
       {},
       { env: { RUNNER_TEMP: "/owned/temp" } },

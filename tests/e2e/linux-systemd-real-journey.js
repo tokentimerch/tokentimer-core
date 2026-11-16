@@ -95,7 +95,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
   const runId=crypto.randomBytes(5).toString("hex");const writeRoot=`/var/lib/tokentimer-qualification-${runId}`;
   const writeFixture={runId,root:writeRoot,allowed:writeRoot+"/allowed",denied:writeRoot+"/denied",probe:writeRoot+"/write-probe.js",probeSha256:digest(path.join(repoRoot,"tests/e2e/helpers/linux-systemd-write-probe.js"))};
   require("../../scripts/certops-linux-systemd-ownership").validateWriteFixture(writeFixture);assert.equal(fs.lstatSync(writeRoot,{throwIfNoEntry:false}),undefined);
-  const writeGate=require("../../packages/agent/scripts/host-gate").createHostGate({suite:"linux-systemd-writepath",strict:true,evidenceLevel:"real-host",reportPath:path.join(repoRoot,"qualification-results/linux-systemd-writepath.json"),fixtureSource:{file:"tests/e2e/linux-systemd-real-journey.js",sha256:digest(__filename)},requiredCapabilities:["linux","systemd"],probeCapabilities:()=>({linux:{available:process.platform==="linux"},systemd:{available:["running","degraded"].includes(manager.stdout.trim()),evidence:"native systemctl is-system-running"}})});
+  const writeGate=require("../../packages/agent/scripts/host-gate").createHostGate({suite:"linux-systemd-writepath",strict:true,debugDetail:false,evidenceLevel:"real-host",reportPath:path.join(repoRoot,"qualification-results/linux-systemd-writepath.json"),fixtureSource:{file:"tests/e2e/linux-systemd-real-journey.js",sha256:digest(__filename)},requiredCapabilities:["linux","systemd"],probeCapabilities:()=>({linux:{available:process.platform==="linux"},systemd:{available:["running","degraded"].includes(manager.stdout.trim()),evidence:"native systemctl is-system-running"}})});
   let owned = false;
   let agentId;
   let primaryError;
@@ -103,8 +103,9 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
   const installedDiscovery=require("./helpers/certops-linux-installed-discovery");
   const discoveryResources=[];
   const ownershipPlan={root:ROOT,unit:UNIT,user:USER,installer,fixtureSha256:digest(__filename),writeFixture,installedDiscoveryRequired:true,installedDiscoveryNonce:crypto.randomBytes(32).toString("hex"),installedDiscoveryCompletion:installedDiscovery.completionPath(process.env.RUNNER_TEMP)};
-  for(const file of [installedDiscovery.completionPath(process.env.RUNNER_TEMP),installedDiscovery.guardPath(process.env.RUNNER_TEMP)])assert.equal(fs.lstatSync(file,{throwIfNoEntry:false}),undefined,"Refuse a prior installed-discovery ownership marker");
+  for(const file of [installedDiscovery.prePath(process.env.RUNNER_TEMP),installedDiscovery.completionPath(process.env.RUNNER_TEMP),installedDiscovery.guardPath(process.env.RUNNER_TEMP)])assert.equal(fs.lstatSync(file,{throwIfNoEntry:false}),undefined,"Refuse a prior installed-discovery ownership marker");
   try {
+    installedDiscovery.preparePreDiscovery(ownershipPlan, process.env.RUNNER_TEMP);
     // Register ownership before installation can partially create files/user.
     require("../../scripts/certops-linux-systemd-ownership").claimOwnershipReceipt(ownershipReceipt, ownershipPlan);
     owned = true;
@@ -207,9 +208,9 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     checkPermissions(stateDir, 0o700);
   } catch (error) { primaryError = error; }
   finally {
-    let discoverySafe=true;
+    let discoverySafe=true, discoveryState;
     let hostDrained=false,hostRemoved=false;
-    if(owned)try{for(const resource of discoveryResources)resource.assertCleanupSafe();installedDiscovery.assertCompletion(ownershipPlan,process.env.RUNNER_TEMP);}catch(error){cleanupErrors.push(error);discoverySafe=false;}
+    if(owned)try{for(const resource of discoveryResources)resource.assertCleanupSafe();discoveryState=installedDiscovery.assertCleanupSafe(ownershipPlan,process.env.RUNNER_TEMP);}catch(error){cleanupErrors.push(error);discoverySafe=false;}
     if (owned && discoverySafe) {
       const clean = (action) => { try { action(); } catch (error) { cleanupErrors.push(error); } };
       clean(() => {require("../../scripts/certops-linux-systemd-ownership").assertNoSymlinkTargets([ROOT,UNIT_FILE,DROPINS,POLKIT,writeFixture.root]);command("sh", [installer, "--uninstall"]);});
@@ -235,7 +236,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
         assert.equal(spawnSync("getent", ["passwd", USER]).status, 2);
         assert.equal(serviceProperty("LoadState"), "not-found");
       });
-      if (!cleanupErrors.length) clean(() => fs.unlinkSync(ownershipReceipt));
+      if (!cleanupErrors.length) clean(() => { installedDiscovery.removePreDiscovery(ownershipPlan, process.env.RUNNER_TEMP, discoveryState); fs.unlinkSync(ownershipReceipt); });
       hostRemoved=hostDrained&&cleanupErrors.length===0;
     }
     if (agentId && discoverySafe && hostDrained && hostRemoved) {
@@ -243,6 +244,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
       catch (error) { cleanupErrors.push(error); }
     }
   }
+  if (primaryError) await writeGate.recordFailure(primaryError);
   try{await writeGate.scenario("linux-systemd-native-writepath-owned-cleanup",async()=>{assert.equal(cleanupErrors.length,0);assert.equal(fs.existsSync(writeFixture.root),false);assert.equal(fs.existsSync(DROPINS),false);assert.equal(mainPid(),0);});await writeGate.finish({requiredScenarios:["linux-systemd-native-writepath-allowed-peer-erofs","linux-systemd-native-writepath-owned-cleanup"]});}catch(error){cleanupErrors.push(error);}
   if (cleanupErrors.length) throw new AggregateError(primaryError ? [primaryError, ...cleanupErrors] : cleanupErrors,
     "Linux installer qualification or owned cleanup failed", { cause: primaryError });
