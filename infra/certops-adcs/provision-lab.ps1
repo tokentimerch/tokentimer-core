@@ -25,6 +25,7 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [ValidateSet('Standard_D2s_v5','Standard_D2as_v5')][string]$VmSize = 'Standard_D2s_v5',
   [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]{1,49}$')][string]$Location)
 $ErrorActionPreference = 'Stop'
+if($JournalPhaseExperiment -in @('accepted-before-bind','bound-before-complete')){throw 'Accepted-install experiment is disabled: active observation-loss interruption and atomic descendant containment are not qualified'}
 . (Join-Path $PSScriptRoot 'arm-operation.ps1')
 if($QualificationScope -eq 'operator-acceptance' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Operator acceptance cannot include fault experiments'}
 # A diagnostic shard runs a subset of the plain comprehensive journeys in its own lab. It is never release evidence.
