@@ -18,8 +18,8 @@ Total skips found: 211
 | `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 15 | prepare-only preserves restored state across simulated SCM interruption | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 41 | installer isolates Node environment without changing the caller | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 63 | privileged installer paths verify source and stage before executing package code | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 175 | actual installer filesystem branches preserve literal brackets and wildcard siblings | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 253 | installer rejects writable and unverified predecessor applications | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 181 | actual installer filesystem branches preserve literal brackets and wildcard siblings | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 259 | installer rejects writable and unverified predecessor applications | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/install-agent-sh.test.js` | 36 | install-agent.sh polkit grants on re-run | describe(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/installer-revocation-default.test.js` | 30 | Linux installer writes the requested default only to a new config | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/installer-revocation-default.test.js` | 57 | Windows installer writes the requested default only to a new config | test(..., { skip }) option-object | `platform` |
@@ -44,12 +44,12 @@ Total skips found: 211
 | `packages/agent/scripts/windows-upgrade-recovery.test.js` | 500 | rejects an oversized recovery record before touching the existing application | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/windows-upgrade-recovery.test.js` | 523 | installer Node helper rejects inherited preloads and restores the caller environment | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/windows-upgrade-recovery.test.js` | 557 | runtime package marker selects bundled Node and rejects incomplete bundles | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 639 | service health requires the expected child to survive a second observation | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 668 | bundled bootstrap rejects ancestor permissions that can alter a reparse point | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 709 | bundled bootstrap rejects a user-owned extraction directory | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 740 | recovery refuses a journal with inherited, unprotected ACL | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 775 | validated bundled runtime stays locked against replacement during bootstrap | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 780 | validated bundled runtime stays locked against replacement during bootstrap | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 655 | service health requires the expected child to survive a second observation | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 684 | bundled bootstrap rejects ancestor permissions that can alter a reparse point | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 725 | bundled bootstrap rejects a user-owned extraction directory | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 756 | recovery refuses a journal with inherited, unprotected ACL | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 791 | validated bundled runtime stays locked against replacement during bootstrap | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 796 | validated bundled runtime stays locked against replacement during bootstrap | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/acme/acme.test.js` | 278 | POSIX hook executes non-executable archive bytes with spaces and quotes in the path | test(..., { skip }) option-object | `platform` |
 | `packages/agent/src/acme/acme.test.js` | 796 | acme.sh wrapper uses the explicit runtime and never falls back to PATH | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/config/config.test.js` | 121 | sets 0700 permissions on non-win32 platforms | it(..., { skip }) option-object | `platform` |
