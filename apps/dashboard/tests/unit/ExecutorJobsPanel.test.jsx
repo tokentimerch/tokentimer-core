@@ -462,6 +462,7 @@ describe('ExecutorJobsPanel approvals', () => {
             groupId: 'owned-group',
             materialVersionId: 'exact-reviewed-version',
             provider: 'vault-kv2',
+            operation: 'soft-delete',
             materialStoreRef: 'approved-store',
             providerVersion: 1,
             profileRevision: 1,
