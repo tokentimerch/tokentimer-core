@@ -132,7 +132,7 @@ test("stale cleanup authority does not starve later work or create a fence",asyn
     VALUES($1,'renew','pending','api',$2::jsonb,$3) RETURNING id`,[f.workspaceId,JSON.stringify({domain:"example.test"}),f.issuer])).rows[0];
   await pool.query("UPDATE workspaces SET certops_distribution_authorization_revision=certops_distribution_authorization_revision+1 WHERE id=$1",[f.workspaceId]);
   const row=(await pool.query("SELECT * FROM certops_agents WHERE id=$1",[f.issuer])).rows[0];
-  const agent={id:row.id,workspaceId:f.workspaceId,agentId:row.agent_id,agentVersion:row.agent_version,protocolVersion:row.protocol_version};
+  const agent=require("../../apps/api/services/certops/agentCredentialFence").bindAuthenticatedAgent({id:row.id,workspaceId:f.workspaceId,agentId:row.agent_id,agentVersion:row.agent_version,protocolVersion:row.protocol_version,status:row.status},row.credential_hash);
   await require("../../apps/api/services/certops/jobSigning").ensureActiveSigningKey();
   const claimed=await require("../../apps/api/services/certops/agentDispatch").claimJobs({agent,body:{maxJobs:1,supportedActions:["cleanup-from-store","renew"]}});
   assert.equal(claimed.jobs.length,1);
