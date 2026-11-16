@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const { randomUUID } = require("node:crypto");
 const path = require("node:path");
+const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const { test } = require("node:test");
 const { Pool } = require("pg");
@@ -23,9 +24,18 @@ async function withDatabase(run) {
     target = new Pool({ ...connection, database });
     const env = { ...process.env, NODE_ENV: "test", DB_HOST: connection.host, DB_PORT: String(connection.port), DB_USER: connection.user, DB_PASSWORD: connection.password, DB_NAME: database, DISABLE_ADMIN_BOOTSTRAP: "true" };
     delete env.DB_SSL; delete env.PGSSLROOTCERT; delete env.DATABASE_URL;
-    function migrate(maxVersion, fails = false, reviewedPreview = false, rotationPreview = false) {
-      const source = `const m=require(${JSON.stringify(entry)}); ${maxVersion ? `for(let i=m.migrations.length-1;i>=0;i--)if(m.migrations[i].version>${maxVersion})m.migrations.splice(i,1);` : ""} ${reviewedPreview ? `const {composeMigrations}=require("./apps/api/migrations/compose-migrations"); const original=m.migrations.filter(x=>x.version<=85||[92,93].includes(x.version)); const names=["operator_connections","operator_enrollment_grants","operator_action_requests"]; const prior=[...original,...names.map((name,i)=>({...m.migrations.find(x=>x.name===name),version:94+i}))]; const legacy=m.migrations.filter(x=>!["certops_retirement_dossiers","certops_material_reconciliation"].includes(x.name)); const preview=composeMigrations(legacy,prior); m.migrations.splice(0,m.migrations.length,...preview);` : ""} ${rotationPreview ? `const old=m.migrations.filter(x=>x.version<=85||(x.version>=92&&x.version<=95)||(x.version>=98&&x.version<=111)||["agent_credential_rotations","agent_credential_rotation_ack"].includes(x.name)).map(x=>x.name==="agent_credential_rotations"?{...x,version:112}:x.name==="agent_credential_rotation_ack"?{...x,version:113}:x); m.migrations.splice(0,m.migrations.length,...old);` : ""} m.runMigrations().then(()=>process.exit(0),e=>{console.error(e);process.exit(1)});`;
+    function migrate(maxVersion, fails = false, reviewedPreview = false, rotationPreview = false, independentFixtures = false) {
+      const fixtureEntry = path.join(path.dirname(entry), "migrate-independent-fixture.cjs");
+      if (independentFixtures) {
+        const original = fs.readFileSync(entry, "utf8");
+        const marker = "migrations.sort((a, b) => a.version - b.version);";
+        assert.equal(original.split(marker).length, 2);
+        const fixture = `const fixtureReservations=require("./migration-reservations.cjs").reservations; for(let v=114;v<=122;v++)migrations.push({version:v,name:fixtureReservations[v],sql:"SELECT 1"});\n`;
+        fs.writeFileSync(fixtureEntry, original.replace(marker, fixture + marker));
+      }
+      const source = `const m=require(${JSON.stringify(independentFixtures ? fixtureEntry : entry)}); ${maxVersion ? `for(let i=m.migrations.length-1;i>=0;i--)if(m.migrations[i].version>${maxVersion})m.migrations.splice(i,1);` : ""} ${reviewedPreview ? `const {composeMigrations}=require("./apps/api/migrations/compose-migrations"); const original=m.migrations.filter(x=>x.version<=85||[92,93].includes(x.version)); const names=["operator_connections","operator_enrollment_grants","operator_action_requests"]; const prior=[...original,...names.map((name,i)=>({...m.migrations.find(x=>x.name===name),version:94+i}))]; const legacy=m.migrations.filter(x=>!["certops_retirement_dossiers","certops_material_reconciliation"].includes(x.name)); const preview=composeMigrations(legacy,prior); m.migrations.splice(0,m.migrations.length,...preview);` : ""} ${rotationPreview ? `const old=m.migrations.filter(x=>x.version<=85||(x.version>=92&&x.version<=95)||(x.version>=98&&x.version<=111)||["agent_credential_rotations","agent_credential_rotation_ack"].includes(x.name)).map(x=>x.name==="agent_credential_rotations"?{...x,version:112}:x.name==="agent_credential_rotation_ack"?{...x,version:113}:x); m.migrations.splice(0,m.migrations.length,...old);` : ""} m.runMigrations().then(()=>process.exit(0),e=>{console.error(e);process.exit(1)});`;
       const result = spawnSync(process.execPath, ["-e", source], { env, encoding: "utf8", timeout: 90000, maxBuffer: 8 * 1024 * 1024 });
+      if (independentFixtures) fs.rmSync(fixtureEntry, { force: true });
       const output = String(result.error || "") + result.stdout + result.stderr;
       assert.equal(result.status, fails ? 1 : 0, output.slice(-6000));
       return output;
@@ -44,11 +54,47 @@ test("fresh database applies the canonical rotation pair and restarts unchanged"
     migrate();
     const before = await ledger(target);
     assert.deepEqual(before.filter(row => row.version >= 114).map(({ version, name }) => ({ version, name })), [
+      { version: 123, name: "agent_credential_rotations" },
+      { version: 124, name: "agent_credential_rotation_ack" },
+    ]);
+    migrate();
+    assert.deepEqual(await ledger(target), before);
+  });
+});
+test("previous canonical rotation 114/115 remains unchanged after renumbering", { timeout: 120000 }, async () => {
+  await withDatabase(async ({ target, migrate }) => {
+    migrate(113);
+    const fs = require("node:fs");
+    const migrationDir = path.dirname(entry);
+    await target.query(fs.readFileSync(path.join(migrationDir, "123-agent-credential-rotations.sql"), "utf8"));
+    await target.query(fs.readFileSync(path.join(migrationDir, "124-agent-rotation-ack.sql"), "utf8"));
+    await target.query("INSERT INTO migrations(version,name) VALUES (114, 'agent_credential_rotations'), (115, 'agent_credential_rotation_ack')");
+    const before = await ledger(target);
+    assert.deepEqual(before.slice(-2).map(({version,name}) => ({version,name})), [
       { version: 114, name: "agent_credential_rotations" },
       { version: 115, name: "agent_credential_rotation_ack" },
     ]);
     migrate();
     assert.deepEqual(await ledger(target), before);
+    migrate();
+    assert.deepEqual(await ledger(target), before);
+  });
+});
+test("rotation preview retains identities when reserved independent schemas arrive", { timeout: 120000 }, async () => {
+  await withDatabase(async ({ target, migrate }) => {
+    migrate(113);
+    const fs = require("node:fs");
+    const migrationDir = path.dirname(entry);
+    await target.query(fs.readFileSync(path.join(migrationDir, "123-agent-credential-rotations.sql"), "utf8"));
+    await target.query(fs.readFileSync(path.join(migrationDir, "124-agent-rotation-ack.sql"), "utf8"));
+    await target.query("INSERT INTO migrations(version,name) VALUES (114, 'agent_credential_rotations'), (115, 'agent_credential_rotation_ack')");
+    const before = await ledger(target);
+    migrate(undefined, false, false, false, true);
+    const after = await ledger(target);
+    assert.deepEqual(after.slice(0, before.length), before);
+    assert.equal(after.length, before.length + 9);
+    migrate(undefined, false, false, false, true);
+    assert.deepEqual(await ledger(target), after);
   });
 });
 for (const version of [108, 111, 113]) {
@@ -61,8 +107,8 @@ for (const version of [108, 111, 113]) {
       const after = await ledger(target);
       assert.deepEqual(after.filter(row => row.version <= version), before);
       assert.deepEqual(after.filter(row => row.version >= 114).map(({ version: n, name }) => ({ version: n, name })), [
-        { version: 114, name: "agent_credential_rotations" },
-        { version: 115, name: "agent_credential_rotation_ack" },
+        { version: 123, name: "agent_credential_rotations" },
+        { version: 124, name: "agent_credential_rotation_ack" },
       ]);
       const relation = await target.query("SELECT to_regclass('certops_agent_credential_rotations') AS name");
       assert.equal(relation.rows[0].name, "certops_agent_credential_rotations");

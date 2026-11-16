@@ -10,8 +10,8 @@ test("released ledger appends rotation after current reserved migrations", () =>
   assert.doesNotThrow(() => validateMigrationHistory(released));
   const plan = composeMigrations(migrations, released);
   assert.deepEqual(plan.filter(({ name }) => name.startsWith("agent_credential_rotation")).map(({ version, name }) => ({ version, name })), [
-    { version: 114, name: "agent_credential_rotations" },
-    { version: 115, name: "agent_credential_rotation_ack" },
+    { version: 123, name: "agent_credential_rotations" },
+    { version: 124, name: "agent_credential_rotation_ack" },
   ]);
   const applied = plan.map(({ version, name }) => ({ version, name }));
   assert.doesNotThrow(() => validateMigrationHistory(applied));
@@ -31,7 +31,41 @@ test("ambiguous rotation previews fail before composition", () => {
 
 test("rotation acknowledgement cannot precede its preparation schema", () => {
   const released = migrations.filter(({ version }) => version <= 111).map(({ version, name }) => ({ version, name }));
-  assert.throws(() => composeMigrations(migrations, [...released, { version: 115, name: "agent_credential_rotation_ack" }]), /incomplete dependency agent_credential_rotation_ack/);
+  assert.throws(() => composeMigrations(migrations, [...released, { version: 124, name: "agent_credential_rotation_ack" }]), /incomplete dependency agent_credential_rotation_ack/);
+  assert.throws(() => composeMigrations(migrations, [...released, { version: 115, name: "agent_credential_rotation_ack" }]), /Unsupported Core migration history/);
+});
+
+test("the prior 114/115 rotation ledger keeps its exact identities", () => {
+  const recorded = migrations.filter(({ version }) => version <= 113).map(({ version, name }) => ({ version, name }));
+  recorded.push({ version: 114, name: "agent_credential_rotations" }, { version: 115, name: "agent_credential_rotation_ack" });
+  const plan = composeMigrations(migrations, recorded);
+  assert.deepEqual(plan.filter(({ name }) => name.startsWith("agent_credential_rotation")).map(({ version, name }) => ({ version, name })), recorded.slice(-2));
+  assert.doesNotThrow(() => validateMigrationHistory(recorded));
+  assert.deepEqual(composeMigrations(migrations, plan), plan);
+});
+
+test("the 114/115 rotation preview retains its ledger as reserved features arrive", () => {
+  const { reservations } = require("../../apps/api/migrations/migration-reservations.cjs");
+  const legacy = migrations.map((entry) => entry.name === "agent_credential_rotations" ? { ...entry, version: 114 }
+    : entry.name === "agent_credential_rotation_ack" ? { ...entry, version: 115 } : entry);
+  const base = legacy.filter(({ version }) => version >= 70 && version <= 77);
+  const provider = ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "certops_material_providers"]
+    .map((name, index) => ({ version: 78 + index, name }));
+  const history = composeMigrations(legacy, [...base, ...provider]).map(({ version, name }) => ({ version, name }));
+  assert.deepEqual(history.slice(-2), [
+    { version: 114, name: "agent_credential_rotations" },
+    { version: 115, name: "agent_credential_rotation_ack" },
+  ]);
+  const future = Object.entries(reservations).filter(([version]) => Number(version) >= 114 && Number(version) <= 122)
+    .map(([version, name]) => ({ version: Number(version), name, sql: `fixture-${name}` }));
+  const registry = [...migrations, ...future];
+  const plan = composeMigrations(registry, history);
+  assert.deepEqual(plan.slice(0, history.length).map(({ version, name }) => ({ version, name })), history);
+  for (let end = history.length; end <= plan.length; end++) {
+    assert.deepEqual(composeMigrations(registry, plan.slice(0, end)), plan);
+  }
+  const tampered = plan.map((entry) => entry.version === 116 ? { ...entry, name: "distribution_pagerduty_recovery" } : entry);
+  assert.throws(() => composeMigrations(registry, tampered), /Unsupported Core migration history/);
 });
 
 test("an unrecognized earlier alias does not make a rotation preview safe", () => {

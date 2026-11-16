@@ -41,8 +41,19 @@ are reservations, not no-op migrations. They do not install another feature.
 | 109 | certops_period_creator_delete | Main; unchanged |
 | 110 | recipient_member_verification | Reuse exact verified workspace-member email proof |
 | 111 | auto_sync_owner_username | Auto-sync owner username |
-| 112 | agent_credential_rotations | Credential rotation preparation and receipt |
-| 113 | agent_credential_rotation_ack | Credential rotation acknowledgement |
+| 112 | certops_retirement_dossiers | Released main; unchanged |
+| 113 | certops_material_reconciliation | Released main; unchanged |
+| 114 | certops_observed_revocation | Reserved observed revocation |
+| 115 | store_issuance_explicit_renewal_consent | Reserved store renewal consent |
+| 116 | certops_acme_store_enrollment_identity | Reserved ACME enrollment identity |
+| 117 | certops_adcs_expected_identity_receipts | Reserved AD CS receipt identity |
+| 118 | certops_windows_iis_consent | Reserved IIS consent |
+| 119 | certops_material_adcs_operation_union | Reserved AD CS operation union |
+| 120 | certops_iis_absence_proofs | Reserved IIS absence proof |
+| 121 | certops_enrollment_jobs_index | Reserved enrollment jobs index |
+| 122 | distribution_pagerduty_recovery | Reserved PagerDuty recovery |
+| 123 | agent_credential_rotations | Credential rotation preparation and receipt |
+| 124 | agent_credential_rotation_ack | Credential rotation acknowledgement |
 
 A ledger based on the released numbering that records `agent_credential_rotations` or `agent_credential_rotation_ack` at version 109 or 110 is ambiguous and is rejected before migration SQL. Preserve the database and arrange a separately reviewed recovery; do not edit or relabel its ledger.
 

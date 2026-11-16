@@ -5003,8 +5003,8 @@ migrations.push({
   sql: fs.readFileSync(require("path").join(__dirname, "113-certops-material-reconciliation.sql"), "utf8"),
 });
 
-migrations.push({ version: 114, name: "agent_credential_rotations", sql: fs.readFileSync(require("path").join(__dirname, "114-agent-credential-rotations.sql"), "utf8") });
-migrations.push({ version: 115, name: "agent_credential_rotation_ack", sql: fs.readFileSync(require("path").join(__dirname, "115-agent-rotation-ack.sql"), "utf8") });
+migrations.push({ version: 123, name: "agent_credential_rotations", sql: fs.readFileSync(require("path").join(__dirname, "123-agent-credential-rotations.sql"), "utf8") });
+migrations.push({ version: 124, name: "agent_credential_rotation_ack", sql: fs.readFileSync(require("path").join(__dirname, "124-agent-rotation-ack.sql"), "utf8") });
 
 const { composeMigrations, assertUnambiguousRotationHistory } = require("./compose-migrations");
 

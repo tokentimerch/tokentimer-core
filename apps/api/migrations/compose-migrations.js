@@ -234,8 +234,33 @@ function composeMigrations(migrations, recorded = []) {
       throw new Error("Unsupported Core migration history: noncanonical gap");
   }
 
+  // A reviewed rotation candidate could have applied 114/115 before the
+  // independent revocation and recovery reservations were introduced. Rebuild
+  // that exact earlier plan and allow only its deterministic append prefixes.
   let contiguousOrder = null;
-  if (contiguous && rows.length && !recognizedRetirementPreview) {
+  const rotation114 = rows.find((row) => row.version === 114 && row.name === "agent_credential_rotations");
+  const newIndependentNames = new Set([
+    "certops_observed_revocation", "store_issuance_explicit_renewal_consent",
+    "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts",
+    "certops_windows_iis_consent", "certops_material_adcs_operation_union",
+    "certops_iis_absence_proofs", "certops_enrollment_jobs_index", "distribution_pagerduty_recovery",
+  ]);
+  if (contiguous && rotation114 && migrations.some((entry) => newIndependentNames.has(entry.name))) {
+    const legacyRegistry = migrations.filter((entry) => !newIndependentNames.has(entry.name))
+      .map((entry) => entry.name === "agent_credential_rotations" ? { ...entry, version: 114 }
+        : entry.name === "agent_credential_rotation_ack" ? { ...entry, version: 115 } : entry);
+    const legacyPlan = composeMigrations(legacyRegistry, featureHistory.filter((row) => row.version < 114));
+    const oldTail = legacyPlan.filter((entry) => entry.version >= 78);
+    const oldNames = new Set(legacyPlan.map((entry) => entry.name));
+    const appended = extensions.filter((entry) => !oldNames.has(entry.name))
+      .map((entry, index) => ({ ...entry, version: 116 + index }));
+    const expected = [...oldTail, ...appended];
+    if (rows.length <= expected.length && rows.every((row, index) =>
+      row.version === expected[index].version && row.name === expected[index].name)) {
+      contiguousOrder = expected.map((entry) => entry.name);
+    }
+  }
+  if (contiguous && rows.length && !recognizedRetirementPreview && !contiguousOrder) {
     const I = "certops_installed_file_distribution",
       S = "auto_sync_provider_stats",
       R = "auto_sync_run_metrics",
