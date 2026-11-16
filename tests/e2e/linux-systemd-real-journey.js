@@ -69,6 +69,20 @@ function digest(file) { return crypto.createHash("sha256").update(fs.readFileSyn
 function assertCoreDumpLimits(limits) {
   assert.match(limits, /^Max core file size[ \t]+0[ \t]+0[ \t]+bytes[ \t]*$/m);
 }
+// Report only fixed-shape comparisons, never raw /proc content or numeric UIDs.
+function uidDiagnostic(status, expectedUid, mainPidUnchanged) {
+  const match = typeof status === "string" && status.match(/^Uid:[ \t]+([0-9]+)[ \t]+([0-9]+)[ \t]+([0-9]+)[ \t]+([0-9]+)[ \t]*$/m);
+  const parsed = Boolean(match) && Number.isSafeInteger(expectedUid) && expectedUid > 0;
+  const expected = String(expectedUid);
+  return {
+    uidRowParsed: parsed,
+    realMatches: parsed ? match[1] === expected : null,
+    effectiveMatches: parsed ? match[2] === expected : null,
+    savedMatches: parsed ? match[3] === expected : null,
+    filesystemMatches: parsed ? match[4] === expected : null,
+    mainPidUnchanged: typeof mainPidUnchanged === "boolean" ? mainPidUnchanged : null,
+  };
+}
 
 module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId, userId, createBootstrap, repoRoot }) {
   assert.equal(process.platform, "linux");
@@ -152,7 +166,14 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
       const pid = mainPid();
       assert.ok(pid > 0);
       const status = fs.readFileSync(`/proc/${pid}/status`, "utf8");
-      assert.match(status, new RegExp(`^Uid:\\s+${uid}\\s+${uid}\\s+${uid}\\s+${uid}$`, "m"));
+      try {
+        assert.match(status, new RegExp(`^Uid:\\s+${uid}\\s+${uid}\\s+${uid}\\s+${uid}$`, "m"));
+      } catch (error) {
+        let stable = null;
+        try { stable = mainPid() === pid; } catch {}
+        writeGate.report.nativeUidDiagnostic = uidDiagnostic(status, uid, stable);
+        throw error;
+      }
       assertCoreDumpLimits(fs.readFileSync(`/proc/${pid}/limits`, "utf8"));
       assert.equal(fs.realpathSync(`/proc/${pid}/exe`), nodeBinary);
       if (afterBootstrapRestart) assert.equal(fs.readFileSync(`/proc/${pid}/environ`).includes(Buffer.from("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=")), false);
@@ -258,3 +279,4 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
   if (primaryError) throw primaryError;
 };
 module.exports.assertCoreDumpLimits = assertCoreDumpLimits;
+module.exports.uidDiagnostic = uidDiagnostic;
