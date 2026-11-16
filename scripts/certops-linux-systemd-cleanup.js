@@ -18,6 +18,7 @@ function cleanup() {
   const receiptPath = path.join(process.env.RUNNER_TEMP, "certops-linux-systemd-owned.json");
   const stat = fs.lstatSync(receiptPath,{throwIfNoEntry:false});
   if (!stat) {
+    require("./certops-linux-systemd-db-ownership").assertNoMarkers(process.env.RUNNER_TEMP);
     for(const target of ["/opt/tokentimer-agent","/etc/systemd/system/tokentimer-agent.service","/etc/systemd/system/tokentimer-agent.service.d","/etc/polkit-1/rules.d/50-tokentimer-agent.rules"]){assert.equal(fs.lstatSync(target,{throwIfNoEntry:false}),undefined,"Cleanup receipt missing while host resources exist; refusing unowned cleanup");}
     for(const database of ["passwd","group"])assert.equal(spawnSync("getent",[database,"tokentimer-agent"]).status,2,"Cleanup receipt missing while an agent account exists");
     return;
@@ -29,6 +30,9 @@ function cleanup() {
   const ownership=require("./certops-linux-systemd-ownership"),held=ownership.captureOwnershipReceipt(receiptPath);
   try {
   const receipt = JSON.parse(held.original.toString("utf8"));
+  const dbOwnership=require("./certops-linux-systemd-db-ownership");
+  const dbProof=dbOwnership.assertSafe(receipt,process.env.RUNNER_TEMP);
+  dbOwnership.assertOwnerExited(receipt);
   assert.equal(receipt.root, "/opt/tokentimer-agent");
   assert.equal(receipt.unit, "tokentimer-agent.service");
   assert.equal(receipt.user, "tokentimer-agent");
@@ -67,6 +71,7 @@ function cleanup() {
   assert.equal(fs.existsSync(writeFixture.root),false);
   held.assertUnchanged();
   discovery.removePreDiscovery(receipt, process.env.RUNNER_TEMP, discoveryState);
+  dbOwnership.remove(receipt,process.env.RUNNER_TEMP,dbProof);
   ownership.removeOwnershipReceipt(receiptPath,held);
   } finally { held.close(); }
 }
