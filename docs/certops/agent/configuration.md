@@ -153,6 +153,11 @@ Each reported observation is retained as workspace evidence; the inventory shows
 the latest result and, when a check fails, the last verified result. Evidence
 has no separate revocation retention setting and is deleted with the workspace.
 
+For unknown or stale results, check allowed responder origins, network reachability,
+CA trust and published CRL/OCSP validity. Correct the cause and wait for the next
+scan; restart after changing local configuration. A retained revoked finding
+remains visible until a fresh verified result supersedes it.
+
 `discovery` block:
 
 | Field | Type | Default | Notes |
