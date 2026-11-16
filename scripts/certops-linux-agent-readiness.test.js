@@ -1,6 +1,32 @@
 "use strict";
 const test=require("node:test"),assert=require("node:assert/strict");
-const {waitForAgentIdentity,identifyAgentProcess,assertExpectedAgentUid}=require("../tests/e2e/helpers/linux-systemd-agent-readiness");
+const {waitForAgentIdentity,identifyAgentProcess,assertExpectedAgentUid,assertAgentThreadUids}=require("../tests/e2e/helpers/linux-systemd-agent-readiness");
+const fs=require("node:fs"),os=require("node:os"),path=require("node:path");
+function procFixture(t){
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"ttqual-threads-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const task=path.join(root,"42","task");fs.mkdirSync(task,{recursive:true});
+  const add=(tid,uid,birth="123")=>{const dir=path.join(task,String(tid));fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,"status"),`Name:\tworker\nTgid:\t42\nPid:\t${tid}\nUid:\t${uid}\t${uid}\t${uid}\t${uid}\n`);fs.writeFileSync(path.join(dir,"stat"),`${tid} (thread) S ${Array(18).fill("0").join(" ")} ${birth} 0\n`);};
+  add(42,1000);add(43,1000);return {root,task,add};
+}
+test("checks four UIDs on every stable thread, not just the leader",t=>{
+  const {root,add}=procFixture(t);assert.doesNotThrow(()=>assertAgentThreadUids(42,1000,{procRoot:root}));
+  add(43,0);assert.throws(()=>assertAgentThreadUids(42,1000,{procRoot:root}),/UID/);
+  add(43,1000);fs.writeFileSync(path.join(root,"42","task","43","status"),"Tgid:\t42\nPid:\t43\nUid:\t1000\t1000\t0\t1000\n");
+  assert.throws(()=>assertAgentThreadUids(42,1000,{procRoot:root}),/UID/);
+});
+test("refuses thread appearance or disappearance during inventory",t=>{
+  const {root,add}=procFixture(t);let scans=0;
+  const api={...fs,readdirSync(...args){const result=fs.readdirSync(...args);if(++scans===1)add(44,1000);return result;}};
+  assert.throws(()=>assertAgentThreadUids(42,1000,{procRoot:root,fsApi:api}),/inventory changed/);
+  scans=0;const missing={...fs,readdirSync(...args){const result=fs.readdirSync(...args);return ++scans===2?result.filter(tid=>tid!=="43"):result;}};
+  assert.throws(()=>assertAgentThreadUids(42,1000,{procRoot:root,fsApi:missing}),/inventory changed/);
+});
+test("refuses a reused thread ID or unreadable task status",t=>{
+  const {root,add}=procFixture(t);let reads=0;
+  const api={...fs,readFileSync(file,...args){const result=fs.readFileSync(file,...args);if(String(file).endsWith(`${path.sep}43${path.sep}stat`)&&++reads===1)add(43,1000,"124");return result;}};
+  assert.throws(()=>assertAgentThreadUids(42,1000,{procRoot:root,fsApi:api}),/thread changed/);
+  fs.rmSync(path.join(root,"42","task","43","status"));assert.throws(()=>assertAgentThreadUids(42,1000,{procRoot:root}));
+});
 test("waits for the exact agent after a transient helper, then validates it once",async()=>{
   const samples=[{pid:42,birth:"100",identified:false},{pid:42,birth:"100",identified:true},{pid:42,birth:"100",identified:true}], checked=[];
   const result=await waitForAgentIdentity({observe:()=>samples.shift(),verify:s=>checked.push(s.pid),previousPid:11,timeoutMs:1000,sleep:async()=>{}});

@@ -193,6 +193,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
       const pid = mainPid();
       assert.ok(pid > 0);
       const birth = processBirth(pid);
+      assert.ok(birth,"Agent process birth unavailable");
       if(observed){assert.equal(pid,observed.pid,"Agent PID changed before identity verification");assert.equal(birth,observed.birth,"Agent process changed before identity verification");}
       const status = fs.readFileSync(`/proc/${pid}/status`, "utf8");
       try {
@@ -206,10 +207,11 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
         writeGate.report.nativeUidDiagnostic = uidDiagnostic(status, uid, stable, {phase, executableMatches, serviceState, birthUnchanged: birth && after ? birth === after : null});
         throw error;
       }
+      readiness.assertAgentThreadUids(pid,uid);
       assertCoreDumpLimits(fs.readFileSync(`/proc/${pid}/limits`, "utf8"));
       assert.equal(fs.realpathSync(`/proc/${pid}/exe`), nodeBinary);
       if (afterBootstrapRestart) assert.equal(fs.readFileSync(`/proc/${pid}/environ`).includes(Buffer.from("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=")), false);
-      if(observed){assert.equal(mainPid(),pid,"Agent PID changed during identity verification");assert.equal(processBirth(pid),birth,"Agent process changed during identity verification");}
+      assert.equal(mainPid(),pid,"Agent PID changed during identity verification");assert.equal(processBirth(pid),birth,"Agent process changed during identity verification");
       return pid;
     };
     const waitForAgent=async(previousPid=0,afterBootstrapRestart=true,phase=null)=>readiness.waitForAgentIdentity({observe:observeAgent,previousPid,verify:observed=>identity(afterBootstrapRestart,phase,observed)});
