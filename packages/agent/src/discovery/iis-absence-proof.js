@@ -5,7 +5,7 @@
 const childProcess = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { isIP } = require("node:net");
-const { execWithoutShell, listHttpSysBindings } = require("../windows-discovery");
+const { execWithoutShell, listHttpSysBindings, canonicalIisAddress } = require("../windows-discovery");
 
 const IIS_SNAPSHOT_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
@@ -37,8 +37,8 @@ function selector(value) {
   if (typeof value !== "string") return null;
   const m = /^(.*):(\d+):(.*)$/.exec(value);
   if (!m || !m[1] || Number(m[2]) < 1 || Number(m[2]) > 65535) return null;
-  const address = m[1].replace(/^\[|\]$/g, "").toLowerCase();
-  if (address !== "*" && !isIP(address)) return null;
+  const address = canonicalIisAddress(m[1]);
+  if (address === null) return null;
   return { address, port: Number(m[2]), hostname: m[3] };
 }
 
@@ -55,22 +55,26 @@ function parseIisSnapshot(stdout) {
 }
 
 function provesWildcardAbsent(observation, iis, http, certificates) {
-  const address = String(observation?.boundAddress || "").replace(/^\[|\]$/g, "").toLowerCase();
+  const address = canonicalIisAddress(observation?.boundAddress);
   const port = observation?.port;
   if (observation?.locationKind !== "iis_binding" || !isConcreteAddress(address) ||
       !Number.isInteger(port) || !observation.siteName || !/^[a-f0-9]{40}$/i.test(observation.thumbprint || "")) return false;
   if (!Array.isArray(iis) || !Array.isArray(http) || !Array.isArray(certificates)) return false;
   const matchingCertificates=certificates.filter(cert => cert.thumbprint.toLowerCase() === observation.thumbprint.toLowerCase());
   if (matchingCertificates.length !== 1 || matchingCertificates[0].hasPrivateKey !== true || matchingCertificates[0].fingerprintSha256 !== observation.fingerprintSha256) return false;
-  const matchingIis = iis.filter(b => b.site.toLowerCase() === observation.siteName.toLowerCase() && b.address === address && b.port === port && !b.hostname && (b.flags & 1) === 0);
+  const matchingIis = iis.filter(b => b.site.toLowerCase() === observation.siteName.toLowerCase() && b.address === address && b.port === port && !b.hostname && (b.flags & 3) === 0);
   if (matchingIis.length !== 1 || iis.some(b => b.port === port && (b.address === "*" || !isConcreteAddress(b.address)))) return false;
-  const matchingHttp = http.filter(b => b.keyedBy === "ipport" && b.ipPort?.toLowerCase() === `${isIP(address) === 6 ? `[${address}]` : address}:${port}`);
+  const matchingHttp = http.filter(b => {
+    if (b.keyedBy !== "ipport" || typeof b.ipPort !== "string") return false;
+    const split = b.ipPort.lastIndexOf(":");
+    return split > 0 && Number(b.ipPort.slice(split + 1)) === port && canonicalIisAddress(b.ipPort.slice(0,split)) === address;
+  });
   if (matchingHttp.length !== 1 || String(matchingHttp[0].thumbprint || "").toLowerCase() !== observation.thumbprint.toLowerCase()) return false;
   if (String(matchingHttp[0].storeName || "").toLowerCase() !== "my") return false;
   return !http.some(b => {
     if (b.keyedBy !== "ipport") return false;
     const value=String(b.ipPort || ""); const split=value.lastIndexOf(":");
-    return split > 0 && Number(value.slice(split+1)) === port && !isConcreteAddress(value.slice(0,split).replace(/^\[|\]$/g,""));
+    return split > 0 && Number(value.slice(split+1)) === port && !isConcreteAddress(canonicalIisAddress(value.slice(0,split)));
   });
 }
 
@@ -109,7 +113,11 @@ async function readAbsenceSnapshot({ execFileImpl, signal } = {}) {
 
 function snapshotIdentity(snapshot) {
   const iis = snapshot.iis.map(row => JSON.stringify([row.site.toLowerCase(), row.address, row.port, row.hostname, row.flags])).sort();
-  const http = snapshot.http.map(row => JSON.stringify([row.keyedBy, row.ipPort?.toLowerCase(), row.thumbprint?.toLowerCase(), row.storeName?.toLowerCase()])).sort();
+  const http = snapshot.http.map(row => {
+    const value = String(row.ipPort || ""); const split = value.lastIndexOf(":");
+    const canonical = row.keyedBy === "ipport" && split > 0 ? canonicalIisAddress(value.slice(0,split)) : null;
+    return JSON.stringify([row.keyedBy, canonical ? `${canonical}:${value.slice(split+1)}` : value.toLowerCase(), row.thumbprint?.toLowerCase(), row.storeName?.toLowerCase()]);
+  }).sort();
   const certificates = snapshot.certificates.map(row => JSON.stringify([row.thumbprint.toLowerCase(), row.fingerprintSha256, row.hasPrivateKey])).sort();
   return JSON.stringify([iis, http, certificates]);
 }

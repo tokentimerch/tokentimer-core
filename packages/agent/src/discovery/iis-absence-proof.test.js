@@ -27,6 +27,20 @@ test("wildcard, SNI, duplicate and missing HTTP.sys bindings never prove absence
   assert.equal(provesWildcardAbsent(observation, iis(row), [],certificates), false);
   assert.equal(provesWildcardAbsent(observation, iis(row), [...http("192.0.2.10:443"),{keyedBy:"ipport",ipPort:"192.0.2.10:443",thumbprint:"BB".repeat(20)}],certificates), false);
 });
+test("IPv6 absence proof compares equivalent addresses and rejects wildcard, SNI and CCS", async () => {
+  const v6={...observation,port:18450,boundAddress:"::1"};
+  const concrete={site:row.site,binding:"[0:0:0:0:0:0:0:1]:18450:",flags:0};
+  assert.equal(provesWildcardAbsent(v6,iis(concrete),http("[::1]:18450"),certificates),true);
+  assert.equal(provesWildcardAbsent(v6,iis({...concrete,flags:1}),http("[::1]:18450"),certificates),false);
+  assert.equal(provesWildcardAbsent(v6,iis({...concrete,flags:2}),http("[::1]:18450"),certificates),false);
+  assert.equal(provesWildcardAbsent(v6,iis(concrete,{site:row.site,binding:"[::]:18450:",flags:0}),http("[::1]:18450"),certificates),false);
+  assert.equal(provesWildcardAbsent(v6,iis(concrete),http("[::1]:18450","[::]:18450"),certificates),false);
+  assert.equal(provesWildcardAbsent(v6,iis(concrete),http("[::2]:18450"),certificates),false);
+  assert.throws(()=>iis({...concrete,binding:"[::1:18450:"}));
+  const first={iis:iis(concrete),http:http("[0:0:0:0:0:0:0:1]:18450"),certificates};
+  const second={iis:iis({...concrete,binding:"[::1]:18450:"}),http:http("[::1]:18450"),certificates};
+  let n=0;assert.deepEqual(await readStableAbsenceSnapshot({read:async()=>++n===1?first:second}),second);
+});
 test("malformed and partial IIS snapshot is rejected", () => {
   for (const value of [{}, { sites:[row.site], items:[{...row,binding:"broken"}] }, {sites:[],items:[row]}, {sites:[row.site],items:[{...row,flags:null}]}]) {
     assert.throws(() => parseIisSnapshot(JSON.stringify(value)));
