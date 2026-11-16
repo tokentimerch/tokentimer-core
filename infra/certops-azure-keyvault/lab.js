@@ -143,6 +143,18 @@ async function githubPreflight(env = process.env) {
   )
     policy.fail("AZURE_KV_TRUSTED_JANITOR_REQUIRED");
 }
+async function githubApproval(env = process.env) {
+  // Recheck protected environments after the environment gate and before OIDC.
+  await githubPreflight(env);
+  if (!/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID || ""))
+    policy.fail("AZURE_KV_APPROVAL_RUN_CONTEXT_INVALID");
+  const root = `/repos/${policy.REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
+  policy.requireIndependentApproval(
+    await github(root, env),
+    await github(root + "/approvals", env),
+    env,
+  );
+}
 const groupId = (p) =>
   `/subscriptions/${p.subscriptionId}/resourceGroups/${p.group}`;
 const vaultId = (p) =>
@@ -316,7 +328,10 @@ async function provision(env = process.env) {
   const deadline = Date.now() + 600000;
   let vault;
   do {
-    vault = arm("GET", vaultId(p) + `?api-version=${KEY_VAULT_ARM_API_VERSION}`);
+    vault = arm(
+      "GET",
+      vaultId(p) + `?api-version=${KEY_VAULT_ARM_API_VERSION}`,
+    );
     if (vault.properties?.provisioningState === "Succeeded") break;
     await sleep(5000);
   } while (Date.now() < deadline);
@@ -545,6 +560,7 @@ module.exports = {
   arm,
   github,
   githubPreflight,
+  githubApproval,
   groupId,
   vaultId,
   assertPlan,
@@ -560,6 +576,7 @@ module.exports = {
 if (require.main === module) {
   const actions = {
     "github-preflight": githubPreflight,
+    "github-approval": githubApproval,
     provision,
     cleanup,
     janitor,
