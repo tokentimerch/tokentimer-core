@@ -74,7 +74,7 @@ function makeRequest(body) {
   return {
     workspace: { id: "workspace-1" },
     user: { id: 42 },
-    body: body && typeof body === "object" && !Array.isArray(body) && !Object.hasOwn(body, "idempotencyKey") ? { idempotencyKey: "test-batch", ...body } : body,
+    body,
   };
 }
 
@@ -122,22 +122,30 @@ describe("CertOps bulk-renew route", () => {
       assert.strictEqual(call.requiresApproval, false);
       assert.strictEqual(call.requestedByUserId, 42);
       assert.strictEqual(call.actorUserId, 42);
-      assert.strictEqual(call.idempotencyKey, `bulk-renew:test-batch:${uuid(index + 1)}`);
+      assert.match(call.idempotencyKey, new RegExp(`^bulk-renew:[a-f0-9-]{36}:${uuid(index + 1)}$`));
     }
   });
 
-  it("rejects a real bulk request without a key before loading an ACME store certificate", async () => {
-    let loaded = false, created = false;
-    const handler = makeHandler({
-      certificateLoader: async () => { loaded = true; return { id: uuid(9), key_mode: "os-store-managed" }; },
-      manualJobCreator: async () => { created = true; },
-    });
-    const res = responseRecorder();
-    await handler(makeRequest({ certificateIds: [uuid(9)], idempotencyKey: undefined }), res);
-    assert.strictEqual(res.statusCode, 400);
-    assert.match(res.body.error, /idempotencyKey is required/);
-    assert.equal(loaded, false);
-    assert.equal(created, false);
+  it("accepts legacy and ACME store requests without keys, using a fresh key for each attempt", async () => {
+    for (const keyMode of ["agent-local", "os-store-managed"]) {
+      const keys = [];
+      const handler = makeHandler({
+        certificateLoader: async () => ({ id: uuid(9), key_mode: keyMode }),
+        manualJobCreator: async ({ idempotencyKey }) => {
+          assert.match(idempotencyKey, new RegExp(`^bulk-renew:[a-f0-9-]{36}:${uuid(9)}$`));
+          keys.push(idempotencyKey);
+          return { job: { id: `job-${keys.length}` }, created: true };
+        },
+      });
+      const first = responseRecorder(), second = responseRecorder();
+      await handler(makeRequest({ certificateIds: [uuid(9)] }), first);
+      await handler(makeRequest({ certificateIds: [uuid(9)] }), second);
+      assert.equal(first.statusCode, 200);
+      assert.equal(second.statusCode, 200);
+      assert.notEqual(keys[0], keys[1]);
+      assert.equal(first.body.results[0].jobId, "job-1");
+      assert.equal(second.body.results[0].jobId, "job-2");
+    }
   });
 
   it("allows a dry run without an idempotency key", async () => {

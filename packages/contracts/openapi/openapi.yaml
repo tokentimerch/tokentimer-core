@@ -15822,12 +15822,6 @@ components:
       type: object
       additionalProperties: false
       required: [certificateIds]
-      anyOf:
-        - required: [idempotencyKey]
-        - required: [dryRun]
-          properties:
-            dryRun:
-              enum: [true]
       description: >-
         Bulk renewal request. Each certificate id becomes one renew job
         created through the same manual creation path as POST /jobs; source
@@ -15862,9 +15856,9 @@ components:
           maxLength: 64
           pattern: '^[A-Za-z0-9._-]{1,64}$'
           description: >-
-            Required for real bulk renewals; optional for dry runs. Reuse the
-            same key for retries of one request and use a new key for a new
-            attempt. Each certificate receives a derived per-item key.
+            Optional request-level key. Reuse it for retries of the same request
+            and use a new key for a new attempt. If omitted, a fresh key is
+            generated for each request, so retries may create new jobs.
         payload:
           allOf:
             - $ref: "#/components/schemas/CertOpsPublicObject"

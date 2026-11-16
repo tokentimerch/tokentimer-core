@@ -1171,7 +1171,7 @@ function bulkRenewItemIdempotencyKey(idempotencyKey, certificateId) {
   // No auto-derived fallback: the jobs table's (workspace_id,
   // idempotency_key) uniqueness has no time component, so a key derived from
   // the certificate id alone would make that certificate renewable exactly
-  // once, forever. Real requests supply a fresh key per intent.
+  // once, forever. The handler generates a fresh key when none is supplied.
   if (idempotencyKey) {
     return `bulk-renew:${idempotencyKey}:${certificateId}`;
   }
@@ -1223,9 +1223,6 @@ function parseBulkRenewRequest(body) {
   if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
     return { error: "dryRun must be a boolean" };
   }
-  if (body.dryRun !== true && body.idempotencyKey === undefined) {
-    return { error: "idempotencyKey is required for bulk renewal; reuse the same key when retrying the request" };
-  }
   if (body.idempotencyKey !== undefined) {
     if (
       typeof body.idempotencyKey !== "string" ||
@@ -1269,10 +1266,10 @@ function parseBulkRenewRequest(body) {
  * response is always 200 with per-item outcomes, except whole-request shape
  * problems (400) and the disabled-rollout 404.
  *
- * A request-level idempotencyKey makes real-run retries safe: each item is
+ * An optional request-level idempotencyKey makes retries safe: each item is
  * created with a derived "bulk-renew:<key>:<certificateId>" job key, so a
  * replayed batch returns the already-created jobs (marked replayed: true)
- * instead of enqueueing duplicates. A dry run does not need a key.
+ * instead of enqueueing duplicates. Without one, each request gets a fresh key.
  *
  * Dry run preflights each certificate without writing: existence, renewable
  * inventory status, resolution of that certificate's stored renewal profile
@@ -1296,6 +1293,7 @@ function bulkRenewCertificatesHandler({
         code: CERTOPS_JOB_INVALID,
       });
     }
+    const requestIdempotencyKey = parsed.idempotencyKey || require("node:crypto").randomUUID();
 
     // The payload is a whole-request field shared as an override on top of
     // each certificate's stored renewal profile; validate it once up front
@@ -1371,7 +1369,7 @@ function bulkRenewCertificatesHandler({
           jobCreator: manualRenewalJobCreator({ certificateId }),
           requiresApproval: parsed.requiresApproval,
           idempotencyKey: bulkRenewItemIdempotencyKey(
-            parsed.idempotencyKey,
+            requestIdempotencyKey,
             certificateId,
           ),
           // Same session-write source posture as single manual job creation.
