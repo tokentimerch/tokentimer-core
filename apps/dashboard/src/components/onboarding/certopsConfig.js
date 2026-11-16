@@ -335,7 +335,7 @@ export const REGISTRATION_NOTES = [
 // --write-path only applies to the Linux service sandbox. The Windows
 // installer takes the flag for parity but does not use it.
 export const WINDOWS_REGISTRATION_NOTES = [
-  'On the server, download the agent package for your TokenTimer version and check its checksum, with the commands below. Select legacy for published releases; Node.js 22 or 24 must be installed. Bundled packages are unavailable until publisher verification is supported.',
+  'On the server, download the agent package and check its checksum using the commands below. First use an empty folder owned by Administrators or SYSTEM and protected from unprivileged changes. Select legacy for published releases and use Node.js 22 or 24 in a protected location. Bundled packages are unavailable until publisher verification is supported.',
   'Extract it and open an elevated PowerShell in the extracted folder, the one that contains scripts\\install-agent.ps1.',
   'Run the install command below from that folder. Add --dry-run first to see what it will change.',
   'The installer asks for the bootstrap token with a hidden prompt: paste the token there. Do not put it on the command line.',
