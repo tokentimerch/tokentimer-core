@@ -37,7 +37,7 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 74).name, "certops_material_distribution");
     assert.equal(migrations.find((entry) => entry.version === 75).name, "certops_distribution_review");
     assert.equal(migrations.find((entry) => entry.version === 76).name, "certops_distribution_transfer");
-    assert.equal(migrations.at(-1).version, 122);
+    assert.equal(migrations.at(-1).version, 125);
     assert.equal(migrations.find((entry) => entry.version === 114).name, "distribution_pagerduty_recovery");
     assert.equal(migrations.find((entry) => entry.version === 115).name, "certops_observed_revocation");
     assert.equal(migrations.find(entry => entry.version === 82).name, "auto_sync_system_metrics");
@@ -53,7 +53,6 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 106).name, "operator_issuance");
     assert.equal(migrations.find((entry) => entry.version === 107).name, "certops_issuance_job_identity");
     assert.equal(migrations.find((entry) => entry.version === 108).name, "certops_issuance_identity_transfer");
-
     assert.equal(migrations.find((entry) => entry.version === 98).name, "certops_manual_rollout_authority");
     assert.equal(migrations.find((entry) => entry.version === 109).name, "certops_period_creator_delete");
     assert.equal(migrations.find((entry) => entry.version === 112).name, "certops_retirement_dossiers");
@@ -63,7 +62,8 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 111).name, "auto_sync_owner_username");
     assert.equal(migrations.find((entry) => entry.version === 117).name, "certops_acme_store_enrollment_identity");
     assert.equal(migrations.find((entry) => entry.version === 118).name, "certops_adcs_expected_identity_receipts");
-    assert.equal(migrations.at(-1).name, "certops_enrollment_jobs_index");
+    assert.equal(migrations.find((entry) => entry.version === 122).name, "certops_enrollment_jobs_index");
+    assert.equal(migrations.at(-1).name, "certops_adcs_preflight_lookup_index");
     assert.equal(migrations.find(entry => entry.version === 95).name, "remove_pagerduty_rest_lookup");
     assert.throws(() => validateMigrationHistory([
       ...migrations.filter(entry => entry.version <= 78).map(({version, name}) => ({version, name})),
@@ -73,7 +73,7 @@ describe("operational notifications migration", () => {
     assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 122 }, (_, index) => index + 1),
+      [...Array.from({ length: 122 }, (_, index) => index + 1), 125],
     );
     assert.equal(migrations.find(entry => entry.version === 73).name, "certops_job_alert_context");
     assert.match(migrations.find(entry => entry.version === 72).sql, /ON DELETE SET NULL \(issuer_id\)/);
@@ -450,11 +450,11 @@ describe("CertOps inventory migration", () => {
     const expectedTailVersions = Array.from(
       { length: Math.max(...tailVersions) - 10 },
       (_, index) => 11 + index,
-    ).filter((version) => (notificationCount === 4 || !notificationVersions.includes(version)));
+    ).filter((version) => (notificationCount === 4 || !notificationVersions.includes(version)) && ![123, 124].includes(version));
     assert.deepEqual(
       tailVersions,
       expectedTailVersions,
-      "migration versions from 11 onward may omit only PR #140's reserved 56-59",
+      "migration versions from 11 onward may omit only PR #140 and secure-agent reserved slots",
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -1910,7 +1910,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     assert.doesNotMatch(migration.sql, /DROP COLUMN/i);
   });
 
-  it("keeps migration versions sequential except PR #140's reserved 56-59", () => {
+  it("keeps migration versions ordered with explicit reserved gaps", () => {
     const versions = migrations.map((entry) => entry.version);
     const sorted = [...versions].sort((a, b) => a - b);
     assert.deepEqual(versions, sorted, "migrations array must be declared in version order");
@@ -1918,9 +1918,9 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const notificationCount = notificationVersions.filter((version) => sorted.includes(version)).length;
     assert.ok(notificationCount === 0 || notificationCount === 4);
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
-      .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
+      .filter((version) => (notificationCount === 4 || !notificationVersions.includes(version)) && ![123, 124].includes(version));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 122);
+    assert.equal(sorted[sorted.length - 1], 125);
   });
 });
 

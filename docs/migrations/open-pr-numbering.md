@@ -51,7 +51,16 @@ are reservations, not no-op migrations. They do not install another feature.
 | 120 | certops_material_adcs_operation_union | Preserve both material and AD CS job operations |
 | 121 | certops_iis_absence_proofs | Reconcile proven IIS observations |
 | 122 | certops_enrollment_jobs_index | Index enrollment jobs |
-| 125 | certops_adcs_preflight_lookup_index | #714 adds a partial index for issuer/agent preflight history. Leave reservations 123–124 unapplied here. |
+| 123 | agent_credential_rotations | Reserved by #614 |
+| 124 | agent_credential_rotation_ack | Reserved by #614 |
+| 125 | certops_adcs_preflight_lookup_index | Partial index for issuer/agent preflight history (#714) |
+
+The index uses canonical version 125 on fresh installs. The recognized retirement
+preview keeps its applied version-109 ledger. With PagerDuty recovery already
+applied, the index appends at version 123. The earlier preview that recorded the
+index at 122 retains that identity and appends pending PagerDuty recovery and
+secure-agent migrations in the reviewed order. Leave reserved slots unapplied
+until their definitions arrive.
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.

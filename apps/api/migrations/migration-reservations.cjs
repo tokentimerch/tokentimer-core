@@ -43,6 +43,8 @@ const reservations = Object.freeze({
   120: "certops_material_adcs_operation_union",
   121: "certops_iis_absence_proofs",
   122: "certops_enrollment_jobs_index",
+  123: "agent_credential_rotations",
+  124: "agent_credential_rotation_ack",
   125: "certops_adcs_preflight_lookup_index",
 });
 

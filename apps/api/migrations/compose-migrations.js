@@ -86,6 +86,14 @@ function composeMigrations(migrations, recorded = []) {
     .slice()
     .sort((a, b) => a.version - b.version);
   const byName = new Map(extensions.map((entry) => [entry.name, entry]));
+  // A reviewed #714 preview may have applied its index before PagerDuty
+  // recovery and the reserved #614 tails. Keep that exact append order.
+  const afterPreflightIndex = (names) => {
+    const tails = new Set(["distribution_pagerduty_recovery", "agent_credential_rotations", "agent_credential_rotation_ack"]);
+    const retained = names.filter(name => !tails.has(name));
+    const position = retained.indexOf("certops_adcs_preflight_lookup_index");
+    return position < 0 ? names : [...retained.slice(0,position+1), ...names.filter(name=>tails.has(name)), ...retained.slice(position+1)];
+  };
   // Validate the already-applied preview with the previous registry before
   // appending main's newer migrations under unoccupied identities.
   const hasRetirementPreview = byName.get("certops_retirement_dossiers")?.version !== 109 &&
@@ -102,7 +110,8 @@ function composeMigrations(migrations, recorded = []) {
       ...extensions.filter((entry) => entry.version >= 114).map((entry) => entry.name),
     ];
     recognizedRetirementPreview = oldRows.every((row) => row.version < 70 || oldIdentity.get(row.name) === row.version) &&
-      rows.filter((row) => row.version > 109).every((row, index) => row.version === 110 + index && row.name === appended[index]);
+      [appended,afterPreflightIndex(appended)].some(names=>rows.filter((row) => row.version > 109)
+        .every((row, index) => row.version === 110 + index && row.name === names[index]));
     if (!recognizedRetirementPreview) throw new Error("Unsupported Core retirement preview migration history");
   }
   // This reviewed preview predates main's PagerDuty migrations at 94/95.
@@ -277,7 +286,7 @@ function composeMigrations(migrations, recorded = []) {
       const companionOrders = Array.from({ length: independent.length + 1 }, (_entry, cut) =>
         [...prefix, ...independent.slice(0, cut), ...companions, ...independent.slice(cut)],
       );
-      return [ordinary, ...companionOrders].some((names) => {
+      return [ordinary, ...companionOrders].flatMap(names=>[names,afterPreflightIndex(names)]).some((names) => {
         const applied = new Set(rows.map((row) => row.name));
         const lastApplied = Math.max(-1, ...names.map((name, index) => applied.has(name) ? index : -1));
         const skipped = names.slice(0, lastApplied + 1).filter((name) => !applied.has(name));
