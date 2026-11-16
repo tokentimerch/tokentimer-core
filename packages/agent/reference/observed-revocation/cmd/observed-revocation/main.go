@@ -150,7 +150,15 @@ func run(r io.Reader, w io.Writer, now time.Time) error {
 		return write()
 	}
 	out.ChainStatus = "valid"
-	result := revocation.CheckChain(context.Background(), chains[0], req.AllowedOrigins, roots, now)
+	// Distrusted roots must not authorize the HTTPS connection used to fetch
+	// status, even when the observed certificate has another valid chain.
+	var tlsRoots []*x509.Certificate
+	for _, root := range roots {
+		if !denied[sha1.Sum(root.Raw)] {
+			tlsRoots = append(tlsRoots, root)
+		}
+	}
+	result := revocation.CheckChain(context.Background(), chains[0], req.AllowedOrigins, tlsRoots, now)
 	out.Verdict = result.Verdict
 	out.Detail = result.Detail
 	out.RevokedIssuerFingerprintSha256 = result.RevokedIssuerFingerprintSha256
