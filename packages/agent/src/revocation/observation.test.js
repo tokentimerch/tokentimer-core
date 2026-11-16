@@ -40,13 +40,14 @@ test("includes the exact revoked intermediate fingerprint in observation metadat
 
 test("scan checker preserves the origin of local trust material", async () => {
   let actual;
-  const material = { roots: ["explicit-root"], intermediates: ["explicit-intermediate"], systemRoots: ["system-root"], systemIntermediates: ["system-intermediate"] };
+  const material = { roots: ["explicit-root"], intermediates: ["explicit-intermediate"], systemRoots: ["system-root"], systemIntermediates: ["system-intermediate"], deniedFingerprints: ["a".repeat(40)] };
   const checker = await createScanChecker({ enabled: true, allowedOrigins: ["http://pki.example"] }, { load: () => material, check: (value) => { actual = value; return { verdict: "unknown" }; } });
   await checker({ intermediateCertificates: ["observed-intermediate"] });
   assert.deepEqual(actual.roots, ["explicit-root"]);
   assert.deepEqual(actual.systemRoots, ["system-root"]);
   assert.deepEqual(actual.intermediates, ["explicit-intermediate", "observed-intermediate"]);
   assert.deepEqual(actual.systemIntermediates, ["system-intermediate"]);
+  assert.deepEqual(actual.deniedFingerprints, ["a".repeat(40)]);
 });
 
 test("failed verification reports unknown with an attempt time, and concurrency is bounded", async () => {
