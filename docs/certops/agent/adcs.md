@@ -139,6 +139,8 @@ Enrollment additionally requires `dnsScopes` and `keyAlgorithms` on one matching
 
 **Operator action:** add explicit DNS and key constraints before enabling enrollment, then restart the service. Public issuer confirmation, profile changes and immutable signed snapshots cannot broaden these host-local permissions. Tightening a rule refuses later continuations and deletes only their exact unaccepted key; an accepted or installing key requires installation reconciliation and is preserved. Terminal cancellation/expiry cleanup remains available even after local rules change.
 
+When the agent confirms that an automatic renewal was refused before creating a key or submitting a request, TokenTimer retries after 15 minutes, then 30 minutes, then hourly. Correct the rule and restart the agent. Older agents and other refusals may not provide this confirmation and are not retried automatically; investigate their enrollment history before taking further action.
+
 Restart `TokenTimerAgent` after you save the rule. The certificate DNS name on the renewal profile must be in `declaredTargetSelectors`. Add the name there and restart the agent. The next heartbeat publishes it. An empty list does not remove the last name. If the issuer wizard stays on "Waiting for the agent to report the preflight verdict", confirm the agent is online, that this rule names the same CA and template, and that the agent build advertises AD CS preflight.
 
 ## Create the issuer
@@ -252,7 +254,7 @@ These are the error codes the product returns. Each one names the operator actio
 
 | Code | What to do |
 |---|---|
-| `issuer_not_allowlisted` | Add an enrollment rule for this exact CA config and template, restart `TokenTimerAgent`, and run the check again. The agent does not contact the CA until that rule exists. |
+| `issuer_not_allowlisted` | Check the local enrollment rule for this CA, template, DNS names and key algorithm; restart `TokenTimerAgent` after a change. If the rule matches, inspect CA safety and connectivity. A failed safety check does not submit a certificate request. |
 | `ADCS_TEMPLATE_UNSAFE` | Use the template common name. The template must be schema version 2 or later, schema version 3 or later for EC, and Server Authentication only. Publish it on that CA. |
 | `ADCS_CA_CONFIG_UNSAFE` | Clear `EDITF_ATTRIBUTESUBJECTALTNAME2` and set `IF_ENFORCEENCRYPTICERTREQUEST` (`0x200`). Run the check again. |
 | `ADCS_CA_KEY_UNPINNED` | Run the CA check on the agent that will enroll, then pin a CA certificate. The check stores that certificate and the template OID on the agent. A check on a different agent does not prepare this one. |
