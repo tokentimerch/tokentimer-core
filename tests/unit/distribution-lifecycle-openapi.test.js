@@ -40,6 +40,14 @@ test("original-job reconciliation documents fresh review and immutable read-only
   assert.ok(receipt.required.includes("observedAt"));
 });
 
+test("cleanup documentation identifies both separately qualified KV v2 providers", () => {
+  const cleanup = document.paths[`${groupPath}/cleanups`].post;
+  assert.match(cleanup.description, /Vault and OpenBao KV v2/);
+  assert.match(cleanup.description, /qualified capability/);
+  assert.ok(!document.components.schemas.CertOpsJobCreateRequest.properties.operation.enum.includes("cleanup-from-store"));
+  assert.ok(document.components.schemas.CertOpsJob.properties.operation.enum.includes("cleanup-from-store"));
+});
+
 test("the complete served contract validates as OpenAPI 3.0 with resolved lifecycle schemas", async () => {
   const parsed = await SwaggerParser.validate(specPath);
   assert.equal(parsed.openapi, "3.0.3");

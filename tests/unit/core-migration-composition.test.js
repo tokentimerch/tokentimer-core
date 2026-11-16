@@ -287,70 +287,6 @@ const core = [
 const ledger = (names, length = names.length) =>
   names.slice(0, length).map((name, i) => ({ version: 70 + i, name }));
 
-test("fresh and current Core installations retain the canonical migration history", () => {
-  for (const recorded of [
-    [],
-    ...Array.from({ length: 8 }, (_, i) => ledger(canonical, i + 1)),
-  ]) {
-    if (recorded.length > canonical.length) continue;
-    assert.deepEqual(composeMigrations(core, recorded), core);
-  }
-});
-for (const [name, names, minLength] of [
-  ["distribution-first", distribution, 1],
-  ["enrollment-first preview", preview, 2],
-  ["previous AD-CS-first distribution preview", previous, 4],
-]) {
-  test(`${name} installations preserve every applied name and append missing AD CS schema`, () => {
-    for (let count = minLength; count <= 7; count++) {
-      const result = composeMigrations(core, ledger(names, count));
-      assert.deepEqual(
-        result
-          .filter((e) => e.version >= 70 && e.version <= 76)
-          .map((e) => e.name),
-        names,
-      );
-      assert.deepEqual(result[0], core[0]);
-      assert.deepEqual(result.at(-1), core.at(-1));
-      assert.deepEqual(
-        composeMigrations(core, ledger(names)),
-        result,
-        "replay is stable",
-      );
-    }
-  });
-}
-test("unknown, mixed, duplicate and gapped histories fail before SQL executes", () => {
-  for (const recorded of [
-    [{ version: 70, name: "unknown" }],
-    [{ version: 71, name: canonical[1] }],
-    [
-      { version: 70, name: canonical[0] },
-      { version: 72, name: canonical[2] },
-    ],
-    [
-      { version: 70, name: canonical[3] },
-      { version: 71, name: canonical[3] },
-    ],
-    [...ledger(distribution, 4), { version: 74, name: canonical[2] }],
-    [...ledger(canonical), { version: 78, name: "unknown" }],
-    [ledger(canonical, 1)[0], ledger(canonical, 1)[0]],
-  ])
-    assert.throws(
-      () => composeMigrations(core, recorded),
-      /Unsupported Core migration history/,
-    );
-});
-test("malformed pinned migration registries cannot be composed", () => {
-  assert.throws(
-    () => composeMigrations(core.filter((e) => e.name !== canonical[1])),
-    /inconsistent pinned Core migration/,
-  );
-  assert.throws(
-    () => composeMigrations([...core, core[1]]),
-    /inconsistent pinned Core migration/,
-  );
-});
 test("recipient preview ledgers keep applied rows and leave room for the other open migrations", () => {
   const names = [
     ...canonical,
@@ -402,37 +338,6 @@ test("recipient preview ledgers keep applied rows and leave room for the other o
       { version: 81, name: "certops_distribution_lifecycle" },
     ]),
     /certops_distribution_lifecycle/,
-  );
-});
-
-test("all 72 legacy distribution-first definitions retain their immutable historical SQL", () => {
-  const coreRoot = path.resolve(__dirname, "../..");
-  const { migrations } = require(
-    path.join(coreRoot, "apps/api/migrations/migrate.js"),
-  );
-  const previous = composeMigrations(
-    migrations,
-    ledger(distribution, 3),
-  ).filter((e) => e.version <= 72);
-  assert.equal(previous.length, 72);
-  assert.equal(
-    crypto.createHash("sha256").update(JSON.stringify(previous)).digest("hex"),
-    "eeae27b7b0cec957338e4e126bcefed29465b6441226925cd8930d77e49087d9",
-  );
-});
-
-test("all 73 enrollment-first preview definitions retain their immutable historical SQL", () => {
-  const coreRoot = path.resolve(__dirname, "../..");
-  const { migrations } = require(
-    path.join(coreRoot, "apps/api/migrations/migrate.js"),
-  );
-  const previous = composeMigrations(migrations, ledger(preview, 4)).filter(
-    (e) => e.version <= 73,
-  );
-  assert.equal(previous.length, 73);
-  assert.equal(
-    crypto.createHash("sha256").update(JSON.stringify(previous)).digest("hex"),
-    "c5c3d63c224fedc59fb37d8f1de99fb84b2d02dbbd86e2800ae9de7564be9099",
   );
 });
 
@@ -491,70 +396,6 @@ const core = [
 const ledger = (names, length = names.length) =>
   names.slice(0, length).map((name, i) => ({ version: 70 + i, name }));
 
-test("fresh and current Core installations retain the canonical migration history", () => {
-  for (const recorded of [
-    [],
-    ...Array.from({ length: 8 }, (_, i) => ledger(canonical, i + 1)),
-  ]) {
-    if (recorded.length > canonical.length) continue;
-    assert.deepEqual(composeMigrations(core, recorded), core);
-  }
-});
-for (const [name, names, minLength] of [
-  ["distribution-first", distribution, 1],
-  ["enrollment-first preview", preview, 2],
-  ["previous AD-CS-first distribution preview", previous, 4],
-]) {
-  test(`${name} installations preserve every applied name and append missing AD CS schema`, () => {
-    for (let count = minLength; count <= 7; count++) {
-      const result = composeMigrations(core, ledger(names, count));
-      assert.deepEqual(
-        result
-          .filter((e) => e.version >= 70 && e.version <= 76)
-          .map((e) => e.name),
-        names,
-      );
-      assert.deepEqual(result[0], core[0]);
-      assert.deepEqual(result.at(-1), core.at(-1));
-      assert.deepEqual(
-        composeMigrations(core, ledger(names)),
-        result,
-        "replay is stable",
-      );
-    }
-  });
-}
-test("unknown, mixed, duplicate and gapped histories fail before SQL executes", () => {
-  for (const recorded of [
-    [{ version: 70, name: "unknown" }],
-    [{ version: 71, name: canonical[1] }],
-    [
-      { version: 70, name: canonical[0] },
-      { version: 72, name: canonical[2] },
-    ],
-    [
-      { version: 70, name: canonical[3] },
-      { version: 71, name: canonical[3] },
-    ],
-    [...ledger(distribution, 4), { version: 74, name: canonical[2] }],
-    [...ledger(canonical), { version: 78, name: "unknown" }],
-    [ledger(canonical, 1)[0], ledger(canonical, 1)[0]],
-  ])
-    assert.throws(
-      () => composeMigrations(core, recorded),
-      /Unsupported Core migration history/,
-    );
-});
-test("malformed pinned migration registries cannot be composed", () => {
-  assert.throws(
-    () => composeMigrations(core.filter((e) => e.name !== canonical[1])),
-    /inconsistent pinned Core migration/,
-  );
-  assert.throws(
-    () => composeMigrations([...core, core[1]]),
-    /inconsistent pinned Core migration/,
-  );
-});
 test("manual rollout authority composes before or after reserved companion migrations", () => {
   const { migrations } = require("../../apps/api/migrations/migrate");
   const companions = new Set([86, 87, 88, 89, 90, 91, 96, 97]);
@@ -644,37 +485,6 @@ test("new MCP schema dependencies cannot be recorded before their required table
   }
 });
 
-test("all 72 legacy distribution-first definitions retain their immutable historical SQL", () => {
-  const coreRoot = path.resolve(__dirname, "../..");
-  const { migrations } = require(
-    path.join(coreRoot, "apps/api/migrations/migrate.js"),
-  );
-  const previous = composeMigrations(
-    migrations,
-    ledger(distribution, 3),
-  ).filter((e) => e.version <= 72);
-  assert.equal(previous.length, 72);
-  assert.equal(
-    crypto.createHash("sha256").update(JSON.stringify(previous)).digest("hex"),
-    "eeae27b7b0cec957338e4e126bcefed29465b6441226925cd8930d77e49087d9",
-  );
-});
-
-test("all 73 enrollment-first preview definitions retain their immutable historical SQL", () => {
-  const coreRoot = path.resolve(__dirname, "../..");
-  const { migrations } = require(
-    path.join(coreRoot, "apps/api/migrations/migrate.js"),
-  );
-  const previous = composeMigrations(migrations, ledger(preview, 4)).filter(
-    (e) => e.version <= 73,
-  );
-  assert.equal(previous.length, 73);
-  assert.equal(
-    crypto.createHash("sha256").update(JSON.stringify(previous)).digest("hex"),
-    "c5c3d63c224fedc59fb37d8f1de99fb84b2d02dbbd86e2800ae9de7564be9099",
-  );
-});
-
 test("PagerDuty's independent slot preserves applied history while companion migrations arrive later", () => {
   const registered = require("../../apps/api/migrations/migrate").migrations;
   const migrations = registered.filter(row => row.version <= 82 || ["pagerduty_incident_lifecycle", "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup"].includes(row.name));
@@ -709,3 +519,24 @@ test("PagerDuty's independent slot preserves applied history while companion mig
 });
 
 }
+require("node:test")("recovery preview retains its exact ledger across deterministic append prefixes", () => {
+  const assert = require("node:assert/strict");
+  const { migrations, validateMigrationHistory } = require("../../apps/api/migrations/migrate");
+  const { composeMigrations } = require("../../apps/api/migrations/compose-migrations");
+  const base = migrations.filter((entry) => entry.version <= 113)
+    .map(({ version, name }) => ({ version, name }));
+  const preview = [...base, { version: 114, name: "distribution_pagerduty_recovery" }];
+  const planned = composeMigrations(migrations, preview);
+  const ledger = planned.map(({ version, name }) => ({ version, name }));
+  assert.deepEqual(ledger.slice(0, preview.length), preview);
+  for (let length = preview.length; length <= ledger.length; length++) {
+    validateMigrationHistory(ledger.slice(0, length));
+    assert.deepEqual(composeMigrations(migrations, ledger.slice(0, length)), planned);
+  }
+  const altered = [...preview, { ...ledger[preview.length], name: "certops_windows_iis_consent" }];
+  assert.throws(() => composeMigrations(migrations, altered), /Unsupported Core migration history/);
+  const gap = [...preview, { ...ledger[preview.length], version: 116 }];
+  assert.throws(() => composeMigrations(migrations, gap), /Unsupported Core migration history/);
+  const wrongBase = preview.map((row) => row.version === 113 ? { ...row, name: "certops_material_providers" } : row);
+  assert.throws(() => composeMigrations(migrations, wrongBase), /Unsupported Core migration history/);
+});

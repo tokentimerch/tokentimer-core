@@ -482,6 +482,22 @@ describe("collectWindowsDiscoveryObservations", () => {
     );
     assert.equal(observations.filter(value => value.locationKind === "windows_store").length, 1);
   });
+  it("reports service bindings even when the store contains 1000 certificates", async () => {
+    const certificate = new (require("node:crypto").X509Certificate)(fs.readFileSync(path.join(__dirname, "../verify/fixtures/leaf.crt.pem")));
+    const raw = Array.from(certificate.raw);
+    const thumbs = Array.from({length:1000}, (_, i) => (i + 1).toString(16).padStart(40,"0"));
+    const items = thumbs.map((thumbprint, i) => ({
+      thumbprint:thumbprint.toUpperCase(),subject:codeUnits(`CN=host${i}.example.test`),issuer:codeUnits("CN=Test CA"),
+      notBefore:`/Date(${Date.UTC(2026,0,1)})/`,notAfter:`/Date(${Date.UTC(2027,0,1)})/`,serialNumber:"1A",hasPrivateKey:false,rawData:[],
+    }));
+    const execFileImpl=makeExecFileImplRouter({storeJson:JSON.stringify({items}),
+      bindingsJson:httpSysJson([{ipPort:"10.0.0.5:443",thumbprint:thumbs[0],storeName:"My"}]),
+      appcmdStdout:'SITE "Web" (id:1,bindings:https/10.0.0.5:443:,state:Started)'});
+    const spawn=()=>fakeSpawnResult({stdout:JSON.stringify({items:thumbs.map(Thumbprint=>({Thumbprint,RawData:raw}))})});
+    const observations=await collectWindowsDiscoveryObservations({execFileImpl,spawn});
+    assert.equal(observations.filter(item=>item.locationKind==="windows_store").length,1000);
+    assert.ok(observations.some(item=>item.locationKind==="iis_binding" && item.locationSlot==="Web:443@10.0.0.5"));
+  });
 
   it("reports the native bracketed IPv6 IIS binding without changing its native slot", async () => {
     const certificate=new (require("node:crypto").X509Certificate)(fs.readFileSync(path.join(__dirname,"../verify/fixtures/leaf.crt.pem")));

@@ -128,6 +128,73 @@ describe('association provenance API contract', () => {
       ).toBeNull()
     );
   });
+  it('resets paging on asset changes and ignores old responses after returning', async () => {
+    const pending = [];
+    const firstPage = id => ({
+      managed: true,
+      configurations: [],
+      items: [
+        {
+          id: `${id}-1`,
+          config_name: `Asset ${id}`,
+          event: 'attached',
+          occurred_at: '2026-10-01T00:00:00Z',
+        },
+      ],
+      next_before: 'cursor',
+    });
+    get.mockImplementation(url =>
+      url.includes('?before=')
+        ? new Promise(resolve => pending.push(resolve))
+        : Promise.resolve({ data: firstPage(url.includes('/71/') ? 71 : 72) })
+    );
+    const view = tokenId => (
+      <ChakraProvider>
+        <AutoSyncProvenance tokenId={tokenId} />
+      </ChakraProvider>
+    );
+    const rendered = render(view(71));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Show history' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier history' }));
+    rendered.rerender(view(72));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Show history' })
+    );
+    expect(
+      screen.getByRole('button', { name: 'Earlier history' })
+    ).toBeEnabled();
+    rendered.rerender(view(71));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Show history' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier history' }));
+    await act(async () =>
+      pending[0]({
+        data: {
+          ...firstPage(71),
+          items: [
+            {
+              id: 'old',
+              event: 'attached',
+              config_name: 'Stale result',
+              occurred_at: '2026-10-01T00:00:00Z',
+            },
+          ],
+        },
+      })
+    );
+    expect(screen.queryByText('Added to Stale result')).not.toBeInTheDocument();
+    expect(document.querySelector('button[disabled]')).toBeInTheDocument();
+    await act(async () =>
+      pending[1]({ data: { ...firstPage(71), items: [], next_before: null } })
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Earlier history' })
+    ).not.toBeInTheDocument();
+  });
+
   it('does not claim manual ownership when history is unavailable', async () => {
     get.mockRejectedValueOnce(new Error('offline'));
     render(
@@ -135,7 +202,9 @@ describe('association provenance API contract', () => {
         <AutoSyncProvenance tokenId={71} ownership='Manual or legacy' />
       </ChakraProvider>
     );
-    expect(await screen.findByText('Auto-sync history could not be loaded.')).toBeTruthy();
+    expect(
+      await screen.findByText('Auto-sync history could not be loaded.')
+    ).toBeTruthy();
     expect(screen.queryByText('Manual or legacy')).toBeNull();
   });
 
@@ -196,4 +265,95 @@ describe('association provenance API contract', () => {
       screen.getByRole('button', { name: 'Earlier history' })
     ).toBeTruthy();
   });
+
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])(
+    'isolates pagination after switching assets (revisit: %s, rejection: %s)',
+    async (revisit, rejectOld) => {
+      const page = name => ({
+        managed: true,
+        configurations: [],
+        items: [
+          {
+            id: name,
+            config_name: name,
+            event: 'attached',
+            occurred_at: '2026-10-01T00:00:00Z',
+          },
+        ],
+        next_before: '26',
+      });
+      let finishOld;
+      let finishCurrent;
+      let initialLoads = 0;
+      let paginationLoads = 0;
+      get.mockImplementation(url => {
+        if (!url.includes('?')) {
+          initialLoads += 1;
+          return Promise.resolve({ data: page(`Current ${initialLoads}`) });
+        }
+        paginationLoads += 1;
+        if (paginationLoads === 1) {
+          return new Promise((resolve, reject) => {
+            finishOld = () =>
+              rejectOld
+                ? reject(new Error('stale failure'))
+                : resolve({ data: page('Stale page') });
+          });
+        }
+        return new Promise(resolve => {
+          finishCurrent = () => resolve({ data: page('Earlier current page') });
+        });
+      });
+      const component = tokenId => (
+        <ChakraProvider>
+          <AutoSyncProvenance tokenId={tokenId} ownership='Managed' />
+        </ChakraProvider>
+      );
+      const view = render(component(71));
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Show history' })
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Earlier history' }));
+      expect(
+        screen.getByRole('button', { name: /Earlier history/ })
+      ).toBeDisabled();
+
+      view.rerender(component(72));
+      await screen.findByRole('button', { name: 'Show history' });
+      if (revisit) {
+        view.rerender(component(71));
+        await waitFor(() => expect(initialLoads).toBe(3));
+      }
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Show history' })
+      );
+      const currentName = `Current ${revisit ? 3 : 2}`;
+      expect(
+        await screen.findByText(`Added to ${currentName}`)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Earlier history' })
+      ).not.toBeDisabled();
+      fireEvent.click(screen.getByRole('button', { name: 'Earlier history' }));
+      await act(async () => finishOld());
+      expect(screen.queryByText('Added to Stale page')).not.toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: /Earlier history/ })
+      ).toBeDisabled();
+      await act(async () => finishCurrent());
+      expect(
+        screen.getByText('Added to Earlier current page')
+      ).toBeInTheDocument();
+      expect(screen.getByText(`Added to ${currentName}`)).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Earlier history' })
+      ).not.toBeDisabled();
+    }
+  );
 });

@@ -214,8 +214,8 @@ export function NotificationsStep({ ctx }) {
             soon.
           </Text>
           <Text>
-            <strong>WhatsApp:</strong> Each recipient must confirm their number
-            before receiving alerts.
+            <strong>WhatsApp:</strong> Recipients may need to confirm their
+            number, depending on verification settings.
           </Text>
           <Link
             href={`/workspace-preferences?workspace=${encodeURIComponent(ctx.workspaceId)}`}

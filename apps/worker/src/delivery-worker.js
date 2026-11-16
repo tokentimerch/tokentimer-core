@@ -70,6 +70,7 @@ import {
 import { notificationDeliveryState } from "./shared/notificationDeliveryState.js";
 import {isDistributionAlert,loadDistributionAlertContext,buildDistributionEmailContent,
   buildDistributionWebhookPayload,distributionWhatsAppVariables} from "./shared/distributionAlerts.js";
+import { deliverDistributionPagerDutyTrigger, reconcileDistributionPagerDuty } from "./shared/distributionPagerDuty.js";
 
 const OPERATIONAL_EMAIL_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 let lastOperationalEmailSweepAt = 0;
@@ -1605,6 +1606,7 @@ export async function deliveryWorkerJob({
   // large recipient batch cannot starve recovery. This also runs on an empty
   // queue, in both the Compose runner and Helm delivery CronJob.
   await withClient((client) => reconcilePagerDutyIncidents(client, { send: webhookSender, deliveryState }));
+  await withClient((client) => reconcileDistributionPagerDuty(client, { send: webhookSender }));
 
   await withClient(async (client) => {
     // In test mode, ignore next_attempt_at gating to allow repeated processing in quick succession
@@ -2435,6 +2437,7 @@ export async function deliveryWorkerJob({
                 let transientEndpoints = 0;
                 let permanentEndpoints = 0;
                 let consideredEndpoints = 0;
+                let delegatedDistributionRecovery = false;
                 const webhookEndpoints = {};
                 const errors = [];
 
@@ -2458,6 +2461,10 @@ export async function deliveryWorkerJob({
 
                 for (const wh of webhooks) {
                   const kind = resolveWebhookProviderKind(wh);
+                  if (kind === "pagerduty" && isDistributionAlert(alert) && alert.distributionContext?.transition === "resolved") {
+                    delegatedDistributionRecovery = true;
+                    continue;
+                  }
                   const url = String(wh?.url || "");
                   const routingKey = String(wh?.routingKey || "");
                   const trimmedUrl = url.trim();
@@ -2700,13 +2707,20 @@ export async function deliveryWorkerJob({
                   const endTimer = hLatency
                     .labels("webhooks", kind)
                     .startTimer();
-                  const res = await webhookSender(url, payload, kind);
+                  const res = kind === "pagerduty" && isDistributionAlert(alert)
+                    ? await deliverDistributionPagerDutyTrigger(client, { alert, webhook: wh, payload, send: webhookSender })
+                    : await webhookSender(url, payload, kind);
                   try {
                     endTimer();
                   } catch (_) {
                     logger.debug("Metrics recording failed", {
                       error: _.message,
                     });
+                  }
+                  if (res.skipped) {
+                    succeededEndpoints += 1;
+                    webhookEndpoints[urlHash] = "sent";
+                    continue;
                   }
                   try {
                     cDelivery
@@ -2754,7 +2768,7 @@ export async function deliveryWorkerJob({
                         urlHash,
                         ...(kind === "pagerduty" && { destination_id: urlHash }),
                         group_id: groupIdUsedForWebhooks,
-                        payload_type: isEndpointHealthWebhook
+                        payload_type: isDistributionAlert(alert) ? "certops_distribution" : isEndpointHealthWebhook
                           ? "endpoint_health"
                           : isCertRenewalFailedWebhook
                             ? "cert_renewal_failed"
@@ -2773,6 +2787,21 @@ export async function deliveryWorkerJob({
                       }),
                     ],
                   );
+                }
+                if (delegatedDistributionRecovery) {
+                  const historical = await client.query(`SELECT destination_id,resolved_at FROM certops_distribution_pagerduty
+                    WHERE workspace_id=$1 AND incident_id=$2 AND (trigger_accepted_at IS NOT NULL OR trigger_delivery_uncertain)`,
+                  [alert.workspace_id,alert.distributionContext.incidentId]);
+                  if (!historical.rowCount) {
+                    consideredEndpoints += 1;
+                    transientEndpoints += 1;
+                    errors.push("pagerduty: original_trigger_unavailable");
+                  }
+                  for (const destination of historical.rows) {
+                    consideredEndpoints += 1;
+                    if (destination.resolved_at) { succeededEndpoints += 1; webhookEndpoints[destination.destination_id] = "sent"; }
+                    else { transientEndpoints += 1; webhookEndpoints[destination.destination_id] = "pending"; }
+                  }
                 }
                 success = consideredEndpoints > 0 && transientEndpoints === 0 && permanentEndpoints === 0;
                 partialSuccess = succeededEndpoints > 0 && (transientEndpoints > 0 || permanentEndpoints > 0);

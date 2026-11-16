@@ -62,7 +62,9 @@ export function finishesByItself(stepId, { goal, progress } = {}) {
   return true;
 }
 
-export const hasOwnContinue = stepId => OWN_CONTINUE.has(stepId);
+export const hasOwnContinue = (stepId, guidedImportSteps = false) =>
+  OWN_CONTINUE.has(stepId) &&
+  !(guidedImportSteps && ['file_import', 'integration'].includes(stepId));
 
 /** Journey identity: a new goal or platform starts without any hold. */
 export function journeyKey(intent, progress) {

@@ -53,6 +53,13 @@ async function putConsumerPolicy({
     ).rows[0];
     if (old && material.hashIntent(old.policy) === material.hashIntent(policy))
       return { authorizationRevision: binding.authorization_revision, policy };
+    const unresolved = await client.query(`SELECT 1 FROM certops_consumer_deployments d
+      JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND (j.id=d.job_id OR j.id=d.staging_job_id)
+      WHERE d.workspace_id=$1 AND d.binding_id=$2 AND
+        (j.needs_operator_reconciliation IS TRUE OR (j.status IN ('claimed','running')
+          AND j.payload->'materialDeployment'->>'verificationOnly' IS DISTINCT FROM 'true'))
+      LIMIT 1`, [workspaceId,bindingId]);
+    if (unresolved.rowCount) fail("CERTOPS_CONSUMER_CHANGE_REQUIRES_RECONCILIATION");
     await client.query(
       `INSERT INTO certops_consumer_lifecycle(workspace_id,group_id,binding_id,policy) VALUES($1,$2,$3,$4)
       ON CONFLICT(workspace_id,binding_id) DO UPDATE SET policy=EXCLUDED.policy,updated_at=clock_timestamp()`,

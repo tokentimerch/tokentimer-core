@@ -55,9 +55,9 @@ Total skips found: 178
 | `packages/agent/src/discovery/windows.test.js` | 365 | prefers the raw-bytes-derived SANs over windows-discovery's own list | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 408 | reports a windows_store observation using windows-discovery's parsed fields plus an adapter-computed fingerprint | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 437 | resolves an http.sys binding matched to an IIS site as iis_binding, reusing the store's fingerprint | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 552 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 606 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 694 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/windows.test.js` | 568 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/windows.test.js` | 622 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/windows.test.js` | 710 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/index.test.js` | 4347 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/issuers/adcs-enrollment-reconcile.test.js` | 420 | skips E_ACCESSDENIED and denied probes so a later unique match can attach | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/issuers/adcs-enrollment.test.js` | 170 | pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch | dynamic (this.skip() / t.skip()) | `prerequisite` |
@@ -189,4 +189,4 @@ Total skips found: 178
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 672 | keeps a same-request idempotent manual-job replay to one audit | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 774 | keeps machine event and evidence ingestion available for pre-existing work while paused | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 904 | serializes real PostgreSQL pause and manual-job races in both commit orders | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/postgres/material-reconciliation.test.js` | 694 | real login approval and Linux agent inspect installed legacy evidence through lost-ack recovery | test(..., { skip }) option-object | `platform` |
+| `tests/postgres/material-reconciliation.test.js` | 768 | real login approval and Linux agent inspect installed legacy evidence through lost-ack recovery | test(..., { skip }) option-object | `platform` |

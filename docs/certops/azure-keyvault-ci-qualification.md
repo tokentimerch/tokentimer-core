@@ -1,6 +1,7 @@
 # Azure Key Vault qualification
 
 Use this runbook for the protected real-Azure qualification campaign. The Azure material-store capability remains disabled until its exact native artifact and complete operator journey are independently accepted. A provider test or source-mounted fixture is supporting evidence only.
+
 ## Existing infrastructure and prerequisites
 
 The qualification lab provisions Key Vaults using control-plane API `2026-02-01`. Inventory and material operations use Key Vault data-plane API `7.4`.
@@ -21,15 +22,21 @@ A repository/Azure administrator must configure the following after reviewing
 these workflows. This implementation does not change environment protections,
 repository rules or Azure grants automatically.
 
-| Setting                                                  | Required configuration                                                                                                                                 |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Repository variable `CERTOPS_AZURE_KEYVAULT_LAB_ENABLED` | Exact string `true`; independent of the AD CS opt-in                                                                                                   |
-| Environment `certops-azure-keyvault-lab`                 | Custom deployment policy with **one branch rule `main`**, no tag rules; required reviewers and **prevent self-review** enabled                         |
-| Environment `certops-azure-keyvault-cleanup`             | Separate unattended environment, same exact main-only branch policy; no required reviewers                                                             |
-| Lab environment variables                                | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_KV_ISSUER_ROLE_ID`, `AZURE_KV_ATTRIBUTES_ROLE_ID` (UUIDs, not credentials)       |
-| Cleanup environment variables                            | Its own `AZURE_CLIENT_ID`, plus the same tenant and isolated lab subscription IDs                                                                      |
-| Subscription                                             | Existing AD CS **lab** subscription may be reused after authorization; `Microsoft.KeyVault` and `Microsoft.ManagedIdentity` must already be registered |
-| Default branch                                           | Qualification and cleanup workflows plus reviewed helper/test code present on `main`; janitor active                                                                |
+| Setting                                                  | Required configuration                                                                                                                                                   |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Repository variable `CERTOPS_AZURE_KEYVAULT_LAB_ENABLED` | Exact string `true`; independent of the AD CS opt-in                                                                                                                     |
+| Environment `certops-azure-keyvault-lab`                 | Custom deployment policy with **one branch rule `main`**, no tag rules; required reviewers; the approved run checks for a different reviewer before Azure authentication |
+| Environment `certops-azure-keyvault-cleanup`             | Separate unattended environment, same exact main-only branch policy; no required reviewers                                                                               |
+| Lab environment variables                                | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_KV_ISSUER_ROLE_ID`, `AZURE_KV_ATTRIBUTES_ROLE_ID` (UUIDs, not credentials)                         |
+| Cleanup environment variables                            | Its own `AZURE_CLIENT_ID`, plus the same tenant and isolated lab subscription IDs                                                                                        |
+| Subscription                                             | Existing AD CS **lab** subscription may be reused after authorization; `Microsoft.KeyVault` and `Microsoft.ManagedIdentity` must already be registered                   |
+| Default branch                                           | Qualification and cleanup workflows plus reviewed helper/test code present on `main`; janitor active                                                                     |
+
+The lab requires a fresh workflow dispatch: reruns are rejected because GitHub's
+approval history does not identify the attempt. An authorized reviewer other than
+the dispatcher must approve the lab environment; the job verifies that approval
+before authenticating to Azure. Self-review prevention may remain off in the
+environment settings. After a failed or cancelled run, dispatch a new run.
 
 Configure the provisioning identity's federated trust for issuer
 `https://token.actions.githubusercontent.com`, audience

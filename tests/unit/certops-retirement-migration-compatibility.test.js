@@ -18,6 +18,8 @@ test("retirement preview preserves identities through partial released-main upgr
     validateMigrationHistory(rows);
     const plan = composeMigrations(migrations, rows).map(({ version, name }) => ({ version, name }));
     assert.deepEqual(plan, [...preview, ...appended]);
+    validateMigrationHistory(plan);
+    assert.deepEqual(composeMigrations(migrations, plan).map(({version,name}) => ({version,name})), plan);
   }
 });
 test("released main retains identities before appending retirement", () => {

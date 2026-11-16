@@ -220,14 +220,49 @@ for (const status of [429, 503]) {
       });
       const result = await fixture.scan({ filters: { ...filters, excludeUserPATs } });
       assert.deepEqual(result.items.map(item => item.owner_username),
-        [...(excludeUserPATs ? [] : ["cached-1"]), "cached-2", status === 503 ? "fallback-owner" : null]);
+        [...(excludeUserPATs ? [] : ["cached-1"]), "cached-2", ...(status === 503 ? ["fallback-owner"] : excludeUserPATs ? [] : [null])]);
       assert.equal(result.items.find(item => item.sourceObjectId === "11").gitlab_owner_is_admin, true);
       assert.equal(result.summary[0].skippedUserPATs ?? 0, excludeUserPATs ? 1 : 0);
       assert.equal(fixture.lookupCalls().length, status === 503 ? 1 : 0);
-      assertComplete(result);
+      assertComplete(result, !(excludeUserPATs && status === 429));
     });
   }
 }
+
+for (const status of [401, 403, 404, 429, 503]) {
+  test(`unknown admin PAT owners after ${status} are excluded and block cleanup`, async () => {
+    const fixture = scanner({pats:[pat(10,2)], respond:(pathname)=>{
+      if(pathname==="/api/v4/users") throw httpError(status);
+    }, lookup:()=>{throw httpError(status);}});
+    const result=await fixture.scan({filters:{...filters,excludeUserPATs:true}});
+    assert.deepEqual(result.items,[]);
+    assert.equal(result.summary[0].unclassifiedUserPATs,1);
+    assertComplete(result,false);
+  });
+}
+
+test("a non-admin without a username cannot prove that own PATs are excluded", async () => {
+  const fixture=scanner({admin:false,username:"",pats:[pat(10,1)]});
+  const result=await fixture.scan({filters:{...filters,excludeUserPATs:true}});
+  assert.deepEqual(result.items,[]);
+  assertComplete(result,false);
+  assert.equal(fixture.calls.some(call=>call.pathname==="/api/v4/personal_access_tokens"),false);
+});
+
+test("an absent administrator flag does not classify a non-service owner", async () => {
+  const fixture=scanner({pats:[pat(10,2),pat(11,3)], lookup:id=>({id,username:id===2?"possibly-admin":"deploy-bot"})});
+  const result=await fixture.scan({filters:{...filters,excludeUserPATs:true}});
+  assert.deepEqual(result.items.map(item=>item.sourceObjectId),["11"]);
+  assert.equal(result.summary[0].unclassifiedUserPATs,1);
+  assertComplete(result,false);
+});
+
+test("a non-admin-shaped current user without an administrator flag is unclassified", async () => {
+  const fixture=scanner({admin:false,respond:path=>path==="/api/v4/user"?{id:1,username:"unknown-role"}:undefined});
+  const result=await fixture.scan({filters:{...filters,excludeUserPATs:true}});
+  assert.deepEqual(result.items,[]);
+  assertComplete(result,false);
+});
 
 test("admin caches transient lookup failures and rejects mismatched user responses", async () => {
   const fixture = scanner({
@@ -302,7 +337,7 @@ test("owner resolution preserves PAT expiration, revocation and user exclusions"
       pat(15, 5),
     ],
     lookup: (id) => {
-      if (id === 2) return { id, username: "human" };
+      if (id === 2) return { id, username: "human", is_admin: false };
       if (id === 3) return { id, username: "administrator", is_admin: true };
       if (id === 4) return { id, username: "deploy-bot" };
       throw httpError(404);
@@ -313,16 +348,15 @@ test("owner resolution preserves PAT expiration, revocation and user exclusions"
   });
   assert.deepEqual(
     result.items.map((item) => item.sourceObjectId),
-    ["13", "14", "15"],
+    ["13", "14"],
   );
   assert.deepEqual(result.items.map((item) => item.owner_username), [
     "administrator",
     "deploy-bot",
-    null,
   ]);
   assert.equal(result.summary[0].skippedUserPATs, 1);
   assert.equal(result.summary[0].skippedExpired, 1);
-  assertComplete(result);
+  assertComplete(result, false);
 });
 
 test("admin does not look up filtered or deduplicated PAT owners", async () => {

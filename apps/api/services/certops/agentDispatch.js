@@ -1145,8 +1145,13 @@ async function claimJobs({
     // "operation is issue OR the subject is still provisioning". An agent
     // without the capability keeps claiming ordinary renewals of active
     // certificates exactly as before.
+    const jobs = [];
+    const logStreams = [];
+    let cursor = null;
+    while (jobs.length < maxJobs) {
     const selected = await client.query(
       `SELECT id, workspace_id, operation, status, subject_type, subject_id,
+              created_at::text AS dispatch_cursor_created_at,
               management_period_id, certificate_identity_id, requested_by_connection_id, requested_by_user_id, payload,
               source, attempt_count,
               approved_at, approved_payload_hash, approved_canonical_intent_hash,
@@ -1196,6 +1201,7 @@ async function claimJobs({
                 AND (automatic_profile.renew_before_days IS NULL OR automatic_cert.not_after <= NOW()
                   + (automatic_profile.renew_before_days || ' days')::interval)
             ))
+          AND ($12::timestamptz IS NULL OR (created_at,id)>($12::timestamptz,$13::uuid))
           AND NOT (payload ? 'distributionRollout')
           AND NOT (payload ? 'distributionPolicyApproval')
           -- Exclude contained/superseded distribution work before LIMIT.
@@ -1327,7 +1333,7 @@ async function claimJobs({
           -- AD CS enrollment and continuation jobs (enrollment_id set) need a
           -- fresh adcs-enroll-v1 declaration; prefilter only, as above.
           AND (enrollment_id IS NULL OR $11::boolean)
-        ORDER BY created_at
+        ORDER BY created_at,id
         LIMIT $7
         FOR UPDATE SKIP LOCKED`,
       [
@@ -1342,8 +1348,11 @@ async function claimJobs({
         agentKind,
         canBindTrustAnchorDeploy,
         canEnrollAdcs,
+        cursor?.created_at || null,
+        cursor?.id || null,
       ],
     );
+    if (!selected.rows.length) break;
 
     const eligibilityAgent = {
       ...agent,
@@ -1358,8 +1367,6 @@ async function claimJobs({
       capabilitiesUpdatedAt: caps.capabilities_updated_at,
       agentKind,
     };
-    const jobs = [];
-    const logStreams = [];
     for (const row of selected.rows) {
       // Reclaims are already authorized work. Only a fresh dispatch must
       // revalidate the originating connection and requester membership.
@@ -1451,11 +1458,25 @@ async function claimJobs({
       if (!eligibility.eligible) continue;
       if(row.payload?.materialCleanup){
         try{await require("./materialCleanup").resolveCleanupDefaults({client,workspaceId:row.workspace_id,operation:row.operation,subjectId:row.subject_id,payload:row.payload,assignedAgentId:row.assigned_agent_id,jobId:row.id,forClaim:true});}
-        catch(error){if(!String(error.code || "").startsWith("CERTOPS_"))throw error;continue;}
+        catch(error){
+          if(!String(error.code || "").startsWith("CERTOPS_"))throw error;
+          if(row.status === "pending" && error.code === "CERTOPS_MATERIAL_CLEANUP_AUTHORIZATION_STALE")
+            await client.query(`UPDATE certificate_jobs SET status='rejected',error_code=$2,
+              error_message='Cleanup authorization is stale; request a new approval',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+              WHERE id=$1 AND status='pending'`,[row.id,error.code]);
+          continue;
+        }
       }
       if(row.payload?.materialReconciliation){
         try{await require("./materialReconciliation").assertClaimable({client,workspaceId:row.workspace_id,job:row,agentId:agent.id});}
-        catch(error){if(!String(error.code || "").startsWith("CERTOPS_"))throw error;continue;}
+        catch(error){
+          if(!String(error.code || "").startsWith("CERTOPS_"))throw error;
+          if(row.status === "pending" && error.code === "CERTOPS_RECONCILIATION_AUTHORITY_STALE")
+            await client.query(`UPDATE certificate_jobs SET status='rejected',error_code=$2,
+              error_message='Reconciliation authorization is stale; request a new approval',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+              WHERE id=$1 AND status='pending'`,[row.id,error.code]);
+          continue;
+        }
       }
       if (row.payload?.publication || row.payload?.materialDeployment) {
         try {
@@ -1815,6 +1836,12 @@ async function claimJobs({
           streamingEnabled: logStreamEnabled,
         })
         : { enabled: false, maxBatchBytes: MAX_BATCH_BYTES });
+      if (jobs.length >= maxJobs) break;
+    }
+    const last = selected.rows[selected.rows.length - 1];
+    if (selected.rows.length < maxJobs || !last.dispatch_cursor_created_at ||
+        (cursor && String(last.id) === String(cursor.id))) break;
+    cursor = { created_at: last.dispatch_cursor_created_at, id: last.id };
     }
 
     return { jobs, logStreams };

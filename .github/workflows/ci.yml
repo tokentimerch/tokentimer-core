@@ -539,6 +539,8 @@ jobs:
                 await client.query(`CREATE DATABASE pd_${history}_migration_issue364_test`);
               }
               await client.query('CREATE DATABASE distribution_lifecycle_c1_test');
+              await client.query('CREATE DATABASE distribution_lifecycle_c2_test');
+              await client.query('CREATE DATABASE recovery_preview_c1_test');
             } finally {
               await client.end();
             }
@@ -556,6 +558,18 @@ jobs:
           DB_NAME: pr498_retirement_preview_ci_test
           CERTOPS_ENABLED: "true"
         run: node --test --test-force-exit tests/postgres/retirement-preview-migration-upgrade.test.js
+      - name: Upgrade applied recovery preview and replay
+        env:
+          DB_NAME: recovery_preview_c1_test
+          CERTOPS_ENABLED: "true"
+        run: node --test --test-force-exit tests/postgres/distribution-recovery-preview-upgrade.test.js
+      - name: Verify combined dispatch eligibility and pagination
+        env:
+          DB_NAME: distribution_lifecycle_c2_test
+          CERTOPS_ENABLED: "true"
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit tests/postgres/certops-dispatch-composition.test.cjs
       - name: Verify alert date serialization across host timezones
         run: node --test tests/postgres/alert-queue-timezones.test.js
       - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability

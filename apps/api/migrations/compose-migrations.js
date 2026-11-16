@@ -197,6 +197,20 @@ function composeMigrations(migrations, recorded = []) {
   const recognizedObservedPreview = previewLength > 0 &&
     previewBase.every((row) => row.version === byName.get(row.name).version) &&
     appendedRows.every((row, index) => row.version === 112 + previewLength + index && row.name === expectedAppend[index]?.name);
+  // A published recovery preview followed the canonical registry through 113
+  // and used 114 before the independent 114–121 registrations existed.
+  // Preserve that exact ledger and only deterministic prefixes of its append.
+  const recovery = byName.get("distribution_pagerduty_recovery");
+  const recoveryBase = extensions.filter((entry) => entry.version <= 113);
+  const recoveryAppend = extensions.filter((entry) => entry.version > 113 && entry.name !== recovery?.name);
+  const recognizedRecoveryPreview = recovery && recovery.version !== 114 &&
+    order === canonical && recoveryBase.length === 36 &&
+    recoveryBase.every((entry, index) => entry.version === 78 + index) &&
+    rows.length >= recoveryBase.length + 1 &&
+    recoveryBase.every((entry, index) => rows[index]?.version === entry.version && rows[index]?.name === entry.name) &&
+    rows[recoveryBase.length]?.version === 114 && rows[recoveryBase.length]?.name === recovery.name &&
+    rows.slice(recoveryBase.length + 1).every((row, index) =>
+      row.version === 115 + index && row.name === recoveryAppend[index]?.name);
   if (!contiguous) {
     const base = [
       "certops_installed_file_distribution",
@@ -208,13 +222,13 @@ function composeMigrations(migrations, recorded = []) {
       !base.every((name, index) =>
         rows.some((row) => row.version === 78 + index && row.name === name),
       ) ||
-      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp && !recognizedRetirementPreview && !recognizedObservedPreview)
+      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp && !recognizedRetirementPreview && !recognizedObservedPreview && !recognizedRecoveryPreview)
     )
       throw new Error("Unsupported Core migration history: noncanonical gap");
   }
 
   let contiguousOrder = null;
-  if (contiguous && rows.length && !recognizedRetirementPreview) {
+  if (contiguous && rows.length && !recognizedRetirementPreview && !recognizedRecoveryPreview) {
     const I = "certops_installed_file_distribution",
       S = "auto_sync_provider_stats",
       R = "auto_sync_run_metrics",
