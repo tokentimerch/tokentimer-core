@@ -3,7 +3,8 @@
 const assert = require("node:assert/strict");
 const { randomUUID } = require("node:crypto");
 const { Client, Pool } = require("pg");
-const express = require("express");
+const apiRequire = require("node:module").createRequire(require.resolve("../../../apps/api/package.json"));
+const express = apiRequire("express");
 const request = require("supertest");
 const { migrations } = require("../../../apps/api/migrations/migrate");
 let generateAgentCredential, validateAgentCredential, claimJobs;
@@ -67,8 +68,8 @@ describe("HTTP retirement concurrent with claim on PostgreSQL", function () {
   });
   it("requires a real operator session and workspace access to retire an agent", async () => {
     const bcrypt = require("bcryptjs");
-    const session = require("express-session");
-    const passport = require("passport");
+    const session = apiRequire("express-session");
+    const passport = apiRequire("passport");
     const { requireAuth } = require("../../../apps/api/middleware/auth");
     const { loadWorkspace, requireWorkspaceMembership } = require("../../../apps/api/services/rbac");
     process.env.SESSION_SECRET = "test-session-secret-for-isolated-postgres-only";
@@ -78,8 +79,8 @@ describe("HTTP retirement concurrent with claim on PostgreSQL", function () {
     realApp.use(session({ secret: process.env.SESSION_SECRET, resave: false, saveUninitialized: false }));
     realApp.use(passport.initialize());
     realApp.use(passport.session());
-    realApp.use(require("cookie-parser")());
-    const { doubleCsrf } = require("csrf-csrf");
+    realApp.use(apiRequire("cookie-parser")());
+    const { doubleCsrf } = apiRequire("csrf-csrf");
     const { createCsrfExemptMiddleware, isCertOpsMachineTokenCsrfExemptPath } = require("../../../apps/api/middleware/csrf-exempt");
     const { generateToken, doubleCsrfProtection } = doubleCsrf({
       getSecret: () => process.env.SESSION_SECRET,

@@ -5,6 +5,7 @@ const { before, after, test } = require("node:test");
 const assert = require("node:assert/strict");
 const { randomUUID, randomBytes } = require("node:crypto");
 const { spawnSync } = require("node:child_process");
+const apiRequire = require("node:module").createRequire(require.resolve("../../apps/api/package.json"));
 let pool, enrollments, scheduler, profiles, container;
 const name = "tt-core-enrollment-admission-" + randomUUID();
 const CA = "ca01.corp.example.com\\Corp Issuing CA 01", TEMPLATE = "TokenTimerWebServer", KEY = "ab".repeat(32);
@@ -355,7 +356,7 @@ test("automatic admission losing its preliminary read race skips the manual winn
 test("the enrollment HTTP route returns 409 for an already-open certificate", async () => {
   const f = await fixture();
   await manual(f);
-  const express = require("express"), request = require("supertest");
+  const express = apiRequire("express"), request = require("supertest");
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => { req.user = { id: f.actor }; req.authz = { workspaceRole: "admin" }; req.workspace = { id: f.workspaceId }; req.isAuthenticated = () => true; next(); });
@@ -994,7 +995,7 @@ test("AD CS proof recovery binds the original live identity, verifies installati
     assert.equal(certificate.fingerprint_sha256, null);
     await missingTx.query("COMMIT");
   } catch (error) { await missingTx.query("ROLLBACK"); throw error; } finally { missingTx.release(); }
-  const express = require("express"), request = require("supertest");
+  const express = apiRequire("express"), request = require("supertest");
   const app = express(); app.use(express.json());
   app.use((req, _res, next) => { req.user = { id: f.actor }; req.authz = { workspaceRole: "admin" }; req.workspace = { id: f.workspaceId }; req.isAuthenticated = () => true; next(); });
   app.use(require("../../apps/api/routes/certops-enrollments"));

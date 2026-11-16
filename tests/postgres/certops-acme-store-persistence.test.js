@@ -167,7 +167,7 @@ test("internal ACME store first issue atomically binds owner, enrollment and rep
   await rejectJob({ workspaceId, jobId: rejected.job.id, approverUserId: approver });
   rejectedState = (await pool.query("SELECT e.state,j.status FROM certops_acme_store_enrollments e JOIN certificate_jobs j ON j.id=e.original_job_id WHERE j.id=$1", [rejected.job.id])).rows[0];
   assert.deepEqual(rejectedState, { state: "cancelled_no_effect", status: "rejected" });
-  const express = require("express"), request = require("supertest");
+  const express = require("node:module").createRequire(require.resolve("../../apps/api/package.json"))("express"), request = require("supertest");
   const app = express();
   app.use((req, _res, next) => { req.user = { id: user }; req.authz = { workspaceRole: "admin" }; req.workspace = { id: workspaceId }; req.isAuthenticated = () => true; next(); });
   app.use(require("../../apps/api/routes/certops-enrollments"));
