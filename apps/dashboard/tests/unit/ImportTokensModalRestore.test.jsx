@@ -8,7 +8,6 @@ import {
   cleanup,
   act,
   within,
-  act,
 } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 

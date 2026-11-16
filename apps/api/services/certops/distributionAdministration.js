@@ -213,8 +213,8 @@ async function preflight({
       const window = plan(row.activation_policy, activationDeadline(version?.valid_to,row.observed_valid_to));
       if (!window.at)
         diagnostics.push({
-          code: "CERTOPS_ACTIVATION_WINDOW_UNAVAILABLE",
-          status: "blocked",
+          code: window.reason === "maintenance_search_horizon_exceeded" ? "CERTOPS_ACTIVATION_WINDOW_FORECAST_UNKNOWN" : "CERTOPS_ACTIVATION_WINDOW_UNAVAILABLE",
+          status: window.reason === "maintenance_search_horizon_exceeded" ? "unknown" : "blocked",
           reason: window.reason,
         });
       diagnostics.push({

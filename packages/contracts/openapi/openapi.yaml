@@ -12357,14 +12357,15 @@ paths:
     post:
       tags:
         - CertOps
-      summary: Request independently approved exact-version customer-side Vault soft
+      summary: Request independently approved exact-version customer-side Vault or OpenBao soft
         deletion
       description: Administrator session only. Requires an active workspace, enabled
         non-report-only retention policy, an explicitly enabled runtime cleanup
         setting and a freshly declared qualified customer agent capability.
         Preview eligibility is rechecked under locks before a permanent version
         fence and signed agent claim. Never reads private material or deletes
-        public history. Only Vault KV v2 exact-version soft deletion is supported.
+        public history. Vault and OpenBao KV v2 exact-version soft deletion each
+        require their own qualified capability.
       security:
         - cookieAuth: []
       parameters:
@@ -15409,7 +15410,7 @@ components:
             terminates as dry_run_complete, never succeeded.
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust]
+          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust]
           description: Job operation. "issue" is control-plane-only first-time issuance;
             it is dispatched to agents as action "renew", so the agent-facing action
             values are unchanged. "distribute-trust"/"revoke-trust" install or

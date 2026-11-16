@@ -125,6 +125,23 @@ test("cleanup claim yields to a group editor without fencing and retries current
   }finally{await Promise.all([editor.query("ROLLBACK"),claimant.query("ROLLBACK")]);editor.release();claimant.release();}
 });
 
+test("stale cleanup authority does not starve later work or create a fence",async t=>{
+  const f=await setup(t),requested=await request(f);
+  await approveJob({workspaceId:f.workspaceId,jobId:requested.jobId,approverUserId:f.approver});
+  const renewal=(await pool.query(`INSERT INTO certificate_jobs(workspace_id,operation,status,source,payload,assigned_agent_id)
+    VALUES($1,'renew','pending','api',$2::jsonb,$3) RETURNING id`,[f.workspaceId,JSON.stringify({domain:"example.test"}),f.issuer])).rows[0];
+  await pool.query("UPDATE workspaces SET certops_distribution_authorization_revision=certops_distribution_authorization_revision+1 WHERE id=$1",[f.workspaceId]);
+  const row=(await pool.query("SELECT * FROM certops_agents WHERE id=$1",[f.issuer])).rows[0];
+  const agent={id:row.id,workspaceId:f.workspaceId,agentId:row.agent_id,agentVersion:row.agent_version,protocolVersion:row.protocol_version};
+  await require("../../apps/api/services/certops/jobSigning").ensureActiveSigningKey();
+  const claimed=await require("../../apps/api/services/certops/agentDispatch").claimJobs({agent,body:{maxJobs:1,supportedActions:["cleanup-from-store","renew"]}});
+  assert.equal(claimed.jobs.length,1);
+  assert.equal((await jobFor(f,requested.jobId)).error_code,"CERTOPS_MATERIAL_CLEANUP_AUTHORIZATION_STALE");
+  assert.equal((await jobFor(f,requested.jobId)).status,"rejected");
+  assert.equal((await jobFor(f,renewal.id)).status,"claimed");
+  assert.equal((await pool.query("SELECT state FROM certops_material_cleanups WHERE id=$1",[requested.cleanupId])).rows[0].state,"planned");
+});
+
 test("cleanup uses real signed dispatch, claim-bound receipts and the existing single-use nonce ledger",async t=>{
   const f=await setup(t),requested=await request(f),dispatch=require("../../apps/api/services/certops/agentDispatch"),signing=require("../../apps/api/services/certops/jobSigning");
   const routing=await jobFor(f,requested.jobId);

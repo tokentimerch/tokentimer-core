@@ -5003,6 +5003,12 @@ migrations.push({
   sql: fs.readFileSync(require("path").join(__dirname, "113-certops-material-reconciliation.sql"), "utf8"),
 });
 
+migrations.push({
+  version: 114,
+  name: "distribution_pagerduty_recovery",
+  sql: fs.readFileSync(require("path").join(__dirname, "114-distribution-pagerduty-recovery.sql"), "utf8"),
+});
+
 const { composeMigrations } = require("./compose-migrations");
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored

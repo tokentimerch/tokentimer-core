@@ -1886,9 +1886,7 @@ function ImportTokensModalContent({
       !requestedAutoSyncConfig.create &&
       requestedAutoSyncConfig.id !== autoSyncConfig.id
     ) {
-      showWarning(
-        'Wait for the selected configuration to load before saving.'
-      );
+      showWarning('Wait for the selected configuration to load before saving.');
       return;
     }
     if (source === 'vault') {
@@ -3889,9 +3887,9 @@ function ImportTokensModalContent({
                   {managedIdentityMode !== 'all' && (
                     <Text fontSize='xs' color={muted}>
                       Exclude managed identities and Managed identities only do
-                      not delete previously imported service principals.
-                      Managed identities only also leaves app registrations in
-                      place. Choose All identities before cleanup if missing
+                      not delete previously imported service principals. Managed
+                      identities only also leaves app registrations in place.
+                      Choose All identities before cleanup if missing
                       credentials should be removed.
                     </Text>
                   )}
@@ -3954,8 +3952,8 @@ function ImportTokensModalContent({
                           Registration or Service Principal scan did not find
                           again, including rows left unchecked in the table. A
                           type that failed or was cut short is left in place.
-                          Exclude managed identities and Managed identities
-                          only do not delete service principals, and Managed
+                          Exclude managed identities and Managed identities only
+                          do not delete service principals, and Managed
                           identities only does not scan app registrations. This
                           cannot be undone.
                         </Text>

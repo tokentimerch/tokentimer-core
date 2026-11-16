@@ -1637,15 +1637,14 @@ export default function AlertPreferences({
   // Save only webhook URLs (entire list)
   async function persistWebhooksList(listToPersist) {
     try {
-      if (isViewer) return; // viewers cannot modify webhooks
+      if (isViewer) throw new Error('You cannot modify webhooks');
       setSavingToggles(true);
       const toPersist = listToPersist
         .map(webhookPayloadForSave)
         .filter(Boolean);
       const wsId = workspaceId;
       if (!wsId) {
-        showError('Please select a workspace first');
-        return;
+        throw new Error('Please select a workspace first');
       }
       const payload = {
         webhook_urls: toPersist,
@@ -1673,7 +1672,7 @@ export default function AlertPreferences({
       } catch (_) {}
     } catch (e) {
       if (e?.response?.status === 403) {
-        return;
+        throw e;
       }
       showError(e?.response?.data?.error || 'Failed to save webhooks');
       throw e;

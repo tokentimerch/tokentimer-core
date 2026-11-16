@@ -128,6 +128,73 @@ describe('association provenance API contract', () => {
       ).toBeNull()
     );
   });
+  it('resets paging on asset changes and ignores old responses after returning', async () => {
+    const pending = [];
+    const firstPage = id => ({
+      managed: true,
+      configurations: [],
+      items: [
+        {
+          id: `${id}-1`,
+          config_name: `Asset ${id}`,
+          event: 'attached',
+          occurred_at: '2026-10-01T00:00:00Z',
+        },
+      ],
+      next_before: 'cursor',
+    });
+    get.mockImplementation(url =>
+      url.includes('?before=')
+        ? new Promise(resolve => pending.push(resolve))
+        : Promise.resolve({ data: firstPage(url.includes('/71/') ? 71 : 72) })
+    );
+    const view = tokenId => (
+      <ChakraProvider>
+        <AutoSyncProvenance tokenId={tokenId} />
+      </ChakraProvider>
+    );
+    const rendered = render(view(71));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Show history' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier history' }));
+    rendered.rerender(view(72));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Show history' })
+    );
+    expect(
+      screen.getByRole('button', { name: 'Earlier history' })
+    ).toBeEnabled();
+    rendered.rerender(view(71));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Show history' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier history' }));
+    await act(async () =>
+      pending[0]({
+        data: {
+          ...firstPage(71),
+          items: [
+            {
+              id: 'old',
+              event: 'attached',
+              config_name: 'Stale result',
+              occurred_at: '2026-10-01T00:00:00Z',
+            },
+          ],
+        },
+      })
+    );
+    expect(screen.queryByText('Added to Stale result')).not.toBeInTheDocument();
+    expect(document.querySelector('button[disabled]')).toBeInTheDocument();
+    await act(async () =>
+      pending[1]({ data: { ...firstPage(71), items: [], next_before: null } })
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Earlier history' })
+    ).not.toBeInTheDocument();
+  });
+
   it('does not claim manual ownership when history is unavailable', async () => {
     get.mockRejectedValueOnce(new Error('offline'));
     render(

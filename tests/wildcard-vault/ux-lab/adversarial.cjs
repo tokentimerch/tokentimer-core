@@ -54,7 +54,11 @@ async function security(c) {
   check("revoked consumer Vault token blocks real retrieval without mutation; rotated credential recovers the original pinned job");
 
   const history = (await matrix()).filter(row => state.bindings.some(binding => binding.id === row.binding_id));
-  const successful = await Promise.all(history.map(row => job(row.latest_deployment.jobId)));
+  // A newer, unstarted rollout can be the latest row for a converged binding.
+  // Only scheduled deployments have jobs whose outcome can be checked.
+  const jobIds = history.map(row => row.latest_deployment?.jobId).filter(Boolean);
+  assert.ok(jobIds.length > 0, "security checks need a completed deployment job");
+  const successful = await Promise.all(jobIds.map(id => job(id)));
   assert.ok(successful.every(value => value.status === "succeeded" && value.completedAt));
   for (const mode of ["signature", "payload", "foreign-agent", "replay"]) {
     const prior = await customer("facts", "nginx");

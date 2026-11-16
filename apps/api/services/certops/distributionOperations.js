@@ -40,6 +40,15 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
       profile_revision: binding.profileRevision, required: binding.required, wave: binding.wave,
       verification_policy: binding.verificationPolicy, freshness_seconds: binding.freshnessSeconds, state: binding.state };
     if (old && Object.entries(authorization).every(([key,value]) => old[key] === value)) return old;
+    if (old) {
+      const unresolved = await client.query(`SELECT 1 FROM certops_consumer_deployments d
+        JOIN certificate_jobs j ON j.workspace_id=d.workspace_id AND (j.id=d.job_id OR j.id=d.staging_job_id)
+        WHERE d.workspace_id=$1 AND d.binding_id=$2 AND
+          (j.needs_operator_reconciliation IS TRUE OR (j.status IN ('claimed','running')
+            AND j.payload->'materialDeployment'->>'verificationOnly' IS DISTINCT FROM 'true'))
+        LIMIT 1`, [workspaceId,bindingId]);
+      if (unresolved.rowCount) fail("CERTOPS_CONSUMER_CHANGE_REQUIRES_RECONCILIATION");
+    }
     let row;
     try { row = (await client.query(`INSERT INTO certops_consumer_bindings(id,workspace_id,group_id,assigned_agent_id,deployment_profile_ref,
       profile_revision,required,wave,verification_policy,freshness_seconds,state)
@@ -289,7 +298,7 @@ async function processDistributionIntent({client,row,payload}) {
         // or retry it against changed membership, validity or generation.
         if (job.status !== "pending" || !["CERTOPS_ROLLOUT_APPROVAL_MISMATCH","CERTOPS_ROLLOUT_VERSION_INVALID",
           "CERTOPS_ROLLOUT_POLICY_INVALID","CERTOPS_DISTRIBUTION_INACTIVE","CERTOPS_DISTRIBUTION_AUTHORIZATION_STALE",
-          "CERTOPS_DISTRIBUTION_POLICY_STALE"].includes(error.code)) throw error;
+          "CERTOPS_DISTRIBUTION_POLICY_STALE","CERTOPS_ROLLOUT_REQUIRES_RECONCILIATION"].includes(error.code)) throw error;
         await client.query(`UPDATE certificate_jobs SET status='failed',error_code='CERTOPS_ROLLOUT_APPROVAL_STALE',
           error_message='Rollout authorization changed; request a new rollout approval',completed_at=clock_timestamp(),updated_at=clock_timestamp(),
           approved_by_user_id=NULL,approved_at=NULL,approved_payload_hash=NULL,approved_canonical_intent_hash=NULL

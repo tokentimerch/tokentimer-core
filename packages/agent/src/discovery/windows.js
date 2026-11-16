@@ -476,8 +476,7 @@ async function collectWindowsDiscoveryObservations({
     }
   }
 
-  if (observations.length > 1000) onWarning("windows discovery: observation limit reached; coverage is partial");
-  return observations.slice(0, 1000);
+  return observations;
 }
 
 module.exports = {

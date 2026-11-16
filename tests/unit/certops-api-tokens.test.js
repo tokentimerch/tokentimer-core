@@ -543,7 +543,9 @@ describe("CertOps API token service", () => {
     for (const rawToken of [
       `${created.plaintextToken} `,
       ` ${created.plaintextToken}`,
-      `ttx_${idPart.toUpperCase()}_${secretPart}`,
+      ...[idPart, "0123456789012345"].map(
+        (id) => `ttx_A${id.slice(1)}_${secretPart}`,
+      ),
       `ttx_${idPart}a_${secretPart}`,
       `ttx_${idPart}_${secretPart}a`,
       created.plaintextToken.slice(0, -1),

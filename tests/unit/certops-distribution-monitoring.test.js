@@ -83,6 +83,26 @@ test("distribution channel payloads contain stable incident correlation and expl
   assert.deepEqual(Object.keys(module.distributionWhatsAppVariables(alert,"Sam")),["recipient_name","incident","evidence_url"]);
 });
 
+test("distribution webhooks describe incidents and recovery in each supported channel",async()=>{
+  const {buildDistributionWebhookPayload}=await import("../../apps/worker/src/shared/distributionAlerts.js");
+  for(const transition of ["opened","resolved"]){
+    const alert={workspace_id:"11111111-1111-4111-8111-111111111111",metadata:{incidentId:"22222222-2222-4222-8222-222222222222",
+      groupId:"33333333-3333-4333-8333-333333333333",code:"certificate_drift",transition,severity:"critical",evidence:{desiredVersionId:"v2"}}};
+    for(const kind of ["slack","discord","teams","generic"]){
+      const payload=buildDistributionWebhookPayload(kind,alert);
+      const json=JSON.stringify(payload);
+      assert.match(json,new RegExp(`distribution ${transition}: certificate drift`));
+      assert.ok(json.includes("certops/distribution"));
+      assert.doesNotMatch(json,/undefined|Token Expiry/);assert.ok(!json.includes("day(s)"));
+      if(kind==="generic"){assert.equal(payload.type,"certops_distribution");assert.equal(payload.condition,"certificate_drift");
+        assert.equal(payload.transition,transition);assert.equal(payload.severity,transition==="resolved"?"info":"critical");}
+    }
+    const pagerduty=buildDistributionWebhookPayload("pagerduty",alert,{routingKey:"test-key"});
+    assert.equal(pagerduty.event_action,transition==="resolved"?"resolve":"trigger");
+    assert.equal(pagerduty.dedup_key,`distribution:${alert.metadata.incidentId}`);
+  }
+});
+
 test("recovery context retains current routing, tenant lookup and explicit policy cancellation",async()=>{
   const {loadDistributionAlertContext}=await import("../../apps/worker/src/shared/distributionAlerts.js");
   const workspaceId="11111111-1111-4111-8111-111111111111",incidentId="22222222-2222-4222-8222-222222222222";

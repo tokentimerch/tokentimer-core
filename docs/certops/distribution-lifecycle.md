@@ -22,11 +22,13 @@ Independent Linux preparation, when separately qualified, stages material before
 
 Published, installed, served and trusted are different states. Select each consumer's required assurance and freshness policy. Recurring verification and incidents are off by default; enable them deliberately and configure eligible notification recipients. A new source publication does not prove consumers have converged. Required failures and stale canary evidence can pause a rollout; inspect Jobs and explicitly resume when safe.
 
+Distribution PagerDuty recovery targets each integration that accepted the original alert, even if contact groups change. If an endpoint or routing key is removed or rotated, restore the original configuration to deliver recovery, or resolve the incident in PagerDuty. Recovery waits while distribution incident alerts are disabled. If a trigger response is lost, recovery still targets its original integration without assuming acceptance. Failed recovery retries continue with backoff. Legacy blocked alerts with failures in other channels may need manual review, even if only webhooks remain in the retry list. See [PagerDuty incidents](../PAGERDUTY.md).
+
 Discovery reports observed relationships and coverage. A certificate found in a machine store is not proof that a service uses it.
 
 ## Discovery and recovery
 
-Use preflight to check current prerequisites without deploying material. For failures, open the original job and inspect its public evidence and customer-local journal. Retry the original intent only after correcting the cause and restoring current authorization. A separate read-only reconciliation may be requested and independently approved for an uncertain original deployment; it requires the same assigned agent, current binding and generation, and exact protected installation proof. Missing, replaced or superseded proof remains unresolved. Reconciliation does not rewrite the original outcome or establish current consumer verification.
+Use preflight to check current prerequisites without deploying material. For uncertain work, request a separately approved read-only reconciliation before changing the consumer or starting another rollout. The original agent must still have the original local authorization and exact protected journal and installation proof; missing or replaced proof remains unresolved. An inspection can settle an older obligation after a previous edit or rollout, but does not change the original outcome or establish current consumer verification. If its approval becomes stale, request a new inspection and approval.
 
 ## Retention
 
