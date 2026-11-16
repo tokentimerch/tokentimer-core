@@ -34,7 +34,7 @@ async function createAcmeStoreEnrollmentTx({ client, enrollmentId, request }) {
     fail("certificate owner or predecessor does not match frozen ACME enrollment");
   }
   const open = await client.query(`SELECT id,state FROM certops_acme_store_enrollments
-    WHERE workspace_id=$1::uuid AND certificate_id=$2::uuid AND state <> 'installed' FOR UPDATE`, [r.workspaceId, r.certificateId]);
+    WHERE workspace_id=$1::uuid AND certificate_id=$2::uuid AND state NOT IN ('installed','cancelled_no_effect') FOR UPDATE`, [r.workspaceId, r.certificateId]);
   if (open.rows.length) {
     const error = new Error("An earlier ACME order may still have effects; reconcile it before issuing again");
     error.code = "CERTOPS_ACME_STORE_ORDER_UNCERTAIN";

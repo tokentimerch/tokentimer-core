@@ -801,6 +801,41 @@ test("terminal enrollment wins a concurrent proof recovery preparation", async (
   } finally { await writer.query("ROLLBACK").catch(() => {}); await reader.query("ROLLBACK").catch(() => {}); writer.release(); reader.release(); }
 });
 
+test("expected identity committed after claim expiry cannot authorize proof recovery", async () => {
+  const f = await fixture();
+  const crypto = require("node:crypto");
+  const raw = "expected-expiry-" + randomUUID();
+  const publicId = (await pool.query("UPDATE certops_agents SET credential_hash=$2 WHERE id=$1 RETURNING agent_id", [f.agentId, crypto.createHash("sha256").update(raw).digest("hex")])).rows[0].agent_id;
+  const agent = require("../../apps/api/services/certops/agentCredentialFence").bindAuthenticatedCredential({ id: f.agentId, workspaceId: f.workspaceId, agentId: publicId }, raw);
+  const target = { type: "windows-cert-store", reference: TARGET.reference, store: "My" };
+  const recovery = require("../../apps/api/services/certops/adcsProofRecovery");
+  const issue = require("../../apps/api/services/certops/issuance").createCertificateIssuanceJob;
+  const client = await pool.connect();
+  let job, receipt;
+  try {
+    await client.query("BEGIN");
+    job = (await issue({ client, workspaceId: f.workspaceId, operation: "issue", source: "api", mode: "real", idempotencyKey: randomUUID(), assignedAgentId: f.agentId, requestedByUserId: f.actor, payload: { issuerId: f.issuerId, target } })).job;
+    const claim = randomUUID();
+    await client.query("UPDATE certificate_jobs SET status='running',claimed_by_agent_id=$2,claim_id=$3,attempt_count=1,lease_expires_at=clock_timestamp()+interval '3 seconds' WHERE id=$1", [job.id, f.agentId, claim]);
+    const metadata = { step: "adcs.expected-identity", enrollmentId: job.enrollmentId, destinationSha256: crypto.createHash("sha256").update(JSON.stringify(target)).digest("hex"), fingerprintSha256: "ab".repeat(32), csrSpkiSha256: "cd".repeat(32), leafSpkiSha256: "cd".repeat(32) };
+    const evidence = (await client.query("INSERT INTO certificate_evidence(workspace_id,job_id,evidence_type,claim_id,attempt_count,created_by_agent_id,metadata) VALUES($1,$2,'validation.passed',$3,1,$4,$5::jsonb) RETURNING id", [f.workspaceId, job.id, claim, f.agentId, JSON.stringify(metadata)])).rows[0].id;
+    receipt = await recovery.recordAdcsExpectedIdentityTx({ client, agent, jobId: job.id, evidenceId: evidence });
+    await client.query("SELECT pg_sleep(4)");
+    await client.query("COMMIT");
+    await client.query("BEGIN");
+    await assert.rejects(recovery.witnessCommittedAdcsIdentityTx({ client, agent, jobId: job.id, receiptId: receipt.receiptId }), /not observed within the original claim/);
+    await client.query("ROLLBACK");
+  } finally { await client.query("ROLLBACK").catch(() => {}); client.release(); }
+  await pool.query("UPDATE certificate_jobs SET status='orphaned_unknown_effect',needs_operator_reconciliation=true WHERE id=$1", [job.id]);
+  const tx = await pool.connect();
+  try {
+    await tx.query("BEGIN");
+    const result = await recovery.prepareAdcsProofRecoveryTx({ client: tx, workspaceId: f.workspaceId, enrollmentId: job.enrollmentId, originalJobId: job.id, actorUserId: f.actor, reason: "Inspect", audit: async () => {} });
+    assert.equal(result.state, "expected_identity_unavailable");
+    await tx.query("COMMIT");
+  } finally { tx.release(); }
+});
+
 test("AD CS proof recovery binds the original live identity, verifies installation and preserves workspace deletion", async () => {
   const f = await fixture();
   const crypto = require("node:crypto");
@@ -833,6 +868,10 @@ test("AD CS proof recovery binds the original live identity, verifies installati
     const first = await recovery.recordAdcsExpectedIdentityTx({ client, agent, jobId: job.id, evidenceId });
     assert.equal(first.created, true);
     assert.deepEqual(await recovery.recordAdcsExpectedIdentityTx({ client, agent, jobId: job.id, evidenceId }), { receiptId: first.receiptId, created: false });
+    await assert.rejects(recovery.witnessCommittedAdcsIdentityTx({ client, agent, jobId: job.id, receiptId: first.receiptId }), /not observed within the original claim/);
+    await client.query("COMMIT");
+    await client.query("BEGIN");
+    await recovery.witnessCommittedAdcsIdentityTx({ client, agent, jobId: job.id, receiptId: first.receiptId });
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
   await pool.query("UPDATE certificate_jobs SET status='orphaned_unknown_effect',needs_operator_reconciliation=true,lease_expires_at=NOW()-interval '1 minute' WHERE id=$1", [job.id]);

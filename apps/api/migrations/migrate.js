@@ -5427,6 +5427,13 @@ migrations.push({
     ON certificate_jobs(workspace_id, enrollment_id) WHERE enrollment_id IS NOT NULL`,
 });
 
+// Provisional identity: the combined candidate must allocate the final number.
+migrations.push({
+  version: 125,
+  name: "certops_store_safety_fences",
+  sql: fs.readFileSync(require("path").join(__dirname, "125-certops-store-safety-fences.sql"), "utf8"),
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);

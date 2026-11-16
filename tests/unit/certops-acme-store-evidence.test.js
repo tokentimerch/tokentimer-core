@@ -74,14 +74,22 @@ test("AD CS expected identity and its evidence are recorded atomically", async (
   const f = fixture();
   f.args.evidenceItems[0].metadata = [{ name: "step", value: "adcs.expected-identity" }];
   f.args.deps.createCertificateEvidence = async () => { f.calls.push("evidence"); return { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" }; };
-  f.args.deps.recordAdcsExpectedIdentityTx = async input => { f.calls.push("expected"); assert.equal(input.evidenceId, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"); };
+  f.args.deps.recordAdcsExpectedIdentityTx = async input => { f.calls.push("expected"); assert.equal(input.evidenceId, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"); return { receiptId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }; };
+  f.args.deps.witnessCommittedAdcsIdentityTx = async input => { f.calls.push("witness"); assert.equal(input.receiptId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"); };
   await persistAgentJobEvidenceBatch(f.args);
-  assert.deepEqual(f.calls, ["BEGIN", "credential", "sequence", "evidence", "expected", "COMMIT", "release"]);
+  assert.deepEqual(f.calls, ["BEGIN", "credential", "sequence", "evidence", "expected", "COMMIT", "BEGIN", "witness", "COMMIT", "release"]);
   const failed = fixture(); failed.args.evidenceItems[0].metadata = [{ name: "step", value: "adcs.expected-identity" }];
   failed.args.deps.createCertificateEvidence = async () => ({ id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" });
   failed.args.deps.recordAdcsExpectedIdentityTx = async () => { throw new Error("wrong claim"); };
   await assert.rejects(persistAgentJobEvidenceBatch(failed.args), /wrong claim/);
   assert.ok(failed.calls.includes("ROLLBACK")); assert.equal(failed.calls.includes("COMMIT"), false);
+  const expired = fixture();
+  expired.args.evidenceItems[0].metadata = [{ name: "step", value: "adcs.expected-identity" }];
+  expired.args.deps.createCertificateEvidence = async () => ({ id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" });
+  expired.args.deps.recordAdcsExpectedIdentityTx = async () => ({ receiptId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
+  expired.args.deps.witnessCommittedAdcsIdentityTx = async () => { throw new Error("claim expired"); };
+  await assert.rejects(persistAgentJobEvidenceBatch(expired.args), /claim expired/);
+  assert.deepEqual(expired.calls.filter(x => ["BEGIN", "COMMIT", "ROLLBACK"].includes(x)), ["BEGIN", "COMMIT", "BEGIN", "ROLLBACK"]);
 });
 
 test("AD CS expected leaf evidence is derived from DER and awaits server acknowledgement", async () => {

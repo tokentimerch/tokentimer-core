@@ -95,7 +95,7 @@ async function createAcmeStoreRenewalTx(options = {}) {
     : buildRenewalJobPayload({ certificate: row, reason: options.payload?.reason || "manual-renewal" });
   if (payload.target?.type !== "windows-cert-store") invalid("unsupported ACME store profile");
   if (!existing) {
-    const open = (await client.query(`SELECT id FROM certops_acme_store_enrollments WHERE workspace_id=$1 AND certificate_id=$2::uuid AND state<>'installed' LIMIT 1`, [workspaceId, certificateId])).rows[0];
+    const open = (await client.query(`SELECT id FROM certops_acme_store_enrollments WHERE workspace_id=$1 AND certificate_id=$2::uuid AND state NOT IN ('installed','cancelled_no_effect') LIMIT 1`, [workspaceId, certificateId])).rows[0];
     if (open) { const error = new Error("an ACME store enrollment is already open or uncertain"); error.code = "CERTOPS_ACME_STORE_ORDER_UNCERTAIN"; throw error; }
   }
   const agentPublicId = await owner(client, workspaceId, assignedAgentId, options.env, { fresh: !existing });
