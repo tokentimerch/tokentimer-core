@@ -70,18 +70,31 @@ function assertCoreDumpLimits(limits) {
   assert.match(limits, /^Max core file size[ \t]+0[ \t]+0[ \t]+bytes[ \t]*$/m);
 }
 // Report only fixed-shape comparisons, never raw /proc content or numeric UIDs.
-function uidDiagnostic(status, expectedUid, mainPidUnchanged) {
+function uidDiagnostic(status, expectedUid, mainPidUnchanged, options = {}) {
   const match = typeof status === "string" && status.match(/^Uid:[ \t]+([0-9]+)[ \t]+([0-9]+)[ \t]+([0-9]+)[ \t]+([0-9]+)[ \t]*$/m);
   const parsed = Boolean(match) && Number.isSafeInteger(expectedUid) && expectedUid > 0;
   const expected = String(expectedUid);
+  const booleanOrNull = (value) => typeof value === "boolean" ? value : null;
   return {
+    phase: ["initial", "restart", "crash-recovery"].includes(options.phase) ? options.phase : null,
     uidRowParsed: parsed,
     realMatches: parsed ? match[1] === expected : null,
     effectiveMatches: parsed ? match[2] === expected : null,
     savedMatches: parsed ? match[3] === expected : null,
     filesystemMatches: parsed ? match[4] === expected : null,
     mainPidUnchanged: typeof mainPidUnchanged === "boolean" ? mainPidUnchanged : null,
+    realIsRoot: parsed ? match[1] === "0" : null,
+    effectiveIsRoot: parsed ? match[2] === "0" : null,
+    savedIsRoot: parsed ? match[3] === "0" : null,
+    filesystemIsRoot: parsed ? match[4] === "0" : null,
+    executableMatches: booleanOrNull(options.executableMatches),
+    birthUnchanged: booleanOrNull(options.birthUnchanged),
+    serviceState: ["active", "activating", "deactivating", "inactive", "failed", "reloading"].includes(options.serviceState) ? options.serviceState : null,
   };
+}
+function processBirth(pid) {
+  try { const raw = fs.readFileSync(`/proc/${pid}/stat`, "utf8"); const end = raw.lastIndexOf(")"); const fields = raw.slice(end + 1).trim().split(/\s+/); return end >= 0 && /^\d+$/.test(fields[19] || "") ? fields[19] : null; }
+  catch { return null; }
 }
 
 module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId, userId, createBootstrap, repoRoot }) {
@@ -162,16 +175,20 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     checkPermissions(credential, 0o600);
     assert.equal(config.serverUrl, baseUrl);
     assert.equal(config.workspaceId, workspaceId);
-    const identity = (afterBootstrapRestart = true) => {
+    const identity = (afterBootstrapRestart = true, phase = null) => {
       const pid = mainPid();
       assert.ok(pid > 0);
+      const birth = processBirth(pid);
       const status = fs.readFileSync(`/proc/${pid}/status`, "utf8");
       try {
         assert.match(status, new RegExp(`^Uid:\\s+${uid}\\s+${uid}\\s+${uid}\\s+${uid}$`, "m"));
       } catch (error) {
-        let stable = null;
+        let stable = null, executableMatches = null, serviceState = null;
         try { stable = mainPid() === pid; } catch {}
-        writeGate.report.nativeUidDiagnostic = uidDiagnostic(status, uid, stable);
+        try { executableMatches = fs.realpathSync(`/proc/${pid}/exe`) === nodeBinary; } catch {}
+        try { serviceState = serviceProperty("ActiveState"); } catch {}
+        const after = processBirth(pid);
+        writeGate.report.nativeUidDiagnostic = uidDiagnostic(status, uid, stable, {phase, executableMatches, serviceState, birthUnchanged: birth && after ? birth === after : null});
         throw error;
       }
       assertCoreDumpLimits(fs.readFileSync(`/proc/${pid}/limits`, "utf8"));
@@ -179,7 +196,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
       if (afterBootstrapRestart) assert.equal(fs.readFileSync(`/proc/${pid}/environ`).includes(Buffer.from("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=")), false);
       return pid;
     };
-    const firstPid = identity(false);
+    const firstPid = identity(false, "initial");
     const originalCredential = digest(credential);
     const lastSeen = async () => (await pool.query(
       "SELECT last_seen_at FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2", [workspaceId, agentId],
@@ -193,7 +210,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     fs.unlinkSync(writeFixture.allowed+"/result.json");
     command("systemctl", ["restart", UNIT]);
     await waitFor(() => mainPid() > 0 && mainPid() !== firstPid, "service restart creates a fresh process");
-    identity();
+    identity(true, "restart");
     await writeGate.scenario("linux-systemd-native-writepath-allowed-peer-erofs",async()=>{
       assert.equal(serviceProperty("ProtectSystem"),"strict");const writable=serviceProperty("ReadWritePaths");assert.ok(writable.split(/\s+/).includes(writeFixture.allowed));assert.equal(writable.split(/\s+/).includes(writeFixture.denied),false);
       assert.equal(fs.statSync(writeFixture.allowed).mode&0o777,0o777);assert.equal(fs.statSync(writeFixture.denied).mode&0o777,0o777);
@@ -209,7 +226,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     const seenBeforeCrash = await lastSeen();
     process.kill(beforeCrash, "SIGKILL");
     await waitFor(() => mainPid() > 0 && mainPid() !== beforeCrash, "actual systemd crash recovery");
-    identity();
+    identity(true, "crash-recovery");
     await waitFor(async () => Date.parse(await lastSeen()) > Date.parse(seenBeforeCrash), "recovered service authenticates again");
     assert.equal(digest(credential), originalCredential);
     if(published) await require("./helpers/linux-systemd-published-upgrade").qualifyPublishedUpgrade({published,pool,workspaceId,userId,agentId,baseUrl,repoRoot,nodeBinary,writeFixture,command,waitFor,mainPid,identity,lastSeen,createBootstrap,uid,gid});
