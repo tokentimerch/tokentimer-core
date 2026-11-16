@@ -1,7 +1,36 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { uidDiagnostic } = require("../tests/e2e/linux-systemd-real-journey");
+const { uidDiagnostic, executedMainPid } = require("../tests/e2e/linux-systemd-real-journey");
+
+test("Type=simple readiness waits for exec without filtering the process UID", () => {
+  const expected = "/candidate/node";
+  let executable = "/usr/lib/systemd/systemd";
+  const reads = { readMainPid: () => 123, readBirth: () => "456", readExecutable: () => executable };
+  assert.equal(executedMainPid(expected, reads), false);
+  executable = expected;
+  // Readiness deliberately knows nothing about UID. A root Node process must
+  // reach the caller's existing UID assertion immediately, rather than retry.
+  assert.equal(executedMainPid(expected, reads), 123);
+});
+
+test("native readiness refuses a changing PID, birth or executable", () => {
+  for (const changed of ["readMainPid", "readBirth", "readExecutable"]) {
+    let calls = 0;
+    const reads = { readMainPid: () => 123, readBirth: () => "456", readExecutable: () => "/candidate/node" };
+    const original = reads[changed];
+    reads[changed] = () => ++calls === 1 ? original() : changed === "readMainPid" ? 124 : "changed";
+    assert.equal(executedMainPid("/candidate/node", reads), false);
+  }
+});
+
+test("native readiness retries an absent process but preserves unexpected inspection errors", () => {
+  const reads = { readMainPid: () => 123, readBirth: () => "456", readExecutable: () => { throw Object.assign(new Error("withheld"), { code: "ENOENT" }); } };
+  assert.equal(executedMainPid("/candidate/node", reads), false);
+  reads.readExecutable = () => { throw Object.assign(new Error("withheld"), { code: "EACCES" }); };
+  assert.throws(() => executedMainPid("/candidate/node", reads), { code: "EACCES" });
+  assert.equal(executedMainPid("/candidate/node", { readMainPid: () => 0 }), false);
+});
 
 test("UID diagnostics retain comparisons and PID stability without exposing proc values", () => {
   const uid = 123456, other = 789012;
