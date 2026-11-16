@@ -1094,8 +1094,9 @@ export default function CertOpsAdcs({
             );
           }
           const changed = current?.lastPreflightJobId === jobId;
-          const failed = isJobFinal(job?.status) && job?.status !== 'succeeded';
-          if ((changed || failed) && pollRef.current === poll) {
+          const finalStatus = isJobFinal(job?.status);
+          const failed = finalStatus && job?.status !== 'succeeded';
+          if ((changed || finalStatus) && pollRef.current === poll) {
             poll.cancelled = true;
             clearInterval(poll.timer);
             pollRef.current = null;

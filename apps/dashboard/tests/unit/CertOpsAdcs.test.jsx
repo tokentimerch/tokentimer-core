@@ -5,6 +5,7 @@ import {
   fireEvent,
   waitFor,
   within,
+  act,
 } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
@@ -463,6 +464,73 @@ describe('CertOpsAdcs', () => {
       screen.queryByRole('button', { name: /Use this certificate/ })
     ).not.toBeInTheDocument();
   });
+
+  it.each(['succeeded', 'failed', 'cancelled', 'running'])(
+    'handles a %s check when a newer issuer verdict is retained',
+    async status => {
+      const intervals = vi.spyOn(globalThis, 'setInterval');
+      try {
+        canManageMock.mockReturnValue(true);
+        listAgentsMock.mockResolvedValue({
+          items: [{ id: 'agent-1', name: 'member-1' }],
+        });
+        listIssuersMock.mockResolvedValue({ items: [issuer()] });
+        dispatchIssuerPreflightMock.mockResolvedValue({ job: { id: 'job-1' } });
+        getJobMock.mockResolvedValue({ job: { id: 'job-1', status } });
+
+        const view = renderPage();
+        await screen.findByLabelText('Agent for Issuing CA');
+        fireEvent.change(screen.getByLabelText('Agent for Issuing CA'), {
+          target: { value: 'agent-1' },
+        });
+        fireEvent.submit(
+          screen
+            .getByRole('button', { name: /Run check for Issuing CA/ })
+            .closest('form')
+        );
+        await screen.findByText(
+          /Waiting for Issuing CA to report the preflight verdict/
+        );
+        listIssuersMock.mockResolvedValue({
+          items: [
+            issuer({
+              lastPreflightJobId: 'job-newer',
+              lastPreflight: {
+                ...issuer().lastPreflight,
+                template: 'NewerTemplate',
+              },
+            }),
+          ],
+        });
+        const tick = intervals.mock.calls.find(
+          ([, delay]) => delay === 3000
+        )[0];
+        await act(async () => tick());
+
+        expect(screen.getAllByText(/NewerTemplate/).length).toBeGreaterThan(0);
+        const button = screen.getByRole('button', {
+          name: /Run check for Issuing CA/,
+        });
+        if (status === 'running') {
+          expect(button).toBeDisabled();
+          expect(
+            screen.getByText(/Waiting for Issuing CA/)
+          ).toBeInTheDocument();
+        } else {
+          expect(button).not.toBeDisabled();
+          expect(
+            screen.queryByText(/Waiting for Issuing CA/)
+          ).not.toBeInTheDocument();
+          const callsAfterCompletion = getJobMock.mock.calls.length;
+          await act(async () => tick());
+          expect(getJobMock).toHaveBeenCalledTimes(callsAfterCompletion);
+        }
+        view.unmount();
+      } finally {
+        intervals.mockRestore();
+      }
+    }
+  );
 
   it.each([false, true])(
     'gives the correct next step after pinning (setup guide: %s)',
