@@ -167,6 +167,18 @@ test("internal ACME store first issue atomically binds owner, enrollment and rep
   await rejectJob({ workspaceId, jobId: rejected.job.id, approverUserId: approver });
   rejectedState = (await pool.query("SELECT e.state,j.status FROM certops_acme_store_enrollments e JOIN certificate_jobs j ON j.id=e.original_job_id WHERE j.id=$1", [rejected.job.id])).rows[0];
   assert.deepEqual(rejectedState, { state: "cancelled_no_effect", status: "rejected" });
+  const express = require("express"), request = require("supertest");
+  const app = express();
+  app.use((req, _res, next) => { req.user = { id: user }; req.authz = { workspaceRole: "admin" }; req.workspace = { id: workspaceId }; req.isAuthenticated = () => true; next(); });
+  app.use(require("../../apps/api/routes/certops-enrollments"));
+  const lookup = await request(app).get(`/api/v1/workspaces/${workspaceId}/certops/acme-store-enrollments/by-job/${rejected.job.id}`);
+  assert.equal(lookup.status, 200, JSON.stringify(lookup.body));
+  assert.equal(lookup.body.state, "cancelled_no_effect");
+  const yaml = require(require.resolve("js-yaml", { paths: [require("node:path").resolve(__dirname, "../../apps/dashboard")] }));
+  const spec = yaml.load(require("node:fs").readFileSync(require("node:path").join(__dirname, "../../packages/contracts/openapi/openapi.yaml"), "utf8"));
+  const schema = spec.paths["/api/v1/workspaces/{id}/certops/acme-store-enrollments/by-job/{jobId}"].get.responses["200"].content["application/json"].schema;
+  const validate = new (require("ajv"))({ allErrors: true, strict: false, validateFormats: false }).compile(schema);
+  assert.equal(validate(lookup.body), true, JSON.stringify(validate.errors));
   renewalOptions.idempotencyKey = randomUUID();
   const renewed = await runRenewal();
   assert.equal(renewed.created, true);
@@ -209,6 +221,38 @@ test("internal ACME store first issue atomically binds owner, enrollment and rep
   await pool.query(migrationSql);
   assert.deepEqual((await rows()).rows, beforeReplay);
   await assert.rejects(runRenewal({ idempotencyKey: randomUUID() }), /already open or uncertain/);
+
+  // Simulate a pre-migration writer still active when the migration starts.
+  const beforeLock = await createPreview(), afterLock = await createPreview();
+  await pool.query("DROP TRIGGER certops_cancel_unclaimed_acme_store ON certificate_jobs");
+  const oldWriter = await pool.connect(), migrator = await pool.connect(), newWriter = await pool.connect();
+  const waitForBlock = async (pid) => {
+    for (let i = 0; i < 100; i++) {
+      if ((await pool.query("SELECT cardinality(pg_blocking_pids($1)) AS blockers", [pid])).rows[0].blockers > 0) return;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    throw new Error("expected PostgreSQL writer to wait on the migration fence");
+  };
+  try {
+    await oldWriter.query("BEGIN");
+    await oldWriter.query("UPDATE certificate_jobs SET status='rejected' WHERE id=$1", [beforeLock]);
+    await migrator.query("BEGIN");
+    const migration = migrator.query(migrationSql);
+    await waitForBlock(migrator.processID);
+    await oldWriter.query("COMMIT");
+    await migration;
+    await newWriter.query("BEGIN");
+    const laterCancellation = newWriter.query("UPDATE certificate_jobs SET status='rejected' WHERE id=$1", [afterLock]);
+    await waitForBlock(newWriter.processID);
+    await migrator.query("COMMIT");
+    await laterCancellation;
+    await newWriter.query("COMMIT");
+    const caught = (await pool.query("SELECT original_job_id,state FROM certops_acme_store_enrollments WHERE original_job_id=ANY($1::uuid[])", [[beforeLock, afterLock]])).rows;
+    assert.equal(caught.length, 2);
+    assert.ok(caught.every(row => row.state === "cancelled_no_effect"));
+  } finally {
+    for (const client of [oldWriter, migrator, newWriter]) { await client.query("ROLLBACK").catch(() => {}); client.release(); }
+  }
 });
 
 
