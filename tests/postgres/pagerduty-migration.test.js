@@ -347,6 +347,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     { version: 120, name: "certops_material_adcs_operation_union" },
     { version: 121, name: "certops_iis_absence_proofs" },
     { version: 122, name: "certops_enrollment_jobs_index" },
+    { version: 125, name: "certops_adcs_preflight_lookup_index" },
   ]);
   assert.equal(
     (
