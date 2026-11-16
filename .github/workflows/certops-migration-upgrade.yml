@@ -44,7 +44,7 @@ jobs:
           ref: b6ad7fc3d38db35b4c41a2c6137b0c39afc72158
           path: baseline
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
         with:
           version: '11.13.0'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
