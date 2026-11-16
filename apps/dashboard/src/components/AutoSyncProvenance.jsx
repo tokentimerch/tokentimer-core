@@ -26,11 +26,11 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
   const [retry, setRetry] = useState(0);
   const [showHistory, setShowHistory] = useState(false);
   const current = useRef(tokenId);
-  const generation = useRef(0);
+  const paginationGenRef = useRef(0);
   current.current = tokenId;
   useEffect(() => {
     let cancelled = false;
-    generation.current += 1;
+    paginationGenRef.current += 1;
     setData(null);
     setLoading(false);
     setShowHistory(false);
@@ -45,6 +45,7 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
       });
     return () => {
       cancelled = true;
+      paginationGenRef.current += 1;
     };
   }, [tokenId, retry]);
   const configurations = data?.configurations || [];
@@ -63,7 +64,7 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
     : ownership === 'Managed' || ownership === 'Observed';
   if (!hasAutoSyncProvenance && !error) return null;
   const loadMore = async () => {
-    const requestGeneration = generation.current;
+    const generation = ++paginationGenRef.current;
     setLoading(true);
     setError('');
     try {
@@ -71,8 +72,8 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
         `/api/tokens/${tokenId}/auto-sync-provenance?before=${data.next_before}`
       );
       if (
-        current.current === tokenId &&
-        generation.current === requestGeneration
+        paginationGenRef.current === generation &&
+        current.current === tokenId
       )
         setData(previous => ({
           ...res.data,
@@ -80,15 +81,15 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
         }));
     } catch {
       if (
-        current.current === tokenId &&
-        generation.current === requestGeneration
+        paginationGenRef.current === generation &&
+        current.current === tokenId
       ) {
         setError('Earlier history could not be loaded. Please try again.');
       }
     } finally {
       if (
-        current.current === tokenId &&
-        generation.current === requestGeneration
+        paginationGenRef.current === generation &&
+        current.current === tokenId
       )
         setLoading(false);
     }

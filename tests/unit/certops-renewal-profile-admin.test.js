@@ -34,6 +34,9 @@ const {
 const { RENEWAL_JOB_TERMINAL_STATUSES } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/renewalScheduler.js"),
 );
+const { adcsCaBucket } = require(
+  path.resolve(__dirname, "../../apps/api/services/certops/renewalCapacity.js"),
+);
 const { isTerminalJobStatus } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
 );
@@ -847,6 +850,84 @@ describe("CertOps upcoming renewals coverage", () => {
 
     assert.equal(item.autoRenewEnabled, true);
     assert.equal(item.blockedReason, null);
+  });
+
+  function adcsRow(overrides = {}) {
+    return {
+      key_mode: "os-store-managed",
+      profile_key_mode: "os-store-managed",
+      profile_issuer_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      profile_issuer_kind: "adcs",
+      profile_public_metadata: {
+        renewalProfile: {
+          target: {
+            type: "windows-iis",
+            reference: "app.example.com",
+            store: "My",
+            binding: { site: "Default Web Site", port: 443 },
+          },
+          sanPolicy: { sans: ["app.example.com"] },
+          keyAlgorithm: "rsa",
+          keySize: 2048,
+        },
+      },
+      ...overrides,
+    };
+  }
+
+  it("accepts a native AD CS profile without ACME configuration", async () => {
+    const { item } = await listOne(adcsRow());
+
+    assert.equal(item.autoRenewEnabled, true);
+    assert.equal(item.blockedReason, null);
+  });
+
+  it("reports invalid AD CS targets and policy as incomplete", async () => {
+    const profile = adcsRow().profile_public_metadata.renewalProfile;
+    for (const invalid of [
+      { ...profile, target: null },
+      { ...profile, sanPolicy: { sans: ["other.example.com"] } },
+      { ...profile, keySize: 1024 },
+    ]) {
+      const { item } = await listOne(adcsRow({
+        profile_public_metadata: { renewalProfile: invalid },
+      }));
+      assert.equal(item.autoRenewEnabled, false);
+      assert.equal(item.blockedReason, "incomplete_profile");
+    }
+  });
+
+  it("does not accept a native AD CS profile without an AD CS issuer", async () => {
+    for (const issuer of [
+      { profile_issuer_id: null },
+      { profile_issuer_kind: "acme" },
+    ]) {
+      const { item } = await listOne(adcsRow(issuer));
+      assert.equal(item.autoRenewEnabled, false);
+      assert.equal(item.blockedReason, "incomplete_profile");
+    }
+  });
+
+  it("preserves a disabled AD CS profile's operator intent", async () => {
+    const { item } = await listOne(adcsRow({ profile_status: "disabled" }));
+
+    assert.equal(item.autoRenewEnabled, false);
+    assert.equal(item.blockedReason, "auto_renew_disabled");
+  });
+
+  it("reports AD CS capacity deferral instead of a configuration defect", async () => {
+    const row = adcsRow();
+    const { item } = await listOne(row, {
+      inFlightRows: [{
+        workspace_id: "ws-1",
+        ca_bucket: adcsCaBucket(row.profile_issuer_id),
+        in_flight: 1000,
+      }],
+    });
+
+    assert.equal(item.autoRenewEnabled, true);
+    assert.equal(item.blockedReason, null);
+    assert.equal(item.deferredReason, "ca_capacity");
   });
 
   // Key custody is the one blocker the sweep does not express in SQL: the row

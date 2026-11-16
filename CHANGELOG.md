@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Operator action:** `TRUST_PROXY_HOPS` now defaults to `0` instead of `2` for deployments that relied on the previous default. Before upgrading a proxied deployment, set it to the actual number of trusted HTTP proxy hops; restrict direct API access and ensure proxies sanitize forwarding headers. Otherwise client IP rate limits and HTTPS callback detection can be incorrect. See [configuration](docs/CONFIGURATION.md).
+
 ### Added
 
 - **Certificate distribution lifecycle.** Adds consumer administration, exact-version review and reviewed automation, canary/calendar controls, recurring verification, incident recovery, safe resumption after partial success, public preflight and retention management. An independently approved read-only inspection can reconcile an uncertain original deployment when its assigned agent retains the exact installation proof. Linux independent staging, Azure material storage, shared Windows/IIS material deployment and exact-version Vault/OpenBao cleanup retain their separate closed capability gates. **Operator action:** apply the composed migrations through 114 before matching API/workers; migration 97 requires fresh independent review of existing distribution authorizations. See the [distribution guide](docs/certops/distribution-lifecycle.md) for supported capabilities and recovery.
@@ -29,6 +33,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Dashboard usability.** Review recipient confirmations in a dedicated dialog, with clearer setup guidance and recovery states throughout the dashboard.
 
 ### Fixed
+
+- **AD CS renewal schedule.** Valid native AD CS profiles no longer appear as incomplete in upcoming renewals, and CA-capacity waits remain visible.
 
 - **Certificate management history.** Deleting a former certificate manager now clears their attribution from closed management periods while retaining the history.
 

@@ -451,6 +451,9 @@ test("protected environments require main only, independent approval and separat
     ],
   };
   subject.requireEnvironment(metadata, branches, subject.LAB_ENV);
+  const allowedSelfReview = structuredClone(metadata);
+  allowedSelfReview.protection_rules[0].prevent_self_review = false;
+  subject.requireEnvironment(allowedSelfReview, branches, subject.LAB_ENV);
   for (const rules of [
     [{ name: "feat/certops-distribution-extensions", type: "branch" }],
     [
@@ -477,9 +480,6 @@ test("protected environments require main only, independent approval and separat
   for (const mutate of [
     (m) => {
       m.protection_rules = [];
-    },
-    (m) => {
-      m.protection_rules[0].prevent_self_review = false;
     },
     (m) => {
       m.deployment_branch_policy.custom_branch_policies = false;
@@ -518,6 +518,142 @@ test("protected environments require main only, independent approval and separat
       subject.CLEANUP_ENV,
     ),
   );
+});
+test("only a fresh exact run with an independent lab reviewer may authenticate", () => {
+  const context = { ...env(), GITHUB_ACTOR_ID: "10" };
+  const run = {
+    id: Number(context.GITHUB_RUN_ID),
+    run_attempt: 1,
+    event: "workflow_dispatch",
+    head_branch: "main",
+    head_sha: context.GITHUB_SHA,
+    path: subject.WORKFLOW,
+    actor: { id: 10 },
+    triggering_actor: { id: 10 },
+  };
+  const approval = {
+    state: "approved",
+    user: { id: 11 },
+    environments: [{ name: subject.LAB_ENV }],
+  };
+  subject.requireIndependentApproval(run, [approval], context);
+  for (const patch of [
+    { id: 12345679 },
+    { run_attempt: 2 },
+    { event: "push" },
+    { head_branch: "other" },
+    { head_sha: "b".repeat(40) },
+    { path: "other.yml" },
+    { actor: { id: 11 } },
+    { triggering_actor: { id: 11 } },
+  ])
+    assert.throws(() =>
+      subject.requireIndependentApproval(
+        { ...run, ...patch },
+        [approval],
+        context,
+      ),
+    );
+  for (const reviews of [
+    [],
+    null,
+    [approval, approval],
+    [{ ...approval, state: "rejected" }],
+    [{ ...approval, user: { id: 10 } }],
+    [{ ...approval, user: { id: "11" } }],
+    [{ ...approval, environments: [{ name: subject.CLEANUP_ENV }] }],
+  ])
+    assert.throws(() =>
+      subject.requireIndependentApproval(run, reviews, context),
+    );
+  for (const patch of [
+    { GITHUB_RUN_ATTEMPT: "2" },
+    { GITHUB_ACTOR_ID: "" },
+    { GITHUB_RUN_ID: "../other" },
+  ])
+    assert.throws(() =>
+      subject.requireIndependentApproval(run, [approval], {
+        ...context,
+        ...patch,
+      }),
+    );
+});
+test("approval entry point rechecks live policy and approval before returning", async (t) => {
+  const context = { ...env(), GITHUB_ACTOR_ID: "10", GH_TOKEN: "synthetic" };
+  const run = {
+    id: Number(context.GITHUB_RUN_ID),
+    run_attempt: 1,
+    event: "workflow_dispatch",
+    head_branch: "main",
+    head_sha: context.GITHUB_SHA,
+    path: subject.WORKFLOW,
+    actor: { id: 10 },
+    triggering_actor: { id: 10 },
+  };
+  const prefix = `/repos/${subject.REPOSITORY}`;
+  const data = new Map();
+  for (const name of [subject.LAB_ENV, subject.CLEANUP_ENV]) {
+    const base = `${prefix}/environments/${name}`;
+    data.set(base, {
+      name,
+      deployment_branch_policy: {
+        custom_branch_policies: true,
+        protected_branches: false,
+      },
+      protection_rules:
+        name === subject.LAB_ENV
+          ? [
+              {
+                type: "required_reviewers",
+                prevent_self_review: false,
+                reviewers: [{ reviewer: { id: 11 } }],
+              },
+            ]
+          : [],
+    });
+    data.set(`${base}/deployment-branch-policies`, {
+      branch_policies: [{ name: "main", type: "branch" }],
+    });
+  }
+  data.set(`${prefix}/actions/workflows/certops-azure-keyvault-janitor.yml`, {
+    state: "active",
+    path: ".github/workflows/certops-azure-keyvault-janitor.yml",
+  });
+  const runRoute = `${prefix}/actions/runs/${context.GITHUB_RUN_ID}`;
+  data.set(runRoute, run);
+  const approvalsRoute = `${runRoute}/approvals`;
+  data.set(approvalsRoute, [
+    {
+      state: "approved",
+      user: { id: 11 },
+      environments: [{ name: subject.LAB_ENV }],
+    },
+  ]);
+  const previousFetch = global.fetch;
+  t.after(() => {
+    global.fetch = previousFetch;
+  });
+  global.fetch = async (url) => {
+    const key = new URL(url).pathname;
+    return data.has(key)
+      ? { ok: true, json: async () => data.get(key) }
+      : { ok: false };
+  };
+  await lab.githubApproval(context);
+  data.set(approvalsRoute, [
+    {
+      state: "approved",
+      user: { id: 10 },
+      environments: [{ name: subject.LAB_ENV }],
+    },
+  ]);
+  await assert.rejects(lab.githubApproval(context), {
+    code: "AZURE_KV_INDEPENDENT_ENVIRONMENT_APPROVAL_REQUIRED",
+  });
+  data.delete(approvalsRoute);
+  await assert.rejects(lab.githubApproval(context), {
+    code: "AZURE_KV_GITHUB_CONFIGURATION_READ_REQUIRED",
+  });
 });
 test("janitor verifies actual GitHub owner workflow, source and manual main run", () => {
   const p = plan(),
@@ -722,6 +858,22 @@ test("Azure workflow policy rejects privilege, ref, input, skip and artifact reg
     (w) => {
       w.jobs.lab.steps.find((s) => s.run?.endsWith("lab.js cleanup")).if =
         "success()";
+    },
+    (w) => {
+      w.jobs.lab.steps = w.jobs.lab.steps.filter(
+        (s) => s.id !== "independent-approval",
+      );
+    },
+    (w) => {
+      w.jobs.lab.steps.find((s) => s.id === "independent-approval").if =
+        "false";
+    },
+    (w) => {
+      w.jobs.lab.steps.unshift({ run: "echo unreviewed" });
+    },
+    (w) => {
+      w.jobs.lab.steps.findLast((s) => s.run?.includes("login-oidc.ps1")).if =
+        "always()";
     },
     (w) => {
       w.jobs.lab.steps.find((s) => s.run?.endsWith("real.cjs run")).if =
