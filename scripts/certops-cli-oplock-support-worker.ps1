@@ -9,11 +9,12 @@ if([IO.Path]::GetFileName([IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')) -no
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $InstallerSource).Path,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'Candidate installer parse failed'}
-foreach($name in @('Copy-PackageTree','Activate-StagedPackage')){
+foreach($name in @('Test-PackageCopyExclusion','Copy-PackageTree','Activate-StagedPackage')){
  $definitions=@($ast.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true))
  if($definitions.Count -ne 1){throw 'Missing unique candidate activation function'}
  Invoke-Expression $definitions[0].Extent.Text
 }
+$script:AuthorizedLauncherTransaction=$null
 $app=Join-Path $InstallRoot 'app';$staging="$app.staging.$PID";$previous="$app.previous.$PID"
 try{
  Copy-PackageTree -Source $PackageDirectory -Destination $staging
