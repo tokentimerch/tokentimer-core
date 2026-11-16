@@ -21,10 +21,12 @@ function assertSchema(validate, value, code) {
 const { writeAudit } = require("../audit");
 const { logger } = require("../../utils/logger");
 const { redactGenericSecrets } = require("../../utils/secretMaterial");
-const { createCertificateJob, TERMINAL_JOB_STATUSES } = require("./jobs");
+const { createCertificateJob } = require("./jobs");
 const { adcsCaBucket } = require("./renewalCapacity");
 const { lockWorkspaceForCertOpsSideEffect } = require("./workspaceKillSwitch");
 const { iisSelectorKey } = require("./windowsRenewalOwnership");
+const { loadRefreshJobs, refreshState, refreshIdempotencyKey, notifyRefreshState,
+  QUEUE_TIMEOUT_MS, issuerRefreshStates } = require("./adcsPreflightRefresh");
 const {
   PREFLIGHT_PER_HOUR,
   UNREACHABLE_ERROR,
@@ -329,6 +331,8 @@ function dispatchPreflight({
   beforeLock,
   automatic = false,
   confirmedAt = null,
+  notAfter = null,
+  unavailableTarget = null,
   env = process.env,
 }) {
   if (automatic && (!confirmedAt || !Number.isFinite(new Date(confirmedAt).getTime()))) {
@@ -341,17 +345,39 @@ function dispatchPreflight({
     await tx.query("SELECT pg_advisory_xact_lock(hashtext($1::text))", [
       `adcs-preflight:${workspaceId}`,
     ]);
+    let refreshKey;
+    let boundVersion = null;
     if (automatic) {
-      const existing = await tx.query(
-        `SELECT id FROM certificate_jobs
-          WHERE workspace_id = $1 AND operation = 'adcs-preflight'
-            AND subject_id = $2 AND assigned_agent_id = $3
-            AND created_at >= $5
-            AND (NOT (status = ANY($4::text[])) OR created_at > NOW() - INTERVAL '1 hour')
-          LIMIT 1`,
-        [workspaceId, String(issuerId), agentId, [...TERMINAL_JOB_STATUSES], confirmedAt],
-      );
-      if (existing.rows[0]) return null;
+      // Job rows precede the issuer lock, matching result ingestion's order.
+      // A read-only check stranded before claim can safely terminate. Claimed
+      // jobs retain their lease/nonce fences and are recovered by the reaper.
+      await tx.query(`UPDATE certificate_jobs SET status='failed',
+        error_code='CERTOPS_PREFLIGHT_QUEUE_TIMEOUT',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+        WHERE workspace_id=$1 AND operation='adcs-preflight' AND subject_id=$2
+          AND assigned_agent_id=$3 AND source='automation' AND status='pending'
+          AND created_at < clock_timestamp()-($4::text || ' milliseconds')::interval`,
+      [workspaceId,String(issuerId),agentId,String(QUEUE_TIMEOUT_MS)]);
+      const current = await tx.query(`SELECT v.version,v.ca_config,v.template,v.ca_key_sha256,v.confirmed_at,i.revalidation_required
+        FROM certificate_issuers i JOIN certificate_issuer_versions v
+          ON v.workspace_id=i.workspace_id AND v.issuer_id=i.id AND v.version=i.current_version
+        WHERE i.workspace_id=$1 AND i.id=$2 AND i.kind='adcs' FOR SHARE OF i`, [workspaceId,issuerId]);
+      const version = current.rows[0];
+      boundVersion = version;
+      if (!version || version.ca_config !== caConfig || version.template !== template ||
+          new Date(version.confirmed_at).getTime() !== new Date(confirmedAt).getTime()) {
+        throw serviceError("automatic preflight issuer changed", "CERTOPS_ISSUER_REVALIDATION_REQUIRED");
+      }
+      const context = { workspaceId,issuerId,agentId,version };
+      if (unavailableTarget) {
+        await notifyRefreshState(tx,{ ...context,notAfter,unavailableTarget,
+          state:{state:"blocked",code:"CERTOPS_ADCS_AGENT_UNAVAILABLE",attempts:0} });
+        return null;
+      }
+      const jobs = await loadRefreshJobs(tx, context);
+      const state = refreshState(jobs,version);
+      await notifyRefreshState(tx,{ ...context,state,notAfter });
+      if (state.state !== "required" && !(state.state === "retrying" && state.dispatch)) return null;
+      refreshKey = refreshIdempotencyKey({ ...context,previousId: jobs[0]?.id });
     }
     const recent = await tx.query(
       `SELECT count(*)::int AS n
@@ -362,10 +388,19 @@ function dispatchPreflight({
       [workspaceId],
     );
     if (Number(recent.rows[0]?.n || 0) >= PREFLIGHT_PER_HOUR) {
+      if (automatic) return null; // Wait for capacity without rolling back an expiry alert.
       throw serviceError(
         "AD CS preflight rate limit exceeded for this workspace",
         "CERTOPS_PREFLIGHT_RATE_LIMITED",
       );
+    }
+    if (!automatic) {
+      const current = await tx.query(`SELECT v.version,v.ca_config,v.template,v.ca_key_sha256,v.confirmed_at
+        FROM certificate_issuers i JOIN certificate_issuer_versions v
+          ON v.workspace_id=i.workspace_id AND v.issuer_id=i.id AND v.version=i.current_version
+        WHERE i.workspace_id=$1 AND i.id=$2 FOR SHARE OF i`,[workspaceId,issuerId]);
+      const version = current.rows[0];
+      if (version?.ca_config === caConfig && version?.template === template) boundVersion = version;
     }
     const job = await createJob({
       client: tx,
@@ -373,6 +408,7 @@ function dispatchPreflight({
       operation: "adcs-preflight",
       allowIssuerPreflight: true,
       source: automatic ? "automation" : "api",
+      ...(automatic ? { idempotencyKey: refreshKey } : {}),
       subjectType: "external",
       subjectId: issuerId,
       assignedAgentId: agentId,
@@ -399,9 +435,13 @@ function dispatchPreflight({
     }
     await tx.query(
       `UPDATE certificate_jobs
-          SET preflight_seq = $3
+          SET preflight_seq = $3,
+              result_metadata = result_metadata || $4::jsonb
         WHERE workspace_id = $1 AND id = $2`,
-      [workspaceId, job.id, preflightSeq],
+      [workspaceId, job.id, preflightSeq, JSON.stringify(boundVersion ? {
+        preflightContext: { issuerVersion: boundVersion.version,caKeySha256: boundVersion.ca_key_sha256,
+          confirmedAt: boundVersion.confirmed_at },
+      } : {})],
     );
     await audit({
       client: tx,
@@ -659,6 +699,19 @@ function createEnrollment({
       );
     }
     assertIssuerKind(issuer.kind);
+    if (source === "automation") {
+      // Recheck inside enrollment admission: the scheduler's earlier read may
+      // cross the TTL boundary, a new unsafe result, or a pin confirmation.
+      const { loadQualifyingAdcsAgents } = require("./adcsPreflightGate");
+      const prepared = await loadQualifyingAdcsAgents({ db: tx,workspaceId,
+        issuerId: resolvedIssuerId,reference: target.reference,version: issuer,target,
+        ownerId: agentId,env });
+      if (!prepared.some((candidate) => String(candidate.id) === String(agentId))) {
+        throw serviceError("the selected agent needs a fresh safe AD CS preflight", "CERTOPS_ADCS_AGENT_NOT_PREPARED");
+      }
+      await notifyRefreshState(tx,{ workspaceId,issuerId: resolvedIssuerId,agentId,
+        targetReference:target.reference,state: { state: "fresh" } });
+    }
     let storeSnapshot = {};
     if (target.type === "windows-cert-store") {
       if (!Array.isArray(authorizedDnsNames) || !authorizedDnsNames.some((name) =>
@@ -1478,7 +1531,17 @@ async function listIssuers({
     db.query(
       `SELECT i.id, i.kind, i.name, i.current_version, i.revalidation_required,
               i.last_preflight, i.last_preflight_job_id, i.updated_at, v.ca_key_sha256 AS confirmed_key_sha256,
-              v.ca_config, v.template
+              v.ca_config, v.template, v.confirmed_at,
+              (SELECT jsonb_agg(history) FROM (
+                SELECT j.id,j.assigned_agent_id,j.status,j.source,j.error_code,j.result_metadata,
+                       j.created_at,j.completed_at,j.updated_at
+                  FROM certificate_jobs j
+                 WHERE j.workspace_id=i.workspace_id AND j.subject_id=i.id::text
+                   AND j.operation='adcs-preflight' AND j.created_at >= v.confirmed_at
+                   AND (j.result_metadata->'preflightContext'->>'issuerVersion' IS NULL
+                        OR j.result_metadata->'preflightContext'->>'issuerVersion'=i.current_version::text)
+                 ORDER BY j.preflight_seq DESC NULLS LAST,j.created_at DESC,j.id DESC LIMIT 100
+              ) history) AS refresh_jobs
          FROM certificate_issuers i
          LEFT JOIN certificate_issuer_versions v
            ON v.workspace_id = i.workspace_id
@@ -1510,6 +1573,11 @@ async function listIssuers({
       template: row.template || null,
       lastPreflight: publicPreflight(row.last_preflight),
       lastPreflightJobId: row.last_preflight_job_id || null,
+      preflightRefresh: issuerRefreshStates(row.refresh_jobs,{
+        version: row.current_version,
+        ca_config: row.ca_config,template: row.template,ca_key_sha256: row.confirmed_key_sha256,
+        confirmed_at: row.confirmed_at,revalidation_required: row.revalidation_required,
+      }),
       updatedAt: row.updated_at,
     })),
     pagination: { limit: pageSize, offset: pageOffset, total: Number(total.rows[0]?.n || 0) },

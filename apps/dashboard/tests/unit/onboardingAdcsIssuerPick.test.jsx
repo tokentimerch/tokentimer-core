@@ -438,7 +438,7 @@ describe('Connect your Microsoft CA merged instructions', () => {
   it('runs the post-pin check in the guide and blocks profile setup until it passes', () => {
     show(ctxFor([fresh({ checkedAfterPin: false })]));
     const panel = screen.getByTestId('adcs-issuer-recheck');
-    expect(panel).toHaveTextContent('Renewal needs a CA check taken after');
+    expect(panel).toHaveTextContent('Renewal needs a safe check from the last 24 hours');
     expect(
       screen.getByRole('button', { name: 'Run post-pin check' })
     ).toBeEnabled();

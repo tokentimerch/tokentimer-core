@@ -48,8 +48,10 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import AdcsIssuerWizard from '../../components/certops/AdcsIssuerWizard.jsx';
 import JobActivity from '../../components/onboarding/JobActivity.jsx';
+import { useSummaryPolling } from '../../components/onboarding/useSummaryPolling.js';
 import { getJob } from '../../components/certops/certopsJobsApi.js';
 import { failedPreflightMessage } from '../../components/certops/adcsPreflightJob.js';
+import AdcsPreflightReadiness from '../../components/certops/AdcsPreflightReadiness.jsx';
 import { isJobFinal } from '../../components/onboarding/jobTimeline.js';
 import { showError, showSuccess } from '../../utils/toast.js';
 
@@ -681,6 +683,7 @@ function IssuerRow({
           </Text>
         )}
       </Box>
+      <AdcsPreflightReadiness issuer={issuer} />
       <Collapse in={isOpen} animateOpacity unmountOnExit>
         <Box
           mt={1}
@@ -949,6 +952,7 @@ export default function CertOpsAdcs({
     },
     [workspaceId, roleStatus, canManage]
   );
+  useSummaryPolling(reload, roleStatus === 'ready' && canManage);
 
   useEffect(() => {
     if (roleStatus !== 'ready' || !canManage) {

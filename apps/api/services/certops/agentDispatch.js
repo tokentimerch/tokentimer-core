@@ -3007,6 +3007,11 @@ async function ingestResult({
     const trustResult = body?.trustResult || null;
     const enrollmentResult = body?.enrollmentResult || null;
     const resultMetadata = {
+      // Server-owned dispatch context cannot be supplied or replaced by an
+      // agent report. Retain it so an old-version result never qualifies a
+      // newly confirmed issuer, even if transaction timestamps overlap.
+      ...(job.operation === "adcs-preflight" && job.result_metadata?.preflightContext
+        ? { preflightContext: job.result_metadata.preflightContext } : {}),
       ...(body.reconciliationReceipt ? {reconciliationReceiptHash:require("./materialDistribution").hashIntent(body.reconciliationReceipt)} : {}),
       ...(body.rejectionReason != null
         ? { rejectionReason: body.rejectionReason }

@@ -19,7 +19,10 @@ const ADCS_PREFLIGHT_WAITING_REASON = "waiting_for_fresh_preflight";
 // adcs-preflight for this issuer. The verdict is checked in JS by
 // qualifiesAdcsPreflight so both callers run identical logic.
 const QUALIFYING_AGENTS_SQL = `
-  SELECT a.id, a.last_seen_at, latest.status, latest.result_metadata, latest.created_at
+  SELECT a.id, a.last_seen_at, a.status AS agent_status, a.platform, a.agent_version,
+         a.protocol_version,a.declared_capabilities,a.capabilities_updated_at,a.agent_kind,
+         a.supported_operations,a.declared_target_selectors,
+         latest.status, latest.result_metadata, latest.created_at
     FROM certops_agents a
     LEFT JOIN LATERAL (
       SELECT j.status, j.result_metadata, j.created_at
@@ -38,7 +41,7 @@ const QUALIFYING_AGENTS_SQL = `
 
 async function loadCurrentAdcsIssuerVersion({ db, workspaceId, issuerId }) {
   const result = await db.query(
-    `SELECT v.ca_config, v.template, v.ca_key_sha256, v.confirmed_at
+    `SELECT v.version, v.ca_config, v.template, v.ca_key_sha256, v.confirmed_at, i.revalidation_required
        FROM certificate_issuers i
        JOIN certificate_issuer_versions v
          ON v.workspace_id = i.workspace_id
@@ -56,10 +59,30 @@ function timeMs(value) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+function eligibleRenewalAgent(row, { target, ownerId = null, env = process.env, now = Date.now() }) {
+  const { evaluateAgentJobEligibility } = require("./agentJobEligibility");
+  const { computeAgentCompatibility } = require("./agentRegistry");
+  const agent = { ...row,status: row.agent_status || row.status,
+    agentVersion: row.agent_version,protocolVersion: row.protocol_version,
+    supportedOperations: row.supported_operations,targetSelectors: row.declared_target_selectors,
+    declaredCapabilities: row.declared_capabilities,capabilitiesUpdatedAt: row.capabilities_updated_at,
+    agentKind: row.agent_kind };
+  if (agent.status !== "active" || agent.platform !== "win32") return false;
+  const compatibility = computeAgentCompatibility(agent,env);
+  const job = { operation: "renew",issuerKind: "adcs",assignedAgentId: ownerId,
+    payload: { target } };
+  return evaluateAgentJobEligibility({ agent,job,compatibility,env,now }).eligible &&
+    evaluateAgentJobEligibility({ agent,job: { operation: "adcs-preflight" },compatibility,env,now }).eligible;
+}
+
 // A missing version or confirmation time fails closed, as it did in SQL.
 function qualifiesAdcsPreflight(evidence, version, nowMs) {
-  if (!evidence || evidence.status !== "succeeded" || !version) return false;
+  if (!evidence || evidence.status !== "succeeded" || !version || version.revalidation_required === true) return false;
   const verdict = evidence.result_metadata?.preflightVerdict;
+  const context = evidence.result_metadata?.preflightContext;
+  if (context && (Number(context.issuerVersion) !== Number(version.version) ||
+      context.caKeySha256 !== version.ca_key_sha256 ||
+      timeMs(context.confirmedAt) !== timeMs(version.confirmed_at))) return false;
   const createdMs = timeMs(evidence.created_at);
   const confirmedMs = timeMs(version.confirmed_at);
   if (createdMs == null || confirmedMs == null) return false;
@@ -74,6 +97,7 @@ function qualifiesAdcsPreflight(evidence, version, nowMs) {
     Array.isArray(verdict.caKeySha256s) &&
     verdict.caKeySha256s.includes(version.ca_key_sha256) &&
     createdMs >= confirmedMs &&
+    createdMs <= nowMs &&
     createdMs >= nowMs - ADCS_PREFLIGHT_MAX_AGE_MS
   );
 }
@@ -90,6 +114,9 @@ async function loadQualifyingAdcsAgents({
   reference,
   version,
   nowMs = Date.now(),
+  target = null,
+  ownerId = null,
+  env = process.env,
 }) {
   const result = await db.query(QUALIFYING_AGENTS_SQL, [
     workspaceId,
@@ -97,7 +124,8 @@ async function loadQualifyingAdcsAgents({
     String(issuerId),
   ]);
   return result.rows
-    .filter((row) => qualifiesAdcsPreflight(row, version, nowMs))
+    .filter((row) => qualifiesAdcsPreflight(row, version, nowMs) &&
+      (!target || eligibleRenewalAgent(row,{ target,ownerId,env,now: nowMs })))
     .map((row) => ({ id: row.id, last_seen_at: row.last_seen_at }));
 }
 
@@ -107,4 +135,5 @@ module.exports = {
   loadCurrentAdcsIssuerVersion,
   loadQualifyingAdcsAgents,
   qualifiesAdcsPreflight,
+  eligibleRenewalAgent,
 };

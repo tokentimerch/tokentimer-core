@@ -53,6 +53,9 @@ function confirmedVersion() {
 // verdict for the confirmed CA, template, and key, created `createdAgoMs` ago.
 function preflightEvidence({ id = "agent-1", createdAgoMs = HOUR_MS, verdict = {} } = {}) {
   return {
+    platform: "win32", agent_status: "active",agent_version: "0.18.0",protocol_version: "1.0.0",
+    supported_operations: ["renew","adcs-preflight"],declared_target_selectors: ["www.example.com"],
+    declared_capabilities: ["adcs-enroll-v1","windows-store-only-adcs-v1","evidence-claim-binding-v1"],capabilities_updated_at: new Date(),
     id,
     last_seen_at: new Date(),
     status: "succeeded",
@@ -73,7 +76,7 @@ function preflightEvidence({ id = "agent-1", createdAgoMs = HOUR_MS, verdict = {
 // Answers each gate query by its SQL shape; anything else fails the test.
 function fakePool({
   agentRows = [],
-  declaredRows = [{ "?column?": 1 }],
+  declaredRows = [{ ...preflightEvidence(),status: "active" }],
   openRows = [],
   versionRows = [confirmedVersion()],
 } = {}) {
@@ -87,7 +90,7 @@ function fakePool({
       }
       if (sql.includes("certificate_issuer_versions v")) return { rows: versionRows };
       if (sql.includes("SELECT a.id")) return { rows: agentRows };
-      if (sql.includes("SELECT id") && sql.includes("FROM certops_agents")) return { rows: agentRows.length ? agentRows.filter(({ id }) => !params[2] || id === params[2]).map(({ id }) => ({ id })) : declaredRows };
+      if (sql.includes("SELECT id") && sql.includes("FROM certops_agents")) return { rows: agentRows.length ? agentRows.filter(({ id }) => !params[2] || id === params[2]).map(row => ({ ...row,status: "active" })) : declaredRows };
       if (sql.includes("FROM certificate_enrollments")) return { rows: openRows };
       throw new Error(`unexpected query: ${sql.slice(0, 80)}`);
     },
@@ -156,7 +159,7 @@ describe("AD CS automatic renewal agent readiness", () => {
       { job: { id: null, operation: "renew" }, created: false });
   });
   it("waits when a declaring agent has no qualifying adcs-preflight for this CA", async () => {
-    const pool = fakePool({ declaredRows: [{ "?column?": 1 }] });
+    const pool = fakePool();
     await assert.rejects(run(pool), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
     const select = pool.queries.find((q) => q.sql.includes("SELECT a.id"));
     assert.match(select.sql, /'adcs-preflight'/);
@@ -197,7 +200,7 @@ describe("AD CS automatic renewal agent readiness", () => {
     const pool = fakePool({
       agentRows: [
         {
-          id: "agent-b",
+          ...preflightEvidence({ id: "agent-b" }),
           last_seen_at: new Date(),
           status: null,
           created_at: null,

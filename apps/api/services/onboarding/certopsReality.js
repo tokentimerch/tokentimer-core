@@ -8,6 +8,7 @@
 const { listAgents } = require("../certops/agentRegistry");
 const { consumerMatrix } = require("../certops/materialDistribution");
 const { hasFreshCapability } = require("../certops/agentJobEligibility");
+const { qualifiesAdcsPreflight, ADCS_PREFLIGHT_MAX_AGE_MS } = require("../certops/adcsPreflightGate");
 const {
   CONTINUATION_STATES,
   DEFAULT_POLL_INTERVAL_SECONDS,
@@ -408,7 +409,8 @@ async function loadAdcsReality(
   const sinceMs = since ? new Date(since).getTime() : null;
   const issuers = await pool.query(
     `SELECT i.id, i.name, i.last_preflight, i.current_version, i.created_at,
-            i.revalidation_required,
+            i.revalidation_required, v.version, v.confirmed_at, v.ca_config, v.template, v.ca_key_sha256,
+            j.status AS preflight_status,j.result_metadata AS preflight_metadata,j.created_at AS preflight_created_at,
             (v.confirmed_at IS NOT NULL AND v.ca_key_sha256 IS NOT NULL) AS confirmed,
             (SELECT COUNT(*)::int FROM certificate_profiles p
               WHERE p.workspace_id = i.workspace_id AND p.issuer_id = i.id) AS profile_count,
@@ -420,14 +422,18 @@ async function loadAdcsReality(
             (SELECT COUNT(*)::int FROM certificate_enrollments e
               WHERE e.workspace_id=i.workspace_id AND e.issuer_id=i.id AND e.state='installed'
                 AND e.deploy_target->>'type'='windows-iis'
-                AND ($2::uuid IS NULL OR e.agent_id=$2::uuid)) AS installed_iis_enrollments,
-            (j.id IS NOT NULL AND v.confirmed_at IS NOT NULL
-              AND COALESCE(j.completed_at, j.updated_at) >= v.confirmed_at) AS checked_after_pin
+                AND ($2::uuid IS NULL OR e.agent_id=$2::uuid)) AS installed_iis_enrollments
        FROM certificate_issuers i
        LEFT JOIN certificate_issuer_versions v
          ON v.issuer_id = i.id AND v.version = i.current_version
-       LEFT JOIN certificate_jobs j
-         ON j.workspace_id = i.workspace_id AND j.id = i.last_preflight_job_id
+       LEFT JOIN LATERAL (
+         SELECT candidate.status,candidate.result_metadata,candidate.created_at,candidate.id,candidate.completed_at,candidate.updated_at
+           FROM certificate_jobs candidate
+          WHERE candidate.workspace_id=i.workspace_id AND candidate.operation='adcs-preflight'
+            AND candidate.subject_id=i.id::text
+            AND ($2::uuid IS NULL OR candidate.assigned_agent_id=$2::uuid)
+          ORDER BY candidate.preflight_seq DESC NULLS LAST,candidate.created_at DESC,candidate.id DESC LIMIT 1
+       ) j ON TRUE
       WHERE i.workspace_id = $1 AND i.kind = 'adcs'
       ORDER BY i.created_at DESC
       LIMIT 20`,
@@ -497,7 +503,11 @@ async function loadAdcsReality(
         revalidationRequired: row.revalidation_required === true,
         // Renewal waits for a CA check taken after the CA certificate was
         // pinned. Null until a certificate is pinned.
-        checkedAfterPin: confirmed ? row.checked_after_pin === true : null,
+        checkedAfterPin: confirmed ? qualifiesAdcsPreflight({
+          status: row.preflight_status,result_metadata: row.preflight_metadata,created_at: row.preflight_created_at,
+        },row,now) : null,
+        preflightExpiresAt: row.preflight_created_at ? new Date(new Date(row.preflight_created_at).getTime() +
+          ADCS_PREFLIGHT_MAX_AGE_MS).toISOString() : null,
       };
     }),
     profiles: profiles.rows[0]?.n || 0,

@@ -62,6 +62,7 @@ const { validateAdcsRenewalProfile } = require("./adcsRenewalRules");
 const {
   loadCurrentAdcsIssuerVersion,
   loadQualifyingAdcsAgents,
+  eligibleRenewalAgent,
 } = require("./adcsPreflightGate");
 
 const {
@@ -514,6 +515,9 @@ async function createAutomaticAdcsRenewal({
     issuerId: certificate.profile_issuer_id,
     reference: fields.target.reference,
     version,
+    target: fields.target,
+    ownerId: fields.target.type === "windows-cert-store" || explicitIp ? certificate.deployed_agent_id : null,
+    env,
   });
   const storeOnly = fields.target.type === "windows-cert-store";
   if (storeOnly && !certificate.deployed_agent_id) {
@@ -526,7 +530,8 @@ async function createAutomaticAdcsRenewal({
     : eligibleAgents[0];
   if (!agent) {
     const declared = await dbPool.query(
-      `SELECT id
+      `SELECT id,status,platform,agent_version,protocol_version,supported_operations,
+              declared_target_selectors,declared_capabilities,capabilities_updated_at,agent_kind
          FROM certops_agents
         WHERE workspace_id = $1
           AND status = 'active'
@@ -535,28 +540,32 @@ async function createAutomaticAdcsRenewal({
           AND supported_operations @> '["adcs-preflight"]'::jsonb
           AND ($3::uuid IS NULL OR id = $3::uuid)
         ORDER BY last_seen_at DESC NULLS LAST, id
-        LIMIT 1`,
+        LIMIT 100`,
       [certificate.workspace_id, fields.target.reference, storeOnly || explicitIp ? certificate.deployed_agent_id : null],
     );
-    if (declared.rows[0]?.id && version?.confirmed_at && version?.ca_key_sha256 && version?.ca_config && version?.template) {
+    const candidate = declared.rows.find(row => eligibleRenewalAgent(row,{ target: fields.target,
+      ownerId: storeOnly || explicitIp ? certificate.deployed_agent_id : null,env }));
+    if (version?.confirmed_at && version?.ca_key_sha256 && version?.ca_config && version?.template) {
       await preflightDispatcher({
         client: dbPool,
         workspaceId: certificate.workspace_id,
         issuerId: certificate.profile_issuer_id,
-        agentId: declared.rows[0].id,
+        agentId: candidate?.id || certificate.deployed_agent_id || null,
         caConfig: version.ca_config,
         template: version.template,
         automatic: true,
         confirmedAt: version.confirmed_at,
+        notAfter: certificate.not_after,
+        ...(!candidate ? { unavailableTarget:fields.target.reference } : {}),
         env,
       });
     }
     const error = new Error(
-      declared.rows[0]
+      candidate
         ? (storeOnly ? "the owning agent needs a fresh safe AD CS preflight" : "no agent has a safe adcs-preflight for this CA within the preflight freshness window")
         : "no active Windows agent that supports AD CS preflight declares this renewal target",
     );
-    error.code = declared.rows[0]
+    error.code = candidate
       ? CERTOPS_ADCS_AGENT_NOT_PREPARED
       : CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
     throw error;
