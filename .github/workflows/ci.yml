@@ -375,7 +375,7 @@ jobs:
         run: pnpm run certops:integrity-check
 
       - name: Prove concurrent enrollment admission on isolated PostgreSQL
-        run: node --test --test-force-exit tests/postgres/certops-enrollment-admission.test.js
+        run: node --test --test-force-exit --test-concurrency=1 tests/postgres/certops-enrollment-admission.test.js tests/postgres/certops-adcs-preflight-incidents.test.js
 
       - name: Verify Core and preview migration upgrades on isolated PostgreSQL
         run: node --test --test-force-exit --test-concurrency=1 tests/postgres/certops-store-migration-upgrade.test.js tests/postgres/certops-observed-preview-migration-upgrade.test.js

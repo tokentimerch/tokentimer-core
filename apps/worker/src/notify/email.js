@@ -708,6 +708,12 @@ export async function sendEmailNotification({
       if (!from) continue;
       try {
         await tx.verify();
+        // Connection verification can block while recipient authorization or
+        // consent changes. Recheck immediately before submitting the message.
+        await maybeBeforeSmtpAttempt(onBeforeAttempt, {
+          attempt: "smtp-send",
+          accountIndex: i,
+        });
         const info = await tx.sendMail({
           from,
           to,
@@ -838,6 +844,9 @@ export async function sendEmailNotification({
             : getDbFrom(dbConfig);
           try {
             await dbTx.verify();
+            await maybeBeforeSmtpAttempt(onBeforeAttempt, {
+              attempt: "db-smtp-send",
+            });
             const info = await dbTx.sendMail({
               from,
               to,
