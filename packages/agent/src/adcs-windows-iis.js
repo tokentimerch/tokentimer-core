@@ -669,9 +669,13 @@ function createAdcsWindowsIisExecutors(deps) {
     return safety;
   }
 
-  function safetyRefusalResult(safety, decoded) {
+  function safetyRefusalResult(safety, decoded, { noKeyOrSubmission = false } = {}) {
     return { status: "rejected", rejectionReason: "issuer_not_allowlisted", keyRotated: null,
-      errorMessage: boundErrorMessage(`${safety.errorCode}: ${safety.detail}`),
+      // Versioned attestation in an existing protocol field: older control
+      // planes accept the result and newer ones can distinguish this path.
+      errorMessage: noKeyOrSubmission
+        ? "ADCS_CA_CONFIG_UNSAFE: Local enrollment rule refused before key generation and CA submission. [tt-adcs-no-key-no-submit-v1]"
+        : boundErrorMessage(`${safety.errorCode}: ${safety.detail}`),
       enrollmentResult: enrollmentResultFor(decoded.enrollmentId, decoded.attempt, "refused", { errorCode: safety.errorCode }) };
   }
 
@@ -1072,7 +1076,7 @@ function createAdcsWindowsIisExecutors(deps) {
       }
 
       const safety = ctx.localRuleRefused ? {ok:false,errorCode:"ADCS_CA_CONFIG_UNSAFE",detail:"No whole local enrollment rule permits the signed CA, template, target, DNS names and key algorithm"} : await currentSafety({ jobId, client, snapshot, executionContext, stateDir });
-      if (!safety.ok) return safetyRefusalResult(safety, decoded);
+      if (!safety.ok) return safetyRefusalResult(safety, decoded, { noKeyOrSubmission: ctx.localRuleRefused === true });
       enrollmentLock.assertHeld();
       const safetyLease = await renewJobLeaseOrAbort(leaseOpts || {});
       if (safetyLease?.ok === false) return safetyLease.abort;

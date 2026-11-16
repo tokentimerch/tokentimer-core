@@ -1,6 +1,7 @@
 "use strict";
 
 const Ajv = require("ajv");
+const { isDeepStrictEqual } = require("node:util");
 const addFormats = require("ajv-formats");
 const { pool } = require("../../db/database");
 const enrollmentResultSchema = require("../../../../packages/contracts/certops/enrollment-result-contract.schema.json");
@@ -83,6 +84,52 @@ async function findOpenEnrollment(db, workspaceId, certificateId) {
 // Other failures may have unknown effects and must never use this retry path.
 const LOCAL_DRY_RUN_REFUSAL = 'refusing mode:"real" job because local execution.dryRun is true; set execution.dryRun to false to perform real side effects, or ask the control plane for a mode:"dry_run" job';
 
+// Only an initial, explicit local-policy rejection proves that AD CS was not
+// contacted. A generic refused state can also follow an uncertain submission.
+const SAFE_INITIAL_LOCAL_REFUSAL_SQL = `e.state = 'refused' AND e.last_error_code = 'ADCS_CA_CONFIG_UNSAFE'
+  AND e.attempt <= 1 AND e.request_id IS NULL AND e.operator_request_id IS NULL
+  AND e.pending_since IS NULL AND e.installed_at IS NULL
+  AND EXISTS (SELECT 1 FROM certificate_jobs local_job
+    WHERE local_job.workspace_id=e.workspace_id AND local_job.enrollment_id=e.id
+      AND local_job.id=e.current_job_id AND local_job.source='automation'
+      AND local_job.operation='renew' AND local_job.status='rejected'
+      AND local_job.needs_operator_reconciliation IS FALSE
+      AND local_job.error_code='issuer_not_allowlisted'
+      AND local_job.error_message='ADCS_CA_CONFIG_UNSAFE: Local enrollment rule refused before key generation and CA submission. [tt-adcs-no-key-no-submit-v1]'
+      AND local_job.result_metadata->>'rejectionReason'='issuer_not_allowlisted'
+      AND local_job.result_metadata->'enrollmentResult'->>'state'='refused'
+      AND local_job.result_metadata->'enrollmentResult'->>'errorCode'='ADCS_CA_CONFIG_UNSAFE')
+  AND NOT EXISTS (SELECT 1 FROM certificate_jobs local_jobs
+    WHERE local_jobs.workspace_id=e.workspace_id AND local_jobs.enrollment_id=e.id AND local_jobs.id<>e.current_job_id)`;
+
+// A control-plane cancellation is safe only if no claim or nonce ever existed.
+const SAFE_SUPERSEDED_BEFORE_CLAIM_SQL = `e.state='cancelled' AND e.attempt=0
+  AND e.request_id IS NULL AND e.operator_request_id IS NULL AND e.pending_since IS NULL AND e.installed_at IS NULL
+  AND EXISTS (SELECT 1 FROM certificate_jobs local_job
+    WHERE local_job.workspace_id=e.workspace_id AND local_job.enrollment_id=e.id AND local_job.id=e.current_job_id
+      AND local_job.source='automation' AND local_job.operation='renew' AND local_job.status='cancelled'
+      AND local_job.error_code='CERTOPS_AUTOMATION_SUPERSEDED_BEFORE_CLAIM' AND local_job.completed_at IS NOT NULL
+      AND local_job.attempt_count=0 AND local_job.claimed_by_agent_id IS NULL AND local_job.claim_id IS NULL
+      AND local_job.lease_expires_at IS NULL AND local_job.lease_renewed_at IS NULL
+      AND local_job.needs_operator_reconciliation IS FALSE
+      AND NOT EXISTS (SELECT 1 FROM certops_consumed_nonces n WHERE n.workspace_id=e.workspace_id AND n.job_id=local_job.id))
+  AND NOT EXISTS (SELECT 1 FROM certificate_jobs local_jobs
+    WHERE local_jobs.workspace_id=e.workspace_id AND local_jobs.enrollment_id=e.id AND local_jobs.id<>e.current_job_id)`;
+
+async function isSafeInitialLocalRefusal(db, workspaceId, jobId, { lock = false } = {}) {
+  const result = await db.query(`SELECT j.updated_at FROM certificate_jobs j
+    JOIN certificate_enrollments e ON e.workspace_id=j.workspace_id AND e.id=j.enrollment_id
+    WHERE j.workspace_id=$1 AND j.id=$2 AND (${SAFE_INITIAL_LOCAL_REFUSAL_SQL})${lock ? " FOR UPDATE OF j,e" : ""}`, [workspaceId, jobId]);
+  return result.rows[0] || null;
+}
+
+async function isSafeRetryableAutomaticEnrollment(db, workspaceId, jobId, { lock = false } = {}) {
+  const result = await db.query(`SELECT j.updated_at, (${SAFE_SUPERSEDED_BEFORE_CLAIM_SQL}) AS superseded_before_claim FROM certificate_jobs j
+    JOIN certificate_enrollments e ON e.workspace_id=j.workspace_id AND e.id=j.enrollment_id
+    WHERE j.workspace_id=$1 AND j.id=$2 AND ((${SAFE_INITIAL_LOCAL_REFUSAL_SQL}) OR (${SAFE_SUPERSEDED_BEFORE_CLAIM_SQL}))${lock ? " FOR UPDATE OF j,e" : ""}`, [workspaceId, jobId]);
+  return result.rows[0] || null;
+}
+
 function retryDryRunBlockedRenewal({ client, workspaceId, enrollmentId, eligibleAgentIds, env }) {
   if (!CERTIFICATE_ID_UUID.test(String(enrollmentId || ""))) return null;
   return withTransaction(dbOf(client), async (tx) => {
@@ -145,8 +192,8 @@ async function assertIisTargetAvailable(tx, { workspaceId, certificateId, agentI
         AND lower(btrim(COALESCE(e.deploy_target->'binding'->>'sniHost', ''))) = $4
         AND ($4 <> '' OR COALESCE(NULLIF(e.deploy_target->'binding'->>'address', '*'), '0.0.0.0')::inet = $8::inet)
         AND (e.state = ANY($5::text[]) OR ($6 = 'automation'
-          AND (e.state = 'installed' OR EXISTS (SELECT 1 FROM certificate_jobs j
-            WHERE j.workspace_id = e.workspace_id AND j.enrollment_id = e.id AND j.source = 'automation'))
+          AND (e.state = 'installed' OR (NOT COALESCE(((${SAFE_INITIAL_LOCAL_REFUSAL_SQL}) OR (${SAFE_SUPERSEDED_BEFORE_CLAIM_SQL})), FALSE) AND EXISTS (SELECT 1 FROM certificate_jobs j
+            WHERE j.workspace_id = e.workspace_id AND j.enrollment_id = e.id AND j.source = 'automation')))
           AND EXISTS (
           SELECT 1 FROM managed_certificates current_cert
           JOIN certops_certificate_identities identity
@@ -474,6 +521,7 @@ function createEnrollment({
   initialOperation = "renew",
   workspaceRequiresApprovalAlways = false,
   requiresApproval,
+  expectedAutomationRetry,
 }) {
   if (!validAdcsTarget(target)) {
     throw serviceError(
@@ -497,6 +545,11 @@ function createEnrollment({
         env,
       });
     }
+    if (expectedAutomationRetry) {
+      // Management replacement takes this fence before period and certificate
+      // rows; use the same order to avoid a period/certificate deadlock.
+      await require("./inventory").acquireManagedCertificateImportLock(tx,workspaceId);
+    }
     // Every creator uses the same certificate-scoped transaction lock before
     // reading enrollment state, including manual and racing scheduler calls.
     if (CERTIFICATE_ID_UUID.test(String(certificateId || ""))) {
@@ -510,6 +563,41 @@ function createEnrollment({
         );
         error.statusCode = 409;
         throw error;
+      }
+    }
+    if (expectedAutomationRetry) {
+      if (source !== "automation" || !profileId) throw serviceError("invalid automatic retry", "CERTOPS_ENROLLMENT_REPLAY");
+      if (!await isSafeRetryableAutomaticEnrollment(tx,workspaceId,expectedAutomationRetry.previousJobId,{lock:true})) {
+        throw serviceError("automatic renewal refusal changed before retry", "CERTOPS_ENROLLMENT_REPLAY");
+      }
+      const period = await tx.query(`SELECT id, automation_enabled, renewal_profile_id FROM certops_management_periods
+        WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL FOR UPDATE`, [workspaceId, certificateId]);
+      if (!period.rows[0]?.automation_enabled || String(period.rows[0].renewal_profile_id) !== String(profileId) ||
+          String(period.rows[0].id) !== String(expectedAutomationRetry.periodId)) {
+        throw serviceError("automatic renewal was stopped before retry", "CERTOPS_ENROLLMENT_REPLAY");
+      }
+      const current = await tx.query(`SELECT mc.not_after, mc.status AS certificate_status,
+          mc.source, mc.source_ref, mc.fingerprint_sha256, mc.deployed_agent_id, mc.reconciliation_reason,
+          cp.status AS profile_status, cp.issuer_id, cp.public_metadata
+        FROM managed_certificates mc JOIN certificate_profiles cp
+          ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id
+        WHERE mc.workspace_id=$1 AND mc.id=$2 AND cp.id=$3 FOR UPDATE OF mc,cp`,
+      [workspaceId,certificateId,profileId]);
+      const row = current.rows[0];
+      let profile;
+      try { profile = require("./adcsRenewalRules").validateAdcsRenewalProfile(row?.public_metadata?.renewalProfile); }
+      catch { throw serviceError("automatic renewal profile changed before retry", "CERTOPS_ENROLLMENT_REPLAY"); }
+      const disabled = require("./renewalProfile").AUTO_RENEW_DISABLED_PROFILE_STATUSES;
+      if (!row || ["revoked","decommissioned"].includes(row.certificate_status) || disabled.includes(row.profile_status) ||
+          row.source !== expectedAutomationRetry.source || row.source_ref !== expectedAutomationRetry.sourceRef ||
+          row.fingerprint_sha256 !== expectedAutomationRetry.fingerprint || row.reconciliation_reason === "windows_store_identity_conflict" ||
+          (row.source === "agent_windows" && String(row.source_ref || "").includes("/windows_store/")) ||
+          (expectedAutomationRetry.requireOwner && String(row.deployed_agent_id) !== String(agentId)) ||
+          String(row.issuer_id) !== String(expectedAutomationRetry.issuerId) ||
+          new Date(row.not_after).getTime() !== new Date(expectedAutomationRetry.notAfter).getTime() ||
+          !isDeepStrictEqual(profile.target,target) || !isDeepStrictEqual(profile.sanPolicy.sans,authorizedDnsNames) ||
+          profile.keyAlgorithm !== keyAlgorithm || profile.keySize !== keySize) {
+        throw serviceError("automatic renewal profile changed before retry", "CERTOPS_ENROLLMENT_REPLAY");
       }
     }
     if (target.type === "windows-iis") {
@@ -545,7 +633,7 @@ function createEnrollment({
       resolvedIssuerId = profileIssuerId;
     }
     const version = await tx.query(
-      `SELECT v.version, v.ca_config, v.template, v.ca_key_sha256, i.kind,
+      `SELECT v.version, v.ca_config, v.template, v.ca_key_sha256, v.confirmed_at, i.kind,
               i.revalidation_required
          FROM certificate_issuer_versions v
          JOIN certificate_issuers i
@@ -559,6 +647,11 @@ function createEnrollment({
     );
     const issuer = version.rows[0];
     if (!issuer) throw serviceError("confirmed issuer version not found", "CERTOPS_ISSUER_NOT_FOUND");
+    if (expectedAutomationRetry && (issuer.ca_config !== expectedAutomationRetry.caConfig ||
+        issuer.template !== expectedAutomationRetry.template || issuer.ca_key_sha256 !== expectedAutomationRetry.caKeySha256 ||
+        new Date(issuer.confirmed_at).getTime() !== new Date(expectedAutomationRetry.confirmedAt).getTime())) {
+      throw serviceError("automatic renewal issuer changed before retry", "CERTOPS_ENROLLMENT_REPLAY");
+    }
     if (issuer.revalidation_required === true) {
       throw serviceError(
         "issuer requires revalidation before new enrollments",
@@ -1481,6 +1574,8 @@ async function listEnrollments({ client, workspaceId, limit = 50, offset = 0 }) 
 module.exports = {
   OPEN_ENROLLMENT_STATES,
   findOpenEnrollment,
+  isSafeInitialLocalRefusal,
+  isSafeRetryableAutomaticEnrollment,
   abandonEnrollment,
   cancelEnrollment,
   attachEnrollmentDispatch,

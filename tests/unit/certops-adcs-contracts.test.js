@@ -631,7 +631,7 @@ describe("Agent protocol for AD CS jobs", () => {
     );
   });
 
-  it("names the two refusals an agent makes before any CA contact", () => {
+  it("accepts AD CS issuer and snapshot refusal reasons", () => {
     for (const rejectionReason of ["issuer_not_allowlisted", "enrollment_snapshot_mismatch"]) {
       assert.equal(
         validateAgentMessage(resultMessage({ status: "rejected", rejectionReason })),

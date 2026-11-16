@@ -23,6 +23,7 @@
  * public job payload fields. It never touches private key material.
  */
 
+const crypto = require("node:crypto");
 const { pool } = require("../../db/database");
 const { logger } = require("../../utils/logger");
 const {
@@ -56,7 +57,7 @@ const {
   resolveRenewalPerCaCap,
 } = require("./renewalCapacity");
 const { writeAudit } = require("../audit");
-const { createEnrollment, findOpenEnrollment, dispatchPreflight, retryDryRunBlockedRenewal } = require("./certificateEnrollments");
+const { createEnrollment, findOpenEnrollment, dispatchPreflight, retryDryRunBlockedRenewal, isSafeRetryableAutomaticEnrollment } = require("./certificateEnrollments");
 const { validateAdcsRenewalProfile } = require("./adcsRenewalRules");
 const {
   loadCurrentAdcsIssuerVersion,
@@ -233,6 +234,42 @@ function renewalIdempotencyKey(certificateId, notAfter) {
   return `certops-renewal:${certificateId}:${epoch}`;
 }
 
+async function retryableAdcsRenewalKey(dbPool, workspaceId, initialKey) {
+  // Fixed-width sequence and refusal streak allow the unique idempotency index
+  // to locate the latest retry without walking an ever-growing chain of jobs.
+  // Server supersession resets the streak and may be replanned immediately.
+  const prefix = `certops-adcs-retry:${crypto.createHash("sha256").update(initialKey).digest("hex")}:`;
+  const latest = await dbPool.query(
+    `SELECT id,idempotency_key FROM certificate_jobs
+      WHERE workspace_id=$1 AND idempotency_key >= $2 AND idempotency_key <= $3
+      ORDER BY idempotency_key DESC LIMIT 1`, [workspaceId, `${prefix}000000000000`, `${prefix}999999999999`],
+  );
+  let previous = latest.rows[0];
+  let retry = 0;
+  let refusalStreak = 0;
+  if (previous) {
+    const suffix = previous.idempotency_key.slice(prefix.length);
+    if (!/^\d{12}$/.test(suffix)) return { existingId: previous.id };
+    retry = Number(suffix.slice(0,10));
+    refusalStreak = Number(suffix.slice(10));
+    if (retry === 0 || refusalStreak > 2) return { existingId: previous.id };
+  } else {
+    const initial = await dbPool.query(
+      `SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND idempotency_key=$2 LIMIT 1`,
+      [workspaceId, initialKey],
+    );
+    previous = initial.rows[0];
+    if (!previous) return { key: initialKey };
+  }
+  const refusal = await isSafeRetryableAutomaticEnrollment(dbPool, workspaceId, previous.id);
+  const cooldownMs = Math.min(15 * 60 * 1000 * (2 ** refusalStreak), 60 * 60 * 1000);
+  if (!refusal || (!refusal.superseded_before_claim && Date.now() - new Date(refusal.updated_at).getTime() < cooldownMs) || retry >= 9999999999) {
+    return { existingId: previous.id };
+  }
+  const nextStreak = refusal.superseded_before_claim ? 0 : Math.min(refusalStreak + 1, 2);
+  return { key: `${prefix}${String(retry + 1).padStart(10, "0")}${String(nextStreak).padStart(2, "0")}`, previousJobId: previous.id };
+}
+
 /**
  * Certificates due for renewal: managed, expiring within the threshold, not
  * retired, linked to a profile that has not been switched off, and without an
@@ -258,6 +295,12 @@ async function findCertificatesDueForRenewal({
             mc.not_after,
             mc.key_mode,
             mc.deployed_agent_id,
+            mc.source,
+            mc.source_ref,
+            mc.fingerprint_sha256,
+            (SELECT period.id FROM certops_management_periods period
+              WHERE period.workspace_id=mc.workspace_id AND period.managed_certificate_id=mc.id
+                AND period.ended_at IS NULL LIMIT 1) AS management_period_id,
             mc.profile_id,
             cp.name AS profile_name,
             cp.key_mode AS profile_key_mode,
@@ -525,21 +568,15 @@ async function createAutomaticAdcsRenewal({
     return { job: retry || { id: null, operation: "renew" }, created: Boolean(retry) };
   }
 
-  const idempotencyKey = renewalIdempotencyKey(
+  const initialKey = renewalIdempotencyKey(
     certificate.id,
     certificate.not_after,
   );
-  const existingJob = await dbPool.query(
-    `SELECT id
-       FROM certificate_jobs
-      WHERE workspace_id = $1
-        AND idempotency_key = $2
-      LIMIT 1`,
-    [certificate.workspace_id, idempotencyKey],
-  );
-  if (existingJob.rows[0]) {
-    return { job: { id: existingJob.rows[0].id, operation: "renew" }, created: false };
+  const retryDecision = await retryableAdcsRenewalKey(dbPool, certificate.workspace_id, initialKey);
+  if (retryDecision.existingId) {
+    return { job: { id: retryDecision.existingId, operation: "renew" }, created: false };
   }
+  const idempotencyKey = retryDecision.key;
 
   let created;
   try {
@@ -557,6 +594,15 @@ async function createAutomaticAdcsRenewal({
       authorizedDnsNames: fields.authorizedDnsNames,
       keyAlgorithm: fields.keyAlgorithm,
       keySize: fields.keySize,
+      ...(idempotencyKey !== initialKey ? { expectedAutomationRetry: {
+        issuerId: certificate.profile_issuer_id, notAfter: certificate.not_after,
+        source: certificate.source, sourceRef: certificate.source_ref,
+        fingerprint: certificate.fingerprint_sha256, periodId: certificate.management_period_id,
+        requireOwner: storeOnly || explicitIp,
+        previousJobId: retryDecision.previousJobId,
+        caConfig: version.ca_config, template: version.template, caKeySha256: version.ca_key_sha256,
+        confirmedAt: version.confirmed_at,
+      } } : {}),
     });
   } catch (error) {
     if (["CERTOPS_ENROLLMENT_REPLAY", "CERTOPS_ENROLLMENT_OPEN"].includes(error?.code)) {
@@ -1068,6 +1114,7 @@ module.exports = {
   isValidCaEndpointUrl,
   normalizeCaBucket,
   renewalIdempotencyKey,
+  retryableAdcsRenewalKey,
   resolveRenewalPerCaCap,
   resolveRenewalThresholdDays,
   runRenewalSchedulerSweep,

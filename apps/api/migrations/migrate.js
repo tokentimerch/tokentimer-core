@@ -5420,6 +5420,13 @@ migrations.push({
   sql: fs.readFileSync(require("path").join(__dirname, "120-certops-iis-absence-proofs.sql"), "utf8"),
 });
 
+migrations.push({
+  version: 121,
+  name: "certops_enrollment_jobs_index",
+  sql: `CREATE INDEX IF NOT EXISTS idx_certificate_jobs_enrollment
+    ON certificate_jobs(workspace_id, enrollment_id) WHERE enrollment_id IS NOT NULL`,
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);

@@ -1148,6 +1148,7 @@ async function claimJobs({
     const selected = await client.query(
       `SELECT id, workspace_id, operation, status, subject_type, subject_id,
               management_period_id, certificate_identity_id, requested_by_connection_id, requested_by_user_id, payload,
+              source, attempt_count,
               approved_at, approved_payload_hash, approved_canonical_intent_hash,
               mode, executor_kind,
               assigned_agent_id, required_target_selector,
@@ -1176,6 +1177,25 @@ async function claimJobs({
                     OR mc.reconciliation_reason = 'windows_store_identity_conflict')
           ))
           AND ${require("./legacyIisClaimGuard").legacyIisClaimGuard}
+          -- Do not let switched-off, never-started automatic AD CS work
+          -- occupy the batch while waiting for an operator to enable it.
+          AND (cj.status <> 'pending' OR cj.source <> 'automation' OR cj.operation <> 'renew'
+            OR cj.enrollment_id IS NULL OR cj.attempt_count > 0 OR EXISTS (
+              SELECT 1 FROM certops_management_periods automatic_period
+              JOIN managed_certificates automatic_cert ON automatic_cert.workspace_id=automatic_period.workspace_id
+                AND automatic_cert.id=automatic_period.managed_certificate_id
+              JOIN certificate_profiles automatic_profile ON automatic_profile.workspace_id=automatic_cert.workspace_id
+                AND automatic_profile.id=automatic_cert.profile_id
+              WHERE automatic_period.workspace_id=cj.workspace_id
+                AND automatic_period.managed_certificate_id::text=cj.subject_id
+                AND (cj.management_period_id IS NULL OR automatic_period.id=cj.management_period_id)
+                AND automatic_period.ended_at IS NULL AND automatic_period.automation_enabled=TRUE
+                AND automatic_period.renewal_profile_id=automatic_cert.profile_id
+                AND automatic_profile.status NOT IN ('disabled','archived')
+                AND automatic_cert.not_after IS NOT NULL
+                AND (automatic_profile.renew_before_days IS NULL OR automatic_cert.not_after <= NOW()
+                  + (automatic_profile.renew_before_days || ' days')::interval)
+            ))
           AND NOT (payload ? 'distributionRollout')
           AND NOT (payload ? 'distributionPolicyApproval')
           -- Exclude contained/superseded distribution work before LIMIT.
@@ -1241,6 +1261,9 @@ async function claimJobs({
                 AND period.ended_at IS NULL
                 AND (cj.management_period_id IS NULL OR cj.management_period_id = period.id)
                 AND (identity.lifecycle_status = 'active'
+                  OR (cj.certificate_identity_id IS NULL AND cj.status='pending' AND cj.source='automation'
+                      AND cj.operation='renew' AND cj.enrollment_id IS NOT NULL AND cj.attempt_count=0
+                      AND period.current_identity_id IS NOT NULL)
                   OR (cj.certificate_identity_id IS NULL AND certops_is_initial_provisioning(
                     cj.workspace_id,period.managed_certificate_id,cj.operation,cj.executor_kind,cj.source))
                   OR (
@@ -1348,6 +1371,52 @@ async function claimJobs({
       if (!await require("./managementClaim").lockManagedJobForClaim({
         client, job: row, workspaceId: agent.workspaceId,
       })) continue;
+      const automaticAdmission = await require("./managementClaim").lockAutomaticAdcsRenewalForClaim({
+        client, job: row, workspaceId: agent.workspaceId, env,
+      });
+      if (automaticAdmission === "supersede") {
+        // Only a never-claimed job with no other enrollment work can be
+        // superseded without consulting the agent's durable journal.
+        const safe = await client.query(`SELECT j.id FROM certificate_jobs j
+          WHERE j.workspace_id=$1 AND j.id=$2 AND j.status='pending' AND j.source='automation'
+            AND j.operation='renew' AND j.attempt_count=0 AND j.claimed_by_agent_id IS NULL
+            AND j.claim_id IS NULL AND j.lease_expires_at IS NULL AND j.lease_renewed_at IS NULL
+            AND j.needs_operator_reconciliation IS FALSE
+            AND NOT EXISTS (SELECT 1 FROM certops_consumed_nonces n WHERE n.workspace_id=j.workspace_id AND n.job_id=j.id)
+            AND NOT EXISTS (SELECT 1 FROM certificate_jobs other WHERE other.workspace_id=j.workspace_id
+              AND other.enrollment_id=j.enrollment_id AND other.id<>j.id)`, [agent.workspaceId, row.id]);
+        if (!safe.rows.length) {
+          await client.query(`UPDATE certificate_jobs SET next_attempt_at=NOW()+INTERVAL '1 minute', updated_at=NOW()
+            WHERE workspace_id=$1 AND id=$2 AND status='pending' AND attempt_count=0`, [agent.workspaceId,row.id]);
+          continue;
+        }
+        const cancelled = await client.query(`UPDATE certificate_enrollments SET state='cancelled', updated_at=NOW()
+          WHERE workspace_id=$1 AND id=$2 AND current_job_id=$3 AND state='requested' AND attempt=0
+            AND request_id IS NULL AND operator_request_id IS NULL AND pending_since IS NULL AND installed_at IS NULL
+          RETURNING id`, [agent.workspaceId, row.enrollment_id, row.id]);
+        if (!cancelled.rows.length) {
+          await client.query(`UPDATE certificate_jobs SET next_attempt_at=NOW()+INTERVAL '1 minute', updated_at=NOW()
+            WHERE workspace_id=$1 AND id=$2 AND status='pending' AND attempt_count=0`, [agent.workspaceId,row.id]);
+          continue;
+        }
+        const changed = await client.query(`UPDATE certificate_jobs SET status='cancelled',
+            error_code='CERTOPS_AUTOMATION_SUPERSEDED_BEFORE_CLAIM',
+            error_message='Automatic renewal was superseded before execution because its certificate or renewal profile changed.',
+            completed_at=NOW(), canceled_at=NOW(), updated_at=NOW()
+          WHERE workspace_id=$1 AND id=$2 AND status='pending' AND attempt_count=0 RETURNING id`, [agent.workspaceId, row.id]);
+        if (!changed.rows.length) throw new Error("automatic enrollment supersession lost its locked job");
+        await writeAudit({client, workspaceId:agent.workspaceId, actorUserId:null, subjectUserId:null,
+          action:"CERTOPS_AUTOMATIC_RENEWAL_SUPERSEDED", targetType:"certificate_job", targetId:null,
+          metadata:{jobId:String(row.id), enrollmentId:String(row.enrollment_id), certificateId:String(row.subject_id)}});
+        continue;
+      }
+      if (!automaticAdmission) {
+        // A stale or concurrently locked policy must not occupy the front of
+        // every claim batch; re-evaluate it without starting the enrollment.
+        await client.query(`UPDATE certificate_jobs SET next_attempt_at = NOW() + INTERVAL '1 minute', updated_at = NOW()
+          WHERE id = $1 AND workspace_id = $2 AND status = 'pending' AND attempt_count = 0`, [row.id, agent.workspaceId]);
+        continue;
+      }
       // SQL above is a lock-efficient prefilter. This shared pure predicate
       // is authoritative and is also used by renewal-path health, preventing
       // the UI from calling a path healthy that dispatch would reject.

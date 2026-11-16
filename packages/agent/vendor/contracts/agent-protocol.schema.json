@@ -513,7 +513,7 @@
             "enrollment_snapshot_mismatch",
             null
           ],
-          "description": "Populated when status is rejected/blocked due to agent-local policy or job-integrity/replay checks. Always reported as evidence too, per the 'operator sees policy conflicts, not silent failures' rule. unexpected_job_type (ADR-0012 decision 7) is reported by a diagnostic-kind agent offered anything other than protocol_smoke: there is no lease-release endpoint, so the only way to hand back a job it must not execute is a replay-bound rejected result naming why. issuer_not_allowlisted: no agent-local AD CS enrollment rule matches the CA, template, names and key algorithm together, so no CA was contacted. enrollment_snapshot_mismatch: a continuation's snapshot hash differs from the one the agent journaled for that enrollment (ADR-0014 decisions 3 and 4)."
+          "description": "Populated when status is rejected/blocked due to agent-local policy or job-integrity/replay checks. Always reported as evidence too, per the 'operator sees policy conflicts, not silent failures' rule. unexpected_job_type (ADR-0012 decision 7) is reported by a diagnostic-kind agent offered anything other than protocol_smoke: there is no lease-release endpoint, so the only way to hand back a job it must not execute is a replay-bound rejected result naming why. issuer_not_allowlisted can indicate a local rule refusal or an unsafe or unreadable AD CS safety check; it does not by itself prove that the CA was not contacted or that no key was created. enrollment_snapshot_mismatch: a continuation's snapshot hash differs from the one the agent journaled for that enrollment (ADR-0014 decisions 3 and 4)."
         },
         "keyRotated": {
           "type": [

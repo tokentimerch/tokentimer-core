@@ -59,4 +59,56 @@ async function lockManagedJobForClaim({ client, job, workspaceId }) {
   return Boolean(identity.rows[0]);
 }
 
-module.exports = { lockManagedJobForClaim };
+// A never-started automatic enrollment must still reflect the operator's
+// current management policy. Retried claims and continuations may already
+// have effects and must retain their existing recovery path.
+async function lockAutomaticAdcsRenewalForClaim({ client, job, workspaceId }) {
+  if (job.status !== "pending" || job.source !== "automation" || job.operation !== "renew" ||
+      !job.enrollment_id || Number(job.attempt_count) !== 0 || job.subject_type !== "managed_certificate") return true;
+  const locked = await client.query(
+    `SELECT period.automation_enabled, period.renewal_profile_id, period.current_identity_id, mc.profile_id,
+            mc.fingerprint_sha256, mc.deployed_agent_id, identity.fingerprint_sha256 AS identity_fingerprint,
+            (mc.not_after IS NOT NULL AND (cp.renew_before_days IS NULL OR
+              mc.not_after <= NOW() + (cp.renew_before_days || ' days')::interval)) AS currently_due,
+            cp.status AS profile_status, cp.issuer_id, cp.public_metadata,
+            issuer.current_version, issuer.revalidation_required, enrollment.issuer_id AS enrolled_issuer_id, enrollment.agent_id AS enrolled_agent_id,
+            enrollment.issuer_version, enrollment.snapshot_bytes, enrollment.deploy_target
+       FROM certificate_enrollments enrollment
+       JOIN managed_certificates mc ON mc.workspace_id=enrollment.workspace_id AND mc.id=enrollment.certificate_id
+       JOIN certops_management_periods period ON period.workspace_id=mc.workspace_id AND period.managed_certificate_id=mc.id
+       LEFT JOIN certops_certificate_identities identity ON identity.workspace_id=period.workspace_id AND identity.id=period.current_identity_id
+       JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id
+       JOIN certificate_issuers issuer ON issuer.workspace_id=enrollment.workspace_id AND issuer.id=enrollment.issuer_id
+      WHERE enrollment.workspace_id=$1 AND enrollment.id=$2 AND enrollment.current_job_id=$3
+        AND mc.id::text=lower($4) AND period.ended_at IS NULL
+        AND ($5::uuid IS NULL OR period.id=$5::uuid)
+      FOR SHARE OF period, mc, cp, issuer SKIP LOCKED`,
+    [workspaceId, job.enrollment_id, job.id, job.subject_id, job.management_period_id || null],
+  );
+  const row = locked.rows[0];
+  if (!row || !row.automation_enabled || !row.currently_due || ["disabled", "archived"].includes(row.profile_status)) return false;
+  if (!row.current_identity_id || !row.identity_fingerprint || !row.fingerprint_sha256) return false;
+  if (!job.certificate_identity_id) return "supersede";
+  if (String(job.certificate_identity_id) !== String(row.current_identity_id) ||
+      String(row.fingerprint_sha256).replace(/:/g, "").toLowerCase() !== String(row.identity_fingerprint).toLowerCase() ||
+      String(job.assigned_agent_id) !== String(row.enrolled_agent_id)) return "supersede";
+  const address = row.deploy_target?.binding?.address;
+  const ownerRequired = row.deploy_target?.type === "windows-cert-store" ||
+    (row.deploy_target?.type === "windows-iis" && address != null && address !== "*" && address !== "0.0.0.0");
+  if (ownerRequired && !row.deployed_agent_id) return false;
+  if (ownerRequired && String(row.deployed_agent_id) !== String(job.assigned_agent_id)) return "supersede";
+  if (row.renewal_profile_id !== row.profile_id || row.issuer_id !== row.enrolled_issuer_id ||
+      Number(row.current_version) !== Number(row.issuer_version)) return "supersede";
+  if (row.revalidation_required === true) return false;
+  try {
+    const profile = require("./adcsRenewalRules").validateAdcsRenewalProfile(row.public_metadata?.renewalProfile);
+    const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
+    const equal = require("node:util").isDeepStrictEqual;
+    return equal(profile.target, row.deploy_target) && equal(profile.sanPolicy.sans, snapshot.authorizedDnsNames) &&
+      profile.keyAlgorithm === snapshot.keyAlgorithm && profile.keySize === snapshot.keySize ? true : "supersede";
+  } catch {
+    return false;
+  }
+}
+
+module.exports = { lockManagedJobForClaim, lockAutomaticAdcsRenewalForClaim };
