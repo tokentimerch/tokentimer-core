@@ -1618,7 +1618,8 @@ describe("enrollment rows", () => {
         throw new Error(sql);
       },
     };
-    const issuers = await listIssuers({ client: db, workspaceId: WORKSPACE });
+    const issuers = await listIssuers({ client: db, workspaceId: WORKSPACE,
+      readinessLoader: async () => ({ checks: [], agents: [] }) });
     assert.equal(issuers.items[0].revalidationRequired, true);
     assert.equal(issuers.items[0].lastPreflight.caCertificates[0].certificateB64, undefined);
     assert.equal(issuers.items[0].lastPreflight.caCertificates[0].keySha256, "ab".repeat(32));
@@ -1635,6 +1636,8 @@ describe("enrollment rows", () => {
       async query(sql, params) {
         if (sql.includes("ORDER BY i.name")) {
           assert.equal(params[1], 1);
+          assert.match(sql, /jsonb_agg\(history ORDER BY history.preflight_seq DESC NULLS LAST,history.created_at DESC,history.id DESC\)/);
+          assert.match(sql, /LIMIT 100/);
           return { rows: [] };
         }
         if (sql.includes("count(*)")) return { rows: [{ n: 0 }] };

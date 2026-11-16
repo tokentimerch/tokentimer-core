@@ -277,6 +277,24 @@ describe("AD CS automatic renewal readiness (real database)", function () {
       automatic:true,confirmedAt:row.confirmed_at,env:{CERTOPS_ENABLED:"true"} };
   }
 
+  async function dueCertificateForIncident(context) {
+    const domain=`incident-${crypto.randomBytes(4).toString("hex")}.example.com`;
+    const {provisionSurvivorSource}=require("../e2e/helpers/certops-adcs-local-rules");
+    const certificateId=await provisionSurvivorSource({fixture:{workspaceId,pool},agentRowId:context.agentId,
+      domain,site:"Incident",port:18443,ownedCertificateIds:[]});
+    const target={type:"windows-iis",reference:domain,store:"My",binding:{site:"Incident",port:18443,sniHost:domain}};
+    const profile=(await pool.query(`INSERT INTO certificate_profiles(workspace_id,name,status,source,source_ref,
+      issuer_id,renew_before_days,key_mode,public_metadata,created_by)
+      VALUES($1,$2,'active','manual',$2,$3,30,'os-store-managed',$4::jsonb,$5) RETURNING id`,
+      [workspaceId,domain,context.issuerId,JSON.stringify({renewalProfile:{target,sanPolicy:{sans:[domain]},keyAlgorithm:"rsa",keySize:2048}}),ownerId])).rows[0].id;
+    await pool.query("UPDATE certops_agents SET declared_target_selectors=$2::jsonb WHERE id=$1",[context.agentId,JSON.stringify([domain])]);
+    await pool.query(`UPDATE managed_certificates SET status='active',profile_id=$2,not_after=NOW()+INTERVAL '2 days',fingerprint_sha256=$3 WHERE id=$1`,
+      [certificateId,profile,crypto.randomBytes(32).toString("hex")]);
+    await pool.query(`UPDATE certops_management_periods SET renewal_profile_id=$2,automation_enabled=TRUE
+      WHERE managed_certificate_id=$1 AND ended_at IS NULL`,[certificateId,profile]);
+    return certificateId;
+  }
+
   it("deduplicates concurrent dispatch across independent PostgreSQL transactions", async () => {
     const {dispatchPreflight}=require("../../apps/api/services/certops/certificateEnrollments");
     const context=await scenario();
@@ -300,11 +318,20 @@ describe("AD CS automatic renewal readiness (real database)", function () {
     }
     expect(await dispatchPreflight(input)).to.equal(null);
     expect(await dispatchPreflight(input)).to.equal(null);
-    const notification=await pool.query(`SELECT metadata->>'code' AS code FROM operational_notifications
-      WHERE workspace_id=$1 AND dedupe_key=$2 AND resolved_at IS NULL`,[workspaceId,`adcs-preflight:${input.issuerId}:${input.agentId}`]);
-    expect(notification.rows).to.deep.equal([{code:"CERTOPS_PREFLIGHT_RETRIES_EXHAUSTED"}]);
-    // An operator can deliberately check again after restoring connectivity.
-    expect((await dispatchPreflight({...input,automatic:false})).id).to.be.a("string");
+    const certificateId=await dueCertificateForIncident(input);
+    const {reconcileIssuerPreflightIncident}=require("../../apps/api/services/certops/adcsPreflightIncidents");
+    try {
+      await reconcileIssuerPreflightIncident({db:pool,workspaceId,issuerId:input.issuerId,env:{CERTOPS_ENABLED:"true"}});
+      await reconcileIssuerPreflightIncident({db:pool,workspaceId,issuerId:input.issuerId,env:{CERTOPS_ENABLED:"true"}});
+      const notification=await pool.query(`SELECT metadata->>'code' AS code FROM operational_notifications
+        WHERE workspace_id=$1 AND dedupe_key=$2 AND resolved_at IS NULL`,[workspaceId,`adcs-preflight:${input.issuerId}`]);
+      expect(notification.rows).to.deep.equal([{code:"CERTOPS_PREFLIGHT_RETRIES_EXHAUSTED"}]);
+      // An operator can deliberately check again after restoring connectivity.
+      expect((await dispatchPreflight({...input,automatic:false})).id).to.be.a("string");
+    } finally {
+      await pool.query("UPDATE certops_management_periods SET automation_enabled=FALSE WHERE managed_certificate_id=$1",[certificateId]);
+      await reconcileIssuerPreflightIncident({db:pool,workspaceId,issuerId:input.issuerId,env:{CERTOPS_ENABLED:"true"}});
+    }
   });
 
   it("blocks unsafe results and a changed CA key without creating automatic retries", async () => {
@@ -380,14 +407,14 @@ describe("AD CS automatic renewal readiness (real database)", function () {
     expect((await sweep()).skippedNotAgentDeployable).to.equal(1);
     expect((await pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2",[workspaceId,context.issuerId])).rows).to.have.length(0);
     const unavailable=await pool.query("SELECT severity,metadata->>'code' AS code FROM operational_notifications WHERE workspace_id=$1 AND metadata->>'issuerId'=$2 AND resolved_at IS NULL",[workspaceId,context.issuerId]);
-    expect(unavailable.rows).to.deep.equal([{severity:"critical",code:"CERTOPS_ADCS_AGENT_UNAVAILABLE"}]);
+    expect(unavailable.rows).to.deep.equal([{severity:"critical",code:"CERTOPS_ADCS_AGENT_INELIGIBLE"}]);
     await pool.query("UPDATE certops_agents SET declared_capabilities='[\"adcs-enroll-v1\"]'::jsonb WHERE id=$1",[context.agentId]);
     const first=await sweep();expect(first.skippedAdcsAgentNotPrepared,JSON.stringify(first)).to.equal(1);
     expect((await pool.query("SELECT id FROM certificate_enrollments WHERE certificate_id=$1",[certificateId])).rows).to.have.length(0);
     const check=(await pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='adcs-preflight'",[workspaceId,context.issuerId])).rows[0];
     await pool.query(`UPDATE certificate_jobs SET status='succeeded',completed_at=NOW(),result_metadata=result_metadata || $2::jsonb WHERE id=$1`,
       [check.id,JSON.stringify({preflightVerdict:verdict()})]);
-    const issuerPage=await require("../../apps/api/services/certops/certificateEnrollments").listIssuers({client:pool,workspaceId,limit:100});
+    const issuerPage=await require("../../apps/api/services/certops/certificateEnrollments").listIssuers({client:pool,workspaceId,limit:100,env:{CERTOPS_ENABLED:"true"}});
     expect(issuerPage.items.find(i=>i.id===context.issuerId).preflightRefresh.find(a=>a.agentId===context.agentId).state).to.equal("fresh");
     const summary=await require("../../apps/api/services/onboarding/certopsReality").loadAdcsReality(pool,workspaceId,{agentId:context.agentId});
     expect(summary.issuers.find(i=>i.id===context.issuerId).checkedAfterPin).to.equal(true);
@@ -413,7 +440,7 @@ describe("AD CS automatic renewal readiness (real database)", function () {
       expect(JSON.parse(enrollments[0].snapshot_bytes.toString()).caKeySha256).to.equal(KEY);
       expect((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1",[enrollments[0].current_job_id])).rows[0].status).to.equal("pending_approval");
       expect((await pool.query("SELECT resolved_at FROM operational_notifications WHERE workspace_id=$1 AND dedupe_key=$2",
-        [workspaceId,`adcs-preflight:${context.issuerId}:${context.agentId}`])).rows[0].resolved_at).not.to.equal(null);
+        [workspaceId,`adcs-preflight:${context.issuerId}`])).rows[0].resolved_at).not.to.equal(null);
       expect((await pool.query("SELECT id FROM operational_notifications WHERE workspace_id=$1 AND metadata->>'issuerId'=$2 AND resolved_at IS NULL",[workspaceId,context.issuerId])).rows).to.have.length(0);
     } finally { await pool.query("UPDATE workspaces SET certops_require_approval_always=FALSE WHERE id=$1",[workspaceId]); }
   });

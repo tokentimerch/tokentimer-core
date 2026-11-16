@@ -14,7 +14,10 @@ describe('AD CS approval and current readiness', () => {
     for (const [state, label] of Object.entries({
       required: 'Preflight required',
       queued: 'Preflight queued',
-      running: 'Preflight running / waiting for approval',
+      running: 'Preflight running',
+      awaiting_approval: 'Preflight waiting for approval',
+      agent_unavailable: 'Agent unavailable',
+      agent_ineligible: 'Agent incompatible or missing required capability',
       retrying: 'Retrying after temporary failure',
       blocked: 'Blocked / operator action required',
     }))
@@ -28,7 +31,16 @@ describe('AD CS approval and current readiness', () => {
       <AdcsPreflightReadiness
         issuer={{
           confirmedKeySha256: 'approved',
-          preflightRefresh: [{ agentId: 'agent-a', state: 'fresh', expiresAt }],
+          renewalReadiness: {
+            checks: [
+              {
+                agentId: 'agent-a',
+                state: 'fresh',
+                expiresAt,
+                renewalReady: true,
+              },
+            ],
+          },
         }}
       />
     );
@@ -57,8 +69,54 @@ describe('AD CS approval and current readiness', () => {
       screen.getByText(/Next attempt.*when renewal is due/)
     ).toHaveTextContent('ADCS_CA_UNREACHABLE');
     expect(
-      screen.getByText(/Blocked \/ operator action required/)
+      screen.getByText(/Changed CA key — explicit approval required/)
     ).toHaveTextContent('ADCS_CA_KEY_CHANGED');
+  });
+  it('shows a current jobless blocker ahead of unrelated historical evidence', () => {
+    render(
+      <AdcsPreflightReadiness
+        issuer={{
+          confirmedKeySha256: 'approved',
+          preflightRefresh: [
+            {
+              agentId: 'unrelated',
+              state: 'fresh',
+              expiresAt: '2099-01-01T00:00:00Z',
+            },
+          ],
+          renewalReadiness: {
+            checks: [
+              {
+                state: 'agent_unavailable',
+                code: 'CERTOPS_ADCS_AGENT_UNAVAILABLE',
+                action: 'Restore the owning Windows agent.',
+              },
+            ],
+          },
+        }}
+      />
+    );
+    expect(screen.getByText(/Agent unavailable/)).toHaveTextContent(
+      'Restore the owning Windows agent.'
+    );
+    expect(screen.queryByText(/Fresh preflight/)).not.toBeInTheDocument();
+    expect(screen.getByText(/CA approved/)).toBeInTheDocument();
+  });
+  it('does not promote historical evidence into renewal readiness and names policy blockers', () => {
+    expect(
+      preflightReadinessLabel({
+        state: 'fresh',
+        expiresAt: '2099-01-01T00:00:00Z',
+      })
+    ).toContain('eligibility not established');
+    for (const [code, label] of Object.entries({
+      issuer_not_allowlisted: 'Local enrollment policy blocker',
+      ADCS_TEMPLATE_UNSAFE: 'Unsafe certificate template',
+      ADCS_CA_CONFIG_UNSAFE: 'Unsafe CA configuration',
+      CERTOPS_PREFLIGHT_RETRIES_EXHAUSTED:
+        'Retries exhausted — operator action required',
+    }))
+      expect(preflightReadinessLabel({ state: 'blocked', code })).toBe(label);
   });
   it('requires recheck on onboarding resume after expiry or unsafe supersession', () => {
     vi.useFakeTimers();

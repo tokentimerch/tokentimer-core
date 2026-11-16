@@ -59,7 +59,7 @@ function timeMs(value) {
   return Number.isFinite(ms) ? ms : null;
 }
 
-function eligibleRenewalAgent(row, { target, ownerId = null, env = process.env, now = Date.now() }) {
+function renewalAgentEligibility(row, { target, ownerId = null, env = process.env, now = Date.now() }) {
   const { evaluateAgentJobEligibility } = require("./agentJobEligibility");
   const { computeAgentCompatibility } = require("./agentRegistry");
   const agent = { ...row,status: row.agent_status || row.status,
@@ -67,12 +67,17 @@ function eligibleRenewalAgent(row, { target, ownerId = null, env = process.env, 
     supportedOperations: row.supported_operations,targetSelectors: row.declared_target_selectors,
     declaredCapabilities: row.declared_capabilities,capabilitiesUpdatedAt: row.capabilities_updated_at,
     agentKind: row.agent_kind };
-  if (agent.status !== "active" || agent.platform !== "win32") return false;
+  if (agent.status !== "active") return { eligible:false,reason:"agent_unavailable" };
+  if (agent.platform !== "win32") return { eligible:false,reason:"platform_unsupported" };
   const compatibility = computeAgentCompatibility(agent,env);
   const job = { operation: "renew",issuerKind: "adcs",assignedAgentId: ownerId,
     payload: { target } };
-  return evaluateAgentJobEligibility({ agent,job,compatibility,env,now }).eligible &&
-    evaluateAgentJobEligibility({ agent,job: { operation: "adcs-preflight" },compatibility,env,now }).eligible;
+  const renewal = evaluateAgentJobEligibility({ agent,job,compatibility,env,now });
+  return renewal.eligible ? evaluateAgentJobEligibility({ agent,job: { operation: "adcs-preflight" },compatibility,env,now }) : renewal;
+}
+
+function eligibleRenewalAgent(row, context) {
+  return renewalAgentEligibility(row,context).eligible;
 }
 
 // A missing version or confirmation time fails closed, as it did in SQL.
@@ -136,4 +141,5 @@ module.exports = {
   loadQualifyingAdcsAgents,
   qualifiesAdcsPreflight,
   eligibleRenewalAgent,
+  renewalAgentEligibility,
 };

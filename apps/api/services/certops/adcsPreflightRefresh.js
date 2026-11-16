@@ -39,8 +39,10 @@ function classifyPreflight(job, version) {
   if (verdict?.caCheck === "unsafe") return "ADCS_CA_CONFIG_UNSAFE";
   if (
     verdict &&
-    (verdict.caConfig !== version.ca_config ||
-      verdict.template !== version.template)
+    ((typeof verdict.caConfig === "string" &&
+      verdict.caConfig !== version.ca_config) ||
+      (typeof verdict.template === "string" &&
+        verdict.template !== version.template))
   ) {
     return "CERTOPS_ISSUER_REVALIDATION_REQUIRED";
   }
@@ -69,6 +71,85 @@ function classifyPreflight(job, version) {
   return null;
 }
 
+const FAILURE_ACTIONS = Object.freeze({
+  ADCS_TEMPLATE_UNSAFE:
+    "Review and correct the certificate template security settings, then run Check again.",
+  ADCS_CA_CONFIG_UNSAFE:
+    "Review and correct the CA security settings, then run Check again.",
+  ADCS_CA_KEY_CHANGED:
+    "Independently verify the changed CA key and explicitly approve it before checking again.",
+  ADCS_CA_KEY_UNPINNED:
+    "Verify the approved CA key and the agent's public CA certificate cache.",
+  issuer_not_allowlisted:
+    "Add the exact CA/template pair to the local enrollment rule and restart the agent.",
+  CERTOPS_ISSUER_REVALIDATION_REQUIRED:
+    "Review the current issuer version and explicitly confirm its CA key if required.",
+  CERTOPS_PREFLIGHT_QUEUE_TIMEOUT:
+    "Restore the assigned agent's connectivity and inspect its job queue.",
+  CERTOPS_ADCS_AGENT_UNAVAILABLE:
+    "Restore the owning Windows agent or configure an eligible renewal agent.",
+  CERTOPS_ADCS_AGENT_INELIGIBLE:
+    "Check the agent's version, target declaration and fresh destination/enrollment capabilities.",
+  ADCS_CA_UNREACHABLE:
+    "Restore connectivity from the agent to the configured CA.",
+  CERTOPS_PREFLIGHT_NETWORK_TIMEOUT:
+    "Check agent-to-CA networking and timeout diagnostics.",
+  CERTOPS_PREFLIGHT_EXECUTION_INTERRUPTED:
+    "Check the worker and agent; read-only preflight can recover after backoff.",
+  CERTOPS_PREFLIGHT_RESULT_UNREADABLE:
+    "Inspect the check and local permissions; unreadable evidence does not prove the CA is unreachable.",
+  CERTOPS_PREFLIGHT_OPERATION_FAILED:
+    "Inspect the job's recorded error and restore the execution path.",
+  CERTOPS_PREFLIGHT_RETRIES_EXHAUSTED:
+    "Correct the reported cause and deliberately run Check again to start a new retry episode.",
+  CERTOPS_PREFLIGHT_OPERATOR_ACTION_REQUIRED:
+    "Review the job and local policy before deliberately checking again.",
+  CERTOPS_PREFLIGHT_REQUIRED:
+    "Wait for the due-renewal check, or run Check again to verify the selected agent now.",
+});
+
+function preflightFailure(job, version) {
+  const policy = classifyPreflight(job, version);
+  const raw = job?.error_code || job?.result_metadata?.rejectionReason;
+  const errorCode =
+    typeof raw === "string" && /^[A-Za-z][A-Za-z0-9_]{0,127}$/.test(raw)
+      ? raw
+      : null;
+  let code = policy;
+  if (!code) {
+    if (errorCode === "CERTOPS_PREFLIGHT_QUEUE_TIMEOUT") code = errorCode;
+    else if (errorCode === "CERTOPS_ADCS_AGENT_UNAVAILABLE") code = errorCode;
+    else if (errorCode === "ADCS_CA_UNREACHABLE") code = errorCode;
+    else if (
+      [
+        "ETIMEDOUT",
+        "ESOCKETTIMEDOUT",
+        "NETWORK_TIMEOUT",
+        "ADCS_NETWORK_TIMEOUT",
+      ].includes(errorCode)
+    )
+      code = "CERTOPS_PREFLIGHT_NETWORK_TIMEOUT";
+    else if (
+      job?.status === "orphaned_unknown_effect" ||
+      ["effects_unknown", "lease_expired", "max_attempts_exceeded"].includes(
+        errorCode,
+      )
+    )
+      code = "CERTOPS_PREFLIGHT_EXECUTION_INTERRUPTED";
+    else if (job?.status === "succeeded")
+      code = "CERTOPS_PREFLIGHT_RESULT_UNREADABLE";
+    else code = "CERTOPS_PREFLIGHT_OPERATION_FAILED";
+  }
+  return {
+    code,
+    errorCode,
+    retryable: !policy,
+    action:
+      FAILURE_ACTIONS[code] ||
+      FAILURE_ACTIONS.CERTOPS_PREFLIGHT_OPERATOR_ACTION_REQUIRED,
+  };
+}
+
 function refreshState(jobs, version, now = Date.now()) {
   if (
     !version?.confirmed_at ||
@@ -78,16 +159,39 @@ function refreshState(jobs, version, now = Date.now()) {
     return {
       state: "blocked",
       code: "CERTOPS_ISSUER_REVALIDATION_REQUIRED",
+      action: FAILURE_ACTIONS.CERTOPS_ISSUER_REVALIDATION_REQUIRED,
       attempts: 0,
     };
   }
   const latest = jobs[0];
   if (!latest) return { state: "required", attempts: 0 };
-  const code = classifyPreflight(latest, version);
-  if (code) return { state: "blocked", code, attempts: 0 };
+  const context = latest.result_metadata?.preflightContext;
+  if (
+    new Date(latest.created_at).getTime() <
+      new Date(version.confirmed_at).getTime() ||
+    (context &&
+      (Number(context.issuerVersion) !== Number(version.version) ||
+        context.caKeySha256 !== version.ca_key_sha256 ||
+        new Date(context.confirmedAt).getTime() !==
+          new Date(version.confirmed_at).getTime()))
+  ) {
+    return {
+      state: "required",
+      code: "CERTOPS_PREFLIGHT_EVIDENCE_STALE",
+      attempts: 0,
+      action: FAILURE_ACTIONS.CERTOPS_PREFLIGHT_REQUIRED,
+    };
+  }
+  const failure = preflightFailure(latest, version);
+  if (!failure.retryable) return { state: "blocked", ...failure, attempts: 0 };
   if (!TERMINAL.has(latest.status))
     return {
-      state: latest.status === "pending" ? "queued" : "running",
+      state:
+        latest.status === "pending_approval"
+          ? "awaiting_approval"
+          : ["pending", "approved"].includes(latest.status)
+            ? "queued"
+            : "running",
       attempts: 0,
       jobId: latest.id,
     };
@@ -113,6 +217,17 @@ function refreshState(jobs, version, now = Date.now()) {
   }
   let attempts = 0;
   for (const job of jobs) {
+    const priorContext = job.result_metadata?.preflightContext;
+    if (
+      new Date(job.created_at).getTime() <
+        new Date(version.confirmed_at).getTime() ||
+      (priorContext &&
+        (Number(priorContext.issuerVersion) !== Number(version.version) ||
+          priorContext.caKeySha256 !== version.ca_key_sha256 ||
+          new Date(priorContext.confirmedAt).getTime() !==
+            new Date(version.confirmed_at).getTime()))
+    )
+      break;
     if (
       qualifiesAdcsPreflight(job, version, new Date(job.created_at).getTime())
     )
@@ -124,6 +239,10 @@ function refreshState(jobs, version, now = Date.now()) {
     return {
       state: "blocked",
       code: "CERTOPS_PREFLIGHT_RETRIES_EXHAUSTED",
+      failureCode: failure.code,
+      errorCode: failure.errorCode,
+      action: FAILURE_ACTIONS.CERTOPS_PREFLIGHT_RETRIES_EXHAUSTED,
+      retryable: false,
       attempts,
     };
   const completed = new Date(
@@ -138,7 +257,7 @@ function refreshState(jobs, version, now = Date.now()) {
   const retryAt = completed + BACKOFF_MS * 2 ** Math.max(0, attempts - 1);
   return {
     state: "retrying",
-    code: "ADCS_CA_UNREACHABLE",
+    ...failure,
     attempts,
     nextRefreshAt: new Date(retryAt).toISOString(),
     dispatch: now >= retryAt,
@@ -171,7 +290,7 @@ async function loadRefreshJobs(
 
 function issuerRefreshStates(jobs, version, now = Date.now()) {
   const agents = new Map();
-  for (const job of jobs || []) {
+  for (const job of [...(jobs || [])].sort(comparePreflightJobs)) {
     if (!job.assigned_agent_id) continue;
     if (!agents.has(job.assigned_agent_id))
       agents.set(job.assigned_agent_id, []);
@@ -181,6 +300,26 @@ function issuerRefreshStates(jobs, version, now = Date.now()) {
     agentId,
     ...refreshState(history, version, now),
   }));
+}
+
+function comparePreflightJobs(a, b) {
+  const sequence = (value) =>
+    value != null && /^\d+$/.test(String(value)) ? BigInt(value) : null;
+  const left = sequence(a.preflight_seq),
+    right = sequence(b.preflight_seq);
+  if (left !== right) {
+    if (left == null) return 1;
+    if (right == null) return -1;
+    return left > right ? -1 : 1;
+  }
+  const time =
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  if (Number.isFinite(time) && time !== 0) return time;
+  return String(a.id) === String(b.id)
+    ? 0
+    : String(a.id) > String(b.id)
+      ? -1
+      : 1;
 }
 
 function refreshIdempotencyKey({
@@ -208,63 +347,6 @@ function refreshIdempotencyKey({
     .digest("hex")}`;
 }
 
-async function notifyRefreshState(
-  db,
-  {
-    workspaceId,
-    issuerId,
-    agentId,
-    state,
-    notAfter,
-    unavailableTarget = null,
-    targetReference = null,
-    now = Date.now(),
-  },
-) {
-  const unavailableKey = (reference) =>
-    `adcs-preflight:${issuerId}:unavailable:${crypto.createHash("sha256").update(reference).digest("hex")}`;
-  const key = unavailableTarget
-    ? unavailableKey(unavailableTarget)
-    : `adcs-preflight:${issuerId}:${agentId}`;
-  if (state.state === "fresh") {
-    await db.query(
-      `UPDATE operational_notifications SET resolved_at=NOW(),updated_at=NOW()
-      WHERE workspace_id=$1 AND dedupe_key=ANY($2::text[]) AND resolved_at IS NULL`,
-      [
-        workspaceId,
-        [key, ...(targetReference ? [unavailableKey(targetReference)] : [])],
-      ],
-    );
-    return;
-  }
-  const expiry = notAfter == null ? Infinity : new Date(notAfter).getTime();
-  const critical =
-    Number.isFinite(expiry) && expiry - now <= 7 * 24 * 60 * 60 * 1000;
-  if (state.state !== "blocked" && !critical) return;
-  const code = state.code || "CERTOPS_PREFLIGHT_REQUIRED";
-  await db.query(
-    `INSERT INTO operational_notifications(workspace_id,category,type,severity,dedupe_key,title,message,metadata)
-     VALUES($1,'certops','adcs_preflight_blocked',$2,$3,'AD CS automatic renewal needs attention',$4,$5::jsonb)
-     ON CONFLICT(workspace_id,dedupe_key) WHERE resolved_at IS NULL
-     DO UPDATE SET severity=CASE WHEN operational_notifications.severity='critical' THEN 'critical' ELSE EXCLUDED.severity END,
-       message=EXCLUDED.message,metadata=EXCLUDED.metadata,updated_at=NOW()`,
-    [
-      workspaceId,
-      critical ? "critical" : "warning",
-      key,
-      `${code}: Review the CA check, approved key, template security and agent enrollment rule. Restore connectivity, then run Check again if retries stopped.`,
-      JSON.stringify({
-        issuerId,
-        agentId,
-        targetReference: unavailableTarget || targetReference,
-        code,
-        attempts: state.attempts,
-        href: `/certops/adcs?workspace=${workspaceId}`,
-      }),
-    ],
-  );
-}
-
 module.exports = {
   MAX_ATTEMPTS,
   BACKOFF_MS,
@@ -273,6 +355,8 @@ module.exports = {
   refreshState,
   loadRefreshJobs,
   refreshIdempotencyKey,
-  notifyRefreshState,
+  FAILURE_ACTIONS,
+  preflightFailure,
+  comparePreflightJobs,
   issuerRefreshStates,
 };

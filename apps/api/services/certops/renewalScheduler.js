@@ -287,7 +287,13 @@ async function findCertificatesDueForRenewal({
   adaptive = true,
   batchSize = DEFAULT_BATCH_SIZE,
   terminalStatuses,
+  workspaceId = null,
+  issuerId = null,
 } = {}) {
+  const params = [String(thresholdDays),terminalStatuses,batchSize,AUTO_RENEW_DISABLED_PROFILE_STATUSES];
+  let scope = "";
+  if (workspaceId != null) { params.push(workspaceId); scope += ` AND mc.workspace_id=$${params.length}`; }
+  if (issuerId != null) { params.push(issuerId); scope += ` AND cp.issuer_id=$${params.length}`; }
   const result = await db.query(
     `SELECT mc.id,
             mc.workspace_id,
@@ -364,14 +370,10 @@ async function findCertificatesDueForRenewal({
              AND cj.subject_id = mc.id::text
              AND NOT (cj.status = ANY($2::text[]))
         )
-      ORDER BY mc.not_after ASC
+      ${scope}
+      ORDER BY mc.not_after ASC,mc.id
       LIMIT $3`,
-    [
-      String(thresholdDays),
-      terminalStatuses,
-      batchSize,
-      AUTO_RENEW_DISABLED_PROFILE_STATUSES,
-    ],
+    params,
   );
   return result.rows;
 }
@@ -555,7 +557,6 @@ async function createAutomaticAdcsRenewal({
         template: version.template,
         automatic: true,
         confirmedAt: version.confirmed_at,
-        notAfter: certificate.not_after,
         ...(!candidate ? { unavailableTarget:fields.target.reference } : {}),
         env,
       });
@@ -983,6 +984,14 @@ async function runRenewalSchedulerSweep({
       }
     }
 
+    // Reconcile once per issuer after committed admissions, including open
+    // incidents whose last certificate was stopped, renewed or removed.
+    try {
+      await require("./adcsPreflightIncidents").reconcilePendingPreflightIncidents({db:dbPool,env,certificates:dueCertificates});
+    } catch(error) {
+      summary.errors.push({error:"AD CS preflight incident reconciliation failed"});
+      logger?.warn?.("certops-preflight-incidents-failed",{code:error.code || "incident_projection_failed"});
+    }
     return summary;
   } finally {
     if (summary.lockAcquired) {

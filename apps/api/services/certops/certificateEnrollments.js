@@ -25,8 +25,10 @@ const { createCertificateJob } = require("./jobs");
 const { adcsCaBucket } = require("./renewalCapacity");
 const { lockWorkspaceForCertOpsSideEffect } = require("./workspaceKillSwitch");
 const { iisSelectorKey } = require("./windowsRenewalOwnership");
-const { loadRefreshJobs, refreshState, refreshIdempotencyKey, notifyRefreshState,
-  QUEUE_TIMEOUT_MS, issuerRefreshStates } = require("./adcsPreflightRefresh");
+const {
+  loadRefreshJobs, refreshState, refreshIdempotencyKey,
+  QUEUE_TIMEOUT_MS, issuerRefreshStates,
+} = require("./adcsPreflightRefresh");
 const {
   PREFLIGHT_PER_HOUR,
   UNREACHABLE_ERROR,
@@ -331,7 +333,6 @@ function dispatchPreflight({
   beforeLock,
   automatic = false,
   confirmedAt = null,
-  notAfter = null,
   unavailableTarget = null,
   env = process.env,
 }) {
@@ -369,13 +370,10 @@ function dispatchPreflight({
       }
       const context = { workspaceId,issuerId,agentId,version };
       if (unavailableTarget) {
-        await notifyRefreshState(tx,{ ...context,notAfter,unavailableTarget,
-          state:{state:"blocked",code:"CERTOPS_ADCS_AGENT_UNAVAILABLE",attempts:0} });
         return null;
       }
       const jobs = await loadRefreshJobs(tx, context);
       const state = refreshState(jobs,version);
-      await notifyRefreshState(tx,{ ...context,state,notAfter });
       if (state.state !== "required" && !(state.state === "retrying" && state.dispatch)) return null;
       refreshKey = refreshIdempotencyKey({ ...context,previousId: jobs[0]?.id });
     }
@@ -709,8 +707,6 @@ function createEnrollment({
       if (!prepared.some((candidate) => String(candidate.id) === String(agentId))) {
         throw serviceError("the selected agent needs a fresh safe AD CS preflight", "CERTOPS_ADCS_AGENT_NOT_PREPARED");
       }
-      await notifyRefreshState(tx,{ workspaceId,issuerId: resolvedIssuerId,agentId,
-        targetReference:target.reference,state: { state: "fresh" } });
     }
     let storeSnapshot = {};
     if (target.type === "windows-cert-store") {
@@ -1520,6 +1516,8 @@ async function listIssuers({
   limit = 50,
   offset = 0,
   includeUnconfigured = false,
+  env = process.env,
+  readinessLoader = require("./adcsPreflightIncidents").loadIssuerPreflightReadiness,
 }) {
   const db = dbOf(client);
   const pageSize = readLimit(limit);
@@ -1531,10 +1529,10 @@ async function listIssuers({
     db.query(
       `SELECT i.id, i.kind, i.name, i.current_version, i.revalidation_required,
               i.last_preflight, i.last_preflight_job_id, i.updated_at, v.ca_key_sha256 AS confirmed_key_sha256,
-              v.ca_config, v.template, v.confirmed_at,
-              (SELECT jsonb_agg(history) FROM (
+              v.ca_config, v.template, v.confirmed_at,w.certops_paused,
+              (SELECT jsonb_agg(history ORDER BY history.preflight_seq DESC NULLS LAST,history.created_at DESC,history.id DESC) FROM (
                 SELECT j.id,j.assigned_agent_id,j.status,j.source,j.error_code,j.result_metadata,
-                       j.created_at,j.completed_at,j.updated_at
+                       j.created_at,j.completed_at,j.updated_at,j.preflight_seq
                   FROM certificate_jobs j
                  WHERE j.workspace_id=i.workspace_id AND j.subject_id=i.id::text
                    AND j.operation='adcs-preflight' AND j.created_at >= v.confirmed_at
@@ -1543,6 +1541,7 @@ async function listIssuers({
                  ORDER BY j.preflight_seq DESC NULLS LAST,j.created_at DESC,j.id DESC LIMIT 100
               ) history) AS refresh_jobs
          FROM certificate_issuers i
+         JOIN workspaces w ON w.id=i.workspace_id
          LEFT JOIN certificate_issuer_versions v
            ON v.workspace_id = i.workspace_id
           AND v.issuer_id = i.id
@@ -1562,23 +1561,44 @@ async function listIssuers({
     ),
   ]);
   return {
-    items: rows.rows.map((row) => ({
-      id: row.id,
-      kind: row.kind,
-      name: row.name,
-      currentVersion: row.current_version,
-      revalidationRequired: row.revalidation_required === true,
-      confirmedKeySha256: row.confirmed_key_sha256 || null,
-      caConfig: row.ca_config || null,
-      template: row.template || null,
-      lastPreflight: publicPreflight(row.last_preflight),
-      lastPreflightJobId: row.last_preflight_job_id || null,
-      preflightRefresh: issuerRefreshStates(row.refresh_jobs,{
-        version: row.current_version,
-        ca_config: row.ca_config,template: row.template,ca_key_sha256: row.confirmed_key_sha256,
-        confirmed_at: row.confirmed_at,revalidation_required: row.revalidation_required,
-      }),
-      updatedAt: row.updated_at,
+    items: await Promise.all(rows.rows.map(async (row) => {
+      const version = {
+        version: row.current_version, ca_config: row.ca_config, template: row.template,
+        ca_key_sha256: row.confirmed_key_sha256, confirmed_at: row.confirmed_at,
+        revalidation_required: row.revalidation_required, certops_paused: row.certops_paused,
+      };
+      const readiness = row.kind === "adcs"
+        ? await readinessLoader({ db, workspaceId, issuerId: row.id, version, env })
+        : { checks: [], agents: [] };
+      const history = issuerRefreshStates(row.refresh_jobs, version).map((check) => {
+        const agent = readiness.agents.find((a) => String(a.id) === String(check.agentId));
+        const eligibility = agent && require("./adcsPreflightGate").renewalAgentEligibility(agent, { target: null, env });
+        if (eligibility?.eligible) return { ...check, renewalReady: false };
+        const unavailable = !agent || agent.status !== "active";
+        return {
+          ...check, state: unavailable ? "agent_unavailable" : "agent_ineligible", renewalReady: false,
+          code: unavailable ? "CERTOPS_ADCS_AGENT_UNAVAILABLE" : "CERTOPS_ADCS_AGENT_INELIGIBLE",
+          eligibilityReason: eligibility?.reason || "agent_unavailable",
+        };
+      });
+      return {
+        id: row.id,
+        kind: row.kind,
+        name: row.name,
+        currentVersion: row.current_version,
+        revalidationRequired: row.revalidation_required === true,
+        confirmedKeySha256: row.confirmed_key_sha256 || null,
+        caConfig: row.ca_config || null,
+        template: row.template || null,
+        lastPreflight: publicPreflight(row.last_preflight),
+        lastPreflightJobId: row.last_preflight_job_id || null,
+        preflightRefresh: history,
+        renewalReadiness: {
+          dueCount: readiness.dueCount || 0, affectedCount: readiness.affectedCount || 0,
+          checks: readiness.checks, truncated: readiness.truncated === true,
+        },
+        updatedAt: row.updated_at,
+      };
     })),
     pagination: { limit: pageSize, offset: pageOffset, total: Number(total.rows[0]?.n || 0) },
   };
