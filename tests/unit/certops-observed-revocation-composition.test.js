@@ -34,6 +34,7 @@ test("reserved Windows store migrations and observed revocation compose in eithe
       consent,
       { version: 119, name: "certops_material_adcs_operation_union" },
       { version: 120, name: "certops_iis_absence_proofs" },
+      { version: 121, name: "certops_enrollment_jobs_index" },
     ]);
   }
 });

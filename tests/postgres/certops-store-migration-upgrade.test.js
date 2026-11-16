@@ -71,6 +71,7 @@ test("upgrades a real main database with migrations through 110 and repeats safe
       [118, "certops_windows_iis_consent"],
       [119, "certops_material_adcs_operation_union"],
       [120, "certops_iis_absence_proofs"],
+      [121, "certops_enrollment_jobs_index"],
     ]);
     const preserved = await client.query("SELECT version,name,executed_at FROM migrations WHERE version=98");
     assert.deepEqual(preserved.rows[0], before.rows[0]);

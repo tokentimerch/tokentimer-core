@@ -9,6 +9,8 @@
       {
         "file": "certops-adcs-enrollments.test.js",
         "names": [
+          "retries only a proved local policy refusal, with cooldown, idempotency and IIS locking",
+          "replans a server-superseded enrollment only when it was never claimed",
           "survivor fixture uses the insert-trigger management period and creates eligible enrollment work",
           "WebHosting fixture opens exactly one trigger-created period and its real enrollment job is claimable",
           "claims the continuation of a first enrollment that has no certificate identity yet",
