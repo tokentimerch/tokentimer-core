@@ -572,7 +572,7 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
     for (let replay = 0; replay < 2; replay++) {
       const uninstall = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
         "-File", installerFixture, "--uninstall"], { encoding: "utf8", timeout: 60000 });
-      assert.equal(uninstall.status, 0, "product fixture uninstall failed");
+      assert.equal(uninstall.status, 0, `product fixture uninstall failed: ${uninstall.error || ""}\n${uninstall.stdout || ""}\n${uninstall.stderr || ""}`);
       const deletionDeadline = Date.now() + 15000;
       while (getServiceStatus() !== null && Date.now() < deletionDeadline) {
         spawnSync(process.execPath, ["-e", "setTimeout(()=>{},300)"], { timeout: 1000 });
