@@ -66,6 +66,9 @@ function serviceProperty(name) {
 }
 function mainPid() { return Number(serviceProperty("MainPID")); }
 function digest(file) { return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex"); }
+function assertCoreDumpLimits(limits) {
+  assert.match(limits, /^Max core file size[ \t]+0[ \t]+0[ \t]+bytes[ \t]*$/m);
+}
 
 module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId, userId, createBootstrap, repoRoot }) {
   assert.equal(process.platform, "linux");
@@ -150,7 +153,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
       assert.ok(pid > 0);
       const status = fs.readFileSync(`/proc/${pid}/status`, "utf8");
       assert.match(status, new RegExp(`^Uid:\\s+${uid}\\s+${uid}\\s+${uid}\\s+${uid}$`, "m"));
-      assert.match(fs.readFileSync(`/proc/${pid}/limits`, "utf8"), /^Max core file size\s+0\s+0\s+bytes$/m);
+      assertCoreDumpLimits(fs.readFileSync(`/proc/${pid}/limits`, "utf8"));
       assert.equal(fs.realpathSync(`/proc/${pid}/exe`), nodeBinary);
       if (afterBootstrapRestart) assert.equal(fs.readFileSync(`/proc/${pid}/environ`).includes(Buffer.from("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=")), false);
       return pid;
@@ -254,3 +257,4 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     "Linux installer qualification or owned cleanup failed", { cause: primaryError });
   if (primaryError) throw primaryError;
 };
+module.exports.assertCoreDumpLimits = assertCoreDumpLimits;
