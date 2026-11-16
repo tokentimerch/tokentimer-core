@@ -56,7 +56,7 @@ export default function AzureInventoryAuthFields({
         <>
           {autoSyncManageMode ? (
             <HStack>
-              <Button size='sm' variant='ghost' onClick={onCancelReplace}>
+              <Button size='sm' variant='outline' onClick={onCancelReplace}>
                 Cancel replace
               </Button>
             </HStack>

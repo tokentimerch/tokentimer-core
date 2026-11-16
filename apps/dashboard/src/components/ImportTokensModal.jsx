@@ -1278,6 +1278,12 @@ function ImportTokensModalContent({
   const [savingAutoSync, setSavingAutoSync] = React.useState(false);
   const [runningAutoSyncNow, setRunningAutoSyncNow] = React.useState(false);
   const autoSyncPollCancelRef = React.useRef(false);
+  const autoSyncPollTargetRef = React.useRef(null);
+  const autoSyncPollTokenRef = React.useRef(null);
+  const sourceRef = React.useRef(source);
+  const requestedAutoSyncConfigRef = React.useRef(requestedAutoSyncConfig);
+  sourceRef.current = source;
+  requestedAutoSyncConfigRef.current = requestedAutoSyncConfig;
 
   // Available providers in core
   const CORE_AUTO_SYNC_PROVIDERS = ['github', 'gitlab'];
@@ -1304,10 +1310,33 @@ function ImportTokensModalContent({
       return undefined;
     }
     autoSyncPollCancelRef.current = true;
+    autoSyncPollTargetRef.current = null;
+    autoSyncPollTokenRef.current = null;
     setRequestedAutoSyncConfig(null);
     setRunningAutoSyncNow(false);
     return undefined;
   }, [isOpen]);
+
+  // A running manual scan must not pull the modal back to that configuration
+  // after the operator selects another provider or configuration.
+  React.useEffect(() => {
+    const target = autoSyncPollTargetRef.current;
+    if (!target) return undefined;
+    const requested = requestedAutoSyncConfig;
+    const leftSelection =
+      source !== target.provider ||
+      (requested?.provider && requested.provider !== target.provider) ||
+      (requested?.provider === target.provider && requested.create) ||
+      (requested?.provider === target.provider &&
+        requested.id &&
+        requested.id !== target.id);
+    if (!leftSelection) return undefined;
+    autoSyncPollCancelRef.current = true;
+    autoSyncPollTargetRef.current = null;
+    autoSyncPollTokenRef.current = null;
+    setRunningAutoSyncNow(false);
+    return undefined;
+  }, [source, requestedAutoSyncConfig]);
 
   // Load auto-sync config when source changes and restore form fields from scan_params
   React.useEffect(() => {
@@ -1836,6 +1865,23 @@ function ImportTokensModalContent({
 
   const handleSaveAutoSyncChanges = async () => {
     if (!workspaceId || !autoSyncConfig?.id) return;
+    if (autoSyncConfig.provider && autoSyncConfig.provider !== source) {
+      showWarning(
+        'That configuration is for another provider. Choose it again before saving.'
+      );
+      return;
+    }
+    if (
+      requestedAutoSyncConfig?.provider === source &&
+      requestedAutoSyncConfig.id &&
+      !requestedAutoSyncConfig.create &&
+      requestedAutoSyncConfig.id !== autoSyncConfig.id
+    ) {
+      showWarning(
+        'Wait for the selected configuration to load before saving.'
+      );
+      return;
+    }
     if (source === 'vault') {
       const selectionError = vaultFormRef.current?.validateSelection?.();
       if (selectionError) {
@@ -1924,19 +1970,40 @@ function ImportTokensModalContent({
   const handleRunAutoSyncNow = async () => {
     if (!workspaceId || !autoSyncConfig?.id) return;
     const baselineLastSyncAt = autoSyncConfig.last_sync_at || null;
+    const runProvider = source;
+    const runConfigId = autoSyncConfig.id;
+    const runToken = {};
+    autoSyncPollTokenRef.current = runToken;
+    autoSyncPollTargetRef.current = { provider: runProvider, id: runConfigId };
     autoSyncPollCancelRef.current = false;
     setRunningAutoSyncNow(true);
     try {
       await apiClient.post(
-        `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}/run`
+        `/api/v1/workspaces/${workspaceId}/auto-sync/${runConfigId}/run`
       );
       const outcome = await pollAutoSyncAfterRun({
         workspaceId,
-        provider: source,
-        configId: autoSyncConfig.id,
+        provider: runProvider,
+        configId: runConfigId,
         baselineLastSyncAt,
-        onUpdate: setAutoSyncConfig,
-        isCancelled: () => autoSyncPollCancelRef.current,
+        onUpdate: cfg => {
+          if (autoSyncPollTokenRef.current !== runToken) return;
+          if (sourceRef.current !== runProvider) return;
+          const requested = requestedAutoSyncConfigRef.current;
+          if (requested?.provider && requested.provider !== runProvider) return;
+          if (requested?.provider === runProvider && requested.create) return;
+          if (
+            requested?.provider === runProvider &&
+            requested.id &&
+            requested.id !== runConfigId
+          ) {
+            return;
+          }
+          setAutoSyncConfig(cfg);
+        },
+        isCancelled: () =>
+          autoSyncPollCancelRef.current ||
+          autoSyncPollTokenRef.current !== runToken,
       });
       if (outcome === 'cancelled') return;
       if (outcome === 'success') {
@@ -1970,7 +2037,11 @@ function ImportTokensModalContent({
     } catch (e) {
       showWarning(e?.response?.data?.error || 'Failed to queue sync');
     } finally {
-      setRunningAutoSyncNow(false);
+      if (autoSyncPollTokenRef.current === runToken) {
+        autoSyncPollTokenRef.current = null;
+        autoSyncPollTargetRef.current = null;
+        setRunningAutoSyncNow(false);
+      }
     }
   };
 
