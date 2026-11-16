@@ -50,14 +50,14 @@ Total skips found: 178
 | `packages/agent/src/discovery/discovery.test.js` | 332 | rejects symbolic-link certificate candidates | dynamic (this.skip() / t.skip()) | `platform` |
 | `packages/agent/src/discovery/discovery.test.js` | 367 | parses a real self-signed certificate and extracts public fields, normalizing the fingerprint | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/discovery.test.js` | 396 | never reads private key bytes into the returned certificate entry, even when it peeks the key | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 214 | computes a real SHA-256 fingerprint from base64 DER bytes | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 327 | reads real SAN entries directly from a certificate's own raw DER bytes | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 359 | prefers the raw-bytes-derived SANs over windows-discovery's own list | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 402 | reports a windows_store observation using windows-discovery's parsed fields plus an adapter-computed fingerprint | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 431 | resolves an http.sys binding matched to an IIS site as iis_binding, reusing the store's fingerprint | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 515 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 568 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/discovery/windows.test.js` | 656 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/windows.test.js` | 220 | computes a real SHA-256 fingerprint from base64 DER bytes | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/windows.test.js` | 333 | reads real SAN entries directly from a certificate's own raw DER bytes | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/windows.test.js` | 365 | prefers the raw-bytes-derived SANs over windows-discovery's own list | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/windows.test.js` | 408 | reports a windows_store observation using windows-discovery's parsed fields plus an adapter-computed fingerprint | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/windows.test.js` | 437 | resolves an http.sys binding matched to an IIS site as iis_binding, reusing the store's fingerprint | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/windows.test.js` | 552 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/windows.test.js` | 606 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/discovery/windows.test.js` | 694 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/index.test.js` | 4347 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/issuers/adcs-enrollment-reconcile.test.js` | 420 | skips E_ACCESSDENIED and denied probes so a later unique match can attach | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/issuers/adcs-enrollment.test.js` | 170 | pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch | dynamic (this.skip() / t.skip()) | `prerequisite` |

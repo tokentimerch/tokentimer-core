@@ -619,7 +619,7 @@
     {
       "id": "9d4835a13450389dc907",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 214,
+      "line": 220,
       "name": "computes a real SHA-256 fingerprint from base64 DER bytes",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -628,7 +628,7 @@
     {
       "id": "debeb5e71508b35b2ef8",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 327,
+      "line": 333,
       "name": "reads real SAN entries directly from a certificate's own raw DER bytes",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -637,7 +637,7 @@
     {
       "id": "26365d2772bd13090c57",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 359,
+      "line": 365,
       "name": "prefers the raw-bytes-derived SANs over windows-discovery's own list",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -646,7 +646,7 @@
     {
       "id": "b13e16258590f5a79244",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 402,
+      "line": 408,
       "name": "reports a windows_store observation using windows-discovery's parsed fields plus an adapter-computed fingerprint",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -655,7 +655,7 @@
     {
       "id": "c8e49d156836f0525d40",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 431,
+      "line": 437,
       "name": "resolves an http.sys binding matched to an IIS site as iis_binding, reusing the store's fingerprint",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -664,7 +664,7 @@
     {
       "id": "f95b49bb19f40cd2479e",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 515,
+      "line": 552,
       "name": "unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -673,7 +673,7 @@
     {
       "id": "37eb38150afcae9c2681",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 568,
+      "line": 606,
       "name": "reports an http.sys binding with no matching IIS site as http_sys, not iis_binding",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
@@ -682,7 +682,7 @@
     {
       "id": "896b620b80b9c787229a",
       "file": "packages/agent/src/discovery/windows.test.js",
-      "line": 656,
+      "line": 694,
       "name": "reports real subjectAltNames end-to-end from the certificate's raw bytes",
       "kind": "it(..., { skip }) option-object",
       "environment": "openssl-fixtures",
