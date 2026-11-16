@@ -196,6 +196,9 @@
           "admits concurrent agent locations and a manual import sharing one fingerprint at quota",
           "does not deadlock token-first manual enrollment with an agent enriching the same certificate",
           "rejects malformed and fingerprint-mismatched public material before burning sequence",
+          "preserves the latest revocation and last verified result across late or older-agent observations",
+          "retains unmanaged agent revocation and exposes it without topology access",
+          "does not hide an unchecked or revoked location behind a good location",
           "rolls back the sequence and retained observations on non-admission database failures"
         ]
       }

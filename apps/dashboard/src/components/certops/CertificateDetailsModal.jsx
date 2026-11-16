@@ -1,4 +1,8 @@
-import { CertificateLifecycleBadge } from './CertOpsBadge.jsx';
+import {
+  CertificateLifecycleBadge,
+  ObservedRevocationBadge,
+  hasObservedRevocationContext,
+} from './CertOpsBadge.jsx';
 import Section from '../DashboardDetailsSection.jsx';
 import AutoSyncProvenance from '../AutoSyncProvenance.jsx';
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
@@ -514,6 +518,11 @@ export default function CertificateDetailsModal({
                 <>
                   {certificate ? (
                     <CertificateLifecycleBadge certificate={certificate} />
+                  ) : null}
+                  {hasObservedRevocationContext(certificate) ? (
+                    <ObservedRevocationBadge
+                      result={certificate.observedRevocation}
+                    />
                   ) : null}
                   {hasKeyLocality ? (
                     <KeyLocalityBadge

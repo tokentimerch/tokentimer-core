@@ -1,4 +1,8 @@
-import CertOpsBadge, { CertificateLifecycleBadge } from './CertOpsBadge.jsx';
+import CertOpsBadge, {
+  CertificateLifecycleBadge,
+  ObservedRevocationBadge,
+  hasObservedRevocationContext,
+} from './CertOpsBadge.jsx';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Box,
@@ -494,6 +498,9 @@ export default function CertificateIdentityDetailModal({
         </CertOpsBadge>
         {detail.lifecycleDisplay ? (
           <CertificateLifecycleBadge certificate={detail} />
+        ) : null}
+        {hasObservedRevocationContext(detail) ? (
+          <ObservedRevocationBadge result={detail.observedRevocation} />
         ) : null}
       </HStack>
       {detail.visibilityUnknown ? (

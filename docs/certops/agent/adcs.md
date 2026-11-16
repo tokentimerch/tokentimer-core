@@ -12,6 +12,8 @@ Linux hosts, and Windows hosts that are not domain-joined, do not enroll over DC
 
 ## Operator sequence
 
+For domain-client trust, see [Distribute AD CS trust with Group Policy](../adcs-gpo-trust.md).
+
 Workspace managers and owners can configure AD CS issuers, confirm CA keys and create renewal profiles. Viewers see a disabled setup choice that explains the required role on hover or keyboard focus; system administrator status alone does not replace workspace membership. Start the dashboard's **Preferences → Setup guide** or **Certificate Management → Settings → CertOps quickstart**, choose the Microsoft CA goal and Windows Server, and select your existing agent when appropriate.
 
 1. Prepare a domain-joined Windows member, existing IIS site/HTTPS binding and a published server-authentication template. Give its computer account, or a dedicated group, **Read and Enroll** on that template.
