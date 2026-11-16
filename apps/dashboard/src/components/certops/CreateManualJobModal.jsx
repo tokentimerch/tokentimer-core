@@ -1488,7 +1488,9 @@ export default function CreateManualJobModal({
                 <FormHelperText>
                   {isIssue
                     ? 'Required for issue: a retried request with the same key returns the existing job instead of provisioning a second certificate.'
-                    : 'Optional. Reusing a key returns the existing job instead of creating a duplicate.'}
+                    : isRenew
+                      ? 'Optional. A key is generated when blank and reused while retrying the same request.'
+                      : 'Optional. Reusing a key returns the existing job instead of creating a duplicate.'}
                 </FormHelperText>
               </FormControl>
               {isControllerIssue ? null : (

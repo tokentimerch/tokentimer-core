@@ -74,7 +74,7 @@ function makeRequest(body) {
   return {
     workspace: { id: "workspace-1" },
     user: { id: 42 },
-    body,
+    body: body && typeof body === "object" && !Array.isArray(body) && !Object.hasOwn(body, "idempotencyKey") ? { idempotencyKey: "test-batch", ...body } : body,
   };
 }
 
@@ -122,58 +122,32 @@ describe("CertOps bulk-renew route", () => {
       assert.strictEqual(call.requiresApproval, false);
       assert.strictEqual(call.requestedByUserId, 42);
       assert.strictEqual(call.actorUserId, 42);
-      assert.strictEqual(call.idempotencyKey, null);
+      assert.strictEqual(call.idempotencyKey, `bulk-renew:test-batch:${uuid(index + 1)}`);
     }
   });
 
-  it("leaves the per-item idempotency key unset when the caller omits one, so the same certificate stays renewable", async () => {
-    const { bulkRenewItemIdempotencyKey } = certOpsRouter._test;
-    assert.strictEqual(bulkRenewItemIdempotencyKey(undefined, uuid(1)), null);
-    assert.strictEqual(bulkRenewItemIdempotencyKey(null, uuid(1)), null);
-    assert.strictEqual(
-      bulkRenewItemIdempotencyKey("client-key", uuid(1)),
-      `bulk-renew:client-key:${uuid(1)}`,
-    );
-
-    // Two sequential bulk renews of the same certificate without a client
-    // key must both reach creation with no key, so neither collides with the
-    // other on the jobs table's (workspace, idempotency_key) uniqueness.
-    const creatorCalls = [];
-    const usedKeys = new Set();
+  it("rejects a real bulk request without a key before loading an ACME store certificate", async () => {
+    let loaded = false, created = false;
     const handler = makeHandler({
-      certificateLoader: async () => ({ id: "found" }),
-      manualJobCreator: async (options) => {
-        creatorCalls.push(options);
-        if (options.idempotencyKey) {
-          if (usedKeys.has(options.idempotencyKey)) {
-            const err = new Error(
-              "Idempotency key was already used with a different CertOps job request",
-            );
-            err.code = "CERTOPS_JOB_IDEMPOTENCY_CONFLICT";
-            throw err;
-          }
-          usedKeys.add(options.idempotencyKey);
-        }
-        return { job: { id: `job-${creatorCalls.length}` }, created: true };
-      },
+      certificateLoader: async () => { loaded = true; return { id: uuid(9), key_mode: "os-store-managed" }; },
+      manualJobCreator: async () => { created = true; },
     });
-
-    const first = responseRecorder();
-    await handler(makeRequest({ certificateIds: [uuid(9)] }), first);
-    const second = responseRecorder();
-    await handler(makeRequest({ certificateIds: [uuid(9)] }), second);
-
-    assert.strictEqual(creatorCalls.length, 2);
-    assert.strictEqual(creatorCalls[0].idempotencyKey, null);
-    assert.strictEqual(creatorCalls[1].idempotencyKey, null);
-    assert.deepStrictEqual(first.body.results, [
-      { certificateId: uuid(9), ok: true, jobId: "job-1" },
-    ]);
-    assert.deepStrictEqual(second.body.results, [
-      { certificateId: uuid(9), ok: true, jobId: "job-2" },
-    ]);
+    const res = responseRecorder();
+    await handler(makeRequest({ certificateIds: [uuid(9)], idempotencyKey: undefined }), res);
+    assert.strictEqual(res.statusCode, 400);
+    assert.match(res.body.error, /idempotencyKey is required/);
+    assert.equal(loaded, false);
+    assert.equal(created, false);
   });
 
+  it("allows a dry run without an idempotency key", async () => {
+    const res = responseRecorder();
+    await makeHandler({ certificateLoader: async () => ({ id: uuid(9) }) })(
+      makeRequest({ certificateIds: [uuid(9)], dryRun: true, idempotencyKey: undefined }), res,
+    );
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.dryRun, true);
+  });
   it("derives a per-certificate key from a caller-supplied request key so a replayed batch is a no-op", async () => {
     const created = new Map();
     const creatorCalls = [];
@@ -480,13 +454,13 @@ describe("CertOps bulk-renew route", () => {
     assert.match(duplicate.error, /duplicates/);
 
     const atCap = parseBulkRenewRequest({
-      certificateIds: Array.from({ length: 100 }, (_, i) => uuid(i + 1)),
+      certificateIds: Array.from({ length: 100 }, (_, i) => uuid(i + 1)), idempotencyKey: "batch",
     });
     assert.strictEqual(atCap.error, undefined);
     assert.strictEqual(atCap.certificateIds.length, 100);
 
     const mixedCase = parseBulkRenewRequest({
-      certificateIds: [uuid(1).toUpperCase()],
+      certificateIds: [uuid(1).toUpperCase()], idempotencyKey: "batch",
     });
     assert.deepStrictEqual(mixedCase.certificateIds, [uuid(1)]);
   });
