@@ -39,7 +39,12 @@ Seeing a certificate does not by itself configure automatic renewal.
 
 A registration’s **Observation history** can be filtered by revocation status and
 observation time (entered in local time); roles allowed to manage CertOps can
-also search locations.
+also search locations. It shows observations for that registration’s current
+certificate fingerprint, including earlier management periods with the same
+fingerprint. The current version has no automatic age-based purge; deleting the
+workspace deletes its evidence. This is operational history, not a guaranteed
+audit log: a network outage can leave gaps because discovery observations are
+not queued for later delivery.
 
 ## Certificate management
 
