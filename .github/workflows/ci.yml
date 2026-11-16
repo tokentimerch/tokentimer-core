@@ -9,6 +9,11 @@ on:
     branches: [main, master]
   workflow_dispatch:
     inputs:
+      native_windows_material:
+        description: Also run disposable Windows IIS material qualification
+        required: false
+        default: false
+        type: boolean
       native_windows_revocation:
         description: Also run disposable Windows native revocation qualification
         required: false
@@ -1190,7 +1195,7 @@ jobs:
 
   windows_material_qualification:
     name: Windows IIS Material (${{ matrix.os }} / ${{ matrix.store }} / ${{ matrix.key }})
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.native_windows_material == true
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
