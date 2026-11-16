@@ -60,6 +60,8 @@ foreach($name in @('Test-PackageCopyExclusion','Copy-PackageTree','Activate-Stag
  if($definition.Count -ne 1){throw 'Missing unique production activation function'}
  Invoke-Expression $definition[0].Extent.Text
 }
+# Match the installer's initial state when testing the extracted function.
+$script:AuthorizedLauncherTransaction = $null
 Add-Type @'
 using System;
 using System.Collections.Concurrent;

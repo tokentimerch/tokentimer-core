@@ -14,6 +14,8 @@ foreach($name in @('Test-PackageCopyExclusion','Copy-PackageTree','Activate-Stag
  if($definitions.Count -ne 1){throw 'Expected unique actual installer function'}
  Invoke-Expression $definitions[0].Extent.Text
 }
+# Match the installer's initial state when testing the extracted function.
+$script:AuthorizedLauncherTransaction = $null
 Add-Type @'
 using System;using System.Runtime.InteropServices;using Microsoft.Win32.SafeHandles;
 public static class CertopsPathIdentity {
