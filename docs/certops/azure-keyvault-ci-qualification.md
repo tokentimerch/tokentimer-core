@@ -1,6 +1,6 @@
 # Azure Key Vault qualification
 
-Use this runbook for the protected real-Azure qualification campaign. The Azure material-store capability remains disabled until its exact native artifact and complete operator journey are independently accepted. A provider test or source-mounted fixture is supporting evidence only.
+Use this runbook for the protected real-Azure qualification campaign. Before enabling the Azure material-store capability, obtain independent acceptance of its exact native artifact and complete operator journey. A provider test or source-mounted fixture is supporting evidence only.
 
 ## Existing infrastructure and prerequisites
 

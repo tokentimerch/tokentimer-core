@@ -36,10 +36,10 @@ called stable while they are open.
 
 - **CLM destination extensions**
   ([#248](https://github.com/tokentimerch/tokentimer-core/issues/248)).
-  Qualify Azure Key Vault material storage, shared Windows/IIS deployment,
-  independent Linux staging and exact-version Vault/OpenBao cleanup for production.
+  Qualify shared Windows/IIS deployment, independent Linux staging and
+  exact-version Vault/OpenBao cleanup for production.
   See the [distribution guide](docs/certops/distribution-lifecycle.md) for the
-  supported Vault/OpenBao Linux rollout scope.
+  supported Vault/OpenBao and Azure Key Vault Linux rollout scope.
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   Wire offline mode and outbound allowlists into API and worker egress.

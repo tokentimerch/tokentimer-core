@@ -4,7 +4,7 @@ Use the [distribution guide](distribution-lifecycle.md) for rollouts, verificati
 
 ## Availability and qualification
 
-Vault and OpenBao KV v2 support Linux distribution. Azure Key Vault material storage and shared Windows/IIS material deployment are available only after their separate capabilities are qualified and enabled. Staging and exact-version cleanup also have separate closed gates. Upgrade matching API, worker and agents together; use the normal migration runner and preserve applied migration identities.
+Vault and OpenBao KV v2 and Azure Key Vault Secrets support Linux distribution. Shared Windows/IIS material deployment, staging and exact-version cleanup have separate closed gates. Upgrade matching API, worker and agents together; use the normal migration runner and preserve applied migration identities.
 
 Linux consumers support installed, served and trust assurance. IIS consumers require a typed Windows connector and served or trust verification. Store endpoints, credentials and executable target configuration remain customer-local; the API uses public aliases and references.
 
@@ -33,7 +33,6 @@ and read at version 1. Deleted/destroyed versions fail rather than using latest.
 The [dedicated Azure CI runbook](azure-keyvault-ci-qualification.md) describes
 trusted-main OIDC activation, exact issuer/consumer roles, disposable vault
 ownership and cleanup, and the mandatory provider/signed-service campaign.
-The Azure material-store capability remains disabled until its exact native artifact and complete operator journey are qualified.
 
 Use your own dedicated **public Azure Key Vault Secrets**
 namespace. Private endpoints are supported through your DNS resolving the
