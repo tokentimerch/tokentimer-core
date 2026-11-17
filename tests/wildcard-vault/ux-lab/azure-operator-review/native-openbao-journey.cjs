@@ -4,10 +4,9 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const assert = require("node:assert/strict");
-const { main } = require("../journey.cjs");
-
 async function run() {
   assert.ok(process.platform === "linux" && process.getuid() === 0);
+  const { main } = require("../journey.cjs");
   const output = process.env.TT_WILDCARD_UX_OUTPUT;
   const staged = JSON.parse(fs.readFileSync(path.join(output, "agent-package/harness-input.json"), "utf8"));
   const proof = await main({ nativeOpenBao: {
@@ -21,4 +20,11 @@ async function run() {
   }) + "\n", { flag: "wx", mode: 0o600 });
 }
 
-run().catch(() => { console.error("Native OpenBao journey refused or incomplete"); process.exitCode = 1; });
+run().catch(error => {
+  const kind = error?.code === "ERR_ASSERTION" ? "assertion" : "error";
+  const frames = typeof error?.stack === "string" ? error.stack.split("\n").slice(1, 11) : [];
+  const location = /[\\/](native-openbao-journey\.cjs|journey\.cjs|qualification\.cjs|native-openbao-bootstrap\.cjs|native-service-observation\.cjs):(\d{1,5}):\d{1,4}\)?$/;
+  const frame = frames.map(line => location.exec(line.trim())).find(Boolean);
+  process.stderr.write(`OPENBAO_JOURNEY_FAILED ${kind}${frame ? ` ${frame[1]}:${frame[2]}` : ""}\n`);
+  process.exitCode = 1;
+});
