@@ -68,7 +68,7 @@ Screenshots and GIFs show the current interface with illustrative sample data. [
 
 ### Certificate Lifecycle Management (CLM)
 
-An outbound-only agent renews, deploys, reloads, and verifies certificates on your infrastructure (ACME via certbot/acme.sh, DNS-01 across major providers, atomic rollback), enrolls and renews IIS certificates from a Microsoft AD CS enterprise CA on domain-joined Windows hosts, and publishes one certificate version through your own Vault KV v2 to assigned Linux consumers (NGINX, HAProxy) that deploy it locally, whether it is an ordinary, SAN, or wildcard certificate. Keys and Vault or DNS credentials stay on your hosts. Approval gates, a kill switch, and renewal-failure alerts keeping humans in control. It also distributes and revokes internal CA trust anchors in machine trust stores on Windows, Debian/Ubuntu, and RHEL/Fedora. cert-manager and machine-token executors are supported too. The control plane never receives or stores private key material. [Watch the demo](https://www.youtube.com/watch?v=1BpcL9myKwc).
+An outbound-only agent renews, deploys, reloads, and verifies certificates on your infrastructure (ACME via certbot/acme.sh, DNS-01 across major providers, atomic rollback), enrolls and renews IIS certificates from a Microsoft AD CS enterprise CA on domain-joined Windows hosts, and publishes one certificate version through your own Vault KV v2 to assigned Linux consumers (NGINX, HAProxy) that deploy it locally, whether it is an ordinary, SAN, or wildcard certificate. Keys and Vault or DNS credentials stay on your hosts. Approval gates, a kill switch, and renewal-failure alerts keeping humans in control. It also distributes and revokes internal CA trust anchors in machine trust stores on Windows, Debian/Ubuntu, and RHEL/Fedora. cert-manager and machine-token executors are supported too. The control plane never receives or stores private key material. [Watch the certificate operations demo](https://www.youtube.com/watch?v=9dlDbMt8Ino&t=420s).
 
 <p align="center">
   <img src="docs/assets/certops-certificates.png" alt="Managed certificate inventory with status, days left, renewal policy, key locality, and source for every certificate" width="888" />
@@ -90,6 +90,10 @@ An outbound-only agent renews, deploys, reloads, and verifies certificates on yo
     </td>
   </tr>
 </table>
+
+### MCP assistant access
+
+On Core 0.19 and later, connect a Model Context Protocol (MCP) assistant over HTTPS with browser sign-in to search inventory and inspect certificates and jobs in one workspace. Connections start read-only. Grant permissions separately for reviewed inventory changes and ACME issuance or renewal requests. Certificate requests follow workspace Job approval. MCP is off by default on self-hosted deployments. [Setup guide](https://tokentimer.ch/docs/api/mcp-setup) | [Video walkthrough](https://www.youtube.com/watch?v=UM4vT69EC4E)
 
 ### Unified expiration visibility
 
