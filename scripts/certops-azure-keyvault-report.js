@@ -50,20 +50,21 @@ function counts(rows) {
     skipped: 0,
   };
 }
-function emptyReport(sourceSha, packageSha256) {
+function emptyReport(sourceSha, packageSha256, packageArtifact) {
   const scenarios = SCENARIOS.map((id) => ({ id, status: "pending" }));
   return {
     schemaVersion: 1,
     suite: "real-azure-key-vault-provider-and-signed-service-integration",
     sourceSha,
     packageSha256,
-    buildMode: "qualification-only-not-release",
+    buildMode: packageArtifact ? "exact-release-candidate" : "qualification-only-not-release",
     productionQualified: false,
     fullOperatorE2e: false,
     fixtureCertificateAuthority: true,
     backend: "microsoft-azure-public-key-vault-secrets",
     authModes: ["github-oidc-workload-identity", "token-file"],
-    unqualified: [...DEFERRED],
+    unqualified: DEFERRED.filter(item => !packageArtifact || item !== "production-release-artifact"),
+    ...(packageArtifact ? { packageArtifact } : {}),
     status: "failed",
     databaseCleanup: "not-created",
     counts: counts(scenarios),
@@ -83,7 +84,7 @@ function verify(
   report,
   { requirePassed = true, sourceSha = process.env.GITHUB_SHA } = {},
 ) {
-  const template = emptyReport("", "");
+  const template = emptyReport("", "", report?.packageArtifact);
   keys(report, Object.keys(template));
   for (const field of [
     "schemaVersion",
@@ -104,6 +105,11 @@ function verify(
       (!sourceSha || report.sourceSha === sourceSha) &&
       /^[a-f0-9]{64}$/.test(report.packageSha256),
   );
+  if (report.packageArtifact) {
+    require("./certops-azure-keyvault-package.cjs").verifyIdentity(report.packageArtifact);
+    requireValue(report.packageArtifact.candidateSha === report.sourceSha &&
+      report.packageArtifact.packageSha256 === report.packageSha256);
+  }
   requireValue(
     ["passed", "failed"].includes(report.status) &&
       ["completed", "not-created", "failed"].includes(report.databaseCleanup),

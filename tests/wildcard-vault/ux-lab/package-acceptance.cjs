@@ -129,6 +129,21 @@ auto_auth {
     }
     roles.set(name, { role, accessor: issued.secret_id_accessor, permissionsChecked: true, isolationChecked: true });
   }
+  async function prepareNativeRole({ workspaceId, groupId, materialVersionId }) {
+    const ids = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+    for (const id of [workspaceId, groupId, materialVersionId]) assert.match(id, ids);
+    const role = `tt-installed-consumer-${groupId}`;
+    const object = `secret/data/tokentimer/${workspaceId}/${groupId}/bundles/${materialVersionId}`;
+    await request("sys/policies/acl/" + role, "PUT", { policy: `path "${object}" { capabilities = ["read"] }` });
+    await request("auth/approle/role/" + role, "POST", { token_policies: [role], token_period: "10m",
+      token_explicit_max_ttl: "20m", secret_id_ttl: "5m", secret_id_num_uses: 1 });
+    const { role_id: roleId } = (await request(`auth/approle/role/${role}/role-id`)).data;
+    const { secret_id: secretId } = (await request(`auth/approle/role/${role}/secret-id`, "POST", {})).data;
+    assert.match(roleId, ids);
+    assert.match(secretId, ids);
+    return { roleId, secretId };
+  }
+
   return {
     prepare() {
       assert.equal(fs.existsSync(build), false, "Package acceptance requires a fresh package directory");
@@ -136,7 +151,7 @@ auto_auth {
       files = extracted.files;
       return extracted.root;
     },
-    verify(packageRoot) { verifyInstalled(files, packageRoot); }, rotate, stop,
+    verify(packageRoot) { verifyInstalled(files, packageRoot); }, rotate, stop, prepareNativeRole,
     async revoke(name) {
       await stop(name); rememberToken(name);
       await request("auth/token/revoke", "POST", { token: fs.readFileSync(path.join(root, name, "material-token"), "utf8").trim() });

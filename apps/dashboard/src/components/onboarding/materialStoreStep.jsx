@@ -309,7 +309,7 @@ function MaterialStoreForm({ ctx }) {
           {qualified
             ? 'Agent capabilities and customer-local policy must still match.'
             : providerFact?.qualified === false
-              ? 'Setup instructions are available, but this deployment has not qualified this provider for production. Publication and deployment actions stay disabled. An agent declaration alone cannot enable it.'
+              ? 'You can review the setup instructions now. Publication and deployment become available when your deployment runs a release that qualifies this provider.'
               : 'Current capability facts are unavailable or deployment requirements are incomplete. Refresh the capability facts and upgrade API and agents together when needed. Publication stays disabled until the core, distribution and provider requirements are ready.'}
         </StatusPanel>
         <FormControl>
