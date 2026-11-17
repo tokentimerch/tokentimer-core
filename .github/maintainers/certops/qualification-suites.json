@@ -7923,6 +7923,11 @@
       "scenarios": ["linux-openbao-cleanup-restart"],
       "capabilityGroup": "linux-systemd-writepath"
     },
+    "linux-staging-restart": {
+      "evidenceLevel": "real-host",
+      "scenarios": ["linux-staging-restart"],
+      "capabilityGroup": "linux-systemd-writepath"
+    },
     "dns-provider-errors": {
       "evidenceLevel": "integration",
       "capabilities": [

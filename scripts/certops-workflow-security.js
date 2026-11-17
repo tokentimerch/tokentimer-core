@@ -92,7 +92,8 @@ function validateWorkflow(workflow,name="workflow"){
     if(name==="certops-dns-fixture-janitor.yml"&&id==="cleanup"&&job.environment!=="certops-dns-cleanup-${{ matrix.provider }}")fail(`${id} independent DNS cleanup requires its dedicated unattended environment`);
     const selectedLane={tooling:"tooling","tooling-windows":"tooling",windows:"windows","agent-stack":"stack"}[id];
     const selectedCondition=name==="certops-qualification.yml"&&selectedLane&&job.needs==="selection"&&job.if===`github.ref == 'refs/heads/main' && needs.selection.outputs.${selectedLane} == 'true'`;
-    const distributionConditions={postgres:"github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup", "agent-lab":"github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup", "functional-summary":"${{ always() && github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup }}", "native-vault-cleanup":"github.ref == 'refs/heads/main' && inputs.native_vault_cleanup"};
+    const supportingDistribution="github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup && !inputs.native_linux_staging";
+    const distributionConditions={postgres:supportingDistribution, "agent-lab":supportingDistribution, "functional-summary":`\${{ always() && ${supportingDistribution} }}`, "native-vault-cleanup":"github.ref == 'refs/heads/main' && (inputs.native_vault_cleanup || inputs.native_linux_staging)"};
     const distributionLane=name==="certops-distribution-qualification.yml"&&Object.hasOwn(distributionConditions,id);
     if(name==="certops-distribution-qualification.yml"&&!distributionLane)fail(`${id} is not a recognized distribution qualification lane`);
     const distributionCondition=distributionLane&&job.if===distributionConditions[id]&&(id!=="functional-summary"||JSON.stringify(job.needs)===JSON.stringify(["postgres","agent-lab"]))&&events.length===1&&events[0]==="workflow_dispatch"&&workflow.on.workflow_dispatch?.inputs?.native_vault_cleanup?.type==="boolean"&&workflow.on.workflow_dispatch.inputs.native_vault_cleanup.default===false;
@@ -104,10 +105,12 @@ function validateWorkflow(workflow,name="workflow"){
     if((permissions["id-token"]==="write"||job.permissions?.["id-token"]==="write")&&!job.environment)fail(`${id} OIDC requires a protected qualification environment`);
     const steps=job.steps||[],runs=steps.map(step=>step.run||"").join("\n");
     const nativeCleanup=name==="certops-distribution-qualification.yml"&&id==="native-vault-cleanup";
-    const cleanupFailure="linux-${{ env.NATIVE_CLEANUP_STORE }}-cleanup-failure";
+    const cleanupFailure="linux-${{ env.NATIVE_CASE }}-failure";
     if(nativeCleanup){
       const provider=workflow.on.workflow_dispatch?.inputs?.native_cleanup_provider;
       if(provider?.type!=="choice"||provider.default!=="vault-kv2"||JSON.stringify(provider.options)!==JSON.stringify(["vault-kv2","openbao-kv2"])||job.env?.NATIVE_CLEANUP_STORE!=="${{ inputs.native_cleanup_provider == 'openbao-kv2' && 'openbao' || 'vault' }}")fail(`${id} requires its two exact KV v2 provider choices`);
+      const staging=workflow.on.workflow_dispatch?.inputs?.native_linux_staging;
+      if(staging?.type!=="boolean"||staging.default!==false||job.env?.NATIVE_CASE!=="${{ inputs.native_linux_staging && 'staging' || (inputs.native_cleanup_provider == 'openbao-kv2' && 'openbao-cleanup' || 'vault-cleanup') }}")fail(`${id} requires the exact staging selector`);
       const failureUploads=steps.filter(step=>step.with?.name===cleanupFailure);
       if(failureUploads.length!==1||failureUploads[0].if!=="failure()"||failureUploads[0].with?.path!==`qualification-results/${cleanupFailure}.json`)fail(`${id} requires only the bounded failure report on failure`);
     }

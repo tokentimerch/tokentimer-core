@@ -324,8 +324,9 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     await waitFor(async () => await lastSeen(), "authenticated API registration");
     if (vaultCleanup) {
       require("../../scripts/certops-linux-published-package").verifyTree(`${ROOT}/app`, vaultCleanup.fileInventory, { installed: true });
-      vaultProof = await require("./helpers/linux-vault-cleanup-restart")({
-        pool, workspaceId, agentRowId, baseUrl, command, identity, mainPid, waitFor, stateDir, uid, gid, vaultFixture,
+      const qualify = vaultCleanup.staging ? require("./helpers/linux-material-staging-restart") : require("./helpers/linux-vault-cleanup-restart");
+      vaultProof = await qualify({
+        pool, workspaceId, agentId, agentRowId, baseUrl, command, identity, mainPid, waitFor, stateDir, writeFixture, uid, gid, vaultFixture,
       });
       require("../../scripts/certops-linux-published-package").verifyTree(`${ROOT}/app`, vaultCleanup.fileInventory, { installed: true });
     } else {
