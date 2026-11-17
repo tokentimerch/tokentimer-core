@@ -58,6 +58,7 @@ function inspectLinuxCandidate(archive, receipt, provider = "vault-kv2", staging
   assert.equal(path.basename(archive), receipt.archive);
   assert.equal(receipt.packagerSha256, sha(path.resolve(__dirname, "../packages/agent/scripts/pack-release.js")));
   const baseline = require("../packages/agent/src/capabilities/qualified-capabilities.json").qualified;
+  if (distribution) assert.equal(baseline.includes("windows-material-iis-v1"), false, "Windows IIS must remain absent from the qualification baseline");
   const added = candidate.capabilities ?? [candidate.capability];
   assert.ok(added.every(capability => !baseline.includes(capability)));
   assert.deepEqual(receipt.capabilities, [...baseline, ...added]);

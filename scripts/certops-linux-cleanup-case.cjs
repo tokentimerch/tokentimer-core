@@ -8,7 +8,7 @@ const distribution = Object.freeze({
   directory: "certops-linux-release-distribution",
   buildMode: "release-distribution-candidate",
   capabilities: Object.freeze([
-    cleanupCapability("vault-kv2"), cleanupCapability("openbao-kv2"), stagingCapability, "windows-material-iis-v1",
+    cleanupCapability("vault-kv2"), cleanupCapability("openbao-kv2"), stagingCapability,
   ]),
 });
 
