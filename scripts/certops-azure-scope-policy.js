@@ -3,8 +3,10 @@
  * may only finish/clean an already owned manual campaign, never create a lab. */
 const KV = "certops-azure-keyvault-qualification.yml";
 const KV_CLEANUP = "certops-azure-keyvault-janitor.yml";
+const IMDS = "certops-azure-imds-qualification.yml";
 const PROVISION = Object.freeze([
   KV,
+  IMDS,
   "certops-native-issuer-reassignment.yml",
   "certops-enterprise-adcs-qualification.yml",
   "certops-enterprise-adcs-hierarchy-qualification.yml",
@@ -32,12 +34,55 @@ const KEYVAULT_IF =
 const EXPIRY_IF = KEYVAULT_IF + " && inputs.natural_expiry";
 const PROVIDER_IF = KEYVAULT_IF + " && !inputs.natural_expiry";
 const EXPIRY_UPLOAD_IF = "success() && steps.expiry-observation.outcome == 'success' && steps.expiry-cleanup.outcome == 'success'";
+const IMDS_IF = MAIN + " && vars.CERTOPS_AZURE_IMDS_LAB_ENABLED == 'true'";
+const IMDS_UPLOAD_IF = "success() && steps.collect.outcome == 'success' && steps.scrub.outcome == 'success'";
 const LIFECYCLE_IF = MAIN;
 function allowedCondition(name, value) {
   if (name === KV) return [PROVIDER_IF, EXPIRY_IF, KEYVAULT_IF + " && inputs.final_package"].includes(value);
+  if (name === IMDS) return value === IMDS_IF;
   return PROVISION.includes(name)
     ? value === PROVISION_IF
     : LIFECYCLE.includes(name) && value === LIFECYCLE_IF;
+}
+
+function imdsPolicy(workflow, errors) {
+  const job = workflow.jobs?.lab;
+  if (Object.keys(workflow.jobs || {}).join() !== "lab" ||
+      workflow.concurrency?.group !== "certops-azure-imds-qualification" ||
+      workflow.concurrency?.["cancel-in-progress"] !== false ||
+      JSON.stringify(workflow.permissions) !== JSON.stringify({ contents: "read" }) ||
+      job?.name !== "IMDS qualification" || job.if !== IMDS_IF || job["runs-on"] !== "ubuntu-latest" ||
+      job.environment !== "certops-azure-imds-lab" || job["timeout-minutes"] !== 90 ||
+      JSON.stringify(job.permissions) !== JSON.stringify({ contents: "read", actions: "read", "id-token": "write" }) ||
+      job.services || job.strategy || job["continue-on-error"]) {
+    errors.push("IMDS requires one bounded protected main job with its dedicated opt-in");
+    return;
+  }
+  const inputs = workflow.on?.workflow_dispatch?.inputs || {};
+  if (Object.keys(inputs).sort().join() !== "package_artifact_id,package_run_id,package_sha256" ||
+      Object.values(inputs).some(input => input.type !== "string" || input.required !== true)) {
+    errors.push("IMDS requires the immutable producer run, artifact and checksum");
+  }
+  const [checkout, node, verify, login, launch, reauth, collect, scrub, upload] = job.steps || [];
+  const loginStep = step => step?.shell === "pwsh" && step.run === "./infra/certops-azure-keyvault/login-oidc.ps1" && !step.if;
+  if (job.steps?.length !== 9 || job.steps.some(step =>
+      step["continue-on-error"] || (step !== launch && step.env?.TT_IMDS_APPROVED_PLAN_B64 !== undefined)) ||
+      !checkout?.uses?.startsWith("actions/checkout@") || checkout.if ||
+      checkout.with?.["persist-credentials"] !== false || checkout.with.ref || checkout.with.repository ||
+      !node?.uses?.startsWith("actions/setup-node@") || node.if || node.with?.["node-version"] !== "24.22.3" ||
+      verify?.id !== "verify-package" || verify.if || !verify.run?.includes("scripts/certops-final-package-source.cjs") ||
+      job.env?.TT_IMDS_APPROVED_PLAN_B64 !== undefined ||
+      !loginStep(login) || launch?.id !== "launch" || launch.if ||
+      launch.env?.TT_IMDS_APPROVED_PLAN_B64 !== "${{ secrets.TT_IMDS_APPROVED_PLAN_B64 }}" ||
+      !launch.run?.includes("infra/certops-azure-keyvault/imds/launch.cjs launch") || !loginStep(reauth) ||
+      collect?.id !== "collect" || collect.if || !collect.run?.includes("infra/certops-azure-keyvault/imds/launch.cjs collect") ||
+      scrub?.id !== "scrub" || scrub.if !== "always()" || !scrub.run?.includes('rm -rf -- "$private" "$retained"') ||
+      !upload?.uses?.startsWith("actions/upload-artifact@") || upload.if !== IMDS_UPLOAD_IF ||
+      upload.with?.name !== "azure-imds-final-package" ||
+      upload.with?.path !== "qualification-results/azure-imds-final-package.json" ||
+      upload.with?.["if-no-files-found"] !== "error") {
+    errors.push("IMDS must verify the package before login and expose only the post-teardown, scrubbed profile");
+  }
 }
 
 function expiryPolicy(job, provider) {
@@ -501,6 +546,10 @@ function validate(name, workflow) {
     keyvaultPolicy(name, workflow, errors);
     return errors;
   }
+  if (name === IMDS) {
+    imdsPolicy(workflow, errors);
+    return errors;
+  }
   for (const job of Object.values(workflow.jobs || {})) {
     if (!allowedCondition(name, job.if))
       errors.push(
@@ -519,6 +568,7 @@ module.exports = {
   PROVISION_IF,
   KEYVAULT_IF,
   EXPIRY_UPLOAD_IF,
+  IMDS_UPLOAD_IF,
   LIFECYCLE_IF,
   allowedCondition,
   validate,
