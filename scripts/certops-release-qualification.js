@@ -214,10 +214,10 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           }
         }
         if (slot.suite === "linux-systemd-reapply") require("../tests/e2e/helpers/linux-systemd-reapply").verifyProof(artifact.report.nativeInstallerReapply);
-        if (slot.suite === "linux-staging-restart") {
+        if (["linux-staging-restart", "linux-openbao-staging-restart"].includes(slot.suite)) {
           const { architecture, platform, cleanup, nativeLinuxStagingRestart: proof, qualificationEnvironment: env } = artifact.report;
           if (platform !== "linux" || architecture !== "x64" || env.executionSurface !== "host" || env.libc !== "glibc" ||
-              cleanup?.status !== "passed" || proof?.provider !== "vault-kv2" || proof.authenticatedAttempts !== 1 ||
+              cleanup?.status !== "passed" || proof?.provider !== (slot.suite === "linux-openbao-staging-restart" ? "openbao-kv2" : "vault-kv2") || proof.authenticatedAttempts !== 1 ||
               proof.authenticatedReads !== 1 || proof.destinationMutations !== 0 ||
               !["installedTreeVerified", "stagedAcrossRestart", "activationBlocked", "destinationUnchanged"].every(key => proof[key] === true) ||
               typeof proof.artifactId !== "string" || !/^[1-9]\d{0,15}$/.test(proof.artifactId) ||

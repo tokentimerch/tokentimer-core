@@ -457,7 +457,10 @@ describe("CertOps agent surface E2E", () => {
       });
       const fs = require("node:fs");
       fs.writeFileSync(path.join(process.env.TT_CLEANUP_EVIDENCE_DIR, "native-facts.json"), JSON.stringify({
-        ...proof, ...(provider === "openbao-kv2" ? { provider } : {}),
+        ...proof, ...(vaultCleanup.distribution || provider === "openbao-kv2" ? { provider } : {}),
+        ...(vaultCleanup.distribution ? {
+          packageVersion: vaultCleanup.receipt.packageVersion, packageCapabilities: vaultCleanup.receipt.capabilities,
+        } : {}),
         artifactId: vaultCleanup.artifactId, packageSha256: vaultCleanup.archiveSha256,
       }), { flag: "wx" });
     });
