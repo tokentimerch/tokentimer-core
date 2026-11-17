@@ -82,7 +82,7 @@ module.exports = async function qualifyVaultRestart({
     vaultFixture.sessions.push(actor);
     const reviewer = await createApiFixture(baseUrl);
     vaultFixture.sessions.push(reviewer);
-    await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES ($1,$2,'admin'),($1,$3,'admin')",
+    await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES ($1,$2,'admin'),($1,$3,'workspace_manager')",
       [workspaceId, actor.userId, reviewer.userId]);
     const f = await fixture({ enrolled: { workspaceId, actor: actor.userId, approver: reviewer.userId, issuer: agentRowId } });
     const versions = await seedCleanupHistory(f);
