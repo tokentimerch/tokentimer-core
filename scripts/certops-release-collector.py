@@ -71,7 +71,7 @@ VAULT_CLEANUP_SUITE = "linux-vault-cleanup-restart"
 OPENBAO_CLEANUP_SUITE = "linux-openbao-cleanup-restart"
 LINUX_STAGING_SUITE = "linux-staging-restart"
 OPENBAO_STAGING_SUITE = "linux-openbao-staging-restart"
-LINUX_DISTRIBUTION_CAPABILITIES = ["material-cleanup-vault-kv2-v1", "material-cleanup-openbao-kv2-v1", "material-consumer-staging-v1", "windows-material-iis-v1"]
+LINUX_DISTRIBUTION_CAPABILITIES = ["material-cleanup-vault-kv2-v1", "material-cleanup-openbao-kv2-v1", "material-consumer-staging-v1"]
 MAX_DISTRIBUTION_TAR = 256 * 1024 * 1024
 WORKFLOWS = {
     ".github/workflows/" + name for name in (

@@ -29,7 +29,7 @@ test("native staging keeps the Vault candidate separate and requires the shared 
   }, "openbao-kv2", true, { distribution: true }), /release-distribution-candidate/);
   assert.deepEqual(cleanupCase.distribution.capabilities, [
     "material-cleanup-vault-kv2-v1", "material-cleanup-openbao-kv2-v1",
-    "material-consumer-staging-v1", "windows-material-iis-v1",
+    "material-consumer-staging-v1",
   ]);
 });
 test("exact release candidate requires a digest and rejects changed tarball bytes", t => {
