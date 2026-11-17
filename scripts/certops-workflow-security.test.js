@@ -175,6 +175,28 @@ test("distribution selectors retain exact main, manual dispatch and bounded fail
  }
  for(const change of [x=>{x.on.push={branches:["main"]};},x=>{x.on.workflow_dispatch.inputs.native_vault_cleanup.default=true;},x=>{x.jobs.extra=structuredClone(x.jobs.postgres);},x=>{x.jobs["native-vault-cleanup"].steps.find(s=>s.name==="Preserve the bounded native failure report").with.path="qualification-results/../foreign";},x=>{x.jobs["native-vault-cleanup"].steps.find(s=>s.name==="Preserve the bounded native failure report").if="success()";},x=>{x.jobs["native-vault-cleanup"].steps.find(s=>s.name==="Preserve the bounded native failure report").if="always()";}]){const bad=structuredClone(w);change(bad);assert.ok(validateWorkflow(bad,name).length);}
 });
+test("release distribution requires four isolated jobs consuming the one verified main artifact", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const yaml = require("node:module").createRequire(require.resolve("mocha/package.json"))("js-yaml");
+  const name = "certops-distribution-qualification.yml";
+  const workflow = yaml.load(fs.readFileSync(path.resolve(__dirname, "../.github/workflows", name), "utf8"));
+  assert.deepEqual(validateWorkflow(workflow, name), []);
+  for (const change of [
+    jobs => { delete jobs["release-native-linux-staging-openbao"]; },
+    jobs => { jobs["release-distribution-candidate"].steps.find(step => step.name === "Require the exact trusted main dispatch SHA").run = "true"; },
+    jobs => { delete jobs["release-distribution-candidate"].steps.find(step => step.id === "package").env.EXPECTED_PACKAGE_SHA256; },
+    jobs => { const step = jobs["release-distribution-candidate"].steps.find(step => step.id === "package");
+      step.run = step.run.replace("verify-release-distribution-candidate", "skip-verification"); },
+    jobs => { jobs["release-native-vault-cleanup"].needs = "postgres"; },
+    jobs => { jobs["release-native-linux-staging-openbao"].env.NATIVE_MODE = "--native-staging"; },
+    jobs => { jobs["release-native-linux-staging-vault"].steps.find(step => step.uses?.startsWith("actions/download-artifact@")).with["artifact-ids"] = "1"; },
+    jobs => { jobs["release-native-openbao-cleanup"].steps.find(step => step.name === "Verify teardown of only the owned host and containers").if = "success()"; },
+  ]) {
+    const bad = structuredClone(workflow);
+    change(bad.jobs);
+    assert.ok(validateWorkflow(bad, name).length);
+  }
+});
 test("manual qualification cannot bypass the trusted main reference",()=>{
  const workflow=baseline();
  for(const name of ["certops-qualification.yml","certops-distribution-qualification.yml","certops-enterprise-adcs-qualification.yml"]){

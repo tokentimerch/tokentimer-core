@@ -6,6 +6,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const assert = require("node:assert/strict");
+const linuxCase = () => require("./certops-linux-cleanup-case.cjs");
 const digest = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const ADCS_ACCEPTANCE_SCENARIOS = Object.freeze([
   "adcs-package-native-server-language-and-system-identity",
@@ -132,26 +133,31 @@ function verifyInstalled(files, installedRoot) {
 }
 function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha, linuxCleanup = null }) {
   assert.match(candidateSha || "", /^[a-f0-9]{40}$/);
+  const distribution = !!linuxCleanup && linuxCleanup === linuxCase().distribution;
+  const linuxOnly = linuxCleanup && !distribution;
   fs.mkdirSync(outputRoot); // Never reuse an artifact from another run.
   const staging = path.join(outputRoot, "build"), artifacts = path.join(outputRoot, "artifacts");
   fs.cpSync(sourcePackage, staging, { recursive: true, filter: file => !path.relative(sourcePackage, file).split(path.sep).some(part => ["node_modules", "dist", ".git"].includes(part)) });
   const input = path.join(staging, "src/capabilities/qualified-capabilities.json");
   const original = JSON.parse(fs.readFileSync(input, "utf8"));
+  if (distribution) assert.equal(original.qualified.includes("windows-material-iis-v1"), false, "Windows IIS must remain absent from the qualification baseline");
   const selected = [...new Set([...original.qualified, ...capabilities])];
   if (linuxCleanup) {
-    assert.deepEqual(capabilities, [linuxCleanup.capability]);
-    assert.equal(original.qualified.includes(linuxCleanup.capability), false);
-    const packageFile = path.join(staging, "package.json");
-    const pkg = JSON.parse(fs.readFileSync(packageFile, "utf8"));
-    pkg.os = ["linux"];
-    pkg.files = pkg.files.filter(file => !/\.exe$|install-agent\.ps1$/i.test(file));
-    fs.writeFileSync(packageFile, JSON.stringify(pkg, null, 2) + "\n");
+    assert.deepEqual(capabilities, linuxCleanup.capabilities ?? [linuxCleanup.capability]);
+    assert.ok(capabilities.every(capability => !original.qualified.includes(capability)));
+    if (linuxOnly) {
+      const packageFile = path.join(staging, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(packageFile, "utf8"));
+      pkg.os = ["linux"];
+      pkg.files = pkg.files.filter(file => !/\.exe$|install-agent\.ps1$/i.test(file));
+      fs.writeFileSync(packageFile, JSON.stringify(pkg, null, 2) + "\n");
+    }
     run(process.execPath, [path.join(staging, "scripts/check-shipped-sources.js")]);
   }
   fs.writeFileSync(input, JSON.stringify({ qualified: selected }));
   run(process.execPath, [path.join(staging, "scripts/build-qualified-capabilities.js")]);
   run(process.execPath, [path.join(staging, "scripts/pack-release.js"), "--out-dir", artifacts,
-    ...(linuxCleanup ? ["--linux-only"] : [])]);
+    ...(linuxOnly ? ["--linux-only"] : [])]);
   const names = fs.readdirSync(artifacts).filter(name => name.endsWith(".tgz"));
   assert.equal(names.length, 1, "Expected one candidate agent archive");
   const archive = names[0], sha256 = digest(path.join(artifacts, archive));
@@ -160,14 +166,17 @@ function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha,
   if (linuxCleanup) {
     receipt.schemaVersion = 1;
     receipt.version = require(path.join(staging, "package.json")).version;
+    if (distribution) receipt.packageVersion = receipt.version;
     receipt.nodeVersion = process.version;
     receipt.npmVersion = run("npm", ["--version"]).trim();
-    require("./certops-linux-published-package").inspectLinuxCandidate(path.join(artifacts, archive), receipt, linuxCleanup.provider, linuxCleanup.staging);
+    require("./certops-linux-published-package").inspectLinuxCandidate(path.join(artifacts, archive), receipt, linuxCleanup.provider, linuxCleanup.staging, {
+      distribution, sourceKind: receipt.sourceKind,
+    });
   }
   fs.writeFileSync(path.join(outputRoot, "artifact.json"), JSON.stringify(receipt, null, 2));
   return receipt;
 }
-function buildLinuxCleanup(outputRoot, provider, staging = false) {
+function buildLinuxCandidate(outputRoot, linuxCleanup) {
   assert.equal(process.platform, "linux");
   assert.equal(process.env.GITHUB_ACTIONS, "true");
   assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted");
@@ -176,21 +185,46 @@ function buildLinuxCleanup(outputRoot, provider, staging = false) {
   const root = path.resolve(__dirname, "..");
   assert.equal(run("git", ["rev-parse", "HEAD"], { cwd: root }).trim(), candidateSha);
   assert.equal(run("git", ["status", "--porcelain"], { cwd: root }).trim(), "");
-  const linuxCleanup = require("./certops-linux-cleanup-case.cjs")(provider, staging);
   const expectedOutput = path.join(fs.realpathSync(process.env.RUNNER_TEMP), linuxCleanup.directory);
   assert.equal(path.resolve(outputRoot), expectedOutput);
   return buildCandidate({ sourcePackage: path.join(root, "packages/agent"), outputRoot: expectedOutput,
-    capabilities: [linuxCleanup.capability], candidateSha, linuxCleanup });
+    capabilities: linuxCleanup.capabilities ?? [linuxCleanup.capability], candidateSha, linuxCleanup });
 }
-module.exports = { buildCandidate, extractVerified, verifyInstalled, inventory, digest, verifyAdcsAcceptance, verifyOperatorScope, ADCS_ACCEPTANCE_SCENARIOS };
+
+function verifyReleaseDistributionCandidate(directory, expectedSha256, { nodeVersion, npmVersion, goVersion }) {
+  assert.match(expectedSha256 || "", /^[a-f0-9]{64}$/, "An exact expected package SHA-256 is required");
+  const receipt = JSON.parse(fs.readFileSync(path.join(directory, "artifact.json"), "utf8"));
+  const provenance = JSON.parse(fs.readFileSync(path.join(directory, "native-provenance.json"), "utf8"));
+  assert.equal(receipt.archive, "tokentimer-agent-0.20.0.tgz");
+  assert.equal(receipt.nodeVersion, `v${nodeVersion}`, "Unexpected candidate Node version");
+  assert.equal(receipt.npmVersion, npmVersion, "Unexpected candidate npm version");
+  assert.equal(provenance.goVersion, `go${goVersion}`, "Unexpected candidate Go version");
+  assert.equal(provenance.status, "passed");
+  assert.equal(provenance.sourceSha, receipt.candidateSha);
+  assert.equal(provenance.archive, receipt.archive);
+  assert.equal(receipt.sha256, expectedSha256, "Candidate package receipt SHA-256 differs from the expected SHA-256");
+  assert.equal(provenance.archiveSha256, expectedSha256, "Candidate binary provenance has a different package SHA-256");
+  const actualSha256 = digest(path.join(directory, "artifacts", receipt.archive));
+  assert.equal(actualSha256, expectedSha256, "Candidate tarball bytes differ from the expected SHA-256");
+  return actualSha256;
+}
+module.exports = { buildCandidate, extractVerified, verifyInstalled, inventory, digest, verifyAdcsAcceptance, verifyOperatorScope,
+  verifyReleaseDistributionCandidate, ADCS_ACCEPTANCE_SCENARIOS };
 if (require.main === module) {
   try {
     const [sourcePackage, outputRoot, candidateSha, capabilityList] = process.argv.slice(2);
     if (sourcePackage === "verify-adcs") verifyAdcsAcceptance(JSON.parse(fs.readFileSync(outputRoot, "utf8")), JSON.parse(fs.readFileSync(candidateSha, "utf8")), capabilityList);
     else if(sourcePackage === "verify-operator-scope")verifyOperatorScope(JSON.parse(fs.readFileSync(outputRoot,"utf8")),JSON.parse(fs.readFileSync(candidateSha,"utf8")));
-    else if (sourcePackage === "build-linux-vault-cleanup") buildLinuxCleanup(outputRoot, "vault-kv2");
-    else if (sourcePackage === "build-linux-openbao-cleanup") buildLinuxCleanup(outputRoot, "openbao-kv2");
-    else if (sourcePackage === "build-linux-staging") buildLinuxCleanup(outputRoot, "vault-kv2", true);
+    else if (sourcePackage === "build-linux-vault-cleanup") buildLinuxCandidate(outputRoot, linuxCase()("vault-kv2"));
+    else if (sourcePackage === "build-linux-openbao-cleanup") buildLinuxCandidate(outputRoot, linuxCase()("openbao-kv2"));
+    else if (sourcePackage === "build-linux-staging") buildLinuxCandidate(outputRoot, linuxCase()("vault-kv2", true));
+    else if (sourcePackage === "build-release-distribution-candidate") buildLinuxCandidate(outputRoot, linuxCase().distribution);
+    else if (sourcePackage === "verify-release-distribution-candidate") {
+      const sha256 = verifyReleaseDistributionCandidate(outputRoot, candidateSha, {
+        nodeVersion: process.env.NODE_VERSION, npmVersion: process.env.NPM_VERSION, goVersion: process.env.GO_VERSION,
+      });
+      process.stdout.write(`sha256=${sha256}\n`);
+    }
     else buildCandidate({ sourcePackage, outputRoot, candidateSha, capabilities: capabilityList.split(",") });
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

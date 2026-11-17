@@ -9,6 +9,7 @@ PROFILES = {"full": {"hosted", "domain-adcs", "extended-domain-adcs"}, "standard
 PROFILES["vault-cleanup"] = {"vault-cleanup"}
 PROFILES["openbao-cleanup"] = {"openbao-cleanup"}
 PROFILES["linux-staging"] = {"linux-staging"}
+PROFILES["openbao-staging"] = {"openbao-staging"}
 
 
 def select_profile(matrix, profile="full", capabilities=None):
@@ -26,6 +27,7 @@ def select_profile(matrix, profile="full", capabilities=None):
         if slot.get("suite") == "linux-vault-cleanup-restart": return "vault-cleanup"
         if slot.get("suite") == "linux-openbao-cleanup-restart": return "openbao-cleanup"
         if slot.get("suite") == "linux-staging-restart": return "linux-staging"
+        if slot.get("suite") == "linux-openbao-staging-restart": return "openbao-staging"
         if slot.get("suite") in DOMAIN: return "domain-adcs"
         if slot.get("suite") in EXTENDED: return "extended-domain-adcs"
         if "domain" in capabilities.get(slot.get("suite"),[]):

@@ -14,14 +14,79 @@ test("native OpenBao packaging refuses a Vault candidate before extraction", () 
     schemaVersion: 1, buildMode: cleanupCase("vault-kv2").buildMode,
   }, "openbao-kv2"), /linux-openbao-cleanup-candidate/);
 });
-test("native staging requires its own Linux candidate and refuses another provider", () => {
+test("native staging keeps the Vault candidate separate and requires the shared archive for OpenBao", () => {
   const { inspectLinuxCandidate } = require("./certops-linux-published-package");
   const cleanupCase = require("./certops-linux-cleanup-case.cjs");
   assert.equal(cleanupCase("vault-kv2", true).capability, "material-consumer-staging-v1");
-  assert.throws(() => cleanupCase("openbao-kv2", true), /vault-kv2/);
+  assert.equal(cleanupCase("openbao-kv2", true).suite, "linux-openbao-staging-restart");
+  assert.equal(cleanupCase("openbao-kv2", true).proofField, "nativeLinuxStagingRestart");
+  assert.throws(() => inspectLinuxCandidate("unused", {}, "openbao-kv2", true), /shared Linux distribution candidate/);
   assert.throws(() => inspectLinuxCandidate("unused", {
     schemaVersion: 1, buildMode: cleanupCase("vault-kv2").buildMode,
   }, "vault-kv2", true), /linux-staging-candidate/);
+  assert.throws(() => inspectLinuxCandidate("unused", {
+    schemaVersion: 1, buildMode: cleanupCase("vault-kv2", true).buildMode,
+  }, "openbao-kv2", true, { distribution: true }), /release-distribution-candidate/);
+  assert.deepEqual(cleanupCase.distribution.capabilities, [
+    "material-cleanup-vault-kv2-v1", "material-cleanup-openbao-kv2-v1",
+    "material-consumer-staging-v1",
+  ]);
+});
+test("the distribution producer and inspector refuse IIS in the baseline", t => {
+  const { buildCandidate, digest } = require("./certops-agent-package");
+  const { inspectLinuxCandidate } = require("./certops-linux-published-package");
+  const { distribution } = require("./certops-linux-cleanup-case.cjs");
+  const manifest = require("../packages/agent/src/capabilities/qualified-capabilities.json");
+  const baseline = manifest.qualified;
+  const root = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "tt-linux-baseline-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const sourcePackage = path.join(root, "source");
+  const manifestFile = path.join(sourcePackage, "src/capabilities/qualified-capabilities.json");
+  fs.mkdirSync(path.dirname(manifestFile), { recursive: true });
+  fs.writeFileSync(manifestFile, JSON.stringify({ qualified: [...baseline, "windows-material-iis-v1"] }));
+  assert.throws(() => buildCandidate({
+    sourcePackage, outputRoot: path.join(root, "output"), candidateSha: "a".repeat(40),
+    capabilities: distribution.capabilities, linuxCleanup: distribution,
+  }), /Windows IIS must remain absent/);
+  const version = require("../packages/agent/package.json").version;
+  const receipt = {
+    schemaVersion: 1, buildMode: distribution.buildMode, sourceKind: "workflow-checkout",
+    candidateSha: "a".repeat(40), sha256: "b".repeat(64), nodeVersion: "v24.22.3", npmVersion: "11.19.1",
+    version, packageVersion: version, archive: `tokentimer-agent-${version}.tgz`,
+    packagerSha256: digest(path.resolve(__dirname, "../packages/agent/scripts/pack-release.js")),
+    capabilities: [...baseline, "windows-material-iis-v1", ...distribution.capabilities],
+  };
+  try {
+    manifest.qualified = [...baseline, "windows-material-iis-v1"];
+    assert.throws(() => inspectLinuxCandidate(path.join(root, receipt.archive), receipt, "vault-kv2", false, {
+      distribution: true,
+    }), /Windows IIS must remain absent/);
+  } finally {
+    manifest.qualified = baseline;
+  }
+});
+test("exact release candidate requires a digest and rejects changed tarball bytes", t => {
+  const { digest, verifyReleaseDistributionCandidate } = require("./certops-agent-package");
+  const root = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "tt-release-distribution-digest-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const versions = { nodeVersion: "24.22.3", npmVersion: "11.19.1", goVersion: "1.26.10" };
+  assert.throws(() => verifyReleaseDistributionCandidate(root, undefined, versions), /expected package SHA-256 is required/);
+
+  const archive = "tokentimer-agent-0.20.0.tgz";
+  const candidateSha = "a".repeat(40);
+  const artifacts = path.join(root, "artifacts");
+  const tarball = path.join(artifacts, archive);
+  fs.mkdirSync(artifacts);
+  fs.writeFileSync(tarball, "synthetic package bytes");
+  const sha256 = digest(tarball);
+  fs.writeFileSync(path.join(root, "artifact.json"), JSON.stringify({ archive, candidateSha, sha256,
+    nodeVersion: `v${versions.nodeVersion}`, npmVersion: versions.npmVersion }));
+  fs.writeFileSync(path.join(root, "native-provenance.json"), JSON.stringify({ archive, status: "passed",
+    sourceSha: candidateSha, archiveSha256: sha256, goVersion: `go${versions.goVersion}` }));
+  assert.equal(verifyReleaseDistributionCandidate(root, sha256, versions), sha256);
+  assert.throws(() => verifyReleaseDistributionCandidate(root, sha256, { ...versions, npmVersion: "11.19.0" }), /Unexpected candidate npm version/);
+  fs.writeFileSync(tarball, "different package bytes");
+  assert.throws(() => verifyReleaseDistributionCandidate(root, sha256, versions), /tarball bytes differ from the expected SHA-256/);
 });
 test("published predecessor is exact and true upgrade rejects same/older candidate versions",()=>{assert.equal(baseline.assetId,612562598);assert.equal(baseline.sha256,"c602fe36825c74d423c2c9b89680df3b1ac76542f71804de14dc5e2ec5aa85bf");assert.equal(laterVersion("0.17.3"),"0.17.3");assert.equal(laterVersion("0.17.3-rc.1"),"0.17.3-rc.1");assert.equal(laterVersion("1.0.0"),"1.0.0");for(const value of ["0.17.2","0.17.2-rc.1","0.17.1","0.16.9","0.17.3-beta","0.17.3-rc.01","latest","v0.17.3"])assert.throws(()=>laterVersion(value));});
 test("archive member guard rejects traversal roots alternate separators control text and duplicates",()=>{validateMembers(["package/package.json","package/scripts/install-agent.sh"]);for(const members of [[],["/etc/passwd"],["package/../escape"],["package/a\\b"],["package/a\nfile"],["package/a","package/a"]])assert.throws(()=>validateMembers(members));});

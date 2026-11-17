@@ -15,6 +15,14 @@ on:
         description: Run only installed Linux staging outside activation
         type: boolean
         default: false
+      linux_distribution_candidate_sha:
+        description: Exact trusted main SHA for the shared release archive and four Linux cases
+        type: string
+        default: ''
+      linux_distribution_package_sha256:
+        description: Expected SHA-256 of the universal archive for the shared release case
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -22,7 +30,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   postgres:
-    if: github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup && !inputs.native_linux_staging
+    if: github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup && !inputs.native_linux_staging && inputs.linux_distribution_candidate_sha == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -45,7 +53,7 @@ jobs:
             qualification-results/distribution-vault-*/summary.json
           if-no-files-found: error
   agent-lab:
-    if: github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup && !inputs.native_linux_staging
+    if: github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup && !inputs.native_linux_staging && inputs.linux_distribution_candidate_sha == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -134,7 +142,7 @@ jobs:
           if-no-files-found: error
   functional-summary:
     needs: [postgres, agent-lab]
-    if: ${{ always() && github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup && !inputs.native_linux_staging }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup && !inputs.native_linux_staging && inputs.linux_distribution_candidate_sha == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -161,7 +169,7 @@ jobs:
           path: qualification-results/distribution-functional-summary.json
           if-no-files-found: error
   native-vault-cleanup:
-    if: github.ref == 'refs/heads/main' && (inputs.native_vault_cleanup || inputs.native_linux_staging)
+    if: github.ref == 'refs/heads/main' && (inputs.native_vault_cleanup || inputs.native_linux_staging) && inputs.linux_distribution_candidate_sha == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -186,7 +194,8 @@ jobs:
           node scripts/certops-agent-package.js "build-linux-$NATIVE_CASE" "$candidate"
           node -p '"sha256=" + require(process.argv[1]).sha256' "$candidate/artifact.json" >> "$GITHUB_OUTPUT"
           cp "$candidate/artifact.json" "$candidate/artifacts/"
-      - name: Scan the exact unpacked Linux candidate
+      - &scan_exact_candidate
+        name: Scan the exact unpacked Linux candidate
         env:
           GRYPE_CHECK_FOR_APP_UPDATE: 'false'
         run: |
@@ -201,7 +210,8 @@ jobs:
           echo "acb14a030010fe9bdb9594b4ae108d9d14ef2f926d936aa0916dc62c89c058ea  $scan/grype.tgz" | sha256sum -c -
           tar -xzf "$scan/grype.tgz" -C "$scan" grype
           "$scan/grype" "dir:$scan/package" --fail-on high --only-fixed -o json --file "$scan/security.json"
-      - name: Stage only the verified candidate files
+      - &stage_exact_candidate
+        name: Stage only the verified candidate files
         env:
           EXPECTED_ARCHIVE_SHA256: ${{ steps.package.outputs.sha256 }}
         run: |
@@ -265,3 +275,161 @@ jobs:
           name: linux-${{ env.NATIVE_CASE }}-failure
           path: qualification-results/linux-${{ env.NATIVE_CASE }}-failure.json
           if-no-files-found: warn
+
+  release-distribution-candidate:
+    if: &release_distribution_selected github.ref == 'refs/heads/main' && inputs.linux_distribution_candidate_sha != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      NODE_VERSION: '24.22.3'
+      NPM_VERSION: '11.19.1'
+      GO_VERSION: '1.26.10'
+      GOTOOLCHAIN: local
+      NATIVE_CASE: release-distribution
+    outputs:
+      artifact_id: ${{ steps.candidate.outputs.artifact-id }}
+      package_sha256: ${{ steps.package.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Require the exact trusted main dispatch SHA
+        env:
+          EXPECTED_CANDIDATE: ${{ inputs.linux_distribution_candidate_sha }}
+          EXPECTED_PACKAGE_SHA256: ${{ inputs.linux_distribution_package_sha256 }}
+          CLEANUP_SELECTED: ${{ inputs.native_vault_cleanup }}
+          STAGING_SELECTED: ${{ inputs.native_linux_staging }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_CANDIDATE" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$EXPECTED_PACKAGE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          test "$EXPECTED_CANDIDATE" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_CANDIDATE"
+          test "$CLEANUP_SELECTED" = false
+          test "$STAGING_SELECTED" = false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Build the universal release candidate once
+        id: package
+        env:
+          EXPECTED_PACKAGE_SHA256: ${{ inputs.linux_distribution_package_sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = "go$GO_VERSION"
+          candidate="$RUNNER_TEMP/certops-linux-$NATIVE_CASE"
+          node scripts/certops-agent-package.js build-release-distribution-candidate "$candidate"
+          archive=("$candidate/artifacts/"*.tgz)
+          test "${#archive[@]}" -eq 1
+          node scripts/verify-agent-native-package.js --archive "${archive[0]}" --go-version "$GO_VERSION" \
+            --source-sha "$GITHUB_SHA" --out "$candidate/native-provenance.json"
+          node scripts/certops-agent-package.js verify-release-distribution-candidate \
+            "$candidate" "$EXPECTED_PACKAGE_SHA256" >> "$GITHUB_OUTPUT"
+          cp "$candidate/artifact.json" "$candidate/artifacts/"
+      - *scan_exact_candidate
+      - *stage_exact_candidate
+      - name: Retain the immutable universal release candidate
+        id: candidate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-distribution-candidate
+          path: qualification-results/linux-release-distribution-candidate/
+          if-no-files-found: error
+
+  release-native-vault-cleanup:
+    if: *release_distribution_selected
+    needs: release-distribution-candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      NATIVE_CASE: vault-cleanup
+      NATIVE_MODE: --native-vault-restart
+      TEARDOWN_MODE: --cleanup-native-vault
+    steps: &release_distribution_case_steps
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/certops-node-setup
+      - name: Require the immutable release artifact ID and checksum
+        env:
+          CANDIDATE_ID: ${{ needs.release-distribution-candidate.outputs.artifact_id }}
+          CANDIDATE_SHA256: ${{ needs.release-distribution-candidate.outputs.package_sha256 }}
+        run: |
+          [[ "$CANDIDATE_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+          [[ "$CANDIDATE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+      - name: Download exactly the retained release candidate
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.release-distribution-candidate.outputs.artifact_id }}
+          path: ${{ runner.temp }}/certops-linux-release-distribution/artifacts
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Run the selected installed restart case
+        env:
+          TT_CLEANUP_ARTIFACT_ID: ${{ needs.release-distribution-candidate.outputs.artifact_id }}
+          TT_CLEANUP_ARTIFACT_SHA256: ${{ needs.release-distribution-candidate.outputs.package_sha256 }}
+        run: |
+          sudo env PATH="$PATH" GITHUB_ACTIONS=true GITHUB_SHA="$GITHUB_SHA" GITHUB_REF="$GITHUB_REF" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_TEMP="$RUNNER_TEMP" CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST=1 \
+            TT_CLEANUP_DISTRIBUTION_CANDIDATE=1 TT_CLEANUP_ARTIFACT_ID="$TT_CLEANUP_ARTIFACT_ID" \
+            TT_CLEANUP_ARTIFACT_SHA256="$TT_CLEANUP_ARTIFACT_SHA256" \
+            "$(command -v node)" scripts/run-cleanup-completion-acceptance.cjs "$NATIVE_MODE"
+      - name: Verify teardown of only the owned host and containers
+        if: always()
+        run: |
+          sudo env PATH="$PATH" GITHUB_ACTIONS=true GITHUB_SHA="$GITHUB_SHA" GITHUB_REF="$GITHUB_REF" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_TEMP="$RUNNER_TEMP" CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST=1 \
+            TT_CLEANUP_DISTRIBUTION_CANDIDATE=1 \
+            "$(command -v node)" scripts/run-cleanup-completion-acceptance.cjs "$TEARDOWN_MODE"
+      - name: Preserve the native case receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: linux-${{ env.NATIVE_CASE }}-receipt
+          path: qualification-results/linux-${{ env.NATIVE_CASE }}-restart.json
+          if-no-files-found: error
+      - name: Preserve the bounded native failure report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: linux-${{ env.NATIVE_CASE }}-failure
+          path: qualification-results/linux-${{ env.NATIVE_CASE }}-failure.json
+          if-no-files-found: warn
+
+  release-native-openbao-cleanup:
+    if: *release_distribution_selected
+    needs: release-distribution-candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      NATIVE_CASE: openbao-cleanup
+      NATIVE_MODE: --native-openbao-restart
+      TEARDOWN_MODE: --cleanup-native-openbao
+    steps: *release_distribution_case_steps
+
+  release-native-linux-staging-vault:
+    if: *release_distribution_selected
+    needs: release-distribution-candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      NATIVE_CASE: staging
+      NATIVE_MODE: --native-staging
+      TEARDOWN_MODE: --cleanup-native-staging
+    steps: *release_distribution_case_steps
+
+  release-native-linux-staging-openbao:
+    if: *release_distribution_selected
+    needs: release-distribution-candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      NATIVE_CASE: openbao-staging
+      NATIVE_MODE: --native-openbao-staging
+      TEARDOWN_MODE: --cleanup-native-openbao-staging
+    steps: *release_distribution_case_steps

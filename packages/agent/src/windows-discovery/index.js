@@ -482,12 +482,15 @@ const HTTPSYS_BINDING_KINDS = Object.freeze({
  * buildStoreQueryScript, it works under Constrained Language Mode.
  * @returns {string}
  */
-function buildHttpSysBindingQueryScript() {
+function buildHttpSysBindingQueryScript({ strict = false } = {}) {
   return [
     "$ErrorActionPreference = 'Stop'",
     "$base = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters'",
+    ...(strict ? ["Get-Item -LiteralPath $base -ErrorAction Stop | Out-Null"] : []),
     "$items = @()",
-    `foreach ($kind in @(${Object.keys(HTTPSYS_BINDING_KINDS).map((kind) => `'${kind}'`).join(", ")})) {`,
+    // CCS selectors are not decoded by the regular discovery path. Include
+    // them in the raw inventory so strict callers reject incomplete coverage.
+    `foreach ($kind in @(${[...Object.keys(HTTPSYS_BINDING_KINDS), ...(strict ? ["SslCcsBindingInfo"] : [])].map((kind) => `'${kind}'`).join(", ")})) {`,
     "  $path = $base + '\\' + $kind",
     "  if (Test-Path -LiteralPath $path) {",
     "    $items += @(Get-ChildItem -LiteralPath $path | ForEach-Object {",
@@ -686,6 +689,7 @@ async function listHttpSysBindings({
   powershellPath = "powershell.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
   signal = undefined,
+  strict = false,
 } = {}) {
   assertSafeArgvElements("powershellPath", [powershellPath]);
   const powershellArgv = [powershellPath, "-NoProfile", "-NonInteractive", "-Command"];
@@ -693,7 +697,7 @@ async function listHttpSysBindings({
 
   const { exitCode, stdout, stderr, execError } = await execWithoutShell(
     execFileImpl,
-    [...powershellArgv, buildHttpSysBindingQueryScript()],
+    [...powershellArgv, buildHttpSysBindingQueryScript({ strict })],
     timeoutMs,
     { env: buildPowerShellEnv(), ...(signal ? { signal } : {}) },
   );
@@ -709,10 +713,24 @@ async function listHttpSysBindings({
     return { ok: false, exitCode, stderrExcerpt: boundAndRedactExcerpt(stderr || stdout) };
   }
   try {
-    return {
-      ok: true,
-      bindings: parseHttpSysBindingQueryOutput(typeof stdout === "string" ? stdout : String(stdout ?? "")),
-    };
+    const text = typeof stdout === "string" ? stdout : String(stdout ?? "");
+    const bindings = parseHttpSysBindingQueryOutput(text);
+    if (strict) {
+      const raw = JSON.parse(text).items;
+      const items = Array.isArray(raw) ? raw : raw === null ? [] : [raw];
+      if (items.length !== bindings.length) throw new Error("unrecognized http.sys binding kind");
+      for (const binding of bindings) {
+        if (!binding.thumbprint || typeof binding.ipPort !== "string") throw new Error("incomplete http.sys binding");
+        const split = binding.ipPort.lastIndexOf(":");
+        const host = binding.ipPort.slice(0, split).replace(/^\[|\]$/g, "");
+        const port = binding.ipPort.slice(split + 1);
+        if (split <= 0 || !/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535 ||
+            (binding.keyedBy === "ipport" ? !require("node:net").isIP(host) : !/^[A-Za-z0-9.-]+$/.test(host))) {
+          throw new Error("invalid http.sys binding selector");
+        }
+      }
+    }
+    return { ok: true, bindings };
   } catch (error) {
     return {
       ok: false,

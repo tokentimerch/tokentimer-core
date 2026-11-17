@@ -38,30 +38,42 @@ function inspect(archive,checksum,published=false){
  if(published){assert.equal(name,`tokentimer-agent-${baseline.version}.tgz`);assert.equal(actual,baseline.sha256);assert.equal(fs.statSync(archive).size,baseline.size);assert.equal(pkg.version,baseline.version);}else laterVersion(pkg.version);
  return {version:pkg.version,archiveSha256:actual,archiveSize:fs.statSync(archive).size,fileInventory:archiveInventory(archive)};
 }
-function inspectLinuxCandidate(archive, receipt, provider = "vault-kv2", staging = false) {
-  const linuxCleanup = require("./certops-linux-cleanup-case.cjs")(provider, staging);
+function inspectLinuxCandidate(archive, receipt, provider = "vault-kv2", staging = false, { distribution = false, sourceKind = "workflow-checkout" } = {}) {
+  const linuxCase = require("./certops-linux-cleanup-case.cjs");
+  const scenario = linuxCase(provider, staging);
+  const candidate = distribution ? linuxCase.distribution : scenario;
+  assert.ok(distribution || !(staging && scenario.store === "openbao"), "OpenBao staging requires the shared Linux distribution candidate");
   assert.equal(receipt.schemaVersion, 1);
-  assert.equal(receipt.buildMode, linuxCleanup.buildMode);
-  assert.equal(receipt.sourceKind, "workflow-checkout");
+  assert.equal(receipt.buildMode, candidate.buildMode);
+  assert.equal(receipt.sourceKind, sourceKind);
   assert.match(receipt.candidateSha, /^[a-f0-9]{40}$/);
   assert.match(receipt.sha256, /^[a-f0-9]{64}$/);
   assert.match(receipt.nodeVersion, /^v24\.\d+\.\d+$/);
   assert.match(receipt.npmVersion, /^\d+\.\d+\.\d+$/);
-  const { version } = require("../packages/agent/package.json");
+  const release = require("../packages/agent/package.json");
+  const { version } = release;
   assert.equal(receipt.version, version);
-  assert.equal(receipt.archive, `tokentimer-agent-linux-${version}.tgz`);
+  if (distribution) assert.equal(receipt.packageVersion, version);
+  assert.equal(receipt.archive, `tokentimer-agent-${distribution ? "" : "linux-"}${version}.tgz`);
   assert.equal(path.basename(archive), receipt.archive);
   assert.equal(receipt.packagerSha256, sha(path.resolve(__dirname, "../packages/agent/scripts/pack-release.js")));
   const baseline = require("../packages/agent/src/capabilities/qualified-capabilities.json").qualified;
-  assert.equal(baseline.includes(linuxCleanup.capability), false);
-  assert.deepEqual(receipt.capabilities, [...baseline, linuxCleanup.capability]);
+  if (distribution) assert.equal(baseline.includes("windows-material-iis-v1"), false, "Windows IIS must remain absent from the qualification baseline");
+  const added = candidate.capabilities ?? [candidate.capability];
+  assert.ok(added.every(capability => !baseline.includes(capability)));
+  assert.deepEqual(receipt.capabilities, [...baseline, ...added]);
   const inspected = inspect(archive, archive + ".sha256");
   assert.equal(inspected.archiveSha256, receipt.sha256);
   assert.equal(inspected.version, version);
-  assert.ok(inspected.fileInventory.every(entry => !/\.exe$|install-agent\.ps1$/i.test(entry.file)));
   const pkg = JSON.parse(run(["-xOf", archive, "package/package.json"]));
   assert.equal(pkg.private, true);
-  assert.deepEqual(pkg.os, ["linux"]);
+  assert.deepEqual(pkg.os, distribution ? release.os : ["linux"]);
+  if (distribution) {
+    assert.deepEqual(pkg.files, release.files);
+    for (const file of release.files.filter(name => /\.exe$|install-agent\.ps1$/i.test(name))) {
+      assert.ok(inspected.fileInventory.some(entry => entry.file === file), `Missing release package member: ${file}`);
+    }
+  } else assert.ok(inspected.fileInventory.every(entry => !/\.exe$|install-agent\.ps1$/i.test(entry.file)));
   const embedded = run(["-xOf", archive, "package/src/capabilities/qualified-capabilities.generated.js"]);
   assert.equal(embedded, require("../packages/agent/scripts/build-qualified-capabilities").renderGeneratedModule(receipt.capabilities));
   return inspected;
@@ -71,18 +83,23 @@ function prepareVaultCleanupCandidate(provider = "vault-kv2", staging = false) {
   assert.equal(process.env.GITHUB_REF, "refs/heads/main");
   assert.match(process.env.TT_CLEANUP_ARTIFACT_ID || "", /^[1-9]\d{0,15}$/);
   const root = fs.realpathSync(process.env.RUNNER_TEMP);
-  const candidateDir = path.join(root, require("./certops-linux-cleanup-case.cjs")(provider, staging).directory);
-  const receipt = JSON.parse(fs.readFileSync(path.join(candidateDir, "artifact.json"), "utf8"));
+  const linuxCase = require("./certops-linux-cleanup-case.cjs");
+  const distribution = process.env.TT_CLEANUP_DISTRIBUTION_CANDIDATE === "1";
+  const candidate = distribution ? linuxCase.distribution : linuxCase(provider, staging);
+  const candidateDir = path.join(root, candidate.directory);
+  const artifactDir = path.join(candidateDir, "artifacts");
+  const receipt = JSON.parse(fs.readFileSync(path.join(distribution ? artifactDir : candidateDir, "artifact.json"), "utf8"));
   assert.equal(receipt.candidateSha, process.env.GITHUB_SHA);
   assert.equal(receipt.sha256, process.env.TT_CLEANUP_ARTIFACT_SHA256);
   assert.equal(receipt.archive, path.basename(receipt.archive));
-  const archive = path.join(candidateDir, "artifacts", receipt.archive);
-  const inspected = inspectLinuxCandidate(archive, receipt, provider, staging);
+  if (distribution) assert.deepEqual(fs.readdirSync(artifactDir).sort(), ["artifact.json", receipt.archive, receipt.archive + ".sha256"].sort());
+  const archive = path.join(artifactDir, receipt.archive);
+  const inspected = inspectLinuxCandidate(archive, receipt, provider, staging, { distribution });
   const directory = path.join(candidateDir, "installed-input");
   fs.mkdirSync(directory, { mode: 0o755 });
   run(["-xzf", archive, "--strip-components=1", "--no-same-owner", "-C", directory]);
   verifyTree(directory, inspected.fileInventory);
-  return { ...inspected, directory, receipt, staging, artifactId: process.env.TT_CLEANUP_ARTIFACT_ID };
+  return { ...inspected, directory, receipt, staging, distribution, artifactId: process.env.TT_CLEANUP_ARTIFACT_ID };
 }
 function verifyReleaseMetadata(value){assert.equal(value.tag_name,baseline.tag);assert.equal(value.draft,false);assert.equal(value.prerelease,false);const matches=value.assets.filter(asset=>asset.id===baseline.assetId);assert.equal(matches.length,1);const asset=matches[0];assert.equal(asset.name,`tokentimer-agent-${baseline.version}.tgz`);assert.equal(asset.size,baseline.size);assert.equal(asset.digest,`sha256:${baseline.sha256}`);assert.equal(asset.browser_download_url,baseline.url);return true;}
 function prepare(oldArchive,oldChecksum,newArchive,newChecksum,output){

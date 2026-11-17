@@ -153,11 +153,12 @@ const STORE_NAME_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
 const SNI_HOST_PATTERN =
   /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 
-/** The three wildcard address forms decision 13 names explicitly. Each maps
+/** Wildcard address forms map
  * to its own defined loopback probe address, never a DNS-resolved name. */
 const WILDCARD_BINDING_ADDRESSES = Object.freeze({
   "*": "127.0.0.1",
   "0.0.0.0": "127.0.0.1",
+  "::": "::1",
   "[::]": "::1",
 });
 
@@ -331,7 +332,7 @@ function formatBindingSelector(binding) {
 function formatIpPort(binding) {
   // netsh rejects "*" in an ipport selector ("The parameter is incorrect");
   // the IIS wildcard is 0.0.0.0 to http.sys.
-  const address = binding.address === "*" ? "0.0.0.0" : binding.address;
+  const address = binding.address === "*" ? "0.0.0.0" : binding.address === "::" ? "[::]" : binding.address;
   return `${address}:${binding.port}`;
 }
 
@@ -1111,6 +1112,27 @@ async function checkSniPrecedenceConflict({
   return undefined;
 }
 
+async function checkWildcardPrecedence({ binding, newThumbprint, execFileImpl, powershellPath, timeoutMs, signal }) {
+  const inventory = await listHttpSysBindings({ execFileImpl, powershellPath, timeoutMs, signal, strict: true });
+  if (!inventory.ok) return {
+    ok: false, code: inventory.reason === "aborted" ? "ABORTED" : "QUERY_FAILED",
+    detail: "Cannot verify HTTP.sys bindings for this wildcard.",
+  };
+  const family = ["::", "[::]"].includes(binding.address) ? 6 : 4;
+  const conflict = inventory.bindings.find((entry) => {
+    if (entry.keyedBy !== "ipport") return false;
+    const parsed = splitIpPortLiteral(canonicalSelectorValue(entry.ipPort));
+    if (!parsed || parsed.port !== binding.port) return false;
+    const address = parsed.address.replace(/^\[|\]$/g, "");
+    if (require("node:net").isIP(address) !== family || address === "0.0.0.0" || address === "::") return false;
+    return entry.thumbprint !== newThumbprint;
+  });
+  return conflict ? {
+    ok: false, code: "WILDCARD_PRECEDENCE_CONFLICT",
+    detail: "A specific HTTP.sys binding on the same port serves a different certificate and overrides the wildcard. Review the bindings before retrying.",
+  } : { ok: true };
+}
+
 /**
  * Splits an http.sys `ipPort` literal (an
  * `IP:port` or `Hostname:port` string, per ../windows-discovery's own
@@ -1277,6 +1299,14 @@ async function deployIisBinding({
     });
   }
   const outgoingThumbprint = currentBindingResult.thumbprint;
+  // A concrete HTTP.sys binding wins over a wildcard for that IP. Probing
+  // only loopback can therefore report success while remote clients still
+  // receive a different certificate. Check before changing anything.
+  const isWildcard = !binding.sniHost && Object.prototype.hasOwnProperty.call(WILDCARD_BINDING_ADDRESSES, binding.address);
+  if (isWildcard) {
+    const check = await checkWildcardPrecedence({ binding, newThumbprint, execFileImpl, powershellPath, timeoutMs, signal });
+    if (!check.ok) return guardReturnValue({ ...check, detail: `${check.detail} No changes were made.`, outgoingThumbprint, rolledBack: false });
+  }
   // No parameters when nothing is bound yet: nothing to carry over.
   const outgoingParameters = currentBindingResult.parameters || {};
   const alreadyBound = outgoingThumbprint === newThumbprint;
@@ -1379,6 +1409,14 @@ async function deployIisBinding({
   });
 
   if (verifyResult.verified) {
+    if (isWildcard) {
+      const check = await checkWildcardPrecedence({ binding, newThumbprint, execFileImpl, powershellPath, timeoutMs, signal });
+      if (!check.ok) return guardReturnValue({
+        ...check,
+        detail: `${check.detail} The wildcard may already have changed; inspect it before retrying.`,
+        outgoingThumbprint, rolledBack: false,
+      });
+    }
     const precedenceWarning = binding.sniHost
       ? await checkSniPrecedenceConflict({ binding, execFileImpl, powershellPath, timeoutMs, signal })
       : undefined;
@@ -1455,6 +1493,7 @@ module.exports = {
   formatPreservedParamArgs,
   findUnsupportedNetshParams,
   checkSniPrecedenceConflict,
+  checkWildcardPrecedence,
   queryCurrentBinding,
   bindCertificate,
   deployIisBinding,

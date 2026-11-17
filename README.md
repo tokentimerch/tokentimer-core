@@ -68,7 +68,30 @@ Screenshots and GIFs show the current interface with illustrative sample data. [
 
 ### Certificate Lifecycle Management (CLM)
 
-An outbound-only agent renews, deploys, reloads, and verifies certificates on your infrastructure (ACME via certbot/acme.sh, DNS-01 across major providers, atomic rollback), enrolls and renews IIS certificates from a Microsoft AD CS enterprise CA on domain-joined Windows hosts, and publishes one certificate version through your own Vault KV v2 to assigned Linux consumers (NGINX, HAProxy) that deploy it locally, whether it is an ordinary, SAN, or wildcard certificate. Keys and Vault or DNS credentials stay on your hosts. Approval gates, a kill switch, and renewal-failure alerts keeping humans in control. It also distributes and revokes internal CA trust anchors in machine trust stores on Windows, Debian/Ubuntu, and RHEL/Fedora. cert-manager and machine-token executors are supported too. The control plane never receives or stores private key material. [Watch the certificate operations demo](https://www.youtube.com/watch?v=9dlDbMt8Ino&t=420s).
+TokenTimer’s outbound-only agent runs certificate operations on your infrastructure.
+Use `cert-manager` or connect an external executor with a machine token for supported workflows.
+
+- **ACME issuance and renewal** use `certbot` or `acme.sh` with DNS-01 across major
+  providers. Renewal profiles schedule runs, and the agent deploys the certificate,
+  reloads the service, and verifies the result. Deployment supports atomic rollback.
+- **Windows IIS and Microsoft AD CS** let the Windows agent enroll and renew IIS
+  certificates from an enterprise CA on domain-joined hosts.
+- **Certificate distribution** publishes one ordinary, SAN, or wildcard certificate
+  version to your Vault or OpenBao KV v2. Assigned Linux consumers can install the
+  files or deploy them with service reload and live TLS verification for NGINX, Apache,
+  or HAProxy.
+- **CA trust** distribution and revocation update machine trust stores on Windows,
+  Debian/Ubuntu, and RHEL/Fedora.
+- **Job timelines and audit evidence** capture timestamped results for renewal,
+  deployment, reload, and verification, with agent shell output where available.
+  The audit log records who requested or approved a job. Approval hashes bind the
+  decision to the exact job. For supported deployments, installation and live TLS
+  checks record separate results.
+- **Approval gates, a kill switch, and renewal-failure alerts** give operators control.
+  Private keys and Vault or DNS credentials stay in your infrastructure. The TokenTimer
+  control plane never receives or stores certificate private keys.
+
+[watch the certificate operations demo](https://www.youtube.com/watch?v=9dlDbMt8Ino&t=420s).
 
 <p align="center">
   <img src="docs/assets/certops-certificates.png" alt="Managed certificate inventory with status, days left, renewal policy, key locality, and source for every certificate" width="888" />
@@ -91,39 +114,58 @@ An outbound-only agent renews, deploys, reloads, and verifies certificates on yo
   </tr>
 </table>
 
-### MCP assistant access
-
-On Core 0.19 and later, connect a Model Context Protocol (MCP) assistant over HTTPS with browser sign-in to search inventory and inspect certificates and jobs in one workspace. Connections start read-only. Grant permissions separately for reviewed inventory changes and ACME issuance or renewal requests. Certificate requests follow workspace Job approval. MCP is off by default on self-hosted deployments. [Setup guide](https://tokentimer.ch/docs/api/mcp-setup) | [Video walkthrough](https://www.youtube.com/watch?v=UM4vT69EC4E)
-
 ### Unified expiration visibility
 
-Track certificates, tokens, secrets, licenses, subscriptions, and other expiring assets across providers and environments in one place. Filter by category, section, owner, or urgency, and see at a glance what expires next.
+- **One inventory** tracks certificates, tokens, secrets, licenses, subscriptions,
+  and other expiring assets across providers and environments.
+- **Filters by category, section, owner, and urgency** help you see what expires next.
 
 <p align="center">
   <img src="docs/assets/asset-inventory.png" alt="Asset inventory listing certificates, keys, licenses, and general assets with owners, contact groups, expiration dates, and status" width="888" />
 </p>
 
-### Flexible multi-channel alerting
-
-Notify teams through email, Slack, Microsoft Teams, Discord, PagerDuty, WhatsApp, and webhooks, with configurable delivery and escalation options.
-
-[PagerDuty expiration incidents](docs/PAGERDUTY.md) correlate triggers and automatic recovery, while acknowledgment stays in PagerDuty.
-
-<p align="center">
-  <img src="docs/assets/workspace-alerting.png" alt="Workspace alerting preferences: expiry thresholds, delivery window, contacts, and webhook setup guides for Slack, Discord, Teams, and PagerDuty" width="888" />
-</p>
-
 ### Native integrations, auto-sync, and automated discovery
 
-Connect TokenTimer to providers like HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, Microsoft Entra ID, GCP Secret Manager, GitHub, and GitLab to automatically import and keep expiration metadata up to date, discover public subdomains for SSL certificate imports, and monitor HTTPS endpoints for SSL expiry and health.
+- **Provider imports** collect expiration metadata from HashiCorp Vault, AWS Secrets
+  Manager, Azure Key Vault, Microsoft Entra ID, GCP Secret Manager, GitHub, and GitLab.
+  Scheduled auto-sync keeps metadata current for supported integrations.
+- **Subdomain discovery** finds public certificates you can import into inventory.
+- **HTTPS endpoint monitors** track SSL certificate expiry and endpoint health.
 
 <p align="center">
   <img src="docs/assets/dashboard-workflow.gif" alt="Subdomain discovery and monitored certificate import, Vault scanning and import, and filtering the resulting inventory" width="888" />
 </p>
 
+### Flexible multi-channel alerting
+
+- **Delivery and escalation** can use email, Slack, Microsoft Teams, Discord, PagerDuty,
+  WhatsApp, and webhooks.
+- **PagerDuty incidents** correlate the expiration trigger with automatic recovery.
+  Acknowledge incidents in PagerDuty. [PagerDuty expiration incidents](docs/PAGERDUTY.md)
+
+<p align="center">
+  <img src="docs/assets/workspace-alerting.png" alt="Workspace alerting preferences: expiry thresholds, delivery window, contacts, and webhook setup guides for Slack, Discord, Teams, and PagerDuty" width="888" />
+</p>
+
+### MCP assistant access
+
+- **Connect over HTTPS** with browser sign-in on Core 0.19 and later. Self-hosted
+  deployments must enable MCP before connecting a Model Context Protocol (MCP) assistant.
+- **Read access** is the default. Search inventory and inspect certificates and jobs
+  within one workspace.
+- **Optional write grants** allow reviewed inventory changes and ACME issuance or
+  renewal requests. Certificate requests follow the workspace’s Job approval setting.
+
+[Setup guide](https://tokentimer.ch/docs/api/mcp-setup) · [Video walkthrough](https://www.youtube.com/watch?v=UM4vT69EC4E)
+
 ### Built for teams and audits
 
-Organize assets with workspaces, control access with RBAC, and keep an audit trail of important actions and alert activity. Approvals are bound by hash to the exact job that runs, and each renewal step records its own evidence, so the trail shows who approved what and how the result was verified. [Watch the dashboard walkthrough](docs/assets/dashboard-overview.gif).
+- **Workspaces and role-based access** let you organize assets and control who
+  can view or manage them.
+- **The audit log** records sign-ins, alert deliveries, integration scans, auto-sync
+  failures, and SSO membership changes. Filter events and export them as JSON or CSV.
+
+[Watch the dashboard walkthrough](docs/assets/dashboard-overview.gif).
 
 <p align="center">
   <img src="docs/assets/audit-log.png" alt="Audit log with filterable events for logins, alert deliveries, integration scans, auto-sync failures, and SSO membership changes, exportable as JSON or CSV" width="888" />
@@ -131,7 +173,10 @@ Organize assets with workspaces, control access with RBAC, and keep an audit tra
 
 ### Security-first by design
 
-TokenTimer stores expiration metadata, ownership, and status information without storing secret values or private keys. Integration scan credentials are discarded after one-off imports; if you enable auto-sync, they are encrypted at rest in the database for scheduled re-scans.
+- **Asset inventory** stores expiration metadata, ownership, and status.
+  Secret values and certificate private keys stay in your infrastructure.
+- **Integration credentials** are discarded after one-off imports. When you enable
+  auto-sync, TokenTimer encrypts them at rest in the database for scheduled re-scans.
 
 <br>
 
