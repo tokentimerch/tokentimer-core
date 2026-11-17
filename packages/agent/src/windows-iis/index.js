@@ -1493,6 +1493,7 @@ module.exports = {
   formatPreservedParamArgs,
   findUnsupportedNetshParams,
   checkSniPrecedenceConflict,
+  checkWildcardPrecedence,
   queryCurrentBinding,
   bindCertificate,
   deployIisBinding,

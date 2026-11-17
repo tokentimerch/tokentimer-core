@@ -8,6 +8,8 @@ const {
   assertValidBinding,
   deployIisBinding,
   queryCurrentBinding,
+  checkWildcardPrecedence,
+  WILDCARD_BINDING_ADDRESSES,
 } = require("../windows-iis");
 const {
   acquireStoreLock,
@@ -206,10 +208,14 @@ function createWindowsConnector({
       timeoutMs: 30000,
       signal,
     });
-    return (
-      current.ok === true &&
-      current.thumbprint === computeSha1ThumbprintFromPem(bundle.certificatePem)
-    );
+    const thumbprint = computeSha1ThumbprintFromPem(bundle.certificatePem);
+    if (current.ok !== true || current.thumbprint !== thumbprint) return false;
+    if (!target.sniHost && Object.hasOwn(WILDCARD_BINDING_ADDRESSES, target.address)) {
+      const check = await checkWildcardPrecedence({ binding: target, newThumbprint: thumbprint,
+        execFileImpl, powershellPath, timeoutMs: 30000, signal });
+      if (!check.ok) return false;
+    }
+    return true;
   }
   return {
     withLock,

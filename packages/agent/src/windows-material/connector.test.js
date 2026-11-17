@@ -65,6 +65,23 @@ test("activation reports bounded conflict and inventory errors without exposing 
     assert.equal(calls,1,"commit is not attempted after a rejected bind");
   }
 });
+test("verification refuses a wildcard masked by a conflicting specific IP without activating", async (t) => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-win-verify-mask-"));
+  t.after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+  const certificatePem = fs.readFileSync(path.join(__dirname, "../verify/fixtures/selfsigned.crt.pem"), "utf8");
+  const thumbprint = new crypto.X509Certificate(certificatePem).fingerprint.replace(/:/g, "");
+  const items = [["0.0.0.0:443", thumbprint], ["10.2.3.4:443", "AA".repeat(20)]].map(([key, hash]) =>
+    ({ kind: "SslBindingInfo", key, values: { SslCertHash: Array.from(Buffer.from(hash, "hex")) } }));
+  const target = { ...binding, target: { ...binding.target, binding: { ...binding.target.binding, address: "*", sniHost: undefined } } };
+  let activations = 0;
+  const connector = createWindowsConnector({ binding: target, stateDir,
+    deployBinding: async () => { activations++; throw new Error("must not activate"); },
+    execFileImpl: (_file, args, _options, callback) => callback(null,
+      JSON.stringify(String(args.at(-1)).includes("SslBindingInfo") ? { items } : { ok: true }), ""),
+  });
+  assert.equal(await connector.verify({ certificatePem, fingerprintSha256: "a".repeat(64) }), false);
+  assert.equal(activations, 0);
+});
 test("Windows connector permits only the exact typed IIS rebind surface", () => {
   const policy = {
     checkTargetScope: (ref) => ({ allowed: ref === "iis-customer" }),
