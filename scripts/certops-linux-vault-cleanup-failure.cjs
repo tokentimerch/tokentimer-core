@@ -15,7 +15,11 @@ const sources = new Set([
   "scripts/certops-linux-systemd-db-ownership.js",
 ]);
 const types = new Set(["testCodeFailure", "hookFailed", "testTimeoutFailure", "cancelledByParent"]);
-const codes = new Set(["ERR_ASSERTION", "ENOENT", "EACCES", "EPERM", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET", "23503", "23505", "42P01"]);
+const codes = new Set([
+  "ERR_ASSERTION", "ENOENT", "EACCES", "EPERM", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET", "23503", "23505", "42P01",
+  "SYSTEMD_TIMEOUT", "SYSTEMD_PROBE_FAILED", "SYSTEMD_INITIALIZING", "SYSTEMD_STARTING", "SYSTEMD_MAINTENANCE",
+  "SYSTEMD_STOPPING", "SYSTEMD_OFFLINE", "SYSTEMD_UNKNOWN", "SYSTEMD_UNRECOGNIZED_STATE",
+]);
 const { testName: caseName, suite } = require("./certops-linux-cleanup-case.cjs")(process.env.TT_CLEANUP_PROVIDER, process.env.TT_CLEANUP_NATIVE_STAGING === "1");
 const suiteName = "CertOps agent surface E2E";
 
