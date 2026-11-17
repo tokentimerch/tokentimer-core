@@ -6,7 +6,7 @@ Use the [distribution guide](distribution-lifecycle.md) for rollouts, verificati
 
 Vault and OpenBao KV v2 and Azure Key Vault Secrets support Linux distribution. Shared Windows/IIS material deployment, staging and exact-version cleanup have separate closed gates. Upgrade matching API, worker and agents together; use the normal migration runner and preserve applied migration identities.
 
-Linux consumers support installed, served and trust assurance. IIS consumers require a typed Windows connector and served or trust verification. Store endpoints, credentials and executable target configuration remain customer-local; the API uses public aliases and references.
+Linux consumers support installed, served and trust assurance. The separately gated IIS connector requires served or trust verification. Store endpoints, credentials and executable target configuration remain customer-local; the API uses public aliases and references.
 
 ## OpenBao
 
@@ -110,6 +110,8 @@ checkpoint to force a new CA order. Never overwrite/delete a pinned object to
 repair an uncertain rollout.
 
 ## Windows Server / IIS
+
+This section describes the shared IIS qualification scope. For released native IIS certificate automation, see [Install on Windows](agent/install-windows.md).
 
 Install the native Windows agent using the existing installer and signed-job
 configuration. The service runs as LocalSystem. Install IIS and the Management

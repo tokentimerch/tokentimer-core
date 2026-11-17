@@ -55,7 +55,7 @@ TokenTimer is an open-source platform providing unified visibility, expiration m
 Three complementary pillars organize the platform:
 
 - **NHI Credential Visibility & Ownership:** inventory machine credentials and service accounts, track expiration and review dates, assign owners, and alert responsible teams. Credential rotation remains with your providers and tooling.
-- **Certificate Lifecycle Management:** discover certificates, automate supported ACME workflows, deploy and verify through outbound-only agents, enroll from Microsoft AD CS, share certificates through your Vault, and coordinate cert-manager or external executors with approvals and audit evidence.
+- **Certificate Lifecycle Management:** discover certificates, automate supported ACME workflows, deploy and verify through outbound-only agents, enroll from Microsoft AD CS, share certificates through your own material store, and coordinate cert-manager or external executors with approvals and audit evidence.
 - **Integrations & Centralized Operations:** aggregate relevant metadata from Vault, AWS, Azure, GCP, GitHub, and GitLab. TokenTimer complements your existing systems; it does not replace their secret-storage responsibilities.
 
 <p align="center">
