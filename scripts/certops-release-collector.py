@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 import re
 import stat
 import subprocess
+import tarfile
 import sys
 import certops_qualification_profiles as qualification_profiles
 import urllib.error
@@ -67,6 +68,8 @@ VAULT_CLEANUP_WORKFLOW = ".github/workflows/certops-distribution-qualification.y
 VAULT_CLEANUP_SUITE = "linux-vault-cleanup-restart"
 OPENBAO_CLEANUP_SUITE = "linux-openbao-cleanup-restart"
 LINUX_STAGING_SUITE = "linux-staging-restart"
+OPENBAO_STAGING_SUITE = "linux-openbao-staging-restart"
+LINUX_DISTRIBUTION_CAPABILITIES = ["material-cleanup-vault-kv2-v1", "material-cleanup-openbao-kv2-v1", "material-consumer-staging-v1", "windows-material-iis-v1"]
 WORKFLOWS = {
     ".github/workflows/" + name for name in (
         "certops-qualification.yml", "certops-real-acme.yml", "certops-acme-native-console.yml", "certops-acme-browser-lifecycle.yml",
@@ -205,13 +208,13 @@ def migration_evidence(value):
 
 def collectable_artifact(run, artifact):
     if run.get("path") == VAULT_CLEANUP_WORKFLOW:
-        return artifact.get("name") in {"linux-vault-cleanup-receipt", "linux-openbao-cleanup-receipt", "linux-staging-receipt"}
+        return artifact.get("name") in {"linux-vault-cleanup-receipt", "linux-openbao-cleanup-receipt", "linux-staging-receipt", "linux-openbao-staging-receipt"}
     # Normal CI also uploads logs, JUnit and other unrelated artifacts. Only its
     # dedicated sanitized AD CS report collection belongs in qualification.
     return run.get('path') != CI_WORKFLOW or artifact.get('name') == 'certops-adcs-api'
 
 def validate_report_workflow(report, workflow):
-    is_linux_receipt = isinstance(report, dict) and report.get("suite") in {VAULT_CLEANUP_SUITE, OPENBAO_CLEANUP_SUITE, LINUX_STAGING_SUITE}
+    is_linux_receipt = isinstance(report, dict) and report.get("suite") in {VAULT_CLEANUP_SUITE, OPENBAO_CLEANUP_SUITE, LINUX_STAGING_SUITE, OPENBAO_STAGING_SUITE}
     if is_linux_receipt != (workflow == VAULT_CLEANUP_WORKFLOW):
         raise ValueError("Installed Linux distribution receipt requires its dedicated producer")
     if workflow == CI_WORKFLOW and (not isinstance(report, dict) or report.get('suite') not in CI_API_SUITES):
@@ -232,10 +235,10 @@ def vault_cleanup_fields(value, store="vault"):
     return {key: facts[key] for key in keys}
 
 
-def linux_staging_fields(value):
+def linux_staging_fields(value, store="vault"):
     facts = value.get("nativeLinuxStagingRestart")
     booleans = ("installedTreeVerified", "stagedAcrossRestart", "activationBlocked", "destinationUnchanged")
-    if (not isinstance(facts, dict) or facts.get("provider") != "vault-kv2"
+    if (not isinstance(facts, dict) or facts.get("provider") != ("openbao-kv2" if store == "openbao" else "vault-kv2")
             or not isinstance(facts.get("artifactId"), str) or not re.fullmatch(r"[1-9][0-9]{0,15}", facts["artifactId"])
             or not isinstance(facts.get("packageSha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", facts["packageSha256"])
             or type(facts.get("authenticatedAttempts")) is not int or facts["authenticatedAttempts"] != 1
@@ -245,6 +248,80 @@ def linux_staging_fields(value):
             or value.get("platform") != "linux" or value.get("architecture") != "x64"):
         raise ValueError("Invalid installed Linux staging evidence")
     return {key: facts[key] for key in (*booleans, "provider", "artifactId", "packageSha256", "authenticatedAttempts", "authenticatedReads", "destinationMutations")}
+
+
+def linux_distribution_capabilities():
+    baseline = json.loads((ROOT / "packages/agent/src/capabilities/qualified-capabilities.json").read_text(encoding="utf-8"))["qualified"]
+    if (not isinstance(baseline, list) or len(set(baseline)) != len(baseline)
+            or any(capability in baseline for capability in LINUX_DISTRIBUTION_CAPABILITIES)):
+        raise ValueError("Combined distribution capabilities overlap the baseline")
+    return [*baseline, *LINUX_DISTRIBUTION_CAPABILITIES]
+
+
+def linux_distribution_proof(facts):
+    if facts.get("packageVersion") != "0.20.0" or facts.get("packageCapabilities") != linux_distribution_capabilities():
+        raise ValueError("Combined distribution proof version or capabilities mismatch")
+    return {"packageVersion": facts["packageVersion"], "packageCapabilities": facts["packageCapabilities"]}
+
+
+def authenticate_linux_distribution_archive(raw, artifact, proof, candidate):
+    if json.loads((ROOT / "packages/agent/package.json").read_text(encoding="utf-8")).get("version") != "0.20.0":
+        raise ValueError("Combined distribution candidate checkout has the wrong package version")
+    if (str(artifact.get("id")) != proof["artifactId"] or artifact.get("digest") != "sha256:" + hashlib.sha256(raw).hexdigest()):
+        raise ValueError("Combined distribution artifact identity or digest mismatch")
+    name = "tokentimer-agent-0.20.0.tgz"
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        entries = archive.infolist()
+        if (len(entries) != 3 or set(archive.namelist()) != {"artifact.json", name, name + ".sha256"}
+                or len(set(archive.namelist())) != 3 or sum(info.file_size for info in entries) > MAX_ARCHIVE
+                or any(info.is_dir() or stat.S_ISLNK(info.external_attr >> 16) for info in entries)
+                or archive.getinfo("artifact.json").file_size > MAX_REPORT or archive.getinfo(name + ".sha256").file_size > 256):
+            raise ValueError("Unexpected combined distribution archive inventory")
+        receipt = json.loads(archive.read("artifact.json"))
+        if (type(receipt.get("schemaVersion")) is not int or receipt["schemaVersion"] != 1 or receipt.get("sourceKind") != "workflow-checkout"
+                or receipt.get("buildMode") != "release-distribution-candidate" or receipt.get("candidateSha") != candidate
+                or receipt.get("packageVersion") != "0.20.0" or receipt.get("archive") != name
+                or receipt.get("capabilities") != linux_distribution_capabilities()
+                or receipt.get("packagerSha256") != hashlib.sha256((ROOT / "packages/agent/scripts/pack-release.js").read_bytes()).hexdigest()
+                or receipt.get("sha256") != proof["packageSha256"]):
+            raise ValueError("Combined distribution candidate receipt mismatch")
+        package = archive.read(name)
+        checksum = hashlib.sha256(package).hexdigest()
+        if checksum != proof["packageSha256"] or archive.read(name + ".sha256").decode("ascii").strip() != f"{checksum}  {name}":
+            raise ValueError("Combined distribution package checksum mismatch")
+        with tarfile.open(fileobj=io.BytesIO(package), mode="r:gz") as tar:
+            members = tar.getmembers()
+            names = [entry.name for entry in members]
+            required = ("package/package.json", "package/src/capabilities/qualified-capabilities.generated.js")
+            if (len(names) > 10000 or sum(entry.size for entry in members) > 256 * 1024 * 1024
+                    or len(names) != len(set(names)) or any(names.count(path) != 1 for path in required)):
+                raise ValueError("Combined package has ambiguous embedded identity")
+            if any(not tar.getmember(path).isfile() or tar.getmember(path).size > MAX_REPORT for path in required):
+                raise ValueError("Combined package embedded identity is not a bounded file")
+            package_metadata = json.load(tar.extractfile(required[0]))
+            source = tar.extractfile(required[1]).read().decode("utf-8")
+            generated = subprocess.run(["node", "-e", "const b=require('./packages/agent/scripts/build-qualified-capabilities');process.stdout.write(b.renderGeneratedModule(JSON.parse(process.argv[1])))", json.dumps(linux_distribution_capabilities())], cwd=ROOT, capture_output=True, text=True, timeout=30, check=True).stdout
+            if package_metadata.get("name") != "@tokentimer/agent" or package_metadata.get("version") != "0.20.0" or source != generated:
+                raise ValueError("Combined package embedded version or capability list mismatch")
+
+
+def validate_linux_distribution_jobs(run, jobs):
+    required = {"release-distribution-candidate", "release-native-vault-cleanup", "release-native-openbao-cleanup",
+                "release-native-linux-staging-vault", "release-native-linux-staging-openbao"}
+    if (run.get("event") != "workflow_dispatch" or not isinstance(jobs, dict) or type(jobs.get("total_count")) is not int or jobs["total_count"] > 100
+            or not isinstance(jobs.get("jobs"), list) or len(jobs["jobs"]) != jobs["total_count"]):
+        raise ValueError("Combined distribution job inventory is incomplete")
+    selected = [job for job in jobs["jobs"] if job.get("name") in required]
+    if len(selected) != len(required) or {job["name"] for job in selected} != required:
+        raise ValueError("Combined distribution jobs are missing or duplicated")
+    for job in selected:
+        if (job.get("run_id") != run.get("id") or job.get("run_attempt") != run.get("run_attempt")
+                or job.get("status") != "completed" or job.get("conclusion") != "success"):
+            raise ValueError("Combined distribution job does not belong to the successful run attempt")
+        if job["name"] != "release-distribution-candidate":
+            teardowns = [step for step in job.get("steps", []) if step.get("name") == "Verify teardown of only the owned host and containers"]
+            if len(teardowns) != 1 or teardowns[0].get("conclusion") != "success":
+                raise ValueError("Combined distribution native teardown is not verified")
 
 
 def authenticate_vault_archive(raw, artifact, proof, candidate, store="vault", *, staging=False):
@@ -1400,10 +1477,18 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
         result = {key: value[key] for key in keys if key in value}
         if value.get("suite") in {VAULT_CLEANUP_SUITE, OPENBAO_CLEANUP_SUITE}:
             store = "openbao" if value.get("suite") == OPENBAO_CLEANUP_SUITE else "vault"
-            result["nativeOpenBaoCleanupRestart" if store == "openbao" else "nativeVaultCleanupRestart"] = vault_cleanup_fields(value, store)
+            field = "nativeOpenBaoCleanupRestart" if store == "openbao" else "nativeVaultCleanupRestart"
+            result[field] = vault_cleanup_fields(value, store)
+            if "packageVersion" in value[field] or "packageCapabilities" in value[field]:
+                result[field].update(linux_distribution_proof(value[field]))
             result.update(platform="linux", architecture="x64")
-        if value.get("suite") == LINUX_STAGING_SUITE:
-            result["nativeLinuxStagingRestart"] = linux_staging_fields(value)
+        if value.get("suite") in {LINUX_STAGING_SUITE, OPENBAO_STAGING_SUITE}:
+            store = "openbao" if value.get("suite") == OPENBAO_STAGING_SUITE else "vault"
+            result["nativeLinuxStagingRestart"] = linux_staging_fields(value, store)
+            if "packageVersion" in value["nativeLinuxStagingRestart"] or "packageCapabilities" in value["nativeLinuxStagingRestart"]:
+                result["nativeLinuxStagingRestart"].update(linux_distribution_proof(value["nativeLinuxStagingRestart"]))
+            elif store == "openbao":
+                raise ValueError("OpenBao staging requires the combined distribution candidate")
             result.update(platform="linux", architecture="x64")
         if "cleanup" in value:
             cleanup = value["cleanup"]
@@ -2392,7 +2477,7 @@ def main(arguments=()):
                 owner_auth.validate_finalizer_run(run, repository, run_id)
             else:
                 validate_run(run, candidate, repository)
-            if profile in {"vault-cleanup", "openbao-cleanup", "linux-staging"} and run.get("path") != VAULT_CLEANUP_WORKFLOW:
+            if profile in {"vault-cleanup", "openbao-cleanup", "linux-staging", "openbao-staging"} and run.get("path") != VAULT_CLEANUP_WORKFLOW:
                 raise ValueError("Installed Linux distribution profile accepts only its dedicated workflow runs")
             data = json.loads(download(endpoint + "/artifacts?per_page=100", token))
             if data.get("total_count", 0) > MAX_ARTIFACTS_PER_RUN:
@@ -2442,20 +2527,21 @@ def main(arguments=()):
                 reports = extract_reports(raw, suites, scopes, database_scopes, authenticate_report=authenticate_elapsed_report) if elapsed_finalizer else extract_reports(raw, suites, scopes, database_scopes)
                 for suffix, report in reports:
                     validate_report_workflow(report, run.get("path"))
-                    if isinstance(report, dict) and report.get("suite") in {VAULT_CLEANUP_SUITE, OPENBAO_CLEANUP_SUITE, LINUX_STAGING_SUITE}:
-                        store = "openbao" if report["suite"] == OPENBAO_CLEANUP_SUITE else "vault"
-                        staging = report["suite"] == LINUX_STAGING_SUITE
+                    if isinstance(report, dict) and report.get("suite") in {VAULT_CLEANUP_SUITE, OPENBAO_CLEANUP_SUITE, LINUX_STAGING_SUITE, OPENBAO_STAGING_SUITE}:
+                        store = "openbao" if report["suite"] in {OPENBAO_CLEANUP_SUITE, OPENBAO_STAGING_SUITE} else "vault"
+                        staging = report["suite"] in {LINUX_STAGING_SUITE, OPENBAO_STAGING_SUITE}
                         if staging:
                             proof_field = "nativeLinuxStagingRestart"
                         else:
                             proof_field = "nativeOpenBaoCleanupRestart" if store == "openbao" else "nativeVaultCleanupRestart"
-                        stem = "linux-staging" if staging else f"linux-{store}-cleanup"
+                        stem = ("linux-openbao-staging" if store == "openbao" else "linux-staging") if staging else f"linux-{store}-cleanup"
                         if proof_field in linux_proofs or artifact.get("name") != stem + "-receipt":
                             raise ValueError("Expected one matching installed Linux distribution receipt")
                         proof = report[proof_field]
+                        combined = "packageVersion" in proof
                         matches = [item for item in data.get("artifacts", [])
                                    if str(item.get("id")) == proof["artifactId"]]
-                        if (len(matches) != 1 or matches[0].get("name") != stem + "-candidate"
+                        if (len(matches) != 1 or matches[0].get("name") != ("release-distribution-candidate" if combined else stem + "-candidate")
                                 or matches[0].get("expired") is not False
                                 or type(matches[0].get("id")) is not int
                                 or type(matches[0].get("size_in_bytes")) is not int
@@ -2467,7 +2553,21 @@ def main(arguments=()):
                         downloaded_bytes += len(package_raw)
                         if archive_count > limits["archives"] or downloaded_bytes > MAX_TOTAL_DOWNLOAD:
                             raise ValueError("Installed Vault candidate exceeds collection budget")
-                        authenticate_vault_archive(package_raw, matches[0], proof, candidate, store, staging=staging)
+                        if combined:
+                            linux_distribution_proof(proof)
+                            candidates = [item for item in data.get("artifacts", []) if item.get("name") == "release-distribution-candidate" and item.get("expired") is False]
+                            if len(candidates) != 1 or candidates[0].get("id") != matches[0]["id"]:
+                                raise ValueError("Expected one shared distribution artifact in this run")
+                            run_attempt = run.get("run_attempt")
+                            if type(run_attempt) is not int or run_attempt < 1 or run.get("id") != run_id:
+                                raise ValueError("Combined distribution run attempt is invalid")
+                            jobs = json.loads(download(f"{endpoint}/attempts/{run_attempt}/jobs?per_page=100", token))
+                            validate_linux_distribution_jobs(run, jobs)
+                            authenticate_linux_distribution_archive(package_raw, matches[0], proof, candidate)
+                        else:
+                            if report["suite"] == OPENBAO_STAGING_SUITE:
+                                raise ValueError("OpenBao staging requires the combined distribution candidate")
+                            authenticate_vault_archive(package_raw, matches[0], proof, candidate, store, staging=staging)
                         linux_proofs[proof_field] = {**proof, "runId": run_id}
                     verify_webhosting_retention_workflow(report, run.get("path"))
                     verify_alive_grace_workflow(report, run.get("path"))
