@@ -5,6 +5,8 @@ const REPOSITORY = "tokentimerch/tokentimer-core";
 const PURPOSE = "certops-azure-keyvault-qualification";
 const LAB_ENV = "certops-azure-keyvault-lab";
 const CLEANUP_ENV = "certops-azure-keyvault-cleanup";
+const IMDS_ENV = "certops-azure-imds-lab";
+const IMDS_WORKFLOW = ".github/workflows/certops-azure-imds-qualification.yml";
 const WORKFLOW = ".github/workflows/certops-azure-keyvault-qualification.yml";
 const GUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const GROUP = /^tt-kvqual-([1-9][0-9]{0,19})-([1-9][0-9]{0,4})$/;
@@ -48,18 +50,55 @@ function requireEnvironment(metadata, branches, name) {
   const reviewers = metadata.protection_rules?.find(
     (rule) => rule.type === "required_reviewers",
   );
-  if (name === LAB_ENV && !reviewers?.reviewers?.length)
+  if ([LAB_ENV, IMDS_ENV].includes(name) && !reviewers?.reviewers?.length)
     fail("AZURE_KV_INDEPENDENT_ENVIRONMENT_APPROVAL_REQUIRED");
   if (name === CLEANUP_ENV && reviewers?.reviewers?.length)
     fail("AZURE_KV_UNATTENDED_CLEANUP_ENVIRONMENT_REQUIRED");
 }
+function allowsLabSelfApproval(env, environment) {
+  if (env.RUNNER_ENVIRONMENT !== "github-hosted" ||
+      (environment === LAB_ENV && env.TT_AZURE_FINAL_PACKAGE === "0")) return false;
+  const decimalId = /^[1-9][0-9]{0,15}$/;
+  const [producerRunId, artifactId, packageSha256] = environment === IMDS_ENV
+    ? [env.TT_IMDS_PACKAGE_RUN_ID, env.TT_IMDS_PACKAGE_ARTIFACT_ID, env.TT_IMDS_PACKAGE_SHA256]
+    : [
+        env.TT_AZURE_FINAL_PACKAGE === "1" ? env.GITHUB_RUN_ID : env.TT_AZURE_EXPIRY_PACKAGE_RUN_ID,
+        env.TT_AZURE_FINAL_PACKAGE === "1" ? env.TT_AZURE_PACKAGE_ARTIFACT_ID : env.TT_AZURE_EXPIRY_PACKAGE_ARTIFACT_ID,
+        env.TT_AZURE_PACKAGE_SHA256,
+      ];
+  if (!decimalId.test(producerRunId || "") || !decimalId.test(artifactId || "") || !/^[a-f0-9]{64}$/.test(packageSha256 || ""))
+    return false;
+
+  // The protected environment supplies this record after dispatch. It expires
+  // within the lab lease and cannot authorize any other run or archive.
+  const raw = env.TT_AZURE_LAB_SELF_APPROVAL;
+  if (typeof raw !== "string" || raw.length > 512) return false;
+  let scope;
+  try {
+    scope = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  const now = Date.now();
+  return scope?.environment === environment &&
+    scope.runId === env.GITHUB_RUN_ID && scope.actorId === env.GITHUB_ACTOR_ID &&
+    scope.headSha === env.GITHUB_SHA && scope.producerRunId === producerRunId &&
+    scope.artifactId === artifactId && scope.packageSha256 === packageSha256 &&
+    Number.isSafeInteger(scope.expiresAt) && scope.expiresAt > now && scope.expiresAt <= now + 7200000;
+}
+
 // Approval history is run-scoped and does not identify a rerun attempt.
-// Accept only a fresh attempt with one independent approval for this environment.
-function requireIndependentApproval(run, approvals, env) {
-  requireTrusted(env);
+function requireLabApproval(run, approvals, env, environment = LAB_ENV) {
+  if (![LAB_ENV, IMDS_ENV].includes(environment))
+    fail("AZURE_KV_APPROVAL_RUN_CONTEXT_INVALID");
+  requireTrusted(env, environment === LAB_ENV);
+  if (environment === IMDS_ENV &&
+      (env.CERTOPS_AZURE_IMDS_LAB_ENABLED !== "true" || env.RUNNER_ENVIRONMENT !== "github-hosted"))
+    fail("AZURE_KV_APPROVAL_RUN_CONTEXT_INVALID");
   const actorId = env.GITHUB_ACTOR_ID;
   if (
     env.GITHUB_RUN_ATTEMPT !== "1" ||
+    env.GITHUB_EVENT_NAME !== "workflow_dispatch" ||
     !/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID || "") ||
     !/^[1-9][0-9]*$/.test(actorId || "") ||
     !Number.isSafeInteger(run?.id) ||
@@ -68,7 +107,7 @@ function requireIndependentApproval(run, approvals, env) {
     run.event !== "workflow_dispatch" ||
     run.head_branch !== "main" ||
     run.head_sha !== env.GITHUB_SHA ||
-    run.path !== WORKFLOW ||
+    run.path !== (environment === IMDS_ENV ? IMDS_WORKFLOW : WORKFLOW) ||
     String(run.actor?.id || "") !== actorId ||
     String(run.triggering_actor?.id || "") !== actorId
   )
@@ -77,19 +116,20 @@ function requireIndependentApproval(run, approvals, env) {
     ? approvals.filter(
         (item) =>
           Array.isArray(item?.environments) &&
-          item.environments.some(
-            (environment) => environment?.name === LAB_ENV,
-          ),
+          item.environments.some((entry) => entry?.name === environment),
       )
     : [];
   if (
     labApprovals.length !== 1 ||
     labApprovals[0].state !== "approved" ||
     !Number.isSafeInteger(labApprovals[0].user?.id) ||
-    labApprovals[0].user.id < 1 ||
-    String(labApprovals[0].user.id) === actorId
+    labApprovals[0].user.id < 1
   )
     fail("AZURE_KV_INDEPENDENT_ENVIRONMENT_APPROVAL_REQUIRED");
+  const selfApproved = String(labApprovals[0].user.id) === actorId;
+  if (selfApproved && (run.status !== "in_progress" || !allowsLabSelfApproval(env, environment)))
+    fail("AZURE_KV_INDEPENDENT_ENVIRONMENT_APPROVAL_REQUIRED");
+  return selfApproved;
 }
 function plan(
   env,
@@ -300,7 +340,8 @@ module.exports = {
   fail,
   requireTrusted,
   requireEnvironment,
-  requireIndependentApproval,
+  IMDS_ENV,
+  requireLabApproval,
   plan,
   ownedGroup,
   ownedResources,
