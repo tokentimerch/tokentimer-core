@@ -45,6 +45,12 @@ function safeFacts(value) {
     value.forced401 === false && value.clockOverridden === false && /^[a-f0-9]{32}$/.test(value.pinnedVersion);
 }
 
+// Caller contract: authenticate the job startedAt (+90 minutes) and the owned
+// resource expiresAt (existing two-hour TTL), reserving at least ten minutes
+// for cleanup. Pass these same absolute budget values to supervisor and worker;
+// Date.now() plus a fresh ceiling is not the original deadline. All descendants
+// must stay in this supervised process group; detached children are not covered.
+// Begin cleanup only after verified drainage; this helper performs no cleanup.
 function runBoundedWorker({ workerPath, budget, signal }) {
   if (!path.isAbsolute(workerPath)) throw new Error("AZURE_EXPIRY_WORKER_PATH_INVALID");
   const deadline = workDeadline(budget || {}, Date.now());
