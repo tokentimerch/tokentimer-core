@@ -68,6 +68,12 @@ function automatic(f, dbPool = pool) {
     profile_issuer_id: f.issuerId, profile_public_metadata: f.publicMetadata }, mode: "real",
     env: { CERTOPS_ENABLED: "true" }, auditWriter: async () => {} });
 }
+async function duplicateObservation(f) {
+  return (await pool.query(`INSERT INTO managed_certificates
+    (workspace_id,source,source_ref,fingerprint_sha256,name,common_name,identity_observed_at,status,not_after,profile_id,key_mode)
+    VALUES($1,'agent_filesystem',$2,$3,'Second location','app.example.com',NOW(),'discovered',$4,$5,'agent-local') RETURNING *`,
+  [f.workspaceId, randomUUID(), f.certificate.fingerprint_sha256, f.certificate.not_after, f.profile.id])).rows[0];
+}
 async function count(f) {
   return Number((await pool.query("SELECT count(*) FROM certificate_enrollments WHERE workspace_id=$1 AND certificate_id=$2", [f.workspaceId, f.certificate.id])).rows[0].count);
 }
@@ -78,6 +84,43 @@ test("manual concurrent mixed-case admission creates one enrollment and one job"
   assert.equal(results.find(result => result.status === "rejected").reason.code, "CERTOPS_ENROLLMENT_OPEN");
   assert.equal(await count(f), 1);
   assert.equal(Number((await pool.query("SELECT count(*) FROM certificate_jobs WHERE workspace_id=$1 AND operation='renew'", [f.workspaceId])).rows[0].count), 1);
+});
+test("one IIS binding excludes duplicate registrations during enrollment and after automatic replacement", async () => {
+  const f = await fixture();
+  const second = await duplicateObservation(f);
+  const target = {
+    ...TARGET, reference: TARGET.reference.toUpperCase(),
+    binding: { ...TARGET.binding, site: TARGET.binding.site.toUpperCase() },
+  };
+  const results = await Promise.allSettled([manual(f), manual(f, { certificateId: second.id, target })]);
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+  assert.equal(results.find(result => result.status === "rejected").reason.code, "CERTOPS_ENROLLMENT_OPEN");
+  const winner = results.find(result => result.status === "fulfilled").value;
+  const [replaced, unchanged] = results[0].status === "fulfilled" ? [f.certificate, second] : [second, f.certificate];
+  await pool.query("UPDATE certificate_enrollments SET state='installed', installed_at=NOW() WHERE id=$1", [winner.enrollmentId]);
+  await pool.query("UPDATE managed_certificates SET fingerprint_sha256=$2, identity_observed_at=NOW() WHERE id=$1", [replaced.id, randomBytes(32).toString("hex")]);
+  assert.equal((await automatic({ ...f, certificate: unchanged })).created, false);
+  const otherPort = { ...TARGET, binding: { ...TARGET.binding, port: 8443 } };
+  assert.ok((await manual(f, { certificateId: unchanged.id, target: otherPort })).enrollmentId);
+});
+test("the same enrollment fields on two agents identify different IIS bindings", async () => {
+  const f = await fixture();
+  const second = await duplicateObservation(f);
+  const otherAgent = (await pool.query(`INSERT INTO certops_agents
+    (workspace_id,agent_id,name,agent_version,protocol_version,credential_prefix,credential_hash,status,declared_target_selectors)
+    SELECT workspace_id,$2,'Second agent',agent_version,protocol_version,$3,$4,'active',declared_target_selectors
+      FROM certops_agents WHERE id=$1 RETURNING id`,
+  [f.agentId, "agent-" + randomUUID(), "ttagent_" + randomBytes(8).toString("hex"), randomBytes(32).toString("hex")])).rows[0].id;
+  await manual(f);
+  assert.ok((await manual(f, { certificateId: second.id, agentId: otherAgent })).enrollmentId);
+});
+test("a terminal denial on another registration does not prevent automatic renewal", async () => {
+  const f = await fixture();
+  const second = await duplicateObservation(f);
+  const denied = await manual(f, { source: "automation", env: { CERTOPS_ENABLED: "true" } });
+  await pool.query("UPDATE certificate_enrollments SET state='denied' WHERE id=$1", [denied.enrollmentId]);
+  await pool.query("UPDATE certificate_jobs SET status='failed' WHERE id=$1", [denied.jobId]);
+  assert.equal((await automatic({ ...f, certificate: second })).created, true);
 });
 test("manual and automatic admissions share the same transaction exclusion", async () => {
   const f = await fixture();
