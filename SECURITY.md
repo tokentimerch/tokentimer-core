@@ -6,7 +6,7 @@ If you discover a security vulnerability in TokenTimer, please report it respons
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Instead, please email: [support@tokentimer.ch](mailto:support@tokentimer.ch)
+Instead, please email: [security@tokentimer.ch](mailto:security@tokentimer.ch)
 
 We will acknowledge your report within 48 hours and work with you to understand and address the issue before any public disclosure.
 
