@@ -25,6 +25,6 @@ function captureOwnershipReceipt(file){
 function removeOwnershipReceipt(file,held){held.assertUnchanged();fs.unlinkSync(file);const dir=fs.openSync(path.dirname(file),fs.constants.O_RDONLY);try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}}
 function assertHostReceiptRemoved(runnerTemp){assert.ok(typeof runnerTemp==="string"&&path.isAbsolute(runnerTemp));require("./certops-linux-systemd-db-ownership").assertNoMarkers(runnerTemp);for(const name of ["certops-linux-systemd-owned.json","certops-linux-systemd-discovery-active.json","certops-linux-systemd-discovery-pre.json"])assert.equal(fs.lstatSync(path.join(runnerTemp,name),{throwIfNoEntry:false}),undefined,"Preserve owned database while installed-host ownership remains unresolved");}
 function assertProtocolHostReceiptRemoved(env = process.env, verify = assertHostReceiptRemoved) {
-  if (env.CERTOPS_REAL_LINUX_SYSTEMD_REQUIRED === "1" || env.TT_CLEANUP_NATIVE_VAULT === "1") verify(env.RUNNER_TEMP);
+  if (env.CERTOPS_REAL_LINUX_SYSTEMD_REQUIRED === "1" || env.TT_CLEANUP_NATIVE_VAULT === "1" || env.TT_CLEANUP_NATIVE_OPENBAO === "1") verify(env.RUNNER_TEMP);
 }
 module.exports={validateWriteFixture,validateHostedEnvironment,claimOwnershipReceipt,captureOwnershipReceipt,removeOwnershipReceipt,assertNoSymlinkTargets,assertHostReceiptRemoved,assertProtocolHostReceiptRemoved};

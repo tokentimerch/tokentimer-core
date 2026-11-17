@@ -38,10 +38,12 @@ test("profiles partition the complete matrix without hiding missing or blocked h
     hosted = subject.selectProfile(matrix, "standard-hosted"),
     domain = subject.selectProfile(matrix, "adcs"),
     extended = subject.selectProfile(matrix, "extended-adcs"),
-    cleanup = subject.selectProfile(matrix, "vault-cleanup");
+    cleanup = subject.selectProfile(matrix, "vault-cleanup"),
+    openbao = subject.selectProfile(matrix, "openbao-cleanup");
   assert.deepEqual(cleanup.selectedSlotIds, ["linux-vault-cleanup-restart"]);
-  assert.deepEqual(full.omittedSlotIds, cleanup.selectedSlotIds);
-  assert.equal(full.selectedSlotIds.length, matrix.slots.length - 1);
+  assert.deepEqual(openbao.selectedSlotIds, ["linux-openbao-cleanup-restart"]);
+  assert.deepEqual(full.omittedSlotIds, [...cleanup.selectedSlotIds, ...openbao.selectedSlotIds]);
+  assert.equal(full.selectedSlotIds.length, matrix.slots.length - 2);
   assert.deepEqual(
     new Set([
       ...hosted.selectedSlotIds,

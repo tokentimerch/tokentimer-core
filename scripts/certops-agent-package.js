@@ -130,8 +130,7 @@ function verifyInstalled(files, installedRoot) {
   assert.ok(stat.isDirectory() && !stat.isSymbolicLink(), "Installed package root must be a real directory");
   assert.deepEqual(inventory(installedRoot), files, "Installed files differ from the verified package");
 }
-const VAULT_CLEANUP = "material-cleanup-vault-kv2-v1";
-function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha, linuxVaultCleanup = false }) {
+function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha, linuxCleanup = null }) {
   assert.match(candidateSha || "", /^[a-f0-9]{40}$/);
   fs.mkdirSync(outputRoot); // Never reuse an artifact from another run.
   const staging = path.join(outputRoot, "build"), artifacts = path.join(outputRoot, "artifacts");
@@ -139,9 +138,9 @@ function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha,
   const input = path.join(staging, "src/capabilities/qualified-capabilities.json");
   const original = JSON.parse(fs.readFileSync(input, "utf8"));
   const selected = [...new Set([...original.qualified, ...capabilities])];
-  if (linuxVaultCleanup) {
-    assert.deepEqual(capabilities, [VAULT_CLEANUP]);
-    assert.equal(original.qualified.includes(VAULT_CLEANUP), false);
+  if (linuxCleanup) {
+    assert.deepEqual(capabilities, [linuxCleanup.capability]);
+    assert.equal(original.qualified.includes(linuxCleanup.capability), false);
     const packageFile = path.join(staging, "package.json");
     const pkg = JSON.parse(fs.readFileSync(packageFile, "utf8"));
     pkg.os = ["linux"];
@@ -152,23 +151,23 @@ function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha,
   fs.writeFileSync(input, JSON.stringify({ qualified: selected }));
   run(process.execPath, [path.join(staging, "scripts/build-qualified-capabilities.js")]);
   run(process.execPath, [path.join(staging, "scripts/pack-release.js"), "--out-dir", artifacts,
-    ...(linuxVaultCleanup ? ["--linux-only"] : [])]);
+    ...(linuxCleanup ? ["--linux-only"] : [])]);
   const names = fs.readdirSync(artifacts).filter(name => name.endsWith(".tgz"));
   assert.equal(names.length, 1, "Expected one candidate agent archive");
   const archive = names[0], sha256 = digest(path.join(artifacts, archive));
   assert.equal(fs.readFileSync(path.join(artifacts, archive + ".sha256"), "utf8").trim(), `${sha256}  ${archive}`);
-  const receipt = { candidateSha, archive, sha256, sourceKind: process.env.GITHUB_ACTIONS === "true" ? "workflow-checkout" : "local-worktree", buildMode: linuxVaultCleanup ? "linux-vault-cleanup-candidate" : "qualification-only-not-release", capabilities: selected, packagerSha256: digest(path.join(sourcePackage, "scripts/pack-release.js")) };
-  if (linuxVaultCleanup) {
+  const receipt = { candidateSha, archive, sha256, sourceKind: process.env.GITHUB_ACTIONS === "true" ? "workflow-checkout" : "local-worktree", buildMode: linuxCleanup?.buildMode ?? "qualification-only-not-release", capabilities: selected, packagerSha256: digest(path.join(sourcePackage, "scripts/pack-release.js")) };
+  if (linuxCleanup) {
     receipt.schemaVersion = 1;
     receipt.version = require(path.join(staging, "package.json")).version;
     receipt.nodeVersion = process.version;
     receipt.npmVersion = run("npm", ["--version"]).trim();
-    require("./certops-linux-published-package").inspectLinuxCandidate(path.join(artifacts, archive), receipt);
+    require("./certops-linux-published-package").inspectLinuxCandidate(path.join(artifacts, archive), receipt, linuxCleanup.provider);
   }
   fs.writeFileSync(path.join(outputRoot, "artifact.json"), JSON.stringify(receipt, null, 2));
   return receipt;
 }
-function buildLinuxVaultCleanup(outputRoot) {
+function buildLinuxCleanup(outputRoot, provider) {
   assert.equal(process.platform, "linux");
   assert.equal(process.env.GITHUB_ACTIONS, "true");
   assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted");
@@ -177,8 +176,11 @@ function buildLinuxVaultCleanup(outputRoot) {
   const root = path.resolve(__dirname, "..");
   assert.equal(run("git", ["rev-parse", "HEAD"], { cwd: root }).trim(), candidateSha);
   assert.equal(run("git", ["status", "--porcelain"], { cwd: root }).trim(), "");
-  return buildCandidate({ sourcePackage: path.join(root, "packages/agent"), outputRoot: path.resolve(outputRoot),
-    capabilities: [VAULT_CLEANUP], candidateSha, linuxVaultCleanup: true });
+  const linuxCleanup = require("./certops-linux-cleanup-case.cjs")(provider);
+  const expectedOutput = path.join(fs.realpathSync(process.env.RUNNER_TEMP), linuxCleanup.directory);
+  assert.equal(path.resolve(outputRoot), expectedOutput);
+  return buildCandidate({ sourcePackage: path.join(root, "packages/agent"), outputRoot: expectedOutput,
+    capabilities: [linuxCleanup.capability], candidateSha, linuxCleanup });
 }
 module.exports = { buildCandidate, extractVerified, verifyInstalled, inventory, digest, verifyAdcsAcceptance, verifyOperatorScope, ADCS_ACCEPTANCE_SCENARIOS };
 if (require.main === module) {
@@ -186,7 +188,8 @@ if (require.main === module) {
     const [sourcePackage, outputRoot, candidateSha, capabilityList] = process.argv.slice(2);
     if (sourcePackage === "verify-adcs") verifyAdcsAcceptance(JSON.parse(fs.readFileSync(outputRoot, "utf8")), JSON.parse(fs.readFileSync(candidateSha, "utf8")), capabilityList);
     else if(sourcePackage === "verify-operator-scope")verifyOperatorScope(JSON.parse(fs.readFileSync(outputRoot,"utf8")),JSON.parse(fs.readFileSync(candidateSha,"utf8")));
-    else if (sourcePackage === "build-linux-vault-cleanup") buildLinuxVaultCleanup(outputRoot);
+    else if (sourcePackage === "build-linux-vault-cleanup") buildLinuxCleanup(outputRoot, "vault-kv2");
+    else if (sourcePackage === "build-linux-openbao-cleanup") buildLinuxCleanup(outputRoot, "openbao-kv2");
     else buildCandidate({ sourcePackage, outputRoot, candidateSha, capabilities: capabilityList.split(",") });
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

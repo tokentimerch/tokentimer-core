@@ -444,16 +444,20 @@ describe("CertOps agent surface E2E", () => {
       await require("./linux-systemd-real-journey")({ pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot });
     });
   }
-  if (process.env.TT_CLEANUP_NATIVE_VAULT === "1") {
-    it("installed Linux Vault cleanup resumes after lost delete response", { timeout: 240000 }, async () => {
+  if (process.env.TT_CLEANUP_NATIVE_VAULT === "1" || process.env.TT_CLEANUP_NATIVE_OPENBAO === "1") {
+    const provider = process.env.TT_CLEANUP_NATIVE_OPENBAO === "1" ? "openbao-kv2" : "vault-kv2";
+    const { testName } = require("../../scripts/certops-linux-cleanup-case.cjs")(provider);
+    it(testName, { timeout: 240000 }, async () => {
       assert.equal(dbAvailable, true);
-      const vaultCleanup = require("../../scripts/certops-linux-published-package").prepareVaultCleanupCandidate();
+      assert.equal(process.env.TT_CLEANUP_PROVIDER, provider);
+      const vaultCleanup = require("../../scripts/certops-linux-published-package").prepareVaultCleanupCandidate(provider);
       const proof = await require("./linux-systemd-real-journey")({
         pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot, vaultCleanup,
       });
       const fs = require("node:fs");
       fs.writeFileSync(path.join(process.env.TT_CLEANUP_EVIDENCE_DIR, "native-facts.json"), JSON.stringify({
-        ...proof, artifactId: vaultCleanup.artifactId, packageSha256: vaultCleanup.archiveSha256,
+        ...proof, ...(provider === "openbao-kv2" ? { provider } : {}),
+        artifactId: vaultCleanup.artifactId, packageSha256: vaultCleanup.archiveSha256,
       }), { flag: "wx" });
     });
   }

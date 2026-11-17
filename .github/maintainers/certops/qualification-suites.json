@@ -1028,6 +1028,26 @@
       "suite": "linux-vault-cleanup-restart",
       "source": "tests/e2e/helpers/linux-vault-cleanup-restart.js",
       "requiredSources": [
+        "scripts/certops-linux-cleanup-case.cjs",
+        ".github/workflows/certops-distribution-qualification.yml",
+        "scripts/run-cleanup-completion-acceptance.cjs",
+        "scripts/certops-agent-package.js",
+        "scripts/certops-linux-published-package.js",
+        "packages/agent/scripts/pack-release.js",
+        "packages/agent/scripts/install-agent.sh",
+        "tests/e2e/certops-agent-e2e.test.js",
+        "tests/e2e/linux-systemd-real-journey.js",
+        "tests/helpers/distribution-lifecycle-fixture.cjs"
+      ],
+      "environmentGroup": "linux-systemd-24-04-environment"
+    },
+    {
+      "id": "linux-openbao-cleanup-restart",
+      "kind": "host",
+      "suite": "linux-openbao-cleanup-restart",
+      "source": "tests/e2e/helpers/linux-vault-cleanup-restart.js",
+      "requiredSources": [
+        "scripts/certops-linux-cleanup-case.cjs",
         ".github/workflows/certops-distribution-qualification.yml",
         "scripts/run-cleanup-completion-acceptance.cjs",
         "scripts/certops-agent-package.js",
@@ -2672,6 +2692,9 @@
     ],
     "vault-cleanup": [
       "vault-cleanup"
+    ],
+    "openbao-cleanup": [
+      "openbao-cleanup"
     ]
   },
   "description": "Certificate lifecycle specifications and implementation mappings. Planned and partial statuses are not execution evidence; qualification requires successful named reports from mapped environments.",
@@ -7893,6 +7916,11 @@
     "linux-vault-cleanup-restart": {
       "evidenceLevel": "real-host",
       "scenarios": ["linux-vault-cleanup-restart"],
+      "capabilityGroup": "linux-systemd-writepath"
+    },
+    "linux-openbao-cleanup-restart": {
+      "evidenceLevel": "real-host",
+      "scenarios": ["linux-openbao-cleanup-restart"],
       "capabilityGroup": "linux-systemd-writepath"
     },
     "dns-provider-errors": {
