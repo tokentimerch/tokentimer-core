@@ -140,6 +140,7 @@ function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha,
   fs.cpSync(sourcePackage, staging, { recursive: true, filter: file => !path.relative(sourcePackage, file).split(path.sep).some(part => ["node_modules", "dist", ".git"].includes(part)) });
   const input = path.join(staging, "src/capabilities/qualified-capabilities.json");
   const original = JSON.parse(fs.readFileSync(input, "utf8"));
+  if (distribution) assert.equal(original.qualified.includes("windows-material-iis-v1"), false, "Windows IIS must remain absent from the qualification baseline");
   const selected = [...new Set([...original.qualified, ...capabilities])];
   if (linuxCleanup) {
     assert.deepEqual(capabilities, linuxCleanup.capabilities ?? [linuxCleanup.capability]);
