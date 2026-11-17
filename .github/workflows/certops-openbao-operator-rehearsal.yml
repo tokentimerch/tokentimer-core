@@ -53,7 +53,8 @@ jobs:
           git merge-base --is-ancestor "$candidate_sha" "$GITHUB_SHA"
           git diff --quiet "$candidate_sha" "$GITHUB_SHA" -- tests/wildcard-vault/ux-lab \
             scripts/certops-agent-package.js scripts/certops-azure-keyvault-package.cjs \
-            scripts/certops-linux-systemd-ownership.js tests/e2e/linux-systemd-real-journey.js
+            scripts/certops-linux-systemd-ownership.js tests/e2e/linux-systemd-real-journey.js \
+            ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/run.ps1'
           git worktree add --detach "$area/candidate" "$candidate_sha"
           test "$(git -C "$area/candidate" rev-parse HEAD)" = "$candidate_sha"
       - name: Build immutable lab images from the selected producer checkout
@@ -84,6 +85,11 @@ jobs:
           export TT_UX_CANDIDATE_REPO="$area/candidate"
           cd "$TT_UX_CANDIDATE_REPO"
           harness=tests/wildcard-vault/ux-lab/azure-operator-review
+          # Update only the reviewed runner after building the producer's images.
+          candidate_sha="$(node -p 'require(process.argv[1]).candidateSha' "$area/identity.json")"
+          expected_harness="$(git diff --name-only "$candidate_sha" "$GITHUB_SHA" -- "$harness/run.ps1")"
+          install -m 0644 "$GITHUB_WORKSPACE/$harness/run.ps1" "$harness/run.ps1"
+          test "$(git diff --name-only HEAD)" = "$expected_harness"
           node "$harness/project-freshness.cjs" "$LAB_PROJECT"
           node - "$area/identity.json" "$area/owned.json" "$LAB_PROJECT" <<'NODE'
           const fs = require("node:fs");
@@ -101,6 +107,9 @@ jobs:
             -CustomerImage "$(cat "$area/customers.iid")" -SuppliedPackageDirectory "$area/package" \
             -SuppliedProducerRunId "$run" -SuppliedArtifactId "$artifact" -SuppliedArchiveSha256 "$digest" \
             > "$area/up.log" 2>&1; then
+            if grep -Eom 1 'Candidate image preflight failed|Supplied package staging failed|Dashboard build failed|Docker Compose failed \([0-9]+\)|Port [0-9]+ is occupied|MethodNotFound' "$area/up.log"; then
+              echo '::notice::An OpenBao setup stage reported an error'
+            fi
             echo '::error::OpenBao owned setup failed; cleanup will run'
             exit 1
           fi
