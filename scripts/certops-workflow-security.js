@@ -92,13 +92,21 @@ function validateWorkflow(workflow,name="workflow"){
     if(name==="certops-dns-fixture-janitor.yml"&&id==="cleanup"&&job.environment!=="certops-dns-cleanup-${{ matrix.provider }}")fail(`${id} independent DNS cleanup requires its dedicated unattended environment`);
     const selectedLane={tooling:"tooling","tooling-windows":"tooling",windows:"windows","agent-stack":"stack"}[id];
     const selectedCondition=name==="certops-qualification.yml"&&selectedLane&&job.needs==="selection"&&job.if===`github.ref == 'refs/heads/main' && needs.selection.outputs.${selectedLane} == 'true'`;
-    const distributionSummary=name==="certops-distribution-qualification.yml"&&id==="functional-summary"&&JSON.stringify(job.needs)===JSON.stringify(["postgres","agent-lab"])&&job.if==="${{ always() && github.ref == 'refs/heads/main' }}";
-    if(job.if!=="github.ref == 'refs/heads/main'"&&!scopedKeyVaultPreflight&&!selectedCondition&&!dnsCondition&&!distributionSummary&&!require("./certops-azure-scope-policy").allowedCondition(name,job.if))fail(`${id} must enforce the exact trusted main reference`);
+    const distributionConditions={postgres:"github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup", "agent-lab":"github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup", "functional-summary":"${{ always() && github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup }}", "native-vault-cleanup":"github.ref == 'refs/heads/main' && inputs.native_vault_cleanup"};
+    const distributionLane=name==="certops-distribution-qualification.yml"&&Object.hasOwn(distributionConditions,id);
+    if(name==="certops-distribution-qualification.yml"&&!distributionLane)fail(`${id} is not a recognized distribution qualification lane`);
+    const distributionCondition=distributionLane&&job.if===distributionConditions[id]&&(id!=="functional-summary"||JSON.stringify(job.needs)===JSON.stringify(["postgres","agent-lab"]))&&events.length===1&&events[0]==="workflow_dispatch"&&workflow.on.workflow_dispatch?.inputs?.native_vault_cleanup?.type==="boolean"&&workflow.on.workflow_dispatch.inputs.native_vault_cleanup.default===false;
+    if(distributionLane&&!distributionCondition)fail(`${id} must enforce its manual selector and exact trusted main reference`);
+    if(job.if!=="github.ref == 'refs/heads/main'"&&!scopedKeyVaultPreflight&&!selectedCondition&&!dnsCondition&&!distributionCondition&&!require("./certops-azure-scope-policy").allowedCondition(name,job.if))fail(`${id} must enforce the exact trusted main reference`);
     if(name==="certops-qualification.yml"&&selectedLane&&!selectedCondition)fail(`${id} must narrow execution to its committed selection output`);
     if(!Number.isInteger(job["timeout-minutes"])||job["timeout-minutes"]<1||job["timeout-minutes"]>(name==="certops-enterprise-adcs-qualification.yml"&&id==="lab"?300:180))fail(`${id} requires a bounded timeout`);
     if(job.permissions)for(const [key,value] of Object.entries(job.permissions))if(!(["contents","actions"].includes(key)&&value==="read")&&!(key==="id-token"&&value==="write"))fail(`${id} expands token permissions`);
     if((permissions["id-token"]==="write"||job.permissions?.["id-token"]==="write")&&!job.environment)fail(`${id} OIDC requires a protected qualification environment`);
     const steps=job.steps||[],runs=steps.map(step=>step.run||"").join("\n");
+    if(name==="certops-distribution-qualification.yml"&&id==="native-vault-cleanup"){
+      const failureUploads=steps.filter(step=>step.with?.name==="linux-vault-cleanup-failure");
+      if(failureUploads.length!==1||failureUploads[0].if!=="failure()"||failureUploads[0].with?.path!=="qualification-results/linux-vault-cleanup-failure.json")fail(`${id} requires only the bounded failure report on failure`);
+    }
     const retainedDay=name==="certops-retention24h-prepare.yml"&&retainedDayProtocol(workflow,id,job);
     const retainedCadence=name==="certops-retention-cadence-prepare.yml"&&retainedCadenceProtocol(workflow,id,job);
     if(name==="certops-retention-cadence-prepare.yml"&&!retainedCadence)fail(`${id} installed timer handoff requires its complete original-artifact-first owned lifecycle`);
@@ -123,7 +131,8 @@ function validateWorkflow(workflow,name="workflow"){
         // an unconditional upload could expose a malformed sensitive report.
         const sanitizedKeyVaultUpload = name === "certops-azure-keyvault-qualification.yml" && step.if === "always() && steps.evidence-check.outcome == 'success'";
         const earlyAdcsFailureUpload = name === "certops-enterprise-adcs-qualification.yml" && id === "lab" && step.if === "failure() && !inputs.debug_mode" && step.with?.path === "qualification-results/enterprise-adcs-real.json" && step["continue-on-error"] === true && step["timeout-minutes"] === 2 && steps.some(other => other !== step && other.uses?.startsWith("actions/upload-artifact@") && other.if === "always()" && other.with?.path === "qualification-results/enterprise-adcs-*.json");
-        if(step.if!=="always()"&&!sanitizedKeyVaultUpload&&!earlyAdcsFailureUpload)fail(`${id} must preserve diagnostic reports after failure`);
+        const vaultFailureUpload=name==="certops-distribution-qualification.yml"&&id==="native-vault-cleanup"&&step.if==="failure()"&&step.with?.name==="linux-vault-cleanup-failure"&&step.with?.path==="qualification-results/linux-vault-cleanup-failure.json";
+        if(step.if!=="always()"&&!sanitizedKeyVaultUpload&&!earlyAdcsFailureUpload&&!vaultFailureUpload)fail(`${id} must preserve diagnostic reports after failure`);
         const artifact=String(step.with?.path||"");if(!artifact||artifact.split(/\r?\n/).some(line=>line&&(!/^((candidate\/)?qualification-results\/)/.test(line)||line.replace(/\\/g,"/").split("/").includes(".."))))fail(`${id} artifacts must stay in the sanitized report directory`);
       }
       if(typeof step.run==="string"&&/\$\{\{\s*(inputs\.|github\.event\.inputs\.)/.test(step.run))fail(`${id} manual inputs must be passed through environment or typed arguments, not interpolated into shell code`);

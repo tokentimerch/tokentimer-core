@@ -160,6 +160,15 @@ test("scheduled janitor remains enabled when new lab provisioning is disabled",(
  for(const condition of [azure.PROVISION_IF,"always()","github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'"]){const bad=structuredClone(workflow);bad.jobs.cleanup.if=condition;assert.ok(azure.validate(name,bad).length);}
  assert.match(azure.PROVISION_IF,/CERTOPS_ADCS_LAB_ENABLED/);assert.doesNotMatch(azure.LIFECYCLE_IF,/CERTOPS_ADCS_LAB_ENABLED/);
 });
+test("distribution selectors retain exact main, manual dispatch and bounded failure evidence",()=>{
+ const fs=require("node:fs"),path=require("node:path"),yaml=require("node:module").createRequire(require.resolve("mocha/package.json"))("js-yaml");
+ const name="certops-distribution-qualification.yml",w=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows",name),"utf8"));
+ assert.deepEqual(validateWorkflow(w,name),[]);
+ for(const id of ["postgres","agent-lab","functional-summary","native-vault-cleanup"]){
+  for(const condition of ["github.ref == 'refs/heads/main'", "github.ref == 'refs/heads/main' || true", "always()"]){const bad=structuredClone(w);bad.jobs[id].if=condition;assert.ok(validateWorkflow(bad,name).length,id);}
+ }
+ for(const change of [x=>{x.on.push={branches:["main"]};},x=>{x.on.workflow_dispatch.inputs.native_vault_cleanup.default=true;},x=>{x.jobs.extra=structuredClone(x.jobs.postgres);},x=>{x.jobs["native-vault-cleanup"].steps.find(s=>s.name==="Preserve the bounded native failure report").with.path="qualification-results/../foreign";},x=>{x.jobs["native-vault-cleanup"].steps.find(s=>s.name==="Preserve the bounded native failure report").if="success()";},x=>{x.jobs["native-vault-cleanup"].steps.find(s=>s.name==="Preserve the bounded native failure report").if="always()";}]){const bad=structuredClone(w);change(bad);assert.ok(validateWorkflow(bad,name).length);}
+});
 test("manual qualification cannot bypass the trusted main reference",()=>{
  const workflow=baseline();
  for(const name of ["certops-qualification.yml","certops-distribution-qualification.yml","certops-enterprise-adcs-qualification.yml"]){
