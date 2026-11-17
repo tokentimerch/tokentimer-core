@@ -146,6 +146,8 @@ node scripts/certops-azure-keyvault-report.js azure-evidence/azure-keyvault-evid
 
 ## Evidence and scope
 
+For the exact-package campaign, dispatch on trusted `main` with `final_package=true` and `package_sha256` set to the expected archive SHA-256. Before Azure authentication, preflight retains the public archive, checksum and receipt as one artifact. The lab and collector use its artifact ID and verify its digest; the scoped verdict requires all 18 scenarios and verified database and Azure resource cleanup from the same run. `productionQualified` and `fullOperatorE2e` remain `false`: complete the separate operator journey and obtain independent acceptance before any gate change.
+
 The protected campaign uses a qualification package, a real owned Azure vault, scoped independent identities and PostgreSQL. It validates provider operations, authorization failures, version pinning, token renewal, interruption and recovery. Its signed-agent service integration is not a complete HTTP/operator and native release qualification. Genuine managed identity, natural access-token expiry and the full installed release journey need their own applicable evidence.
 
 Upload only sanitized, schema-validated evidence and cleanup reports. Never upload tokens, keys, bundles or raw provider responses. Passing tests do not replace verified teardown or independent release acceptance.

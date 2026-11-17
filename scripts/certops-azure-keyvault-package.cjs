@@ -59,7 +59,7 @@ function materializeCandidate(sourcePackage, staging) {
     require("../packages/agent/scripts/build-qualified-capabilities").renderGeneratedModule(CAPABILITIES));
 }
 
-function inspect(directory, candidateSha, expectedSha256) {
+function inspectReceipt(directory, candidateSha, expectedSha256, sourceKind) {
   assert.match(candidateSha || "", /^[a-f0-9]{40}$/);
   assert.match(expectedSha256 || "", /^[a-f0-9]{64}$/);
   const archive = "tokentimer-agent-0.20.0.tgz";
@@ -74,7 +74,7 @@ function inspect(directory, candidateSha, expectedSha256) {
     "npmVersion", "goVersion", "runnerImage", "sha256"].sort());
   assert.equal(receipt.schemaVersion, 1);
   assert.equal(receipt.candidateSha, candidateSha);
-  assert.equal(receipt.sourceKind, "workflow-checkout");
+  assert.equal(receipt.sourceKind, sourceKind);
   assert.equal(receipt.buildMode, "azure-release-candidate");
   assert.equal(receipt.capabilitySource, "isolated-final-manifest");
   assert.equal(receipt.archive, archive);
@@ -94,11 +94,13 @@ function inspect(directory, candidateSha, expectedSha256) {
   return { archive: file, receipt };
 }
 
-function build(output, expectedSha256) {
-  policy.requireTrusted(process.env);
-  assert.match(expectedSha256 || "", /^[a-f0-9]{64}$/);
+function inspect(directory, candidateSha, expectedSha256) {
+  return inspectReceipt(directory, candidateSha, expectedSha256, "workflow-checkout");
+}
+
+function createArchive(output, candidateSha, sourceKind) {
+  assert.equal(process.platform, "linux");
   const run = (command, args) => execFileSync(command, args, { encoding: "utf8", timeout: 600000 }).trim();
-  const candidateSha = process.env.GITHUB_SHA;
   assert.equal(run("git", ["rev-parse", "HEAD"]), candidateSha);
   assert.equal(run("git", ["status", "--porcelain"]), "");
   assert.equal(process.env.GOTOOLCHAIN, "local");
@@ -108,7 +110,7 @@ function build(output, expectedSha256) {
   materializeCandidate(path.resolve("packages/agent"), staging);
   const artifactDirectory = path.join(output, "artifacts");
   run(process.execPath, [path.join(staging, "scripts/pack-release.js"), "--out-dir", artifactDirectory]);
-  const receipt = { candidateSha, sourceKind: "workflow-checkout", buildMode: "azure-release-candidate",
+  const receipt = { candidateSha, sourceKind, buildMode: "azure-release-candidate",
     capabilitySource: "isolated-final-manifest", archive: "tokentimer-agent-0.20.0.tgz", capabilities: CAPABILITIES,
     packagerSha256: packager.digest(path.resolve("packages/agent/scripts/pack-release.js")) };
   receipt.sha256 = packager.digest(path.join(artifactDirectory, receipt.archive));
@@ -119,7 +121,22 @@ function build(output, expectedSha256) {
     nodeVersion: process.version, npmVersion: run("npm", ["--version"]), goVersion: "go1.26.10",
     runnerImage: { os: process.env.ImageOS || "unknown", version: process.env.ImageVersion || "unknown" } });
   fs.writeFileSync(path.join(artifactDirectory, "artifact.json"), JSON.stringify(receipt) + "\n", { flag: "wx" });
-  inspect(artifactDirectory, candidateSha, expectedSha256);
+  return receipt;
+}
+
+function build(output, expectedSha256) {
+  policy.requireTrusted(process.env);
+  assert.match(expectedSha256 || "", /^[a-f0-9]{64}$/);
+  const receipt = createArchive(output, process.env.GITHUB_SHA, "workflow-checkout");
+  inspect(path.join(output, "artifacts"), receipt.candidateSha, expectedSha256);
+  return receipt;
+}
+
+function buildLocal(output) {
+  assert.notEqual(process.env.GITHUB_ACTIONS, "true");
+  const candidateSha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", timeout: 10000 }).trim();
+  const receipt = createArchive(output, candidateSha, "local-worktree");
+  inspectReceipt(path.join(output, "artifacts"), candidateSha, receipt.sha256, "local-worktree");
   return receipt;
 }
 
@@ -146,11 +163,15 @@ function collect(packageDirectory, reportDirectory, output, env = process.env) {
   }) + "\n", { flag: "wx" });
 }
 
-module.exports = { CAPABILITIES, verifyIdentity, inspectArchive, inspect, materializeCandidate, build, collect };
+module.exports = { CAPABILITIES, verifyIdentity, inspectArchive, inspect, materializeCandidate, build, buildLocal, collect };
 if (require.main === module) {
   try {
     const [mode, first, second, third] = process.argv.slice(2);
     if (mode === "build") build(first, second);
+    else if (mode === "build-local") {
+      const receipt = buildLocal(first);
+      console.log(`sha256=${receipt.sha256}`);
+    }
     else if (mode === "collect") collect(first, second, third);
     else if (mode === "verify-release") inspectArchive(first, second);
     else throw new Error("Unknown package action");

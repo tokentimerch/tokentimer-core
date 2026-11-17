@@ -128,6 +128,10 @@ test("scoped collector binds same-run artifact bytes and all scenarios plus data
   assert.equal(verdict.fullOperatorE2e, false);
   assert.ok(verdict.unqualified.includes("full-http-operator-and-real-ca-e2e"));
   assert.ok(verdict.unqualified.includes("azure-imds-managed-identity"));
+  fs.writeFileSync(path.join(f.directory, "artifact.json"), JSON.stringify({ ...f.receipt, sourceKind: "local-worktree" }));
+  assert.throws(() => subject.collect(f.directory, e.directory, path.join(f.root, "local-rejected.json"), env(f)));
+  assert.equal(fs.existsSync(path.join(f.root, "local-rejected.json")), false);
+  fs.writeFileSync(path.join(f.directory, "artifact.json"), JSON.stringify(f.receipt));
   for (const patch of [{ GITHUB_SHA: otherSha }, { GITHUB_RUN_ID: "123" }, { GITHUB_RUN_ATTEMPT: "2" },
     { GITHUB_REF: "refs/heads/feature" }, { GITHUB_EVENT_NAME: "pull_request" },
     { CERTOPS_AZURE_KEYVAULT_LAB_ENABLED: "false" }, { TT_AZURE_PACKAGE_ARTIFACT_ID: "999" },
@@ -144,6 +148,15 @@ test("scoped collector binds same-run artifact bytes and all scenarios plus data
   }
   fs.writeFileSync(path.join(e.directory, "raw.log"), "foreign file");
   assert.throws(() => subject.collect(f.directory, e.directory, path.join(f.root, "rejected.json"), env(f)));
+});
+
+test("local bootstrap cannot run inside Actions or silently create trusted qualification evidence", t => {
+  const f = fixture(t);
+  const result = spawnSync(process.execPath, [__filename.replace(/\.test\.js$/, ".cjs"), "build-local", path.join(f.root, "unused")],
+    { encoding: "utf8", timeout: 10000, windowsHide: true, env: { ...process.env, GITHUB_ACTIONS: "true" } });
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr.trim(), "AZURE_KV_EXACT_PACKAGE_REJECTED");
+  assert.equal(fs.existsSync(path.join(f.root, "unused")), false);
 });
 
 test("release CLI rejects absent or different qualified digest before publishing bytes", t => {
