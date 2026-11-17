@@ -42,6 +42,15 @@ test("refuses a real expiry beyond the externally reserved cleanup window before
   assert.equal(f.counts().reads, 0);
 });
 
+test("reports invalid token times separately from an insufficient observation window", async () => {
+  for (const expiryOffset of [NaN, -1, 20]) {
+    const f = fixture();
+    f.state.expiryOffset = expiryOffset;
+    await assert.rejects(() => _offline.observe(f.options), { code: "AZURE_EXPIRY_TOKEN_TIMES_INVALID" });
+    assert.equal(f.counts().reads, 0);
+  }
+});
+
 test("network failure and a 403 never count as expiration", async () => {
   const network = fixture(); network.state.networkAt = 2;
   await assert.rejects(() => _offline.observe(network.options), { code: "AZURE_EXPIRY_NETWORK_AFTER" });
