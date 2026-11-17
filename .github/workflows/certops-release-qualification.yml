@@ -26,7 +26,6 @@ jobs:
     env:
       CERTOPS_RELEASE_CANDIDATE: ${{ inputs.candidate_sha }}
       CERTOPS_RELEASE_RUN_IDS: ${{ inputs.run_ids }}
-      CERTOPS_QUALIFICATION_PROFILE: ${{ inputs.profile }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,13 +47,15 @@ jobs:
           cache: pnpm
       - name: Install candidate dependencies
         run: pnpm install --frozen-lockfile
-      - name: Collect explicit trusted candidate runs and verify every matrix slot
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - name: Run collector regression tests
         run: |
           node scripts/run-certops-collector-tests.js
           node --test scripts/certops-release-qualification.test.js scripts/certops-arm64-release.test.js
-          python3 scripts/certops-release-collector.py --profile "$CERTOPS_QUALIFICATION_PROFILE"
+      - name: Collect explicit trusted candidate runs and verify every matrix slot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CERTOPS_QUALIFICATION_PROFILE: ${{ inputs.profile }}
+        run: python3 scripts/certops-release-collector.py --profile "$CERTOPS_QUALIFICATION_PROFILE"
       - name: Preserve sanitized consolidated verdict
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
