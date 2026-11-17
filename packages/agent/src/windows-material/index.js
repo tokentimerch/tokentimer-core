@@ -90,6 +90,7 @@ function createWindowsConnector({
   binding,
   stateDir,
   execFileImpl = childProcess.execFile,
+  deployBinding = deployIisBinding,
 }) {
   const target = binding.target.binding;
   const powershellPath = path.join(
@@ -216,7 +217,7 @@ function createWindowsConnector({
     import: (bundle, signal) => invoke("import", bundle, signal),
     async activate(bundle, signal) {
       await invoke("preflight", null, signal);
-      const result = await deployIisBinding({
+      const result = await deployBinding({
         binding: target,
         certificatePem: bundle.certificatePem,
         execFileImpl,
@@ -224,7 +225,14 @@ function createWindowsConnector({
         netshPath: windowsSystem32Tool("netsh"),
         signal,
       });
-      if (!result.ok) throw failure("material_windows_activation_failed");
+      if (!result.ok) {
+        const code = result.code === "WILDCARD_PRECEDENCE_CONFLICT"
+          ? "material_windows_wildcard_conflict"
+          : result.code === "QUERY_FAILED"
+            ? "material_windows_binding_inventory_unavailable"
+            : "material_windows_activation_failed";
+        throw failure(code);
+      }
       await invoke("commit", bundle, signal);
       if (!(await verify(bundle, signal)))
         throw failure("material_windows_binding_mismatch");
