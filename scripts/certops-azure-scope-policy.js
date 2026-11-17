@@ -31,6 +31,7 @@ const KEYVAULT_IF =
   MAIN + " && vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED == 'true'";
 const LIFECYCLE_IF = MAIN;
 function allowedCondition(name, value) {
+  if (name === KV && value === KEYVAULT_IF + " && inputs.final_package") return true;
   return PROVISION.includes(name)
     ? value === (name === KV ? KEYVAULT_IF : PROVISION_IF)
     : LIFECYCLE.includes(name) && value === LIFECYCLE_IF;
@@ -61,7 +62,7 @@ function keyvaultPolicy(name, workflow, errors) {
         "Cleanup must use only its separate identity variables, without spending gates",
       );
   }
-  const expectedJobs = janitor ? ["cleanup"] : ["preflight", "lab"];
+  const expectedJobs = janitor ? ["cleanup"] : ["preflight", "lab", "collect-final-package"];
   if (
     JSON.stringify(Object.keys(workflow.jobs || {})) !==
     JSON.stringify(expectedJobs)
@@ -102,6 +103,36 @@ function keyvaultPolicy(name, workflow, errors) {
       "Only reviewed OIDC variable references are allowed, never Azure credential secrets",
     );
   for (const [id, job] of Object.entries(workflow.jobs || {})) {
+    if (!janitor && id === "collect-final-package") {
+      const steps = job.steps || [];
+      const downloads = steps.filter(step => step.uses?.startsWith("actions/download-artifact@"));
+      const uploads = steps.filter(step => step.uses?.startsWith("actions/upload-artifact@"));
+      if (job.if !== KEYVAULT_IF + " && inputs.final_package" || JSON.stringify(job.needs) !== JSON.stringify(["preflight", "lab"]) ||
+          job.environment || job["continue-on-error"] || JSON.stringify(job.permissions) !== JSON.stringify({contents:"read",actions:"read"}) ||
+          job["timeout-minutes"] !== 5 || downloads.length !== 2 ||
+          JSON.stringify(job.env) !== JSON.stringify({
+            CERTOPS_AZURE_KEYVAULT_LAB_ENABLED: "${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}",
+            TT_AZURE_PACKAGE_ARTIFACT_ID: "${{ needs.preflight.outputs.artifact_id }}",
+            TT_AZURE_PACKAGE_SHA256: "${{ inputs.package_sha256 }}",
+          }) ||
+          downloads[0].with?.["artifact-ids"] !== "${{ needs.preflight.outputs.artifact_id }}" ||
+          downloads[1].with?.["artifact-ids"] !== "${{ needs.lab.outputs.evidence_id }}" ||
+          downloads[0].with?.path !== "${{ runner.temp }}/azure-release-candidate/artifacts" ||
+          downloads[1].with?.path !== "${{ runner.temp }}/azure-final-evidence" ||
+          downloads.some(step => step.with?.["digest-mismatch"] !== "error" || step.with?.["merge-multiple"] !== true) ||
+          uploads.length !== 1 || uploads[0].if !== "always()" ||
+          uploads[0].with?.name !== "azure-keyvault-final-package-verdict" ||
+          uploads[0].with?.path !== "qualification-results/azure-keyvault-final-package-verdict.json" ||
+          uploads[0].with?.["if-no-files-found"] !== "error" ||
+          !steps.some(step => step.run?.includes("certops-azure-keyvault-package.cjs collect")) ||
+          steps.some(step => step["continue-on-error"] || (step.uses && !/^[^@]+@[a-f0-9]{40}$/.test(step.uses)) ||
+            (step.uses?.startsWith("actions/checkout@") && (step.with?.["persist-credentials"] !== false || step.with?.ref || step.with?.repository))) ||
+          /\bAZURE_(?:CLIENT|TENANT|SUBSCRIPTION|KV)_|secrets\./.test(JSON.stringify(job)) ||
+          steps.some(step => /login-oidc|lab\.js|\baz\s/.test(step.run || ""))) {
+        errors.push("Exact-package collector must be read-only and bind both immutable same-run artifacts");
+      }
+      continue;
+    }
     const preflight = !janitor && id === "preflight";
     if (preflight) {
       if (
@@ -121,7 +152,9 @@ function keyvaultPolicy(name, workflow, errors) {
       if (
         !first?.run?.includes('test "$GITHUB_REF" = refs/heads/main') ||
         !first.run.includes('test "$GITHUB_EVENT_NAME" = workflow_dispatch') ||
-        !first.run.includes('test "$OPT_IN" = true')
+        !first.run.includes('test "$OPT_IN" = true') ||
+        !first.run.includes('[[ "$PACKAGE_SHA256" =~ ^[a-f0-9]{64}$ ]]') ||
+        first.env?.FINAL_PACKAGE !== "${{ inputs.final_package }}" || first.env?.PACKAGE_SHA256 !== "${{ inputs.package_sha256 }}"
       )
         errors.push(
           "Preflight must reject wrong refs and missing opt-in before checkout",
@@ -134,6 +167,19 @@ function keyvaultPolicy(name, workflow, errors) {
         )
       )
         errors.push("Preflight cannot authenticate or mutate Azure");
+      const build = job.steps?.find(step => step.name === "Build and verify the universal package before Azure authentication");
+      const upload = job.steps?.find(step => step.id === "package");
+      const scan = job.steps?.find(step => step.name === "Scan the retained candidate for fixed High and Critical advisories");
+      if (build?.if !== "inputs.final_package" || build.env?.PACKAGE_SHA256 !== "${{ inputs.package_sha256 }}" ||
+          !build.run?.includes("certops-azure-keyvault-package.cjs build") ||
+          scan?.if !== "inputs.final_package" || !scan.run?.includes("acb14a030010fe9bdb9594b4ae108d9d14ef2f926d936aa0916dc62c89c058ea") ||
+          !scan.run?.includes("--fail-on high --only-fixed") || job.steps.indexOf(scan) <= job.steps.indexOf(build) ||
+          upload?.if !== "inputs.final_package" || upload.with?.name !== "azure-release-candidate" ||
+          upload.with?.path !== "qualification-results/azure-release-candidate/" ||
+          upload.with?.["if-no-files-found"] !== "error" || job.steps.indexOf(upload) <= job.steps.indexOf(scan) ||
+          job.outputs?.artifact_id !== "${{ steps.package.outputs.artifact-id }}") {
+        errors.push("Exact-package preflight must verify one expected digest before retaining the candidate");
+      }
     } else {
       if (!allowedCondition(name, job.if))
         errors.push(
@@ -261,6 +307,17 @@ function keyvaultPolicy(name, workflow, errors) {
           "Cleanup authentication, deletion and private staging scrub must remain mandatory",
         );
       if (!janitor) {
+        const candidate = steps.filter(step => step.uses?.startsWith("actions/download-artifact@"));
+        const login = steps.findIndex(step => step.run === "./infra/certops-azure-keyvault/login-oidc.ps1");
+        if (candidate.length !== 1 || candidate[0].if !== "inputs.final_package" ||
+            candidate[0].with?.["artifact-ids"] !== "${{ needs.preflight.outputs.artifact_id }}" ||
+            candidate[0].with?.path !== "${{ runner.temp }}/azure-release-candidate/artifacts" ||
+            candidate[0].with?.["digest-mismatch"] !== "error" || candidate[0].with?.["merge-multiple"] !== true ||
+            steps.indexOf(candidate[0]) >= login || job.env?.TT_AZURE_FINAL_PACKAGE !== "${{ inputs.final_package && '1' || '0' }}" ||
+            job.env?.TT_AZURE_PACKAGE_ARTIFACT_ID !== "${{ needs.preflight.outputs.artifact_id }}" ||
+            job.env?.TT_AZURE_PACKAGE_SHA256 !== "${{ inputs.package_sha256 }}") {
+          errors.push("Exact-package lab must consume the immutable selected artifact before authentication");
+        }
         for (const command of [
           "node infra/certops-azure-keyvault/lab.js provision",
           "node tests/e2e/azure-keyvault-real.cjs prepare",
@@ -324,7 +381,9 @@ function keyvaultPolicy(name, workflow, errors) {
     const inputs = workflow.on?.workflow_dispatch?.inputs;
     if (
       !inputs ||
-      Object.keys(inputs).join() !== "location" ||
+      Object.keys(inputs).join() !== "location,final_package,package_sha256" ||
+      inputs.final_package?.type !== "boolean" || inputs.final_package.default !== false ||
+      inputs.package_sha256?.type !== "string" || inputs.package_sha256.default !== "" ||
       inputs.location.type !== "choice" ||
       JSON.stringify(inputs.location.options) !==
         JSON.stringify(["swedencentral", "westeurope", "northeurope"])

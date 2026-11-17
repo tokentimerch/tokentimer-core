@@ -315,6 +315,16 @@ jobs:
             agent-dist/native-security.json
           if-no-files-found: warn
 
+      - name: Require exact qualified 0.20.0 agent bytes
+        if: github.ref == 'refs/tags/v0.20.0'
+        env:
+          QUALIFIED_AGENT_SHA256: ${{ vars.CORE_0200_QUALIFIED_AGENT_SHA256 }}
+        run: |
+          set -euo pipefail
+          archive=(agent-dist/*.tgz)
+          test "${#archive[@]}" -eq 1
+          node scripts/certops-azure-keyvault-package.cjs verify-release "${archive[0]}" "$QUALIFIED_AGENT_SHA256"
+
       - name: Upload agent release artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

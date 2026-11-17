@@ -7,6 +7,14 @@ on:
         type: choice
         options: [swedencentral, westeurope, northeurope]
         default: swedencentral
+      final_package:
+        description: Qualify one retained universal 0.20.0 package with OpenBao and Azure enabled
+        type: boolean
+        default: false
+      package_sha256:
+        description: Required expected universal package SHA-256 when final_package is selected
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -15,18 +23,23 @@ concurrency:
 jobs:
   preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     permissions:
       contents: read
       actions: read
+    outputs:
+      artifact_id: ${{ steps.package.outputs.artifact-id }}
     steps:
       - name: Reject untrusted refs and absent spending opt-in before any credentials
         env:
           OPT_IN: ${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}
+          FINAL_PACKAGE: ${{ inputs.final_package }}
+          PACKAGE_SHA256: ${{ inputs.package_sha256 }}
         run: |
           test "$GITHUB_REF" = refs/heads/main || { echo 'Trusted main required'; exit 1; }
           test "$GITHUB_EVENT_NAME" = workflow_dispatch || exit 1
           test "$OPT_IN" = true || { echo 'Explicit Key Vault lab opt-in required'; exit 1; }
+          if [ "$FINAL_PACKAGE" = true ]; then [[ "$PACKAGE_SHA256" =~ ^[a-f0-9]{64}$ ]]; fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -38,12 +51,54 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CERTOPS_AZURE_KEYVAULT_LAB_ENABLED: ${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}
         run: node infra/certops-azure-keyvault/lab.js github-preflight
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        if: inputs.final_package
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - name: Build and verify the universal package before Azure authentication
+        if: inputs.final_package
+        env:
+          GOTOOLCHAIN: local
+          CERTOPS_AZURE_KEYVAULT_LAB_ENABLED: ${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}
+          PACKAGE_SHA256: ${{ inputs.package_sha256 }}
+        run: |
+          set -euo pipefail
+          source="$RUNNER_TEMP/azure-release-candidate"
+          node scripts/certops-azure-keyvault-package.cjs build "$source" "$PACKAGE_SHA256"
+          destination=qualification-results/azure-release-candidate
+          mkdir -p "$destination"
+          cp "$source/artifacts/artifact.json" "$source/artifacts/"*.tgz "$source/artifacts/"*.sha256 "$destination/"
+      - name: Scan the retained candidate for fixed High and Critical advisories
+        if: inputs.final_package
+        env:
+          GRYPE_CHECK_FOR_APP_UPDATE: 'false'
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            https://github.com/anchore/grype/releases/download/v0.112.0/grype_0.112.0_linux_amd64.tar.gz \
+            -o "$RUNNER_TEMP/grype.tar.gz"
+          echo "acb14a030010fe9bdb9594b4ae108d9d14ef2f926d936aa0916dc62c89c058ea  $RUNNER_TEMP/grype.tar.gz" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/core-grype" "$RUNNER_TEMP/agent-extracted"
+          tar -xzf "$RUNNER_TEMP/grype.tar.gz" -C "$RUNNER_TEMP/core-grype" grype
+          tar -xzf qualification-results/azure-release-candidate/tokentimer-agent-0.20.0.tgz -C "$RUNNER_TEMP/agent-extracted"
+          "$RUNNER_TEMP/core-grype/grype" "dir:$RUNNER_TEMP/agent-extracted" --fail-on high --only-fixed --quiet
+      - name: Retain only the verified universal candidate
+        id: package
+        if: inputs.final_package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: azure-release-candidate
+          path: qualification-results/azure-release-candidate/
+          if-no-files-found: error
   lab:
     needs: preflight
     if: github.ref == 'refs/heads/main' && vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: certops-azure-keyvault-lab
     timeout-minutes: 90
+    outputs:
+      evidence_id: ${{ steps.evidence.outputs.artifact-id }}
     permissions:
       contents: read
       actions: read
@@ -74,6 +129,9 @@ jobs:
       DB_NAME: kvqual
       TT_REAL_AZURE: "1"
       TT_AZURE_QUALIFICATION_REQUIRED: "1"
+      TT_AZURE_FINAL_PACKAGE: ${{ inputs.final_package && '1' || '0' }}
+      TT_AZURE_PACKAGE_ARTIFACT_ID: ${{ needs.preflight.outputs.artifact_id }}
+      TT_AZURE_PACKAGE_SHA256: ${{ inputs.package_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -88,16 +146,25 @@ jobs:
         with:
           version: "11.28.8"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: ${{ !inputs.final_package }}
         with:
           go-version: "1.27.3"
           cache: false
       - run: pnpm install --frozen-lockfile
+      - name: Download the exact candidate selected before credentials
+        if: inputs.final_package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.preflight.outputs.artifact_id }}
+          path: ${{ runner.temp }}/azure-release-candidate/artifacts
+          merge-multiple: true
+          digest-mismatch: error
       - name: Authenticate isolated provisioning identity using OIDC
         shell: pwsh
         run: ./infra/certops-azure-keyvault/login-oidc.ps1
       - name: Check actual permissions and provision only the run-owned vault and identities
         run: node infra/certops-azure-keyvault/lab.js provision
-      - name: Build the exact qualification-only package and prepare real identities
+      - name: Prepare the verified package and real identities
         run: node tests/e2e/azure-keyvault-real.cjs prepare
       - name: Run existing Azure baseline against Microsoft Azure
         run: node --test tests/e2e/material-providers-real.test.js
@@ -120,6 +187,7 @@ jobs:
         if: always()
         run: node scripts/certops-azure-keyvault-report.js --artifact-check qualification-results
       - name: Upload only sanitized evidence, never packages or credential files
+        id: evidence
         if: always() && steps.evidence-check.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -127,4 +195,47 @@ jobs:
           path: |
             qualification-results/azure-keyvault-evidence.json
             qualification-results/azure-keyvault-cleanup.json
+          if-no-files-found: error
+
+  collect-final-package:
+    needs: [preflight, lab]
+    if: github.ref == 'refs/heads/main' && vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED == 'true' && inputs.final_package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    env:
+      CERTOPS_AZURE_KEYVAULT_LAB_ENABLED: ${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}
+      TT_AZURE_PACKAGE_ARTIFACT_ID: ${{ needs.preflight.outputs.artifact_id }}
+      TT_AZURE_PACKAGE_SHA256: ${{ inputs.package_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.preflight.outputs.artifact_id }}
+          path: ${{ runner.temp }}/azure-release-candidate/artifacts
+          merge-multiple: true
+          digest-mismatch: error
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.lab.outputs.evidence_id }}
+          path: ${{ runner.temp }}/azure-final-evidence
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Collect the exact package, all Azure scenarios and owned teardown
+        run: |
+          node scripts/certops-azure-keyvault-package.cjs collect \
+            "$RUNNER_TEMP/azure-release-candidate/artifacts" "$RUNNER_TEMP/azure-final-evidence" \
+            qualification-results/azure-keyvault-final-package-verdict.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: azure-keyvault-final-package-verdict
+          path: qualification-results/azure-keyvault-final-package-verdict.json
           if-no-files-found: error
