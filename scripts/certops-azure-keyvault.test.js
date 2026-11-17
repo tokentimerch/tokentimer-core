@@ -1055,9 +1055,17 @@ test("final Azure package workflow preserves immutable identity, pre-credential 
   const guard = release.findIndex(step => step.name === "Require exact qualified 0.20.0 agent bytes");
   const upload = release.findIndex(step => step.with?.name === "agent-release");
   assert.ok(guard >= 0 && guard < upload);
-  assert.equal(release[guard].if, "github.ref == 'refs/tags/v0.20.0'");
+  assert.equal(release[guard].if, "github.ref == 'refs/tags/v0.20.0' || startsWith(github.ref, 'refs/tags/v0.20.0-')");
   assert.equal(release[guard].env.QUALIFIED_AGENT_SHA256, "${{ vars.CORE_0200_QUALIFIED_AGENT_SHA256 }}");
   assert.match(release[guard].run, /certops-azure-keyvault-package\.cjs verify-release/);
+  const acceptance = release.findIndex(step => step.name === "Require reviewed 0.20.0 package acceptance");
+  const pack = release.findIndex(step => step.name === "Pack agent release tarball");
+  assert.ok(acceptance >= 0 && acceptance < pack && pack < guard);
+  assert.equal(release[acceptance].if, release[guard].if);
+  assert.match(release[acceptance].run, /certops-agent-acceptance\.cjs/);
+  assert.equal(workflow("release.yml").jobs["build-and-push-docker"].needs, "pack-agent");
+  assert.equal(workflow("release.yml").jobs["pack-agent"].env.GOFLAGS, "-buildvcs=false");
+  assert.match(release.find(step => step.name === "Pack agent release tarball").run, /test "\$\(npm --version\)" = 11\.19\.1/);
 });
 test("offline fault-boundary contract preserves TLS and only loses successful owned responses", async (t) => {
   const https = require("node:https"),

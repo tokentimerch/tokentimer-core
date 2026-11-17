@@ -6,6 +6,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const packager = require("./certops-agent-package");
 const policy = require("../infra/certops-azure-keyvault/policy");
+const TOOLCHAIN = Object.freeze({ nodeVersion: "v24.22.3", npmVersion: "11.19.1", goVersion: "go1.26.10", goFlags: "-buildvcs=false" });
 
 const CAPABILITIES = Object.freeze([
   "windows-cert-store-v1", "iis-binding-v1", "trust-anchor-deploy-v1", "adcs-enroll-v1",
@@ -71,7 +72,7 @@ function inspectReceipt(directory, candidateSha, expectedSha256, sourceKind) {
   const receipt = JSON.parse(fs.readFileSync(path.join(directory, "artifact.json"), "utf8"));
   assert.deepEqual(Object.keys(receipt).sort(), ["schemaVersion", "candidateSha", "sourceKind", "buildMode",
     "capabilitySource", "archive", "packageVersion", "capabilities", "packagerSha256", "nodeVersion",
-    "npmVersion", "goVersion", "runnerImage", "sha256"].sort());
+    "npmVersion", "goVersion", "goFlags", "runnerImage", "sha256"].sort());
   assert.equal(receipt.schemaVersion, 1);
   assert.equal(receipt.candidateSha, candidateSha);
   assert.equal(receipt.sourceKind, sourceKind);
@@ -81,9 +82,7 @@ function inspectReceipt(directory, candidateSha, expectedSha256, sourceKind) {
   assert.equal(receipt.packageVersion, "0.20.0");
   assert.deepEqual(receipt.capabilities, CAPABILITIES);
   assert.equal(receipt.packagerSha256, packager.digest(path.resolve(__dirname, "../packages/agent/scripts/pack-release.js")));
-  assert.match(receipt.nodeVersion, /^v24\.[0-9]+\.[0-9]+$/);
-  assert.match(receipt.npmVersion, /^[0-9]+\.[0-9]+\.[0-9]+$/);
-  assert.equal(receipt.goVersion, "go1.26.10");
+  for (const [name, value] of Object.entries(TOOLCHAIN)) assert.equal(receipt[name], value);
   assert.deepEqual(Object.keys(receipt.runnerImage).sort(), ["os", "version"]);
   assert.match(receipt.runnerImage.os, /^[A-Za-z0-9_.-]{1,64}$/);
   assert.match(receipt.runnerImage.version, /^[A-Za-z0-9_.-]{1,64}$/);
@@ -104,7 +103,10 @@ function createArchive(output, candidateSha, sourceKind) {
   assert.equal(run("git", ["rev-parse", "HEAD"]), candidateSha);
   assert.equal(run("git", ["status", "--porcelain"]), "");
   assert.equal(process.env.GOTOOLCHAIN, "local");
-  assert.equal(run("go", ["env", "GOVERSION"]), "go1.26.10");
+  assert.equal(process.version, TOOLCHAIN.nodeVersion);
+  assert.equal(run("npm", ["--version"]), TOOLCHAIN.npmVersion);
+  assert.equal(run("go", ["env", "GOVERSION"]), TOOLCHAIN.goVersion);
+  assert.equal(run("go", ["env", "GOFLAGS"]), TOOLCHAIN.goFlags);
   fs.mkdirSync(output);
   const staging = path.join(output, "build");
   materializeCandidate(path.resolve("packages/agent"), staging);
@@ -117,8 +119,11 @@ function createArchive(output, candidateSha, sourceKind) {
   const native = path.join(output, "native-provenance.json");
   run(process.execPath, ["scripts/verify-agent-native-package.js", "--archive", path.join(artifactDirectory, receipt.archive),
     "--go-version", "1.26.10", "--source-sha", candidateSha, "--out", native]);
+  const provenance = JSON.parse(fs.readFileSync(native, "utf8"));
+  assert.ok(provenance.binaries.every(binary => Object.keys(binary.settings).every(key => !/^vcs(?:\.|$)/.test(key))));
   Object.assign(receipt, { schemaVersion: 1, buildMode: "azure-release-candidate", packageVersion: "0.20.0",
     nodeVersion: process.version, npmVersion: run("npm", ["--version"]), goVersion: "go1.26.10",
+    goFlags: run("go", ["env", "GOFLAGS"]),
     runnerImage: { os: process.env.ImageOS || "unknown", version: process.env.ImageVersion || "unknown" } });
   fs.writeFileSync(path.join(artifactDirectory, "artifact.json"), JSON.stringify(receipt) + "\n", { flag: "wx" });
   return receipt;
@@ -163,7 +168,7 @@ function collect(packageDirectory, reportDirectory, output, env = process.env) {
   }) + "\n", { flag: "wx" });
 }
 
-module.exports = { CAPABILITIES, verifyIdentity, inspectArchive, inspect, materializeCandidate, build, buildLocal, collect };
+module.exports = { CAPABILITIES, TOOLCHAIN, verifyIdentity, inspectArchive, inspect, materializeCandidate, build, buildLocal, collect };
 if (require.main === module) {
   try {
     const [mode, first, second, third] = process.argv.slice(2);

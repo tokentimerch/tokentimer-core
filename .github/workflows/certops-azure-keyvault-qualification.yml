@@ -45,7 +45,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "24.22.3"
       - name: Require independently approved main-only environment and active cleanup
         env:
           GH_TOKEN: ${{ github.token }}
@@ -60,6 +60,7 @@ jobs:
         if: inputs.final_package
         env:
           GOTOOLCHAIN: local
+          GOFLAGS: -buildvcs=false
           CERTOPS_AZURE_KEYVAULT_LAB_ENABLED: ${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}
           PACKAGE_SHA256: ${{ inputs.package_sha256 }}
         run: |
@@ -138,7 +139,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "24.22.3"
       - name: Verify independent approval for this fresh run before Azure authentication
         id: independent-approval
         run: node infra/certops-azure-keyvault/lab.js github-approval
@@ -215,7 +216,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: '24'
+          node-version: '24.22.3'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           artifact-ids: ${{ needs.preflight.outputs.artifact_id }}

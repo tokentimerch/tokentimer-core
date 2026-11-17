@@ -171,6 +171,8 @@ function keyvaultPolicy(name, workflow, errors) {
       const upload = job.steps?.find(step => step.id === "package");
       const scan = job.steps?.find(step => step.name === "Scan the retained candidate for fixed High and Critical advisories");
       if (build?.if !== "inputs.final_package" || build.env?.PACKAGE_SHA256 !== "${{ inputs.package_sha256 }}" ||
+          build.env?.GOTOOLCHAIN !== "local" || build.env?.GOFLAGS !== "-buildvcs=false" ||
+          !job.steps.some(step => step.uses?.startsWith("actions/setup-node@") && step.with?.["node-version"] === "24.22.3") ||
           !build.run?.includes("certops-azure-keyvault-package.cjs build") ||
           scan?.if !== "inputs.final_package" || !scan.run?.includes("acb14a030010fe9bdb9594b4ae108d9d14ef2f926d936aa0916dc62c89c058ea") ||
           !scan.run?.includes("--fail-on high --only-fixed") || job.steps.indexOf(scan) <= job.steps.indexOf(build) ||

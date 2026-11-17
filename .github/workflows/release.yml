@@ -13,6 +13,7 @@ env:
 jobs:
   # Stage 1a: scan the published architecture, then publish its unchanged OCI index.
   build-and-push-docker:
+    needs: pack-agent
     runs-on: ubuntu-latest
     env:
       GRYPE_CHECK_FOR_APP_UPDATE: "false"
@@ -259,12 +260,23 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
+      pull-requests: read
     env:
       GO_VERSION: "1.26.10"
       GOTOOLCHAIN: local
+      GOFLAGS: -buildvcs=false
       GRYPE_CHECK_FOR_APP_UPDATE: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up the candidate Node and npm toolchain
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.22.3'
 
       - name: Set up pinned patched Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -272,9 +284,19 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
+      - name: Require reviewed 0.20.0 package acceptance
+        if: github.ref == 'refs/tags/v0.20.0' || startsWith(github.ref, 'refs/tags/v0.20.0-')
+        env:
+          QUALIFIED_AGENT_SHA256: ${{ vars.CORE_0200_QUALIFIED_AGENT_SHA256 }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/certops-agent-acceptance.cjs .github/releases/0.20.0-agent-acceptance.json "$QUALIFIED_AGENT_SHA256"
+
       - name: Pack agent release tarball
         run: |
           test "$(go env GOVERSION)" = "go${GO_VERSION}"
+          test "$(go env GOFLAGS)" = -buildvcs=false
+          test "$(node --version)" = v24.22.3
+          test "$(npm --version)" = 11.19.1
           node packages/agent/scripts/pack-release.js --out-dir agent-dist
 
       - name: Verify shipped native toolchain and provenance
@@ -316,7 +338,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Require exact qualified 0.20.0 agent bytes
-        if: github.ref == 'refs/tags/v0.20.0'
+        if: github.ref == 'refs/tags/v0.20.0' || startsWith(github.ref, 'refs/tags/v0.20.0-')
         env:
           QUALIFIED_AGENT_SHA256: ${{ vars.CORE_0200_QUALIFIED_AGENT_SHA256 }}
         run: |

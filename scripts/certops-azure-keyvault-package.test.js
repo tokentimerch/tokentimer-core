@@ -33,7 +33,7 @@ function fixture(t, { capabilities = subject.CAPABILITIES, version = "0.20.0", o
     schemaVersion: 1, candidateSha: sha, sourceKind: "workflow-checkout", buildMode: "azure-release-candidate",
     capabilitySource: "isolated-final-manifest", archive, packageVersion: "0.20.0", capabilities: subject.CAPABILITIES,
     packagerSha256: packager.digest(path.join(__dirname, "../packages/agent/scripts/pack-release.js")),
-    nodeVersion: "v24.18.0", npmVersion: "11.6.2", goVersion: "go1.26.10",
+    ...subject.TOOLCHAIN,
     runnerImage: { os: "ubuntu24", version: "20261116.1.0" }, sha256: digest,
   };
   fs.writeFileSync(path.join(directory, "artifact.json"), JSON.stringify(receipt));
@@ -99,7 +99,7 @@ test("archive and receipt accept only the exact final version, source and bytes"
   }
   for (const patch of [{ sourceKind: "local-worktree" }, { buildMode: "qualification-only-not-release" },
     { packageVersion: "0.19.0" }, { goVersion: "go1.27.3" }, { capabilitySource: "unreviewed" },
-    { nodeVersion: "v22.0.0" }, { extra: "foreign" }]) {
+    { nodeVersion: "v24.18.0" }, { npmVersion: "11.6.2" }, { goFlags: "" }, { extra: "foreign" }]) {
     fs.writeFileSync(path.join(f.directory, "artifact.json"), JSON.stringify({ ...f.receipt, ...patch }));
     assert.throws(() => subject.inspect(f.directory, sha, f.digest));
   }
