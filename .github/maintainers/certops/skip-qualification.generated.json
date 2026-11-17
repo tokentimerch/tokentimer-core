@@ -877,7 +877,7 @@
     {
       "id": "7b2ab3b4f83534cb1504",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 483,
+      "line": 486,
       "name": "happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack",
       "environment": "core-protocol-stack",
       "workflow": ".github/workflows/certops-qualification.yml"
@@ -885,7 +885,7 @@
     {
       "id": "3caaac79423f621511de",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 599,
+      "line": 602,
       "name": "tamper: mutating a signed field fails agent-side verification",
       "environment": "core-protocol-stack",
       "workflow": ".github/workflows/certops-qualification.yml"
@@ -893,7 +893,7 @@
     {
       "id": "6429a45a3d220ddac5ba",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 613,
+      "line": 616,
       "name": "bootstrap token reuse is rejected with 401",
       "environment": "core-protocol-stack",
       "workflow": ".github/workflows/certops-qualification.yml"
@@ -901,7 +901,7 @@
     {
       "id": "5858eb73c41787ba2fbf",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 631,
+      "line": 634,
       "name": "bad agent credential is rejected with 401",
       "environment": "core-protocol-stack",
       "workflow": ".github/workflows/certops-qualification.yml"
@@ -909,7 +909,7 @@
     {
       "id": "95791b18f12fc411afa8",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 647,
+      "line": 650,
       "name": "retired agent gets 410 on heartbeat, claim, and results",
       "environment": "core-protocol-stack",
       "workflow": ".github/workflows/certops-qualification.yml"
@@ -917,7 +917,7 @@
     {
       "id": "3a1aff6c52424cf713a9",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 682,
+      "line": 685,
       "name": "workspace kill switch blocks claims with 409",
       "environment": "core-protocol-stack",
       "workflow": ".github/workflows/certops-qualification.yml"
@@ -925,7 +925,7 @@
     {
       "id": "dac270688885dadbf536",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 705,
+      "line": 708,
       "name": "evidence is accepted; private key material is rejected with 422",
       "environment": "core-protocol-stack",
       "workflow": ".github/workflows/certops-qualification.yml"
@@ -933,7 +933,7 @@
     {
       "id": "8783b84579370930cc83",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 747,
+      "line": 750,
       "name": "second claim returns no jobs while the lease is held",
       "environment": "core-protocol-stack",
       "workflow": ".github/workflows/certops-qualification.yml"
@@ -941,7 +941,7 @@
     {
       "id": "2d9f67c60fc3db22c132",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 769,
+      "line": 772,
       "name": "lease reaper defers, then requeues once the claiming agent goes silent",
       "environment": "core-protocol-stack",
       "workflow": ".github/workflows/certops-qualification.yml"
@@ -949,7 +949,7 @@
     {
       "id": "536d9158d0e1632620bc",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 831,
+      "line": 834,
       "name": "lease reaper fails an expired job with exhausted retry budget",
       "environment": "core-protocol-stack",
       "workflow": ".github/workflows/certops-qualification.yml"
@@ -957,7 +957,7 @@
     {
       "id": "cb85f5d48f404a1d5905",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 886,
+      "line": 889,
       "name": "sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted",
       "environment": "core-protocol-stack",
       "workflow": ".github/workflows/certops-qualification.yml"

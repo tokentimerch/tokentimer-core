@@ -79,17 +79,17 @@ Total skips found: 157
 | `packages/mcp/src/credentialStore.test.js` | 343 | rejects a symbolic link and a missing file | it(..., { skip }) option-object | `platform` |
 | `tests/e2e/certops-adcs-gates-api-e2e.test.js` | 17 | unqualified AD CS onboarding and dispatch gates through real API | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-agent-alert-e2e.test.js` | 16 | agent alert governance persists policy and rejects foreign groups and unauthorized roles | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/e2e/certops-agent-e2e.test.js` | 483 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/e2e/certops-agent-e2e.test.js` | 599 | tamper: mutating a signed field fails agent-side verification | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/e2e/certops-agent-e2e.test.js` | 613 | bootstrap token reuse is rejected with 401 | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/e2e/certops-agent-e2e.test.js` | 631 | bad agent credential is rejected with 401 | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/e2e/certops-agent-e2e.test.js` | 647 | retired agent gets 410 on heartbeat, claim, and results | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/e2e/certops-agent-e2e.test.js` | 682 | workspace kill switch blocks claims with 409 | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/e2e/certops-agent-e2e.test.js` | 705 | evidence is accepted; private key material is rejected with 422 | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/e2e/certops-agent-e2e.test.js` | 747 | second claim returns no jobs while the lease is held | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/e2e/certops-agent-e2e.test.js` | 769 | lease reaper defers, then requeues once the claiming agent goes silent | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/e2e/certops-agent-e2e.test.js` | 831 | lease reaper fails an expired job with exhausted retry budget | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/e2e/certops-agent-e2e.test.js` | 886 | sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/certops-agent-e2e.test.js` | 486 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/certops-agent-e2e.test.js` | 602 | tamper: mutating a signed field fails agent-side verification | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/certops-agent-e2e.test.js` | 616 | bootstrap token reuse is rejected with 401 | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/certops-agent-e2e.test.js` | 634 | bad agent credential is rejected with 401 | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/certops-agent-e2e.test.js` | 650 | retired agent gets 410 on heartbeat, claim, and results | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/certops-agent-e2e.test.js` | 685 | workspace kill switch blocks claims with 409 | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/certops-agent-e2e.test.js` | 708 | evidence is accepted; private key material is rejected with 422 | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/certops-agent-e2e.test.js` | 750 | second claim returns no jobs while the lease is held | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/certops-agent-e2e.test.js` | 772 | lease reaper defers, then requeues once the claiming agent goes silent | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/certops-agent-e2e.test.js` | 834 | lease reaper fails an expired job with exhausted retry budget | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/certops-agent-e2e.test.js` | 889 | sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-agent-lease-api-e2e.test.js` | 18 | active claim force retirement fences real agent HTTP | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-agent-log-boundaries-e2e.test.js` | 18 | agent log size and ownership boundaries through real API | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-agent-log-order-e2e.test.js` | 18 | actual agent telemetry ordering, conflict and final closure | dynamic (this.skip() / t.skip()) | `prerequisite` |
