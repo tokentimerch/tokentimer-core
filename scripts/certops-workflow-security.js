@@ -82,6 +82,33 @@ function validateWorkflow(workflow,name="workflow"){
   const permissions=workflow.permissions||{};if(typeof permissions!=="object")fail("explicit read-only permissions required");
   for(const [key,value] of Object.entries(permissions))if(!(["contents","actions"].includes(key)&&value==="read")&&!(key==="id-token"&&value==="write"))fail(`unsupported token permission ${key}`);
   if(permissions.contents!=="read")fail("contents read permission required");
+  const distributionWorkflow = name === "certops-distribution-qualification.yml";
+  const releaseProducer = "release-distribution-candidate";
+  const releaseCases = {
+    "release-native-vault-cleanup": ["vault-cleanup", "--native-vault-restart", "--cleanup-native-vault"],
+    "release-native-openbao-cleanup": ["openbao-cleanup", "--native-openbao-restart", "--cleanup-native-openbao"],
+    "release-native-linux-staging-vault": ["staging", "--native-staging", "--cleanup-native-staging"],
+    "release-native-linux-staging-openbao": ["openbao-staging", "--native-openbao-staging", "--cleanup-native-openbao-staging"],
+  };
+  const mainRef = "github.ref == 'refs/heads/main'";
+  const releaseSelector = "inputs.linux_distribution_candidate_sha";
+  const supportingDistribution = `${mainRef} && !inputs.native_vault_cleanup && !inputs.native_linux_staging && ${releaseSelector} == ''`;
+  const releaseCondition = `${mainRef} && ${releaseSelector} != ''`;
+  const distributionConditions = {
+    postgres: supportingDistribution,
+    "agent-lab": supportingDistribution,
+    "functional-summary": `\${{ always() && ${supportingDistribution} }}`,
+    "native-vault-cleanup": `${mainRef} && (inputs.native_vault_cleanup || inputs.native_linux_staging) && ${releaseSelector} == ''`,
+    [releaseProducer]: releaseCondition,
+    ...Object.fromEntries(Object.keys(releaseCases).map(id => [id, releaseCondition])),
+  };
+  const releaseId = "${{ needs.release-distribution-candidate.outputs.artifact_id }}";
+  const releaseChecksum = "${{ needs.release-distribution-candidate.outputs.package_sha256 }}";
+  if (distributionWorkflow) {
+    const input = workflow.on?.workflow_dispatch?.inputs?.linux_distribution_candidate_sha;
+    if (input?.type !== "string" || input.default !== "") fail("release distribution requires an opt-in exact candidate SHA");
+    if (![releaseProducer, ...Object.keys(releaseCases)].every(id => Object.hasOwn(workflow.jobs || {}, id))) fail("release distribution requires its producer and all four isolated cases");
+  }
   for(const [id,job] of Object.entries(workflow.jobs||{})){
     if(name==="certops-adcs-lab-janitor.yml"&&job.environment!=="certops-adcs-cleanup")fail(`${id} independent expiry cleanup requires its dedicated unattended environment`);
     const scopedKeyVaultPreflight = name === "certops-azure-keyvault-qualification.yml" && id === "preflight" && job.if === undefined;
@@ -92,10 +119,8 @@ function validateWorkflow(workflow,name="workflow"){
     if(name==="certops-dns-fixture-janitor.yml"&&id==="cleanup"&&job.environment!=="certops-dns-cleanup-${{ matrix.provider }}")fail(`${id} independent DNS cleanup requires its dedicated unattended environment`);
     const selectedLane={tooling:"tooling","tooling-windows":"tooling",windows:"windows","agent-stack":"stack"}[id];
     const selectedCondition=name==="certops-qualification.yml"&&selectedLane&&job.needs==="selection"&&job.if===`github.ref == 'refs/heads/main' && needs.selection.outputs.${selectedLane} == 'true'`;
-    const supportingDistribution="github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup && !inputs.native_linux_staging";
-    const distributionConditions={postgres:supportingDistribution, "agent-lab":supportingDistribution, "functional-summary":`\${{ always() && ${supportingDistribution} }}`, "native-vault-cleanup":"github.ref == 'refs/heads/main' && (inputs.native_vault_cleanup || inputs.native_linux_staging)"};
-    const distributionLane=name==="certops-distribution-qualification.yml"&&Object.hasOwn(distributionConditions,id);
-    if(name==="certops-distribution-qualification.yml"&&!distributionLane)fail(`${id} is not a recognized distribution qualification lane`);
+    const distributionLane=distributionWorkflow&&Object.hasOwn(distributionConditions,id);
+    if(distributionWorkflow&&!distributionLane)fail(`${id} is not a recognized distribution qualification lane`);
     const distributionCondition=distributionLane&&job.if===distributionConditions[id]&&(id!=="functional-summary"||JSON.stringify(job.needs)===JSON.stringify(["postgres","agent-lab"]))&&events.length===1&&events[0]==="workflow_dispatch"&&workflow.on.workflow_dispatch?.inputs?.native_vault_cleanup?.type==="boolean"&&workflow.on.workflow_dispatch.inputs.native_vault_cleanup.default===false;
     if(distributionLane&&!distributionCondition)fail(`${id} must enforce its manual selector and exact trusted main reference`);
     if(job.if!=="github.ref == 'refs/heads/main'"&&!scopedKeyVaultPreflight&&!selectedCondition&&!dnsCondition&&!distributionCondition&&!require("./certops-azure-scope-policy").allowedCondition(name,job.if))fail(`${id} must enforce the exact trusted main reference`);
@@ -104,8 +129,45 @@ function validateWorkflow(workflow,name="workflow"){
     if(job.permissions)for(const [key,value] of Object.entries(job.permissions))if(!(["contents","actions"].includes(key)&&value==="read")&&!(key==="id-token"&&value==="write"))fail(`${id} expands token permissions`);
     if((permissions["id-token"]==="write"||job.permissions?.["id-token"]==="write")&&!job.environment)fail(`${id} OIDC requires a protected qualification environment`);
     const steps=job.steps||[],runs=steps.map(step=>step.run||"").join("\n");
-    const nativeCleanup=name==="certops-distribution-qualification.yml"&&id==="native-vault-cleanup";
+    const nativeCleanup=distributionWorkflow&&id==="native-vault-cleanup";
+    const producesRelease = distributionWorkflow && id === releaseProducer;
+    const releaseCase = distributionWorkflow && Object.hasOwn(releaseCases,id) ? releaseCases[id] : null;
     const cleanupFailure="linux-${{ env.NATIVE_CASE }}-failure";
+    const releaseReceipt="linux-${{ env.NATIVE_CASE }}-receipt";
+    const candidateUpload = step => step.if === undefined && step.with?.name === releaseProducer &&
+      step.with?.path === "qualification-results/linux-release-distribution-candidate/" && step.with?.["if-no-files-found"] === "error";
+    const releaseReceiptUpload = step => step.if === undefined && step.with?.name === releaseReceipt &&
+      step.with?.path === "qualification-results/linux-${{ env.NATIVE_CASE }}-restart.json" && step.with?.["if-no-files-found"] === "error";
+    if (producesRelease) {
+      const guard = steps.find(step => step.name === "Require the exact trusted main dispatch SHA");
+      const build = steps.find(step => step.id === "package");
+      if (guard?.env?.EXPECTED_CANDIDATE !== "${{ inputs.linux_distribution_candidate_sha }}" ||
+          !guard.run?.includes('test "$EXPECTED_CANDIDATE" = "$GITHUB_SHA"') ||
+          !guard.run?.includes('test "$(git rev-parse HEAD)" = "$EXPECTED_CANDIDATE"') ||
+          !build?.run?.includes("build-release-distribution-candidate") || steps.indexOf(guard) >= steps.indexOf(build) ||
+          steps.filter(step => step.uses?.startsWith("actions/upload-artifact@") && candidateUpload(step)).length !== 1 ||
+          job.outputs?.artifact_id !== "${{ steps.candidate.outputs.artifact-id }}" ||
+          job.outputs?.package_sha256 !== "${{ steps.package.outputs.sha256 }}") fail(`${id} must build and upload one exact main candidate`);
+    }
+    if (releaseCase) {
+      const [scope, nativeMode, teardownMode] = releaseCase;
+      const download = steps.find(step => step.uses?.startsWith("actions/download-artifact@"));
+      const install = steps.find(step => step.name === "Run the selected installed restart case");
+      const teardown = steps.find(step => step.name === "Verify teardown of only the owned host and containers");
+      const receipts = steps.filter(step => step.uses?.startsWith("actions/upload-artifact@") && releaseReceiptUpload(step));
+      if (job.needs !== releaseProducer || job["runs-on"] !== "ubuntu-24.04" ||
+          job.env?.NATIVE_CASE !== scope || job.env.NATIVE_MODE !== nativeMode || job.env.TEARDOWN_MODE !== teardownMode ||
+          download?.with?.["artifact-ids"] !== releaseId || download.with.name !== undefined ||
+          download.with.path !== "${{ runner.temp }}/certops-linux-release-distribution/artifacts" ||
+          download.with["merge-multiple"] !== true || download.with["digest-mismatch"] !== "error" ||
+          install?.env?.TT_CLEANUP_ARTIFACT_ID !== releaseId ||
+          install.env.TT_CLEANUP_ARTIFACT_SHA256 !== releaseChecksum || teardown?.if !== "always()" ||
+          !install.run?.includes('"$NATIVE_MODE"') || !teardown.run?.includes('"$TEARDOWN_MODE"') ||
+          steps.indexOf(download) >= steps.indexOf(install) || steps.indexOf(teardown) <= steps.indexOf(install) ||
+          receipts.length !== 1 || steps.indexOf(receipts[0]) <= steps.indexOf(teardown)) {
+        fail(`${id} must use the shared archive and independently verify teardown before retaining its receipt`);
+      }
+    }
     if(nativeCleanup){
       const provider=workflow.on.workflow_dispatch?.inputs?.native_cleanup_provider;
       if(provider?.type!=="choice"||provider.default!=="vault-kv2"||JSON.stringify(provider.options)!==JSON.stringify(["vault-kv2","openbao-kv2"])||job.env?.NATIVE_CLEANUP_STORE!=="${{ inputs.native_cleanup_provider == 'openbao-kv2' && 'openbao' || 'vault' }}")fail(`${id} requires its two exact KV v2 provider choices`);
@@ -138,8 +200,9 @@ function validateWorkflow(workflow,name="workflow"){
         // an unconditional upload could expose a malformed sensitive report.
         const sanitizedKeyVaultUpload = name === "certops-azure-keyvault-qualification.yml" && step.if === "always() && steps.evidence-check.outcome == 'success'";
         const earlyAdcsFailureUpload = name === "certops-enterprise-adcs-qualification.yml" && id === "lab" && step.if === "failure() && !inputs.debug_mode" && step.with?.path === "qualification-results/enterprise-adcs-real.json" && step["continue-on-error"] === true && step["timeout-minutes"] === 2 && steps.some(other => other !== step && other.uses?.startsWith("actions/upload-artifact@") && other.if === "always()" && other.with?.path === "qualification-results/enterprise-adcs-*.json");
-        const vaultFailureUpload=nativeCleanup&&step.if==="failure()"&&step.with?.name===cleanupFailure&&step.with?.path===`qualification-results/${cleanupFailure}.json`;
-        if(step.if!=="always()"&&!sanitizedKeyVaultUpload&&!earlyAdcsFailureUpload&&!vaultFailureUpload)fail(`${id} must preserve diagnostic reports after failure`);
+        const vaultFailureUpload=(nativeCleanup||releaseCase)&&step.if==="failure()"&&step.with?.name===cleanupFailure&&step.with?.path===`qualification-results/${cleanupFailure}.json`;
+        const exactReleaseUpload=(producesRelease&&candidateUpload(step))||(releaseCase&&releaseReceiptUpload(step));
+        if(step.if!=="always()"&&!sanitizedKeyVaultUpload&&!earlyAdcsFailureUpload&&!vaultFailureUpload&&!exactReleaseUpload)fail(`${id} must preserve diagnostic reports after failure`);
         const artifact=String(step.with?.path||"");if(!artifact||artifact.split(/\r?\n/).some(line=>line&&(!/^((candidate\/)?qualification-results\/)/.test(line)||line.replace(/\\/g,"/").split("/").includes(".."))))fail(`${id} artifacts must stay in the sanitized report directory`);
       }
       if(typeof step.run==="string"&&/\$\{\{\s*(inputs\.|github\.event\.inputs\.)/.test(step.run))fail(`${id} manual inputs must be passed through environment or typed arguments, not interpolated into shell code`);

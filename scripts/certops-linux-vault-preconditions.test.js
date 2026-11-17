@@ -34,3 +34,11 @@ test("invalid native staging environment emits its own bounded precondition fail
 test("missing artifact identity fails before any native work", { skip: process.platform !== "linux" || process.getuid() !== 0 }, t => {
   probe(t, { GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted", CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST: "1", RUNNER_TEMP: os.tmpdir(), GITHUB_REF: "refs/heads/main", GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1", TT_CLEANUP_ARTIFACT_ID: "sensitive-fake-value", TT_CLEANUP_ARTIFACT_SHA256: "a".repeat(64) });
 });
+
+test("native OpenBao staging requires the shared distribution candidate", { skip: process.platform !== "linux" || process.getuid() !== 0 }, t => {
+  probe(t, {
+    GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted", CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST: "1",
+    RUNNER_TEMP: os.tmpdir(), GITHUB_REF: "refs/heads/main", GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1",
+    TT_CLEANUP_ARTIFACT_ID: "456", TT_CLEANUP_ARTIFACT_SHA256: "a".repeat(64),
+  }, "--native-openbao-staging", "linux-openbao-staging");
+});
