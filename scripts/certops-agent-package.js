@@ -162,12 +162,12 @@ function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha,
     receipt.version = require(path.join(staging, "package.json")).version;
     receipt.nodeVersion = process.version;
     receipt.npmVersion = run("npm", ["--version"]).trim();
-    require("./certops-linux-published-package").inspectLinuxCandidate(path.join(artifacts, archive), receipt, linuxCleanup.provider);
+    require("./certops-linux-published-package").inspectLinuxCandidate(path.join(artifacts, archive), receipt, linuxCleanup.provider, linuxCleanup.staging);
   }
   fs.writeFileSync(path.join(outputRoot, "artifact.json"), JSON.stringify(receipt, null, 2));
   return receipt;
 }
-function buildLinuxCleanup(outputRoot, provider) {
+function buildLinuxCleanup(outputRoot, provider, staging = false) {
   assert.equal(process.platform, "linux");
   assert.equal(process.env.GITHUB_ACTIONS, "true");
   assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted");
@@ -176,7 +176,7 @@ function buildLinuxCleanup(outputRoot, provider) {
   const root = path.resolve(__dirname, "..");
   assert.equal(run("git", ["rev-parse", "HEAD"], { cwd: root }).trim(), candidateSha);
   assert.equal(run("git", ["status", "--porcelain"], { cwd: root }).trim(), "");
-  const linuxCleanup = require("./certops-linux-cleanup-case.cjs")(provider);
+  const linuxCleanup = require("./certops-linux-cleanup-case.cjs")(provider, staging);
   const expectedOutput = path.join(fs.realpathSync(process.env.RUNNER_TEMP), linuxCleanup.directory);
   assert.equal(path.resolve(outputRoot), expectedOutput);
   return buildCandidate({ sourcePackage: path.join(root, "packages/agent"), outputRoot: expectedOutput,
@@ -190,6 +190,7 @@ if (require.main === module) {
     else if(sourcePackage === "verify-operator-scope")verifyOperatorScope(JSON.parse(fs.readFileSync(outputRoot,"utf8")),JSON.parse(fs.readFileSync(candidateSha,"utf8")));
     else if (sourcePackage === "build-linux-vault-cleanup") buildLinuxCleanup(outputRoot, "vault-kv2");
     else if (sourcePackage === "build-linux-openbao-cleanup") buildLinuxCleanup(outputRoot, "openbao-kv2");
+    else if (sourcePackage === "build-linux-staging") buildLinuxCleanup(outputRoot, "vault-kv2", true);
     else buildCandidate({ sourcePackage, outputRoot, candidateSha, capabilities: capabilityList.split(",") });
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

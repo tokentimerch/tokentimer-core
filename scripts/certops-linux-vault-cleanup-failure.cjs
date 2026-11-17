@@ -6,6 +6,8 @@ const sources = new Set([
   "tests/e2e/certops-agent-e2e.test.js",
   "tests/e2e/linux-systemd-real-journey.js",
   "tests/e2e/helpers/linux-vault-cleanup-restart.js",
+  "tests/e2e/helpers/linux-material-staging-restart.js",
+  "tests/e2e/helpers/linux-staging-destination.js",
   "tests/e2e/helpers/certops-api-fixture.js",
   "tests/helpers/distribution-lifecycle-fixture.cjs",
   "scripts/certops-linux-published-package.js",
@@ -14,7 +16,7 @@ const sources = new Set([
 ]);
 const types = new Set(["testCodeFailure", "hookFailed", "testTimeoutFailure", "cancelledByParent"]);
 const codes = new Set(["ERR_ASSERTION", "ENOENT", "EACCES", "EPERM", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET", "23503", "23505", "42P01"]);
-const { testName: caseName, suite } = require("./certops-linux-cleanup-case.cjs")(process.env.TT_CLEANUP_PROVIDER);
+const { testName: caseName, suite } = require("./certops-linux-cleanup-case.cjs")(process.env.TT_CLEANUP_PROVIDER, process.env.TT_CLEANUP_NATIVE_STAGING === "1");
 const suiteName = "CertOps agent surface E2E";
 
 function locations(error) {

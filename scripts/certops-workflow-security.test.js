@@ -167,6 +167,9 @@ test("distribution selectors retain exact main, manual dispatch and bounded fail
  const unsupported=structuredClone(w);
  unsupported.on.workflow_dispatch.inputs.native_cleanup_provider.options.push("azure-key-vault");
  assert.match(validateWorkflow(unsupported,name).join("\n"), /exact KV v2 provider choices/);
+ const stagedByDefault=structuredClone(w);
+ stagedByDefault.on.workflow_dispatch.inputs.native_linux_staging.default=true;
+ assert.match(validateWorkflow(stagedByDefault,name).join("\n"), /exact staging selector/);
  for(const id of ["postgres","agent-lab","functional-summary","native-vault-cleanup"]){
   for(const condition of ["github.ref == 'refs/heads/main'", "github.ref == 'refs/heads/main' || true", "always()"]){const bad=structuredClone(w);bad.jobs[id].if=condition;assert.ok(validateWorkflow(bad,name).length,id);}
  }
