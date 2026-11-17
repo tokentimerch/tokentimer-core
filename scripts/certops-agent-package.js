@@ -6,7 +6,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const assert = require("node:assert/strict");
-const linuxCase = require("./certops-linux-cleanup-case.cjs");
+const linuxCase = () => require("./certops-linux-cleanup-case.cjs");
 const digest = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const ADCS_ACCEPTANCE_SCENARIOS = Object.freeze([
   "adcs-package-native-server-language-and-system-identity",
@@ -133,7 +133,7 @@ function verifyInstalled(files, installedRoot) {
 }
 function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha, linuxCleanup = null }) {
   assert.match(candidateSha || "", /^[a-f0-9]{40}$/);
-  const distribution = linuxCleanup === linuxCase.distribution;
+  const distribution = !!linuxCleanup && linuxCleanup === linuxCase().distribution;
   const linuxOnly = linuxCleanup && !distribution;
   fs.mkdirSync(outputRoot); // Never reuse an artifact from another run.
   const staging = path.join(outputRoot, "build"), artifacts = path.join(outputRoot, "artifacts");
@@ -195,10 +195,10 @@ if (require.main === module) {
     const [sourcePackage, outputRoot, candidateSha, capabilityList] = process.argv.slice(2);
     if (sourcePackage === "verify-adcs") verifyAdcsAcceptance(JSON.parse(fs.readFileSync(outputRoot, "utf8")), JSON.parse(fs.readFileSync(candidateSha, "utf8")), capabilityList);
     else if(sourcePackage === "verify-operator-scope")verifyOperatorScope(JSON.parse(fs.readFileSync(outputRoot,"utf8")),JSON.parse(fs.readFileSync(candidateSha,"utf8")));
-    else if (sourcePackage === "build-linux-vault-cleanup") buildLinuxCandidate(outputRoot, linuxCase("vault-kv2"));
-    else if (sourcePackage === "build-linux-openbao-cleanup") buildLinuxCandidate(outputRoot, linuxCase("openbao-kv2"));
-    else if (sourcePackage === "build-linux-staging") buildLinuxCandidate(outputRoot, linuxCase("vault-kv2", true));
-    else if (sourcePackage === "build-release-distribution-candidate") buildLinuxCandidate(outputRoot, linuxCase.distribution);
+    else if (sourcePackage === "build-linux-vault-cleanup") buildLinuxCandidate(outputRoot, linuxCase()("vault-kv2"));
+    else if (sourcePackage === "build-linux-openbao-cleanup") buildLinuxCandidate(outputRoot, linuxCase()("openbao-kv2"));
+    else if (sourcePackage === "build-linux-staging") buildLinuxCandidate(outputRoot, linuxCase()("vault-kv2", true));
+    else if (sourcePackage === "build-release-distribution-candidate") buildLinuxCandidate(outputRoot, linuxCase().distribution);
     else buildCandidate({ sourcePackage, outputRoot, candidateSha, capabilities: capabilityList.split(",") });
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
