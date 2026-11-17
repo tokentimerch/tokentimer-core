@@ -164,6 +164,9 @@ test("distribution selectors retain exact main, manual dispatch and bounded fail
  const fs=require("node:fs"),path=require("node:path"),yaml=require("node:module").createRequire(require.resolve("mocha/package.json"))("js-yaml");
  const name="certops-distribution-qualification.yml",w=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows",name),"utf8"));
  assert.deepEqual(validateWorkflow(w,name),[]);
+ const unsupported=structuredClone(w);
+ unsupported.on.workflow_dispatch.inputs.native_cleanup_provider.options.push("azure-key-vault");
+ assert.match(validateWorkflow(unsupported,name).join("\n"), /exact KV v2 provider choices/);
  for(const id of ["postgres","agent-lab","functional-summary","native-vault-cleanup"]){
   for(const condition of ["github.ref == 'refs/heads/main'", "github.ref == 'refs/heads/main' || true", "always()"]){const bad=structuredClone(w);bad.jobs[id].if=condition;assert.ok(validateWorkflow(bad,name).length,id);}
  }

@@ -14,6 +14,42 @@ ROOT=Path(__file__).resolve().parent.parent
 
 
 class ProfileTests(unittest.TestCase):
+    def test_openbao_cleanup_binds_its_own_archive_and_receipt(self):
+        spec = importlib.util.spec_from_file_location("openbao_profile_collector", ROOT / "scripts/certops-release-collector.py")
+        collector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(collector)
+        candidate = "a" * 40
+        package = b"candidate package"
+        digest = hashlib.sha256(package).hexdigest()
+        name = "tokentimer-agent-linux-0.19.2-rc.1.tgz"
+        capabilities = json.loads((ROOT / "packages/agent/src/capabilities/qualified-capabilities.json").read_text())["qualified"]
+        receipt = {"schemaVersion": 1, "candidateSha": candidate, "archive": name, "sha256": digest,
+                   "sourceKind": "workflow-checkout", "buildMode": "linux-openbao-cleanup-candidate",
+                   "capabilities": capabilities + ["material-cleanup-openbao-kv2-v1"]}
+        proof = {"artifactId": "42", "packageSha256": digest}
+        def archive():
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as target:
+                target.writestr("artifact.json", json.dumps(receipt))
+                target.writestr(name, package)
+                target.writestr(name + ".sha256", f"{digest}  {name}\n")
+            raw = buffer.getvalue()
+            return raw, {"id": 42, "digest": "sha256:" + hashlib.sha256(raw).hexdigest()}
+        raw, metadata = archive()
+        collector.authenticate_vault_archive(raw, metadata, proof, candidate, "openbao")
+        for bad in ({**receipt, "buildMode": "linux-vault-cleanup-candidate"},
+                    {**receipt, "capabilities": capabilities + ["material-cleanup-vault-kv2-v1"]},
+                    {**receipt, "candidateSha": "b" * 40}):
+            old = receipt.copy(); receipt.clear(); receipt.update(bad)
+            bad_raw, bad_metadata = archive()
+            with self.assertRaises(ValueError):
+                collector.authenticate_vault_archive(bad_raw, bad_metadata, proof, candidate, "openbao")
+            receipt.clear(); receipt.update(old)
+        with self.assertRaises(ValueError):
+            collector.authenticate_vault_archive(raw, {**metadata, "id": 43}, proof, candidate, "openbao")
+        with self.assertRaises(ValueError):
+            collector.validate_report_workflow({"suite": collector.OPENBAO_CLEANUP_SUITE}, collector.CI_WORKFLOW)
+
     def test_vault_cleanup_binds_exact_artifact_and_package_bytes(self):
         spec = importlib.util.spec_from_file_location("vault_profile_collector", ROOT / "scripts/certops-release-collector.py")
         collector = importlib.util.module_from_spec(spec)

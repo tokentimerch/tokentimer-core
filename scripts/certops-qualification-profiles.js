@@ -30,9 +30,11 @@ const PROFILES = Object.freeze({
   "adcs-native": ["domain-adcs"],
   "extended-adcs": ["extended-domain-adcs"],
   "vault-cleanup": ["vault-cleanup"],
+  "openbao-cleanup": ["openbao-cleanup"],
 });
 function classify(slot) {
   if (slot.suite === "linux-vault-cleanup-restart") return "vault-cleanup";
+  if (slot.suite === "linux-openbao-cleanup-restart") return "openbao-cleanup";
   if (DOMAIN.includes(slot.suite)) return "domain-adcs";
   if (EXTENDED.includes(slot.suite)) return "extended-domain-adcs";
   const caps =

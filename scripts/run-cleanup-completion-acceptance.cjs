@@ -1,6 +1,6 @@
 "use strict";
 
-// Independent disposable PostgreSQL + real Vault. Never loads .env, never
+// Independent disposable PostgreSQL and KV v2 store. Never loads .env, never
 // connects to an old lab, and removes only containers carrying this run's label.
 const { spawnSync } = require("node:child_process");
 const crypto = require("node:crypto");
@@ -8,10 +8,16 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const root = path.resolve(__dirname, "..");
-const provider = process.argv.includes("--openbao") ? "openbao-kv2" : "vault-kv2";
+const nativeVault = process.argv.includes("--native-vault-restart");
+const nativeOpenBao = process.argv.includes("--native-openbao-restart");
+const cleanupVault = process.argv.includes("--cleanup-native-vault");
+const cleanupOpenBao = process.argv.includes("--cleanup-native-openbao");
+const openbao = process.argv.includes("--openbao") || nativeOpenBao || cleanupOpenBao;
+const cleanupCase = require("./certops-linux-cleanup-case.cjs")(openbao ? "openbao-kv2" : "vault-kv2");
+const { provider, store, suite, testName, proofField } = cleanupCase;
 const keepLab = process.argv.includes("--keep-lab");
-const native = process.argv.includes("--native-vault-restart");
-const cleanupNative = process.argv.includes("--cleanup-native-vault");
+const native = nativeVault || nativeOpenBao;
+const cleanupNative = cleanupVault || cleanupOpenBao;
 function validateNativePreconditions() {
  if (!(native || cleanupNative)) return;
   const assert = require("node:assert/strict");
@@ -19,7 +25,8 @@ function validateNativePreconditions() {
   assert.equal(process.platform, "linux");
   assert.equal(process.getuid(), 0);
   assert.equal(process.env.GITHUB_REF, "refs/heads/main");
-  assert.equal(provider, "vault-kv2");
+  assert.equal([nativeVault, nativeOpenBao, cleanupVault, cleanupOpenBao].filter(Boolean).length, 1);
+  assert.equal(openbao, nativeOpenBao || cleanupOpenBao);
   assert.equal(keepLab, false);
   assert.match(process.env.GITHUB_RUN_ID || "", /^[1-9]\d{0,15}$/);
   assert.match(process.env.GITHUB_RUN_ATTEMPT || "", /^[1-9]\d{0,7}$/);
@@ -29,10 +36,10 @@ function validateNativePreconditions() {
   }
 }
 const nonce = native || cleanupNative
-  ? crypto.createHash("sha256").update(`linux-vault:${process.env.GITHUB_RUN_ID}:${process.env.GITHUB_RUN_ATTEMPT}`).digest("hex").slice(0, 16)
+  ? crypto.createHash("sha256").update(`linux-${store}:${process.env.GITHUB_RUN_ID}:${process.env.GITHUB_RUN_ATTEMPT}`).digest("hex").slice(0, 16)
   : crypto.randomBytes(8).toString("hex");
 const output = path.join(root, "qualification-results", `cleanup-completion-${nonce}`);
-const failureReport = path.join(root, "qualification-results", "linux-vault-cleanup-failure.json");
+const failureReport = path.join(root, "qualification-results", `linux-${store}-cleanup-failure.json`);
 let nativeStage = "preconditions";
 
 function recordNativeFailure(error) {
@@ -45,7 +52,7 @@ function recordNativeFailure(error) {
   if (fs.lstatSync(directory).isSymbolicLink()) throw new Error("Failure report directory is not owned");
   const exitCode = Number.isInteger(error.exitCode) && error.exitCode >= 0 && error.exitCode <= 255 ? error.exitCode : null;
   fs.writeFileSync(failureReport, JSON.stringify({
-    schemaVersion: 1, suite: "linux-vault-cleanup-restart", status: "failed",
+    schemaVersion: 1, suite, status: "failed",
     failures: [{ stage: nativeStage, category: exitCode === null ? "prerequisite-or-check-failed" : "child-exit", exitCode }],
   }) + "\n");
 }
@@ -87,7 +94,7 @@ function cleanupNativeRun() {
 async function main() {
   const containers = [];
   let nativeFacts;
-  const summary = { schemaVersion: 1, scope: native ? "linux-vault-cleanup-restart" : "cleanup-completion-functional-support", nativeAgentQualified: false,
+  const summary = { schemaVersion: 1, scope: native ? suite : "cleanup-completion-functional-support", nativeAgentQualified: false,
     provider, candidateSha: run("git", ["rev-parse", "HEAD"]).trim(), dirty: Boolean(run("git", ["status", "--porcelain"]).trim()),
     startedAt: new Date().toISOString(), status: "running", logs: ["migration.log", "tests.log"] };
   if (native && (summary.dirty || summary.candidateSha !== process.env.GITHUB_SHA)) {
@@ -152,12 +159,12 @@ async function main() {
       ["tests/postgres/distribution-cleanup.test.js", "tests/postgres/distribution-cleanup-provider.test.js"];
     const args = ["--test", "--test-force-exit", "--test-concurrency=1"];
     if (native) {
-      Object.assign(env, { TT_CLEANUP_NATIVE_VAULT: "1", CERTOPS_E2E_REQUIRED: "1",
+      Object.assign(env, { TT_CLEANUP_NATIVE_VAULT: nativeVault ? "1" : "0", TT_CLEANUP_NATIVE_OPENBAO: nativeOpenBao ? "1" : "0", CERTOPS_E2E_REQUIRED: "1",
         CERTOPS_PROTOCOL_DISPOSABLE_STACK: "1", CERTOPS_CSR_DISPOSABLE_STACK: "1" });
       const reporter = pathToFileURL(path.join(__dirname, "certops-linux-vault-cleanup-failure.cjs")).href;
       args.push("--test-reporter=tap", "--test-reporter-destination=stdout",
         `--test-reporter=${reporter}`, `--test-reporter-destination=${failureReport}`,
-        "--test-name-pattern=installed Linux Vault cleanup resumes after lost delete response");
+        `--test-name-pattern=${testName}`);
     }
     args.push(...tests);
     summary.tests = tests;
@@ -179,6 +186,7 @@ async function main() {
       assert.equal(counts.pass, 1);
       assert.equal(counts.skipped, 0);
       nativeFacts = JSON.parse(fs.readFileSync(path.join(output, "native-facts.json"), "utf8"));
+      if (nativeOpenBao) assert.equal(nativeFacts.provider, provider);
       assert.equal(nativeFacts.artifactId, process.env.TT_CLEANUP_ARTIFACT_ID);
       assert.equal(nativeFacts.packageSha256, process.env.TT_CLEANUP_ARTIFACT_SHA256);
       assert.equal(nativeFacts.installedTreeVerified, true);
@@ -213,9 +221,8 @@ async function main() {
       require("node:assert/strict").match(osRelease, /^ID=ubuntu$/m);
       require("node:assert/strict").equal(process.arch, "x64");
       require("node:assert/strict").ok(process.report.getReport().header.glibcVersionRuntime);
-      const suite = "linux-vault-cleanup-restart";
       const matrix = require("./certops-qualification-manifest");
-      const { source, requiredSources } = matrix.slots.find(slot => slot.id === suite);
+      const { source, requiredSources } = matrix.slots.find(slot => slot.id === "linux-vault-cleanup-restart");
       const sourceRecord = file => ({ file, sha256: require("./certops-agent-package").digest(path.join(root, file)) });
       fs.writeFileSync(path.join(root, "qualification-results", suite + ".json"), JSON.stringify({
         schemaVersion: 1, suite, strict: true, status: "passed", evidenceLevel: "real-host",
@@ -227,7 +234,7 @@ async function main() {
         capabilities: { linux: { available: true }, systemd: { available: true } },
         missingCapabilities: [], requiredScenarios: [suite], missingScenarios: [],
         scenarios: [{ id: suite, status: "passed", evidenceLevel: "real-host", startedAt: summary.startedAt, finishedAt: summary.finishedAt }],
-        cleanup: { status: "passed" }, nativeVaultCleanupRestart: nativeFacts,
+        cleanup: { status: "passed" }, [proofField]: nativeFacts,
       }), { flag: "wx" });
     }
     console.log(`Cleanup completion evidence: ${output}`);
@@ -242,8 +249,8 @@ Promise.resolve().then(() => {
 })
   .catch(error => {
     if (native) {
-      try { recordNativeFailure(error); } catch { console.error("Vault qualification diagnostic unavailable"); }
-      console.error("Installed Vault qualification failed. See linux-vault-cleanup-failure.json for diagnostic details.");
+      try { recordNativeFailure(error); } catch { console.error("Installed cleanup diagnostic unavailable"); }
+      console.error(`Installed cleanup qualification failed. See ${path.basename(failureReport)} for diagnostic details.`);
     } else console.error(error.message);
     process.exitCode = 1;
   });
