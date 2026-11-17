@@ -104,9 +104,12 @@ function validateWorkflow(workflow,name="workflow"){
   };
   const releaseId = "${{ needs.release-distribution-candidate.outputs.artifact_id }}";
   const releaseChecksum = "${{ needs.release-distribution-candidate.outputs.package_sha256 }}";
+  const expectedReleaseChecksum = "${{ inputs.linux_distribution_package_sha256 }}";
   if (distributionWorkflow) {
     const input = workflow.on?.workflow_dispatch?.inputs?.linux_distribution_candidate_sha;
     if (input?.type !== "string" || input.default !== "") fail("release distribution requires an opt-in exact candidate SHA");
+    const checksum = workflow.on?.workflow_dispatch?.inputs?.linux_distribution_package_sha256;
+    if (checksum?.type !== "string" || checksum.default !== "") fail("release distribution requires an explicit expected archive SHA-256");
     if (![releaseProducer, ...Object.keys(releaseCases)].every(id => Object.hasOwn(workflow.jobs || {}, id))) fail("release distribution requires its producer and all four isolated cases");
   }
   for(const [id,job] of Object.entries(workflow.jobs||{})){
@@ -148,6 +151,12 @@ function validateWorkflow(workflow,name="workflow"){
           steps.filter(step => step.uses?.startsWith("actions/upload-artifact@") && candidateUpload(step)).length !== 1 ||
           job.outputs?.artifact_id !== "${{ steps.candidate.outputs.artifact-id }}" ||
           job.outputs?.package_sha256 !== "${{ steps.package.outputs.sha256 }}") fail(`${id} must build and upload one exact main candidate`);
+      if (guard?.env?.EXPECTED_PACKAGE_SHA256 !== expectedReleaseChecksum ||
+          !guard.run?.includes('[[ "$EXPECTED_PACKAGE_SHA256" =~ ^[a-f0-9]{64}$ ]]') ||
+          build?.env?.EXPECTED_PACKAGE_SHA256 !== expectedReleaseChecksum ||
+          !build.run?.includes("verify-release-distribution-candidate")) {
+        fail(`${id} must require and verify the expected archive SHA-256 before upload`);
+      }
     }
     if (releaseCase) {
       const [scope, nativeMode, teardownMode] = releaseCase;

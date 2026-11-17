@@ -19,6 +19,10 @@ on:
         description: Exact trusted main SHA for the shared release archive and four Linux cases
         type: string
         default: ''
+      linux_distribution_package_sha256:
+        description: Expected SHA-256 of the universal archive for the shared release case
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -277,6 +281,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
+      NODE_VERSION: '24.22.3'
+      NPM_VERSION: '11.19.1'
       GO_VERSION: '1.26.10'
       GOTOOLCHAIN: local
       NATIVE_CASE: release-distribution
@@ -290,35 +296,40 @@ jobs:
       - name: Require the exact trusted main dispatch SHA
         env:
           EXPECTED_CANDIDATE: ${{ inputs.linux_distribution_candidate_sha }}
+          EXPECTED_PACKAGE_SHA256: ${{ inputs.linux_distribution_package_sha256 }}
           CLEANUP_SELECTED: ${{ inputs.native_vault_cleanup }}
           STAGING_SELECTED: ${{ inputs.native_linux_staging }}
         run: |
           set -euo pipefail
           [[ "$EXPECTED_CANDIDATE" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$EXPECTED_PACKAGE_SHA256" =~ ^[a-f0-9]{64}$ ]]
           test "$EXPECTED_CANDIDATE" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_CANDIDATE"
           test "$CLEANUP_SELECTED" = false
           test "$STAGING_SELECTED" = false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: '24'
+          node-version: ${{ env.NODE_VERSION }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
       - name: Build the universal release candidate once
         id: package
+        env:
+          EXPECTED_PACKAGE_SHA256: ${{ inputs.linux_distribution_package_sha256 }}
         run: |
           set -euo pipefail
           test "$(go env GOVERSION)" = "go$GO_VERSION"
           candidate="$RUNNER_TEMP/certops-linux-$NATIVE_CASE"
           node scripts/certops-agent-package.js build-release-distribution-candidate "$candidate"
-          node -p '"sha256=" + require(process.argv[1]).sha256' "$candidate/artifact.json" >> "$GITHUB_OUTPUT"
-          cp "$candidate/artifact.json" "$candidate/artifacts/"
           archive=("$candidate/artifacts/"*.tgz)
           test "${#archive[@]}" -eq 1
           node scripts/verify-agent-native-package.js --archive "${archive[0]}" --go-version "$GO_VERSION" \
             --source-sha "$GITHUB_SHA" --out "$candidate/native-provenance.json"
+          node scripts/certops-agent-package.js verify-release-distribution-candidate \
+            "$candidate" "$EXPECTED_PACKAGE_SHA256" >> "$GITHUB_OUTPUT"
+          cp "$candidate/artifact.json" "$candidate/artifacts/"
       - *scan_exact_candidate
       - *stage_exact_candidate
       - name: Retain the immutable universal release candidate
