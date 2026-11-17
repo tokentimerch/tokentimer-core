@@ -55,6 +55,7 @@ test("original Windows root removal is required before outer database cleanup", 
       seeded: { workspaceId: "owned-workspace" },
       process: { env: { CERTOPS_REAL_WINDOWS_REQUIRED: "1" } },
       require: (name) => {
+        if (name === "../../scripts/certops-linux-systemd-ownership") return { assertProtocolHostReceiptRemoved() {} };
         assert.equal(name, "./windows-real-journey");
         return journey;
       },

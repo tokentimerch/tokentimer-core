@@ -414,6 +414,10 @@ test("actual parent finally preserves private roots, accounts and database after
     "agentId",
     "agentRowId",
     "installAttempted",
+    "vaultCleanup",
+    "vaultFixture",
+    "uninstallVaultAgent",
+    "assertServiceDrained",
     "assertInstallIdentityResolved",
     "cleanupInstalledAgent",
     "dbOwnership",
@@ -507,6 +511,10 @@ test("actual parent finally preserves private roots, accounts and database after
       "owned-agent",
       "d89b4df5-f82a-4db7-a10d-53f45a507181",
       true,
+      null,
+      null,
+      () => { throw Error("unexpected Vault uninstall"); },
+      (pid) => { assert.equal(pid(), 0); assert.equal(Boolean(state.cgroupLive), false); },
       require("../tests/e2e/linux-systemd-real-journey").assertInstallIdentityResolved,
       async () => {
         calls.push("database-delete");
