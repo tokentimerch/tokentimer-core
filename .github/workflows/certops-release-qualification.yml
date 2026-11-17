@@ -39,9 +39,15 @@ jobs:
           git cat-file -e "$CERTOPS_RELEASE_CANDIDATE^{commit}"
           git merge-base --is-ancestor "$CERTOPS_RELEASE_CANDIDATE" origin/main
           git checkout --detach "$CERTOPS_RELEASE_CANDIDATE"
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: '11.28.8'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
+          cache: pnpm
+      - name: Install candidate dependencies
+        run: pnpm install --frozen-lockfile
       - name: Collect explicit trusted candidate runs and verify every matrix slot
         env:
           GITHUB_TOKEN: ${{ github.token }}
