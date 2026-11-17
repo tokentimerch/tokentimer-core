@@ -51,3 +51,15 @@ test("normal CI selects only its AD CS reports while supporting stacks retain al
  const ci=yaml.load(fs.readFileSync(path.join(root,'.github/workflows/ci.yml'),'utf8'));
  assert.equal(ci.jobs.build_and_test.steps.find(step=>step.run==='node scripts/certops-api-qualification.js').env.CERTOPS_API_QUALIFICATION_SCOPE,'adcs');
 });
+
+
+test("release collector installs pinned dependencies after trusted checkout before verification",()=>{
+ const yaml=require("node:module").createRequire(require.resolve("mocha/package.json"))("js-yaml");
+ const workflow=yaml.load(fs.readFileSync(path.join(root,".github/workflows/certops-release-qualification.yml"),"utf8"));
+ const steps=workflow.jobs.collect.steps, checkout=steps.findIndex(s=>s.name==="Verify candidate belongs to trusted main history"), setup=steps.findIndex(s=>String(s.uses||"").startsWith("pnpm/action-setup@")), install=steps.findIndex(s=>s.name==="Install candidate dependencies"), collect=steps.findIndex(s=>s.name==="Collect explicit trusted candidate runs and verify every matrix slot");
+ assert.ok(checkout>=0&&setup>checkout&&install>setup&&collect>install);
+ assert.equal(steps[setup].with.version,"11.28.8");
+ assert.equal(steps[install].run,"pnpm install --frozen-lockfile");
+ assert.match(steps[collect].run,/node scripts\/run-certops-collector-tests\.js/);
+ assert.match(steps[collect].run,/python3 scripts\/certops-release-collector\.py/);
+});
