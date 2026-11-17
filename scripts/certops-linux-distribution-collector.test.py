@@ -82,6 +82,18 @@ class DistributionCollectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "archive inventory budget"):
             collector.authenticate_linux_distribution_archive(raw, artifact, proof, "a" * 40)
 
+    def test_iis_in_the_baseline_is_refused(self):
+        original = Path.read_text
+        baseline_path = ROOT / "packages/agent/src/capabilities/qualified-capabilities.json"
+        baseline = json.loads(original(baseline_path))["qualified"]
+        def read_text(path, *args, **kwargs):
+            if path == baseline_path:
+                return json.dumps({"qualified": [*baseline, "windows-material-iis-v1"]})
+            return original(path, *args, **kwargs)
+        with patch.object(Path, "read_text", read_text):
+            with self.assertRaisesRegex(ValueError, "baseline contains a restricted capability"):
+                collector.linux_distribution_capabilities()
+
     def test_extended_tar_header_body_cannot_exceed_decompressed_budget(self):
         for kind in (tarfile.XHDTYPE, tarfile.GNUTYPE_LONGNAME):
             with self.subTest(kind=kind), patch.object(collector, "MAX_DISTRIBUTION_TAR", 4096):

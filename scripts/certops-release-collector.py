@@ -263,8 +263,9 @@ def linux_distribution_capabilities():
     """
     baseline = json.loads((ROOT / "packages/agent/src/capabilities/qualified-capabilities.json").read_text(encoding="utf-8"))["qualified"]
     if (not isinstance(baseline, list) or len(set(baseline)) != len(baseline)
+            or "windows-material-iis-v1" in baseline
             or any(capability in baseline for capability in LINUX_DISTRIBUTION_CAPABILITIES)):
-        raise ValueError("Combined distribution capabilities overlap the baseline")
+        raise ValueError("Combined distribution baseline contains a restricted capability")
     return [*baseline, *LINUX_DISTRIBUTION_CAPABILITIES]
 
 

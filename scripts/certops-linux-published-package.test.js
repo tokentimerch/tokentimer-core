@@ -32,6 +32,39 @@ test("native staging keeps the Vault candidate separate and requires the shared 
     "material-consumer-staging-v1",
   ]);
 });
+test("the distribution producer and inspector refuse IIS in the baseline", t => {
+  const { buildCandidate, digest } = require("./certops-agent-package");
+  const { inspectLinuxCandidate } = require("./certops-linux-published-package");
+  const { distribution } = require("./certops-linux-cleanup-case.cjs");
+  const manifest = require("../packages/agent/src/capabilities/qualified-capabilities.json");
+  const baseline = manifest.qualified;
+  const root = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "tt-linux-baseline-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const sourcePackage = path.join(root, "source");
+  const manifestFile = path.join(sourcePackage, "src/capabilities/qualified-capabilities.json");
+  fs.mkdirSync(path.dirname(manifestFile), { recursive: true });
+  fs.writeFileSync(manifestFile, JSON.stringify({ qualified: [...baseline, "windows-material-iis-v1"] }));
+  assert.throws(() => buildCandidate({
+    sourcePackage, outputRoot: path.join(root, "output"), candidateSha: "a".repeat(40),
+    capabilities: distribution.capabilities, linuxCleanup: distribution,
+  }), /Windows IIS must remain absent/);
+  const version = require("../packages/agent/package.json").version;
+  const receipt = {
+    schemaVersion: 1, buildMode: distribution.buildMode, sourceKind: "workflow-checkout",
+    candidateSha: "a".repeat(40), sha256: "b".repeat(64), nodeVersion: "v24.22.3", npmVersion: "11.19.1",
+    version, packageVersion: version, archive: `tokentimer-agent-${version}.tgz`,
+    packagerSha256: digest(path.resolve(__dirname, "../packages/agent/scripts/pack-release.js")),
+    capabilities: [...baseline, "windows-material-iis-v1", ...distribution.capabilities],
+  };
+  try {
+    manifest.qualified = [...baseline, "windows-material-iis-v1"];
+    assert.throws(() => inspectLinuxCandidate(path.join(root, receipt.archive), receipt, "vault-kv2", false, {
+      distribution: true,
+    }), /Windows IIS must remain absent/);
+  } finally {
+    manifest.qualified = baseline;
+  }
+});
 test("exact release candidate requires a digest and rejects changed tarball bytes", t => {
   const { digest, verifyReleaseDistributionCandidate } = require("./certops-agent-package");
   const root = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "tt-release-distribution-digest-"));
