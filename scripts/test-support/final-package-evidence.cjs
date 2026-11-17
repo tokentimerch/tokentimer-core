@@ -57,18 +57,22 @@ function report(profile, sourceSha, runId, packageArtifact, files) {
       jobs: { requestedBySha256: "1".repeat(64), approvedBySha256: "2".repeat(64), signerKeyIdSha256: "3".repeat(64),
         signed: 2, verified: 2, approved: 2, signatureFailureDenied: true, providerPutAttempts: 1,
         providerVersion: profile.startsWith("azure-") ? "1".repeat(32) : "1", exactVersionReads: 1, latestFallbacks: 0, restartRepublishAttempts: 0 },
-      identities: ["issuer", "consumer"].map((role, i) => ({ role, subjectSha256: String(i).repeat(64), tokenRenewals: 1, crossRoleDenials: 1 })) };
+      identities: ["issuer", "consumer"].map((role, i) => ({ role, subjectSha256: String(i).repeat(64), tokenRenewals: 1,
+        crossRoleDenials: 1, crossRoleDeniedOperation: "opposite-identity-acquisition", consumerWriteStatus: i === 1 ? 403 : null })) };
     const observation = { unit: "tokentimer-agent.service", activeState: "active", subState: "running", mainPid: 123, procPid: 123,
       procStartTicks: "100", serviceUid: 1000, procUid: 1000, commandPackageEntry: "bin/tokentimer-agent.js", processEntrySha256: files["bin/tokentimer-agent.js"] };
     value.nativeService = { kind: "installed-linux-systemd", installedFileHashes: files, agentId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
       enrolledAgentId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", before: observation,
       after: { ...observation, mainPid: 124, procPid: 124, procStartTicks: "101" } };
   } else if (profile === "azure-imds-managed-identity") value.facts = { authMode: profile, imdsHost: "169.254.169.254",
-    metadataHeader: true, imdsRequests: 1, identitySha256: "3".repeat(64), azureReadStatus: 200, azureDeniedStatus: 403, pinnedVersion: "1".repeat(32) };
+    metadataHeader: true, identities: ["issuer", "consumer"].map((role, i) => ({ role, hostIdSha256: String(i).repeat(64),
+      identitySha256: String(i + 2).repeat(64), oppositeIdentitySha256: String(3 - i).repeat(64), imdsRequests: 2,
+      ownTokenStatus: 200, oppositeIdentityTokenStatus: 400 })), azureReadStatus: 200, azureConsumerWriteStatus: 403, pinnedVersion: "1".repeat(32) };
   else {
     const start = Date.parse("2026-11-17T12:00:00Z") / 1000;
     value.facts = { issuedAt: start + 10, expiresAt: start + 3610, observedExpiredAt: start + 3610, renewedAt: start + 3611,
-      renewedExpiresAt: start + 7211, forced401: false, clockOverridden: false, azureStatusAfter: 200, pinnedVersion: "1".repeat(32) };
+      renewedExpiresAt: start + 7211, forced401: false, clockOverridden: false, azureStatusBefore: 200, azureStatusExpired: 401,
+      azureStatusAfter: 200, pinnedVersion: "1".repeat(32) };
   }
   return value;
 }

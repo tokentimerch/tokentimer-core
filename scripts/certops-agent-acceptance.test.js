@@ -171,7 +171,11 @@ test("IMDS and natural-expiry slots reject simulated endpoints, forced failures 
   for (const [scope, mutate] of [
     ["azure-imds-managed-identity", r => { r.facts.authMode = "token-file"; }],
     ["azure-imds-managed-identity", r => { r.facts.imdsHost = "127.0.0.1"; }],
-    ["azure-imds-managed-identity", r => { r.facts.azureDeniedStatus = 200; }],
+    ["azure-imds-managed-identity", r => { r.facts.azureConsumerWriteStatus = 200; }],
+    ["azure-imds-managed-identity", r => { r.facts.identities[1].hostIdSha256 = r.facts.identities[0].hostIdSha256; }],
+    ["azure-imds-managed-identity", r => { r.facts.identities[0].oppositeIdentityTokenStatus = 200; }],
+    ["azure-natural-access-token-expiration", r => { r.facts.azureStatusExpired = "network-error"; }],
+    ["azure-natural-access-token-expiration", r => { r.facts.azureStatusBefore = 401; }],
     ["azure-natural-access-token-expiration", r => { r.facts.forced401 = true; }],
     ["azure-natural-access-token-expiration", r => { r.facts.clockOverridden = true; }],
     ["azure-natural-access-token-expiration", r => { r.facts.renewedAt = r.facts.expiresAt - 1; }],

@@ -9,7 +9,7 @@ const PROFILES = Object.freeze({
   "azure-operator-http-real-ca": { file: "azure-operator-final-package.json", scenarios: OPERATOR },
   "openbao-operator-http-real-ca": { file: "openbao-operator-final-package.json", scenarios: OPERATOR },
   "azure-imds-managed-identity": { file: "azure-imds-final-package.json", scenarios: ["real-imds-token-endpoint",
-    "scoped-secret-read", "secret-write-denied", "exact-version-no-latest", "owned-teardown"] },
+    "distinct-hosts-and-identities", "opposite-identity-token-denied", "scoped-secret-read", "consumer-secret-write-denied", "exact-version-no-latest", "owned-teardown"] },
   "azure-natural-access-token-expiration": { file: "azure-natural-expiration-final-package.json", scenarios: [
     "token-naturally-expires", "token-renewed-after-expiry", "exact-version-read-after-renewal", "owned-teardown"] },
 });
@@ -60,9 +60,11 @@ function operatorFacts(facts, profile) {
   assert.equal(facts.jobs.latestFallbacks, 0); assert.equal(facts.jobs.restartRepublishAttempts, 0);
   assert.ok(Array.isArray(facts.identities) && facts.identities.length === 2);
   facts.identities.forEach((identity, i) => {
-    keys(identity, ["role", "subjectSha256", "tokenRenewals", "crossRoleDenials"]);
+    keys(identity, ["role", "subjectSha256", "tokenRenewals", "crossRoleDenials", "crossRoleDeniedOperation", "consumerWriteStatus"]);
     assert.equal(identity.role, ["issuer", "consumer"][i]); hash(identity.subjectSha256);
     positive(identity.tokenRenewals); positive(identity.crossRoleDenials);
+    assert.equal(identity.crossRoleDeniedOperation, "opposite-identity-acquisition");
+    assert.equal(identity.consumerWriteStatus, i === 1 ? 403 : null);
   });
   assert.notEqual(facts.identities[0].subjectSha256, facts.identities[1].subjectSha256);
 }
@@ -80,18 +82,30 @@ function verify(profile, report, { sourceSha, runId, packageIdentity, files, req
   for (const result of Object.values(report.cleanup)) assert.equal(result, "completed");
   if (operator) operatorFacts(report.facts, profile);
   else if (profile === "azure-imds-managed-identity") {
-    keys(report.facts, ["authMode", "imdsHost", "metadataHeader", "imdsRequests", "identitySha256", "azureReadStatus", "azureDeniedStatus", "pinnedVersion"]);
+    keys(report.facts, ["authMode", "imdsHost", "metadataHeader", "identities", "azureReadStatus", "azureConsumerWriteStatus", "pinnedVersion"]);
     assert.equal(report.facts.authMode, "azure-imds-managed-identity"); assert.equal(report.facts.imdsHost, "169.254.169.254");
-    assert.equal(report.facts.metadataHeader, true); positive(report.facts.imdsRequests); hash(report.facts.identitySha256);
-    assert.equal(report.facts.azureReadStatus, 200); assert.equal(report.facts.azureDeniedStatus, 403);
+    assert.equal(report.facts.metadataHeader, true);
+    assert.ok(Array.isArray(report.facts.identities) && report.facts.identities.length === 2);
+    report.facts.identities.forEach((identity, i) => {
+      keys(identity, ["role", "hostIdSha256", "identitySha256", "oppositeIdentitySha256", "imdsRequests", "ownTokenStatus", "oppositeIdentityTokenStatus"]);
+      assert.equal(identity.role, ["issuer", "consumer"][i]); hash(identity.hostIdSha256); hash(identity.identitySha256);
+      assert.equal(identity.oppositeIdentitySha256, report.facts.identities[1 - i].identitySha256);
+      positive(identity.imdsRequests); assert.ok(identity.imdsRequests >= 2);
+      assert.equal(identity.ownTokenStatus, 200); assert.ok([400, 403, 404].includes(identity.oppositeIdentityTokenStatus));
+    });
+    assert.notEqual(report.facts.identities[0].hostIdSha256, report.facts.identities[1].hostIdSha256);
+    assert.notEqual(report.facts.identities[0].identitySha256, report.facts.identities[1].identitySha256);
+    assert.equal(report.facts.azureReadStatus, 200); assert.equal(report.facts.azureConsumerWriteStatus, 403);
     assert.match(report.facts.pinnedVersion, /^[a-f0-9]{32}$/);
   } else {
-    keys(report.facts, ["issuedAt", "expiresAt", "observedExpiredAt", "renewedAt", "renewedExpiresAt", "forced401", "clockOverridden", "azureStatusAfter", "pinnedVersion"]);
+    keys(report.facts, ["issuedAt", "expiresAt", "observedExpiredAt", "renewedAt", "renewedExpiresAt", "forced401", "clockOverridden",
+      "azureStatusBefore", "azureStatusExpired", "azureStatusAfter", "pinnedVersion"]);
     for (const field of ["issuedAt", "expiresAt", "observedExpiredAt", "renewedAt", "renewedExpiresAt"]) positive(report.facts[field]);
     assert.ok(report.facts.expiresAt > report.facts.issuedAt && report.facts.observedExpiredAt >= report.facts.expiresAt &&
       report.facts.renewedAt >= report.facts.observedExpiredAt && report.facts.renewedExpiresAt > report.facts.renewedAt);
     assert.ok(report.facts.observedExpiredAt >= Date.parse(run.run_started_at) / 1000 - 30 && report.facts.renewedAt <= Date.parse(run.updated_at) / 1000 + 30);
     assert.equal(report.facts.forced401, false); assert.equal(report.facts.clockOverridden, false); assert.equal(report.facts.azureStatusAfter, 200);
+    assert.equal(report.facts.azureStatusBefore, 200); assert.equal(report.facts.azureStatusExpired, 401);
     assert.match(report.facts.pinnedVersion, /^[a-f0-9]{32}$/);
   }
   if (report.nativeService !== null) { assert.ok(operator); verifyNative(report.nativeService, files); }
