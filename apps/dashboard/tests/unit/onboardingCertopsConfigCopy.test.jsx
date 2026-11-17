@@ -55,10 +55,10 @@ afterEach(() => {
 });
 
 describe('before you start', () => {
-  it('accepts OpenBao and keeps web servers optional for file delivery', () => {
+  it('shows provider-neutral prerequisites and keeps web servers optional for file delivery', () => {
     mount(<ObjectiveStep ctx={makeCtx('certops_vault')} />);
     expect(screen.getByTestId('before-you-start').textContent).toMatch(
-      /HTTPS Vault or OpenBao.*KV v2/
+      /material store reachable over HTTPS.*two Linux hosts/
     );
     expect(
       screen.getByText(/web server only for service activation/)
@@ -196,9 +196,16 @@ describe('ACME configuration form', () => {
   });
 
   it('only shows reload commands when a server is selected', () => {
-    mount(<ConfigStep ctx={makeCtx('certops_automate', { ...linuxAcme, reloadService: '' })} />);
+    mount(
+      <ConfigStep
+        ctx={makeCtx('certops_automate', { ...linuxAcme, reloadService: '' })}
+      />
+    );
     expect(screen.queryByText(/The agent runs a check, then/)).toBeNull();
-    fireEvent.change(screen.getByLabelText(/After issuing, reload a web server/), { target: { value: 'nginx' } });
+    fireEvent.change(
+      screen.getByLabelText(/After issuing, reload a web server/),
+      { target: { value: 'nginx' } }
+    );
     expect(screen.getByText(/The agent runs a check, then/)).toBeTruthy();
   });
 

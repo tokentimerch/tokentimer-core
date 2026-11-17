@@ -166,5 +166,13 @@
   "certops.vaultAuth": {
     "path": "/runbooks/certops-vault-agent-authentication",
     "anchor": "1-create-narrowly-scoped-roles-as-a-vault-administrator"
+  },
+  "certops.openbaoDistribution": {
+    "path": "/runbooks/certops-distribution-extensions",
+    "anchor": "openbao-kv-v2"
+  },
+  "certops.azureDistribution": {
+    "path": "/runbooks/certops-distribution-extensions",
+    "anchor": "azure-key-vault-secrets"
   }
 }

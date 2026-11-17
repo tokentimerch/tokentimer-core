@@ -95,7 +95,7 @@ const BEFORE_YOU_START = {
   ],
   vault: [
     ...DNS_PREREQUISITES,
-    'An HTTPS Vault or OpenBao server with a KV v2 mount, and two Linux servers: one that issues the certificate and one that installs it.',
+    'A material store reachable over HTTPS and two Linux hosts, one to issue the certificate and one to install it. The guide shows which providers are ready for this deployment.',
     STAGING_WARNING,
   ],
   adcs: [

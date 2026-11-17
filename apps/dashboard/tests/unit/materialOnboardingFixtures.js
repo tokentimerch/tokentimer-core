@@ -4,7 +4,10 @@ export const GROUP = '22222222-2222-4222-8222-222222222222';
 export const VERSION = '33333333-3333-4333-8333-333333333333';
 export const ISSUER = '44444444-4444-4444-8444-444444444444';
 export const CONSUMER = '55555555-5555-4555-8555-555555555555';
-export function materialContext(provider = 'vault-kv2') {
+export function materialContext(
+  provider = 'vault-kv2',
+  { azureQualified = true } = {}
+) {
   const setup = {
     provider,
     issuerAgentId: ISSUER,
@@ -57,9 +60,10 @@ export function materialContext(provider = 'vault-kv2') {
         })),
         ...['vault_kv2', 'openbao_kv2', 'azure_key_vault'].map(p => ({
           id: `certops.material_store_${p}`,
-          qualified: p !== 'azure_key_vault',
+          qualified: p !== 'azure_key_vault' || azureQualified,
           authorized: true,
-          state: p === 'azure_key_vault' ? 'candidate' : 'ready',
+          state:
+            p === 'azure_key_vault' && !azureQualified ? 'candidate' : 'ready',
         })),
         {
           id: 'certops.windows_material_iis',

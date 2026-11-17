@@ -30,13 +30,9 @@ and read at version 1. Deleted/destroyed versions fail rather than using latest.
 
 ## Azure Key Vault
 
-The [dedicated Azure CI runbook](azure-keyvault-ci-qualification.md) describes
-trusted-main OIDC activation, exact issuer/consumer roles, disposable vault
-ownership and cleanup, and the mandatory provider/signed-service campaign.
-
-Use your own dedicated **public Azure Key Vault Secrets**
-namespace. Private endpoints are supported through your DNS resolving the
-normal `<name>.vault.azure.net` hostname and a trusted TLS chain. Managed HSM,
+Set `publicationDestination.type` to `azure-key-vault`. Use a dedicated vault in
+Azure's public cloud. For Private Link, resolve `<name>.vault.azure.net` through
+your private DNS and use a trusted TLS chain. Managed HSM,
 sovereign clouds, non-exportable private keys, Certificates-only objects and
 bundles whose serialized UTF-8 JSON exceeds 25 KiB are rejected. Certificate
 metadata alone is never treated as deployable private material.
@@ -73,20 +69,20 @@ Copy the issuer-specific group fields from the Vault issuer example as well.
 Never add Vault `mount`, `namespace` or `tokenFile` fields to an Azure store.
 Azure auth alternatives are:
 
-- `{"type":"managed-identity"}` on an Azure VM with IMDS. Optional `clientId`
-  chooses a user-assigned identity. App Service-specific MSI endpoints are not
-  implemented. Workload federation uses the public Azure authority and scope
-  `https://vault.azure.net/.default`.
-- `{"type":"token-file","tokenFile":"C:\\ProgramData\\TokenTimer\\azure-token.json"}`
+- `{"type":"managed-identity"}` on an Azure VM with IMDS. Set `clientId`
+  to select a user-assigned identity. Workload federation uses the public Azure
+  authority and scope `https://vault.azure.net/.default`.
+- `{"type":"token-file","tokenFile":"/run/tokentimer-azure/consumer/token.json"}`
   for an operator-managed renewable token sink. File contents are
   `{"accessToken":"<host-local bearer token>","expiresOn":"<ISO timestamp>"}`;
   numeric `expiresOn` is epoch **milliseconds**. Keep the sink and its parent
   owner/SYSTEM-only (0600/0700 on Linux). Never paste its contents into TokenTimer.
 
-Federated assertions and sinks must be regular protected absolute-path files,
-without symlinks. Assertion tokens renew before expiry; sinks are reread on
-every request. A 401 triggers bounded renewal, and transient GET failures have
-bounded retries. Token or provider response contents never become error text.
+Your credential helper renews federated assertions and token files before expiry.
+Use regular protected files at absolute paths readable by `tokentimer-agent`,
+such as a dedicated directory under `/run`. If a platform projects credentials
+through symlinks, copy them into regular protected files. The agent rereads token
+files on every request and attempts bounded renewal after a 401.
 
 Prefer a custom Azure RBAC data role: consumers need only
 `Microsoft.KeyVault/vaults/secrets/getSecret/action`; issuers additionally need
@@ -101,6 +97,8 @@ Each logical UUID gets a `tt-<sha256>` secret name scoped by the group's local
 prefix. Consumers use the exact immutable 32-hex secret version in the approved
 job. The API records that identifier, never a secret URL or bundle. Do not
 interpret it as a certificate version, monotonic number or timestamp.
+
+Maintainers qualify the exact release archive with the [Azure CI runbook](azure-keyvault-ci-qualification.md).
 
 Azure has no Set Secret CAS. The agent refuses multiple existing versions of a
 logical publication object and never blindly repeats a PUT. If publication is

@@ -40,6 +40,7 @@ import {
   materialSetup,
   materialStoreSatisfied,
   selectedMaterialGroup,
+  materialProvider,
   materialProviderReady,
   materialCertificateInput,
 } from './materialSetupModel.js';
@@ -602,6 +603,7 @@ function MaterialConsumerForm({ ctx }) {
   const manager = canManageMaterial(ctx);
   useSummaryPolling(ctx.refresh, manager);
   const providerQualified = materialProviderReady(ctx, setup.provider);
+  const provider = materialProvider(setup.provider);
   const group = selectedMaterialGroup(ctx.summary, saved);
   const ready =
     manager && providerQualified && materialStoreSatisfied(ctx.summary, saved);
@@ -648,6 +650,12 @@ function MaterialConsumerForm({ ctx }) {
       description='Authorize each destination, check its local configuration and verify the exact published certificate through existing signed jobs.'
       docs={[
         ...ctx.docs('certops.vault', 'Distribution and recovery runbook'),
+        ...(provider
+          ? ctx.docs(
+              provider.configurationDoc,
+              `${provider.label} configuration`
+            )
+          : []),
         ...ctx.docs(
           platform === 'win32'
             ? 'certops.installWindows'
@@ -663,11 +671,11 @@ function MaterialConsumerForm({ ctx }) {
             jobs.
           </StatusPanel>
         )}
-        {!ready && (
+        {manager && !ready && (
           <StatusPanel status='warning'>
-            Complete Configure material store using a qualified provider and a
-            persisted publication receipt first. A saved form or successful
-            no-op does not prove publication.
+            {providerQualified
+              ? 'Publish a certificate in Configure material store before authorizing consumers.'
+              : 'Choose a provider that is ready in Configure material store before authorizing consumers.'}
           </StatusPanel>
         )}
         <FormControl>

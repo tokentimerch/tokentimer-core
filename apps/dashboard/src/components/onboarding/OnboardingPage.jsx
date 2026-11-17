@@ -508,9 +508,9 @@ export function DoneCard({ ctx, guidedImportSteps = GUIDED_IMPORT_STEPS }) {
       title={unverified ? 'Setup finished, not verified yet' : 'You are set up'}
       description={
         (vaultVerified &&
-          'Your certificate was published to Vault and its distribution has current verification evidence. Review each consumer in the certificate details, and verify the live service independently.') ||
+          'Your certificate was published to your material store and its distribution has current verification evidence. Review each consumer in the certificate details, and verify the live service independently.') ||
         (vaultFilesInstalled &&
-          'Your certificate was published to Vault and its files were installed on the selected consumers. File-only delivery does not reload a service or verify the certificate in use.') ||
+          'Your certificate was published to your material store and its files were installed on the selected consumers. File-only delivery confirms installation. Use a service rollout to verify live TLS.') ||
         (windows && goal?.doneTextWindows) ||
         (modalImport && goal.doneTextModal) ||
         goal?.doneText ||

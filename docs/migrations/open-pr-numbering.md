@@ -97,5 +97,6 @@ receipt admission when consuming the shared adapter. Its contract schemas and
 intent producer must accept the explicit operation/provider shape together;
 never alter already signed jobs to migrate the wire shape.
 
-Windows/IIS and Azure production capability gates remain disabled. Database
-compatibility or local protocol tests do not qualify either production artifact.
+Database compatibility and local protocol tests cover the migration and wire
+contract. See [distribution availability](../certops/distribution-extensions.md)
+for the production capability requirements.

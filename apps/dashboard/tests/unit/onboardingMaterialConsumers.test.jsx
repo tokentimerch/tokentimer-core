@@ -385,17 +385,23 @@ describe('Connect and validate consumers', () => {
     await waitFor(() => expect(requestRollout).toHaveBeenCalledTimes(2));
     expect(requestRollout.mock.calls[1]).toEqual(requestRollout.mock.calls[0]);
   });
-  it('keeps read-only viewers and unqualified providers from creating verification requests', () => {
-    const ctx = materialContext('azure-key-vault');
-    ctx.capabilities.viewer.workspaceRole = 'viewer';
-    show(ctx);
-    expect(
-      screen.getByRole('button', {
-        name: 'Check installed material (no deployment)',
-      })
-    ).toBeDisabled();
-    expect(requestRollout).not.toHaveBeenCalled();
-  });
+  it.each([
+    ['viewer', true],
+    ['workspace_manager', false],
+  ])(
+    'requires the right workspace role and a qualified provider (%s, %s)',
+    (workspaceRole, azureQualified) => {
+      const ctx = materialContext('azure-key-vault', { azureQualified });
+      ctx.capabilities.viewer.workspaceRole = workspaceRole;
+      show(ctx);
+      expect(
+        screen.getByRole('button', {
+          name: 'Check installed material (no deployment)',
+        })
+      ).toBeDisabled();
+      expect(requestRollout).not.toHaveBeenCalled();
+    }
+  );
   it('reports missing consumer capabilities without submitting a deployment', () => {
     const ctx = materialContext();
     ctx.summary.certops.agents.items[1].declaredCapabilities = [];
@@ -421,40 +427,54 @@ describe('Connect and validate consumers', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /Trust —/ })).toBeInTheDocument();
   });
-  it('reuses the real binding API for OpenBao installed-only Linux destinations', async () => {
-    const ctx = materialContext('openbao-kv2');
-    assignConsumer.mockImplementation(async (_ws, groupId, id, body) => ({
-      binding: {
-        id,
-        group_id: groupId,
-        assigned_agent_id: body.agentId,
-        deployment_profile_ref: body.deploymentProfileRef,
-        profile_revision: 1,
-        authorization_revision: 3,
-        verification_policy: body.verificationPolicy,
-        state: 'active',
-      },
-    }));
-    show(ctx);
-    fireEvent.change(
-      screen.getByLabelText('Customer-local store HTTPS address'),
-      { target: { value: 'https://bao.example.test' } }
-    );
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Assign Consumer' })
-    );
-    await waitFor(() => expect(assignConsumer).toHaveBeenCalledTimes(1));
-    expect(assignConsumer.mock.calls[0][3]).toMatchObject({
-      agentId: CONSUMER,
-      verificationPolicy: 'installed',
-    });
-    expect(
-      screen.getByRole('group', { name: /Consumer configuration/ }).textContent
-    ).toContain('openbao-kv2');
-    expect(
-      screen.getByRole('group', { name: /Consumer configuration/ }).textContent
-    ).not.toContain('reloadService');
-  });
+  it.each([
+    ['openbao-kv2', 'https://bao.example.test', 'certops.openbaoDistribution'],
+    [
+      'azure-key-vault',
+      'https://customer.vault.azure.net',
+      'certops.azureDistribution',
+    ],
+  ])(
+    'uses the binding API and provider guide for %s installed-only Linux destinations',
+    async (provider, address, docKey) => {
+      const ctx = materialContext(provider);
+      ctx.docs = vi.fn(() => []);
+      assignConsumer.mockImplementation(async (_ws, groupId, id, body) => ({
+        binding: {
+          id,
+          group_id: groupId,
+          assigned_agent_id: body.agentId,
+          deployment_profile_ref: body.deploymentProfileRef,
+          profile_revision: 1,
+          authorization_revision: 3,
+          verification_policy: body.verificationPolicy,
+          state: 'active',
+        },
+      }));
+      show(ctx);
+      fireEvent.change(
+        screen.getByLabelText('Customer-local store HTTPS address'),
+        { target: { value: address } }
+      );
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Assign Consumer' })
+      );
+      await waitFor(() => expect(assignConsumer).toHaveBeenCalledTimes(1));
+      expect(assignConsumer.mock.calls[0][3]).toMatchObject({
+        agentId: CONSUMER,
+        verificationPolicy: 'installed',
+      });
+      expect(
+        screen.getByRole('group', { name: /Consumer configuration/ })
+          .textContent
+      ).toContain(provider);
+      expect(
+        screen.getByRole('group', { name: /Consumer configuration/ })
+          .textContent
+      ).not.toContain('reloadService');
+      expect(ctx.docs).toHaveBeenCalledWith(docKey, expect.any(String));
+    }
+  );
   it('keeps Windows gated despite all advertised connector capabilities', () => {
     const ctx = materialContext();
     Object.assign(ctx.summary.certops.agents.items[1], {

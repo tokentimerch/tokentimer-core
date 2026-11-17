@@ -194,7 +194,7 @@ export const GOALS = {
     label: 'Share one certificate across servers',
     doneUnverified: true,
     description:
-      'Publish through Vault or OpenBao and connect authorized consumers. Azure and Windows shared import remain qualification-gated.',
+      'Publish to your material store and connect authorized Linux consumers.',
     time: 'Needs a server, about 20 min',
     steps: [
       'certops_objective',
