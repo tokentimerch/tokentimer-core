@@ -150,4 +150,6 @@ For the exact-package campaign, dispatch on trusted `main` with `final_package=t
 
 The protected campaign uses a qualification package, a real owned Azure vault, scoped independent identities and PostgreSQL. It validates provider operations, authorization failures, version pinning, token renewal, interruption and recovery. Its signed-agent service integration is not a complete HTTP/operator and native release qualification. Genuine managed identity, natural access-token expiry and the full installed release journey need their own applicable evidence.
 
+For natural expiry, dispatch on trusted `main` with `natural_expiry=true` and the successful provider run's `package_run_id`, `package_artifact_id` and `package_sha256`. The job reuses that archive and stops if the issued token cannot expire with time reserved for teardown.
+
 Upload only sanitized, schema-validated evidence and cleanup reports. Never upload tokens, keys, bundles or raw provider responses. Passing tests do not replace verified teardown or independent release acceptance.

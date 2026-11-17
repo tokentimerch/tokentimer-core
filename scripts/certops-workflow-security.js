@@ -208,11 +208,13 @@ function validateWorkflow(workflow,name="workflow"){
         // Azure diagnostics must pass the closed-schema check even on failure;
         // an unconditional upload could expose a malformed sensitive report.
         const sanitizedKeyVaultUpload = name === "certops-azure-keyvault-qualification.yml" && step.if === "always() && steps.evidence-check.outcome == 'success'";
+        const naturalExpiryUpload = name === "certops-azure-keyvault-qualification.yml" && id === "natural-expiry" &&
+          step.if === require("./certops-azure-scope-policy").EXPIRY_UPLOAD_IF;
         const earlyAdcsFailureUpload = name === "certops-enterprise-adcs-qualification.yml" && id === "lab" && step.if === "failure() && !inputs.debug_mode" && step.with?.path === "qualification-results/enterprise-adcs-real.json" && step["continue-on-error"] === true && step["timeout-minutes"] === 2 && steps.some(other => other !== step && other.uses?.startsWith("actions/upload-artifact@") && other.if === "always()" && other.with?.path === "qualification-results/enterprise-adcs-*.json");
         const vaultFailureUpload=(nativeCleanup||releaseCase)&&step.if==="failure()"&&step.with?.name===cleanupFailure&&step.with?.path===`qualification-results/${cleanupFailure}.json`;
         const exactReleaseUpload=(producesRelease&&candidateUpload(step))||(releaseCase&&releaseReceiptUpload(step));
         const azureCandidateUpload=name==="certops-azure-keyvault-qualification.yml"&&id==="preflight"&&step.id==="package"&&step.if==="inputs.final_package"&&step.with?.name==="azure-release-candidate"&&step.with?.path==="qualification-results/azure-release-candidate/";
-        if(step.if!=="always()"&&!sanitizedKeyVaultUpload&&!earlyAdcsFailureUpload&&!vaultFailureUpload&&!exactReleaseUpload&&!azureCandidateUpload)fail(`${id} must preserve diagnostic reports after failure`);
+        if(step.if!=="always()"&&!sanitizedKeyVaultUpload&&!naturalExpiryUpload&&!earlyAdcsFailureUpload&&!vaultFailureUpload&&!exactReleaseUpload&&!azureCandidateUpload)fail(`${id} must preserve diagnostic reports after failure`);
         const artifact=String(step.with?.path||"");if(!artifact||artifact.split(/\r?\n/).some(line=>line&&(!/^((candidate\/)?qualification-results\/)/.test(line)||line.replace(/\\/g,"/").split("/").includes(".."))))fail(`${id} artifacts must stay in the sanitized report directory`);
       }
       if(typeof step.run==="string"&&/\$\{\{\s*(inputs\.|github\.event\.inputs\.)/.test(step.run))fail(`${id} manual inputs must be passed through environment or typed arguments, not interpolated into shell code`);

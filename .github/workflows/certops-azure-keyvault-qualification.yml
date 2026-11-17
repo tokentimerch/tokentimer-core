@@ -12,7 +12,19 @@ on:
         type: boolean
         default: false
       package_sha256:
-        description: Required expected universal package SHA-256 when final_package is selected
+        description: Expected universal package SHA-256 for final_package or natural_expiry
+        type: string
+        default: ''
+      natural_expiry:
+        description: Observe natural Key Vault access-token expiry on the retained provider candidate
+        type: boolean
+        default: false
+      package_run_id:
+        description: Successful final-package provider run ID (natural_expiry only)
+        type: string
+        default: ''
+      package_artifact_id:
+        description: Immutable universal candidate artifact ID from that run (natural_expiry only)
         type: string
         default: ''
 permissions:
@@ -34,12 +46,22 @@ jobs:
         env:
           OPT_IN: ${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}
           FINAL_PACKAGE: ${{ inputs.final_package }}
+          NATURAL_EXPIRY: ${{ inputs.natural_expiry }}
           PACKAGE_SHA256: ${{ inputs.package_sha256 }}
+          PACKAGE_RUN_ID: ${{ inputs.package_run_id }}
+          PACKAGE_ARTIFACT_ID: ${{ inputs.package_artifact_id }}
         run: |
+          set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main || { echo 'Trusted main required'; exit 1; }
           test "$GITHUB_EVENT_NAME" = workflow_dispatch || exit 1
           test "$OPT_IN" = true || { echo 'Explicit Key Vault lab opt-in required'; exit 1; }
-          if [ "$FINAL_PACKAGE" = true ]; then [[ "$PACKAGE_SHA256" =~ ^[a-f0-9]{64}$ ]]; fi
+          if [ "$FINAL_PACKAGE" = true ] || [ "$NATURAL_EXPIRY" = true ]; then [[ "$PACKAGE_SHA256" =~ ^[a-f0-9]{64}$ ]]; fi
+          if [ "$NATURAL_EXPIRY" = true ]; then
+            test "$FINAL_PACKAGE" = false
+            [[ "$PACKAGE_RUN_ID" =~ ^[1-9][0-9]{0,15}$ && "$PACKAGE_ARTIFACT_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+          else
+            test -z "$PACKAGE_RUN_ID" && test -z "$PACKAGE_ARTIFACT_ID"
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -94,7 +116,7 @@ jobs:
           if-no-files-found: error
   lab:
     needs: preflight
-    if: github.ref == 'refs/heads/main' && vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED == 'true' && !inputs.natural_expiry
     runs-on: ubuntu-latest
     environment: certops-azure-keyvault-lab
     timeout-minutes: 90
@@ -196,6 +218,68 @@ jobs:
           path: |
             qualification-results/azure-keyvault-evidence.json
             qualification-results/azure-keyvault-cleanup.json
+          if-no-files-found: error
+
+  natural-expiry:
+    needs: preflight
+    if: github.ref == 'refs/heads/main' && vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED == 'true' && inputs.natural_expiry
+    runs-on: ubuntu-latest
+    environment: certops-azure-keyvault-lab
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      CERTOPS_AZURE_KEYVAULT_LAB_ENABLED: ${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      AZURE_KV_ISSUER_ROLE_ID: ${{ vars.AZURE_KV_ISSUER_ROLE_ID }}
+      AZURE_KV_ATTRIBUTES_ROLE_ID: ${{ vars.AZURE_KV_ATTRIBUTES_ROLE_ID }}
+      LAB_LOCATION: ${{ inputs.location }}
+      GH_TOKEN: ${{ github.token }}
+      AZURE_CORE_COLLECT_TELEMETRY: 'no'
+      TT_AZURE_EXPIRY_PACKAGE_RUN_ID: ${{ inputs.package_run_id }}
+      TT_AZURE_EXPIRY_PACKAGE_ARTIFACT_ID: ${{ inputs.package_artifact_id }}
+      TT_AZURE_PACKAGE_SHA256: ${{ inputs.package_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.22.3'
+      - name: Verify independent approval for this fresh run
+        id: expiry-approval
+        run: node infra/certops-azure-keyvault/lab.js github-approval
+      - name: Verify and extract the retained universal package before Azure authentication
+        run: node tests/e2e/azure-keyvault-natural-expiry.cjs stage-package
+      - name: Authenticate isolated provisioning identity using OIDC
+        shell: pwsh
+        run: ./infra/certops-azure-keyvault/login-oidc.ps1
+      - name: Provision only the run-owned vault and identities
+        run: node infra/certops-azure-keyvault/lab.js provision
+      - name: Observe natural expiry and renewal on one pinned Azure secret version
+        id: expiry-observation
+        run: node tests/e2e/azure-keyvault-natural-expiry.cjs launch
+      - name: Reauthenticate for cleanup
+        id: expiry-cleanup-auth
+        if: always() && steps.expiry-approval.outcome == 'success'
+        shell: pwsh
+        run: ./infra/certops-azure-keyvault/login-oidc.ps1
+      - name: Confirm worker drainage before run-owned no-purge teardown
+        id: expiry-cleanup
+        if: always() && steps.expiry-cleanup-auth.outcome == 'success'
+        run: node tests/e2e/azure-keyvault-natural-expiry.cjs cleanup
+      - name: Scrub private state and write evidence only after observed teardown
+        if: always()
+        run: node tests/e2e/azure-keyvault-natural-expiry.cjs finalize
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: success() && steps.expiry-observation.outcome == 'success' && steps.expiry-cleanup.outcome == 'success'
+        with:
+          name: azure-natural-expiration-final-package
+          path: qualification-results/azure-natural-expiration-final-package.json
           if-no-files-found: error
 
   collect-final-package:

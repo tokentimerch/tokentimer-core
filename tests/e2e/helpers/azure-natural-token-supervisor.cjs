@@ -51,7 +51,7 @@ function safeFacts(value) {
 // Date.now() plus a fresh ceiling is not the original deadline. All descendants
 // must stay in this supervised process group; detached children are not covered.
 // Begin cleanup only after verified drainage; this helper performs no cleanup.
-function runBoundedWorker({ workerPath, budget, signal }) {
+function runBoundedWorker({ workerPath, budget, signal, onDrained = () => {} }) {
   if (!path.isAbsolute(workerPath)) throw new Error("AZURE_EXPIRY_WORKER_PATH_INVALID");
   const deadline = workDeadline(budget || {}, Date.now());
   if (signal?.aborted) return Promise.reject(new Error("AZURE_EXPIRY_CANCELLED"));
@@ -84,7 +84,13 @@ function runBoundedWorker({ workerPath, budget, signal }) {
       signal?.removeEventListener("abort", abort);
       if (started && !(await groupDrained(child.pid)))
         return reject(new Error("AZURE_EXPIRY_DRAIN_UNVERIFIED"));
+      if (started) {
+        try { onDrained(); } catch { return reject(new Error("AZURE_EXPIRY_DRAIN_RECEIPT_FAILED")); }
+      }
       if (stopReason) return reject(new Error(stopReason));
+      if (code === 1 && !childSignal && result?.failure === "AZURE_EXPIRY_OUTSIDE_BUDGET" &&
+          Object.keys(result).length === 1)
+        return reject(new Error(result.failure));
       if (!started || code !== 0 || childSignal || !safeFacts(result))
         return reject(new Error("AZURE_EXPIRY_WORKER_FAILED"));
       resolve(result);

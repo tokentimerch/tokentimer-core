@@ -29,13 +29,57 @@ const MAIN = "github.ref == 'refs/heads/main'";
 const PROVISION_IF = MAIN + " && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'";
 const KEYVAULT_IF =
   MAIN + " && vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED == 'true'";
+const EXPIRY_IF = KEYVAULT_IF + " && inputs.natural_expiry";
+const PROVIDER_IF = KEYVAULT_IF + " && !inputs.natural_expiry";
+const EXPIRY_UPLOAD_IF = "success() && steps.expiry-observation.outcome == 'success' && steps.expiry-cleanup.outcome == 'success'";
 const LIFECYCLE_IF = MAIN;
 function allowedCondition(name, value) {
-  if (name === KV && value === KEYVAULT_IF + " && inputs.final_package") return true;
+  if (name === KV) return [PROVIDER_IF, EXPIRY_IF, KEYVAULT_IF + " && inputs.final_package"].includes(value);
   return PROVISION.includes(name)
-    ? value === (name === KV ? KEYVAULT_IF : PROVISION_IF)
+    ? value === PROVISION_IF
     : LIFECYCLE.includes(name) && value === LIFECYCLE_IF;
 }
+
+function expiryPolicy(job, provider) {
+  const steps = job.steps || [];
+  const [checkout, node, approval, stage, login, provision, observation, reauth, cleanup, finalize, upload] = steps;
+  const command = (step, action, condition) => step?.run === `node tests/e2e/azure-keyvault-natural-expiry.cjs ${action}` && step.if === condition;
+  const loginCommand = "./infra/certops-azure-keyvault/login-oidc.ps1";
+  const evidence = "azure-natural-expiration-final-package";
+  return job.needs === "preflight" && job.if === EXPIRY_IF && job["runs-on"] === "ubuntu-latest" &&
+    job["timeout-minutes"] === 90 && job.environment === "certops-azure-keyvault-lab" &&
+    JSON.stringify(job.permissions) === JSON.stringify({ contents: "read", actions: "read", "id-token": "write" }) &&
+    !job.services && !job.strategy &&
+    JSON.stringify(job.env) === JSON.stringify({
+      ...Object.fromEntries([
+        "CERTOPS_AZURE_KEYVAULT_LAB_ENABLED", "AZURE_CLIENT_ID", "AZURE_TENANT_ID",
+        "AZURE_SUBSCRIPTION_ID", "AZURE_KV_ISSUER_ROLE_ID", "AZURE_KV_ATTRIBUTES_ROLE_ID",
+      ].map(name => [name, "${{ vars." + name + " }}"])),
+      LAB_LOCATION: "${{ inputs.location }}",
+      GH_TOKEN: "${{ github.token }}",
+      AZURE_CORE_COLLECT_TELEMETRY: "no",
+      TT_AZURE_EXPIRY_PACKAGE_RUN_ID: "${{ inputs.package_run_id }}",
+      TT_AZURE_EXPIRY_PACKAGE_ARTIFACT_ID: "${{ inputs.package_artifact_id }}",
+      TT_AZURE_PACKAGE_SHA256: "${{ inputs.package_sha256 }}",
+    }) &&
+    provider?.if === PROVIDER_IF &&
+    steps.length === 11 && steps.every(step => !step.env && !step["continue-on-error"]) &&
+    checkout?.uses?.startsWith("actions/checkout@") && !checkout.if &&
+    checkout.with?.["persist-credentials"] === false && !checkout.with.ref && !checkout.with.repository &&
+    node?.uses?.startsWith("actions/setup-node@") && !node.if && node.with?.["node-version"] === "24.22.3" &&
+    approval?.run === "node infra/certops-azure-keyvault/lab.js github-approval" && approval.id === "expiry-approval" && !approval.if &&
+    command(stage, "stage-package") && login?.run === loginCommand && login.shell === "pwsh" && !login.if &&
+    provision?.run === "node infra/certops-azure-keyvault/lab.js provision" && !provision.if &&
+    observation?.id === "expiry-observation" && command(observation, "launch") &&
+    reauth?.run === loginCommand && reauth.shell === "pwsh" && reauth.id === "expiry-cleanup-auth" &&
+    reauth.if === "always() && steps.expiry-approval.outcome == 'success'" &&
+    cleanup?.id === "expiry-cleanup" && command(cleanup, "cleanup", "always() && steps.expiry-cleanup-auth.outcome == 'success'") &&
+    command(finalize, "finalize", "always()") &&
+    upload?.uses?.startsWith("actions/upload-artifact@") && upload.if === EXPIRY_UPLOAD_IF &&
+    upload.with?.name === evidence && upload.with?.path === `qualification-results/${evidence}.json` &&
+    upload.with?.["if-no-files-found"] === "error";
+}
+
 function keyvaultPolicy(name, workflow, errors) {
   const janitor = name === KV_CLEANUP;
   if (janitor) {
@@ -62,7 +106,7 @@ function keyvaultPolicy(name, workflow, errors) {
         "Cleanup must use only its separate identity variables, without spending gates",
       );
   }
-  const expectedJobs = janitor ? ["cleanup"] : ["preflight", "lab", "collect-final-package"];
+  const expectedJobs = janitor ? ["cleanup"] : ["preflight", "lab", "natural-expiry", "collect-final-package"];
   if (
     JSON.stringify(Object.keys(workflow.jobs || {})) !==
     JSON.stringify(expectedJobs)
@@ -92,6 +136,7 @@ function keyvaultPolicy(name, workflow, errors) {
     "AZURE_SUBSCRIPTION_ID",
     "AZURE_KV_ISSUER_ROLE_ID",
     "AZURE_KV_ATTRIBUTES_ROLE_ID",
+    "AZURE_CORE_COLLECT_TELEMETRY",
   ]);
   if (
     [...text.matchAll(/\bAZURE_[A-Z0-9_]+/g)].some(
@@ -103,6 +148,11 @@ function keyvaultPolicy(name, workflow, errors) {
       "Only reviewed OIDC variable references are allowed, never Azure credential secrets",
     );
   for (const [id, job] of Object.entries(workflow.jobs || {})) {
+    if (!janitor && id === "natural-expiry") {
+      if (!expiryPolicy(job, workflow.jobs.lab))
+        errors.push("Natural expiry must validate the producer before authentication and verify drainage and teardown before uploading evidence");
+      continue;
+    }
     if (!janitor && id === "collect-final-package") {
       const steps = job.steps || [];
       const downloads = steps.filter(step => step.uses?.startsWith("actions/download-artifact@"));
@@ -154,7 +204,11 @@ function keyvaultPolicy(name, workflow, errors) {
         !first.run.includes('test "$GITHUB_EVENT_NAME" = workflow_dispatch') ||
         !first.run.includes('test "$OPT_IN" = true') ||
         !first.run.includes('[[ "$PACKAGE_SHA256" =~ ^[a-f0-9]{64}$ ]]') ||
-        first.env?.FINAL_PACKAGE !== "${{ inputs.final_package }}" || first.env?.PACKAGE_SHA256 !== "${{ inputs.package_sha256 }}"
+        first.env?.FINAL_PACKAGE !== "${{ inputs.final_package }}" || first.env?.PACKAGE_SHA256 !== "${{ inputs.package_sha256 }}" ||
+        first.env?.NATURAL_EXPIRY !== "${{ inputs.natural_expiry }}" ||
+        first.env?.PACKAGE_RUN_ID !== "${{ inputs.package_run_id }}" || first.env?.PACKAGE_ARTIFACT_ID !== "${{ inputs.package_artifact_id }}" ||
+        !first.run.includes('test "$FINAL_PACKAGE" = false') ||
+        !first.run.includes('[[ "$PACKAGE_RUN_ID" =~ ^[1-9][0-9]{0,15}$ && "$PACKAGE_ARTIFACT_ID" =~ ^[1-9][0-9]{0,15}$ ]]')
       )
         errors.push(
           "Preflight must reject wrong refs and missing opt-in before checkout",
@@ -383,9 +437,11 @@ function keyvaultPolicy(name, workflow, errors) {
     const inputs = workflow.on?.workflow_dispatch?.inputs;
     if (
       !inputs ||
-      Object.keys(inputs).join() !== "location,final_package,package_sha256" ||
+      Object.keys(inputs).join() !== "location,final_package,package_sha256,natural_expiry,package_run_id,package_artifact_id" ||
       inputs.final_package?.type !== "boolean" || inputs.final_package.default !== false ||
       inputs.package_sha256?.type !== "string" || inputs.package_sha256.default !== "" ||
+      inputs.natural_expiry?.type !== "boolean" || inputs.natural_expiry.default !== false ||
+      ["package_run_id", "package_artifact_id"].some(key => inputs[key]?.type !== "string" || inputs[key].default !== "") ||
       inputs.location.type !== "choice" ||
       JSON.stringify(inputs.location.options) !==
         JSON.stringify(["swedencentral", "westeurope", "northeurope"])
@@ -462,6 +518,7 @@ module.exports = {
   LIFECYCLE,
   PROVISION_IF,
   KEYVAULT_IF,
+  EXPIRY_UPLOAD_IF,
   LIFECYCLE_IF,
   allowedCondition,
   validate,
