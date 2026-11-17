@@ -46,7 +46,7 @@ jobs:
           persist-credentials: false
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
         with:
-          version: '11.13.0'
+          package_json_file: candidate/package.json
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24'
