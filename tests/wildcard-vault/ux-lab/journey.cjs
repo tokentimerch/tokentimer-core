@@ -142,7 +142,7 @@ const owner = new User("owner"),
 async function customer(action, name = "issuer", extra = {}) {
   const r = await fetch(controlBase, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(process.env.TT_UX_CONTROL_TOKEN ? {Authorization: `Bearer ${process.env.TT_UX_CONTROL_TOKEN}`} : {}) },
     body: JSON.stringify({ action, name, ...extra }),
     signal: AbortSignal.timeout(20000),
   });
@@ -947,7 +947,73 @@ async function verifyTransferredInventory(before) {
   check("public inventory transfers without a destination Vault integration; source material/job history stays put and destination management is unconfigured",
     { destinationWorkspaceId: state.transferDestinationId, tokenId: state.inventoryTokenId });
 }
-async function main() {
+// Add one installed-only binding after the container operator assertions and
+// before retiring the distribution group during transfer. The normal bindings
+// and their independent served-TLS checks retain their original coverage.
+async function observeNativeOpenBaoConsumer({ packageArtifact, customerImage, apiAddress, baoAddress }) {
+  const materialVersionId = state.renewedVersionId || state.versionId;
+  const selected = (await versions()).find(row => row.id === materialVersionId && row.state === "published");
+  assert.ok(selected);
+  const scope = { workspaceId: state.workspaceId, groupId: state.groupId, materialVersionId, providerVersion: selected.provider_version };
+  const { assertHosted, prepare } = require("./azure-operator-review/native-openbao-bootstrap.cjs");
+  assertHosted();
+  await customer("native-openbao-prepare", "issuer", scope);
+  const native = await prepare({ project: process.env.TT_UX_PROJECT, customerImage, apiAddress, baoAddress, packageArtifact,
+    stage: path.join(root, "agent-package"), workspaceId: state.workspaceId });
+  const findAgent = async agentId => {
+    const { items } = await owner.request(api() + "/agents");
+    return items.find(candidate => candidate.agentId === agentId);
+  };
+  const bindingId = crypto.randomUUID();
+  let enrolled;
+  try {
+    const bootstrap = await owner.request(api() + "/agent-bootstrap-tokens", "POST",
+      { name: "Disposable native OpenBao consumer", expiresAt: new Date(Date.now() + 300000).toISOString() }, 201);
+    native.install(bootstrap.plaintextToken);
+    enrolled = await wait("installed consumer enrolls through the public API", async () => {
+      const agentId = native.readAgentId();
+      return agentId && await findAgent(agentId);
+    });
+    const binding = { agentId: enrolled.id, deploymentProfileRef: "native-openbao", profileRevision: 1, required: true,
+      wave: 2, verificationPolicy: "installed", freshnessSeconds: 3600, state: "active" };
+    const created = await owner.request(group() + "/consumers/" + bindingId, "PUT", binding);
+    assert.equal(created.authorization_revision, 1);
+    native.configure({ agentId: enrolled.agentId, bindingId, groupId: state.groupId, sans: certificateSans });
+    const deploy = await rollout("installed-openbao-consumer", materialVersionId);
+    await approve(deploy.id);
+    await terminal(deploy.id);
+    await converge([bindingId]);
+    const installed = native.verifyOutput(certificateSans[0], selected.fingerprint_sha256);
+    const { beginNativeServiceObservation } = require("./azure-operator-review/final-evidence-bridge.cjs");
+    const finish = await beginNativeServiceObservation({ files: native.files, readEnrolledAgent: findAgent, nodeExecutable: native.nodeExecutable });
+    await native.renew();
+    native.restart();
+    const restarted = Date.now();
+    await wait("installed consumer heartbeat after restart", async () => Date.parse((await findAgent(enrolled.agentId))?.lastSeenAt) > restarted);
+    const proof = await finish();
+    const verification = await rollout("verify-installed-consumer-after-restart", materialVersionId, { verificationOnly: true });
+    await approve(verification.id);
+    await terminal(verification.id);
+    const rows = await converge([bindingId]);
+    assert.ok(rows.some(row => row.binding_id === bindingId && row.observed_material_version_id === materialVersionId),
+      "installed consumer did not observe the retained version");
+    const provider = await customer("native-openbao-facts");
+    assert.ok(provider.exactRead200 > 0 && provider.renew200 > 0, "actual provider reads and renewal required");
+    return { nativeService: proof, installed, provider };
+  } finally {
+    try {
+      if (enrolled) await owner.request(api() + "/agents/" + enrolled.id + "/retire", "POST", {});
+    } finally { await native.close(); }
+  }
+}
+
+async function main({ nativeOpenBao } = {}) {
+  if (nativeOpenBao) {
+    assert.ok(gate && process.env.TT_UX_PACKAGE_ACCEPTANCE === "1");
+    assert.equal(state.materialProvider, "openbao-kv2");
+    assert.equal(state.certificateMode, "ordinary");
+  }
+  let nativeService = null;
   if (gate) {
     assert.equal(process.argv[2] || "all", "all", "Strict qualification cannot resume or run a partial phase");
     await gate.preflight();
@@ -971,7 +1037,7 @@ async function main() {
   );
   await wait("customer host startup", async () => {
     try {
-      const response = await fetch(controlBase, { signal: AbortSignal.timeout(2000) });
+      const response = await fetch(controlBase, { signal: AbortSignal.timeout(2000), headers: process.env.TT_UX_CONTROL_TOKEN ? {Authorization: `Bearer ${process.env.TT_UX_CONTROL_TOKEN}`} : {} });
       const ready = await response.json();
       return response.ok && ready.lab === "wildcard-ux" && ready.databaseAccess === false;
     } catch { return false; }
@@ -1120,7 +1186,10 @@ async function main() {
     } : {}),
     transfer,
   }))
-    if (phase === "all" || phase === "functional" && name !== "transfer" || phase === name) await step(name, fn);
+    if (phase === "all" || phase === "functional" && name !== "transfer" || phase === name) {
+      if (name === "transfer" && nativeOpenBao) nativeService = await observeNativeOpenBaoConsumer(nativeOpenBao);
+      await step(name, fn);
+    }
   if (phase === "all" || phase === "functional") {
     const facts = await customer("facts", "issuer", {
       certificateId: state.certificateId,
@@ -1169,6 +1238,7 @@ async function main() {
     }
     if (gate) await gate.finish({requiredScenarios:qualification.PHASES.map(p=>"distribution-"+p)});
   }
+  return { nativeService: nativeService?.nativeService ?? null, nativeOpenBaoFacts: nativeService ?? null };
 }
 module.exports = { main, context: {state,owner,approver,api,group,versions,matrix,rollout,approve,terminal,job,customer,wait,converge,check,save,root} };
 if (require.main === module) main().catch(async (e) => {

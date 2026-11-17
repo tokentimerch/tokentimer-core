@@ -13,6 +13,7 @@ env:
 jobs:
   # Stage 1a: scan the published architecture, then publish its unchanged OCI index.
   build-and-push-docker:
+    needs: pack-agent
     runs-on: ubuntu-latest
     env:
       GRYPE_CHECK_FOR_APP_UPDATE: "false"
@@ -259,12 +260,23 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
+      pull-requests: read
     env:
       GO_VERSION: "1.26.10"
       GOTOOLCHAIN: local
+      GOFLAGS: -buildvcs=false
       GRYPE_CHECK_FOR_APP_UPDATE: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up the candidate Node and npm toolchain
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.22.3'
 
       - name: Set up pinned patched Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -272,19 +284,46 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
+      - name: Retrieve the independently accepted 0.20.0 archive
+        id: accepted-agent
+        if: github.ref == 'refs/tags/v0.20.0' || startsWith(github.ref, 'refs/tags/v0.20.0-')
+        env:
+          QUALIFIED_AGENT_SHA256: ${{ vars.CORE_0200_QUALIFIED_AGENT_SHA256 }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/certops-agent-acceptance.cjs .github/releases/0.20.0-agent-acceptance.json "$QUALIFIED_AGENT_SHA256" agent-dist
+
       - name: Pack agent release tarball
+        if: steps.accepted-agent.outcome == 'skipped'
         run: |
           test "$(go env GOVERSION)" = "go${GO_VERSION}"
+          test "$(go env GOFLAGS)" = -buildvcs=false
+          test "$(node --version)" = v24.22.3
+          test "$(npm --version)" = 11.19.1
           node packages/agent/scripts/pack-release.js --out-dir agent-dist
 
       - name: Verify shipped native toolchain and provenance
+        env:
+          PRODUCER_SOURCE_SHA: ${{ steps.accepted-agent.outputs.source_sha }}
+          PRODUCER_RUN_ID: ${{ steps.accepted-agent.outputs.producer_run_id }}
         run: |
+          set -euo pipefail
           node --test scripts/verify-agent-native-package.test.js
-          archive=(agent-dist/*.tgz)
+          archive=("$GITHUB_WORKSPACE"/agent-dist/*.tgz)
           test "${#archive[@]}" -eq 1
-          node scripts/verify-agent-native-package.js \
+          source_dir="$GITHUB_WORKSPACE"
+          source_sha="$GITHUB_SHA"
+          producer_run="$GITHUB_RUN_ID"
+          if [ -n "$PRODUCER_SOURCE_SHA" ]; then
+            source_dir="$RUNNER_TEMP/qualified-agent-source"
+            source_sha="$PRODUCER_SOURCE_SHA"
+            producer_run="$PRODUCER_RUN_ID"
+            git worktree add --detach "$source_dir" "$source_sha"
+            trap 'git -C "$GITHUB_WORKSPACE" worktree remove "$source_dir"' EXIT
+          fi
+          cd "$source_dir"
+          GITHUB_RUN_ID="$producer_run" node "$GITHUB_WORKSPACE/scripts/verify-agent-native-package.js" \
             --archive "${archive[0]}" --go-version "$GO_VERSION" \
-            --source-sha "$GITHUB_SHA" --out agent-dist/native-provenance.json
+            --source-sha "$source_sha" --out "$GITHUB_WORKSPACE/agent-dist/native-provenance.json"
 
       - name: Scan shipped package for fixed High and Critical advisories
         run: |
@@ -314,6 +353,16 @@ jobs:
             agent-dist/native-provenance.json
             agent-dist/native-security.json
           if-no-files-found: warn
+
+      - name: Require exact qualified 0.20.0 agent bytes
+        if: github.ref == 'refs/tags/v0.20.0' || startsWith(github.ref, 'refs/tags/v0.20.0-')
+        env:
+          QUALIFIED_AGENT_SHA256: ${{ vars.CORE_0200_QUALIFIED_AGENT_SHA256 }}
+        run: |
+          set -euo pipefail
+          archive=(agent-dist/*.tgz)
+          test "${#archive[@]}" -eq 1
+          node scripts/certops-azure-keyvault-package.cjs verify-release "${archive[0]}" "$QUALIFIED_AGENT_SHA256"
 
       - name: Upload agent release artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

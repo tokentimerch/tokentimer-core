@@ -46,14 +46,22 @@ async function prepare() {
   const { root, state } = context();
   await lab.verifyOwned(state);
   const outputRoot = path.join(root, "candidate");
-  const receipt = packager.buildCandidate({
-    sourcePackage: path.resolve("packages/agent"),
-    outputRoot,
-    candidateSha: process.env.GITHUB_SHA,
-    capabilities: ["material-store-azure-key-vault-v1"],
-  });
+  const exact = process.env.TT_AZURE_FINAL_PACKAGE === "1";
+  const artifactDirectory = exact ? path.join(process.env.RUNNER_TEMP, "azure-release-candidate/artifacts") : path.join(outputRoot, "artifacts");
+  const receipt = exact
+    ? require("../../scripts/certops-azure-keyvault-package.cjs").inspect(artifactDirectory,
+      process.env.GITHUB_SHA, process.env.TT_AZURE_PACKAGE_SHA256).receipt
+    : packager.buildCandidate({
+      sourcePackage: path.resolve("packages/agent"), outputRoot,
+      candidateSha: process.env.GITHUB_SHA, capabilities: ["material-store-azure-key-vault-v1"],
+    });
+  const packageArtifact = exact ? require("../../scripts/certops-azure-keyvault-package.cjs").verifyIdentity({
+    artifactId: process.env.TT_AZURE_PACKAGE_ARTIFACT_ID, runId: process.env.GITHUB_RUN_ID,
+    candidateSha: process.env.GITHUB_SHA, packageSha256: receipt.sha256, packageVersion: receipt.packageVersion,
+    capabilities: receipt.capabilities,
+  }) : undefined;
   const candidate = packager.extractVerified({
-    tarball: path.join(outputRoot, "artifacts", receipt.archive),
+    tarball: path.join(artifactDirectory, receipt.archive),
     expectedSha256: receipt.sha256,
     destination: path.join(root, "extracted"),
   });
@@ -62,6 +70,7 @@ async function prepare() {
     sha256: receipt.sha256,
     archive: receipt.archive,
     inventorySha256: inventoryHash(candidate.files),
+    ...(packageArtifact ? { packageArtifact } : {}),
   });
   const auth = {
     type: "workload-identity",
@@ -115,11 +124,21 @@ async function run() {
     "AZURE_KV_PACKAGE_STATE_INVALID",
   );
   const verifyPackage = () => {
+    const exact = process.env.TT_AZURE_FINAL_PACKAGE === "1";
+    if (exact) {
+      const identity = require("../../scripts/certops-azure-keyvault-package.cjs").verifyIdentity(candidate.packageArtifact);
+      check(identity.artifactId === process.env.TT_AZURE_PACKAGE_ARTIFACT_ID && identity.runId === process.env.GITHUB_RUN_ID &&
+        identity.candidateSha === process.env.GITHUB_SHA && identity.packageSha256 === candidate.sha256,
+      "AZURE_KV_PACKAGE_IDENTITY_CHANGED");
+      require("../../scripts/certops-azure-keyvault-package.cjs").inspect(
+        path.join(process.env.RUNNER_TEMP, "azure-release-candidate/artifacts"), process.env.GITHUB_SHA, candidate.sha256);
+    }
     check(
       candidate.archive === path.basename(candidate.archive) &&
         candidate.archive.endsWith(".tgz") &&
         packager.digest(
-          path.join(root, "candidate/artifacts", candidate.archive),
+          path.join(exact ? path.join(process.env.RUNNER_TEMP, "azure-release-candidate") : path.join(root, "candidate"),
+            "artifacts", candidate.archive),
         ) === candidate.sha256 &&
         inventoryHash(packager.inventory(candidate.root)) ===
           candidate.inventorySha256,
@@ -134,7 +153,8 @@ async function run() {
     ),
   );
   check(
-    !original.qualified.includes("material-store-azure-key-vault-v1") &&
+    (process.env.TT_AZURE_FINAL_PACKAGE === "1" ||
+      !original.qualified.includes("material-store-azure-key-vault-v1")) &&
       !original.qualified.includes("windows-material-iis-v1"),
     "AZURE_KV_PRODUCTION_GATE_MUST_REMAIN_DISABLED",
   );
@@ -155,7 +175,7 @@ async function run() {
   const boundary = new io.FaultBoundary(
     `${state.vault}.vault.azure.net`,
   ).install();
-  const report = reports.emptyReport(process.env.GITHUB_SHA, candidate.sha256);
+  const report = reports.emptyReport(process.env.GITHUB_SHA, candidate.sha256, candidate.packageArtifact);
   fs.mkdirSync(path.dirname(resultFile), { recursive: true });
   let bridge,
     active = null,
