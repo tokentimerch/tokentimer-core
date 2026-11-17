@@ -130,7 +130,8 @@ function verifyInstalled(files, installedRoot) {
   assert.ok(stat.isDirectory() && !stat.isSymbolicLink(), "Installed package root must be a real directory");
   assert.deepEqual(inventory(installedRoot), files, "Installed files differ from the verified package");
 }
-function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha }) {
+const VAULT_CLEANUP = "material-cleanup-vault-kv2-v1";
+function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha, linuxVaultCleanup = false }) {
   assert.match(candidateSha || "", /^[a-f0-9]{40}$/);
   fs.mkdirSync(outputRoot); // Never reuse an artifact from another run.
   const staging = path.join(outputRoot, "build"), artifacts = path.join(outputRoot, "artifacts");
@@ -138,16 +139,46 @@ function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha 
   const input = path.join(staging, "src/capabilities/qualified-capabilities.json");
   const original = JSON.parse(fs.readFileSync(input, "utf8"));
   const selected = [...new Set([...original.qualified, ...capabilities])];
+  if (linuxVaultCleanup) {
+    assert.deepEqual(capabilities, [VAULT_CLEANUP]);
+    assert.equal(original.qualified.includes(VAULT_CLEANUP), false);
+    const packageFile = path.join(staging, "package.json");
+    const pkg = JSON.parse(fs.readFileSync(packageFile, "utf8"));
+    pkg.os = ["linux"];
+    pkg.files = pkg.files.filter(file => !/\.exe$|install-agent\.ps1$/i.test(file));
+    fs.writeFileSync(packageFile, JSON.stringify(pkg, null, 2) + "\n");
+    run(process.execPath, [path.join(staging, "scripts/check-shipped-sources.js")]);
+  }
   fs.writeFileSync(input, JSON.stringify({ qualified: selected }));
   run(process.execPath, [path.join(staging, "scripts/build-qualified-capabilities.js")]);
-  run(process.execPath, [path.join(staging, "scripts/pack-release.js"), "--out-dir", artifacts]);
+  run(process.execPath, [path.join(staging, "scripts/pack-release.js"), "--out-dir", artifacts,
+    ...(linuxVaultCleanup ? ["--linux-only"] : [])]);
   const names = fs.readdirSync(artifacts).filter(name => name.endsWith(".tgz"));
   assert.equal(names.length, 1, "Expected one candidate agent archive");
   const archive = names[0], sha256 = digest(path.join(artifacts, archive));
   assert.equal(fs.readFileSync(path.join(artifacts, archive + ".sha256"), "utf8").trim(), `${sha256}  ${archive}`);
-  const receipt = { candidateSha, archive, sha256, sourceKind: process.env.GITHUB_ACTIONS === "true" ? "workflow-checkout" : "local-worktree", buildMode: "qualification-only-not-release", capabilities: selected, packagerSha256: digest(path.join(sourcePackage, "scripts/pack-release.js")) };
+  const receipt = { candidateSha, archive, sha256, sourceKind: process.env.GITHUB_ACTIONS === "true" ? "workflow-checkout" : "local-worktree", buildMode: linuxVaultCleanup ? "linux-vault-cleanup-candidate" : "qualification-only-not-release", capabilities: selected, packagerSha256: digest(path.join(sourcePackage, "scripts/pack-release.js")) };
+  if (linuxVaultCleanup) {
+    receipt.schemaVersion = 1;
+    receipt.version = require(path.join(staging, "package.json")).version;
+    receipt.nodeVersion = process.version;
+    receipt.npmVersion = run("npm", ["--version"]).trim();
+    require("./certops-linux-published-package").inspectLinuxCandidate(path.join(artifacts, archive), receipt);
+  }
   fs.writeFileSync(path.join(outputRoot, "artifact.json"), JSON.stringify(receipt, null, 2));
   return receipt;
+}
+function buildLinuxVaultCleanup(outputRoot) {
+  assert.equal(process.platform, "linux");
+  assert.equal(process.env.GITHUB_ACTIONS, "true");
+  assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted");
+  assert.equal(process.env.GITHUB_REF, "refs/heads/main");
+  const candidateSha = process.env.GITHUB_SHA;
+  const root = path.resolve(__dirname, "..");
+  assert.equal(run("git", ["rev-parse", "HEAD"], { cwd: root }).trim(), candidateSha);
+  assert.equal(run("git", ["status", "--porcelain"], { cwd: root }).trim(), "");
+  return buildCandidate({ sourcePackage: path.join(root, "packages/agent"), outputRoot: path.resolve(outputRoot),
+    capabilities: [VAULT_CLEANUP], candidateSha, linuxVaultCleanup: true });
 }
 module.exports = { buildCandidate, extractVerified, verifyInstalled, inventory, digest, verifyAdcsAcceptance, verifyOperatorScope, ADCS_ACCEPTANCE_SCENARIOS };
 if (require.main === module) {
@@ -155,6 +186,7 @@ if (require.main === module) {
     const [sourcePackage, outputRoot, candidateSha, capabilityList] = process.argv.slice(2);
     if (sourcePackage === "verify-adcs") verifyAdcsAcceptance(JSON.parse(fs.readFileSync(outputRoot, "utf8")), JSON.parse(fs.readFileSync(candidateSha, "utf8")), capabilityList);
     else if(sourcePackage === "verify-operator-scope")verifyOperatorScope(JSON.parse(fs.readFileSync(outputRoot,"utf8")),JSON.parse(fs.readFileSync(candidateSha,"utf8")));
+    else if (sourcePackage === "build-linux-vault-cleanup") buildLinuxVaultCleanup(outputRoot);
     else buildCandidate({ sourcePackage, outputRoot, candidateSha, capabilities: capabilityList.split(",") });
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

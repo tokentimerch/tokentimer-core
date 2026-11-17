@@ -63,6 +63,8 @@ import certops_adcs_uncertain_abandon_proof as uncertain_abandon_proof
 ROOT = Path(__file__).resolve().parent.parent
 CI_WORKFLOW = '.github/workflows/ci.yml'
 CI_API_SUITES = {'adcs-enrollment-policy-api', 'adcs-installation-recovery-api', 'adcs-api-release-gates'}
+VAULT_CLEANUP_WORKFLOW = ".github/workflows/certops-distribution-qualification.yml"
+VAULT_CLEANUP_SUITE = "linux-vault-cleanup-restart"
 WORKFLOWS = {
     ".github/workflows/" + name for name in (
         "certops-qualification.yml", "certops-real-acme.yml", "certops-acme-native-console.yml", "certops-acme-browser-lifecycle.yml",
@@ -92,6 +94,7 @@ WORKFLOWS = {
     )
 }
 WORKFLOWS.add(CI_WORKFLOW)
+WORKFLOWS.add(VAULT_CLEANUP_WORKFLOW)
 MAX_ARCHIVE = 20 * 1024 * 1024
 MAX_REPORT = 2 * 1024 * 1024
 MAX_TOTAL_DOWNLOAD = 512 * 1024 * 1024
@@ -199,13 +202,60 @@ def migration_evidence(value):
 
 
 def collectable_artifact(run, artifact):
+    if run.get("path") == VAULT_CLEANUP_WORKFLOW:
+        return artifact.get("name") == "linux-vault-cleanup-receipt"
     # Normal CI also uploads logs, JUnit and other unrelated artifacts. Only its
     # dedicated sanitized AD CS report collection belongs in qualification.
     return run.get('path') != CI_WORKFLOW or artifact.get('name') == 'certops-adcs-api'
 
 def validate_report_workflow(report, workflow):
+    is_vault_receipt = isinstance(report, dict) and report.get("suite") == VAULT_CLEANUP_SUITE
+    if is_vault_receipt != (workflow == VAULT_CLEANUP_WORKFLOW):
+        raise ValueError("Installed Vault cleanup receipt requires its dedicated producer")
     if workflow == CI_WORKFLOW and (not isinstance(report, dict) or report.get('suite') not in CI_API_SUITES):
         raise ValueError('Normal CI may supply only AD CS API qualification reports')
+
+
+def vault_cleanup_fields(value):
+    facts = value.get("nativeVaultCleanupRestart")
+    if (not isinstance(facts, dict)
+            or not isinstance(facts.get("artifactId"), str) or not re.fullmatch(r"[1-9][0-9]{0,15}", facts["artifactId"])
+            or not isinstance(facts.get("packageSha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", facts["packageSha256"])
+            or facts.get("installedTreeVerified") is not True
+            or type(facts.get("actualDeleteRequests")) is not int or facts["actualDeleteRequests"] != 1
+            or type(facts.get("authenticatedAttempts")) is not int or facts["authenticatedAttempts"] != 2
+            or value.get("platform") != "linux" or value.get("architecture") != "x64"):
+        raise ValueError("Invalid installed Vault cleanup evidence")
+    keys = ("artifactId", "packageSha256", "installedTreeVerified", "actualDeleteRequests", "authenticatedAttempts")
+    return {key: facts[key] for key in keys}
+
+
+def authenticate_vault_archive(raw, artifact, proof, candidate):
+    if (str(artifact.get("id")) != proof["artifactId"]
+            or artifact.get("digest") != "sha256:" + hashlib.sha256(raw).hexdigest()):
+        raise ValueError("Installed Vault candidate archive digest or identity mismatch")
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        entries = archive.infolist()
+        if (len(entries) != 3 or sum(info.file_size for info in entries) > MAX_ARCHIVE
+                or any(info.is_dir() or stat.S_ISLNK(info.external_attr >> 16) for info in entries)
+                or len(set(archive.namelist())) != 3 or "artifact.json" not in archive.namelist()
+                or archive.getinfo("artifact.json").file_size > MAX_REPORT):
+            raise ValueError("Unexpected installed Vault candidate archive inventory")
+        receipt = json.loads(archive.read("artifact.json"))
+        name = receipt.get("archive") if isinstance(receipt, dict) else None
+        if (not isinstance(name, str) or not re.fullmatch(r"tokentimer-agent-linux-[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?\.tgz", name)
+                or set(archive.namelist()) != {"artifact.json", name, name + ".sha256"}
+                or receipt.get("schemaVersion") != 1
+                or receipt.get("sourceKind") != "workflow-checkout"
+                or receipt.get("buildMode") != "linux-vault-cleanup-candidate"
+                or receipt.get("candidateSha") != candidate or receipt.get("sha256") != proof["packageSha256"]
+                or archive.getinfo(name + ".sha256").file_size > 256):
+            raise ValueError("Installed Vault candidate receipt mismatch")
+        checksum = hashlib.sha256(archive.read(name)).hexdigest()
+        if (checksum != proof["packageSha256"]
+                or archive.read(name + ".sha256").decode("ascii").strip() != f"{checksum}  {name}"):
+            raise ValueError("Installed Vault package checksum mismatch")
+
 
 def declared_sources():
     slots = qualification_manifest.load(ROOT / ".github/maintainers/certops/qualification-suites.json")["slots"]
@@ -1323,6 +1373,9 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 "requiredScenarios", "missingCapabilities", "missingScenarios",
                 "fixtureSource", "qualificationEnvironment", "artifactQualification", "qualificationStatus", "experimental")
         result = {key: value[key] for key in keys if key in value}
+        if value.get("suite") == VAULT_CLEANUP_SUITE:
+            result["nativeVaultCleanupRestart"] = vault_cleanup_fields(value)
+            result.update(platform="linux", architecture="x64")
         if "cleanup" in value:
             cleanup = value["cleanup"]
             if not isinstance(cleanup, dict) or cleanup.get("status") not in ("passed", "failed", "not-run"):
@@ -2293,6 +2346,7 @@ def main(arguments=()):
     output = ROOT / "qualification-results/release-collection"
     output.mkdir(parents=True, exist_ok=True)
     files = []
+    vault_proof = None
     archive_count = 0
     downloaded_bytes = 0
     coverage = catalog_coverage()
@@ -2309,6 +2363,8 @@ def main(arguments=()):
                 owner_auth.validate_finalizer_run(run, repository, run_id)
             else:
                 validate_run(run, candidate, repository)
+            if profile == "vault-cleanup" and run.get("path") != VAULT_CLEANUP_WORKFLOW:
+                raise ValueError("Vault cleanup profile accepts only its dedicated workflow runs")
             data = json.loads(download(endpoint + "/artifacts?per_page=100", token))
             if data.get("total_count", 0) > MAX_ARTIFACTS_PER_RUN:
                 raise ValueError("Artifact inventory exceeds explicit bound")
@@ -2329,6 +2385,8 @@ def main(arguments=()):
                     raise ValueError("Collection total download size exceeds limit")
                 if elapsed_finalizer and artifact.get("digest") != "sha256:" + hashlib.sha256(raw).hexdigest():
                     raise ValueError("Real-day finalizer artifact digest does not match GitHub")
+                if run.get("path") == VAULT_CLEANUP_WORKFLOW and artifact.get("digest") != "sha256:" + hashlib.sha256(raw).hexdigest():
+                    raise ValueError("Installed Vault cleanup receipt digest does not match GitHub")
                 def authenticate_elapsed_report(report):
                     if not isinstance(report, dict):
                         return False
@@ -2355,6 +2413,26 @@ def main(arguments=()):
                 reports = extract_reports(raw, suites, scopes, database_scopes, authenticate_report=authenticate_elapsed_report) if elapsed_finalizer else extract_reports(raw, suites, scopes, database_scopes)
                 for suffix, report in reports:
                     validate_report_workflow(report, run.get("path"))
+                    if isinstance(report, dict) and report.get("suite") == VAULT_CLEANUP_SUITE:
+                        if vault_proof is not None:
+                            raise ValueError("Expected one installed Vault cleanup receipt")
+                        proof = report["nativeVaultCleanupRestart"]
+                        matches = [item for item in data.get("artifacts", [])
+                                   if str(item.get("id")) == proof["artifactId"]]
+                        if (len(matches) != 1 or matches[0].get("name") != "linux-vault-cleanup-candidate"
+                                or matches[0].get("expired") is not False
+                                or type(matches[0].get("id")) is not int
+                                or type(matches[0].get("size_in_bytes")) is not int
+                                or not 1 <= matches[0].get("size_in_bytes", 0) <= MAX_ARCHIVE):
+                            raise ValueError("Expected the exact same-run installed Vault candidate artifact")
+                        package_id = proof["artifactId"]
+                        package_raw = download(f"https://api.github.com/repos/{repository}/actions/artifacts/{package_id}/zip", token, redirect=True)
+                        archive_count += 1
+                        downloaded_bytes += len(package_raw)
+                        if archive_count > limits["archives"] or downloaded_bytes > MAX_TOTAL_DOWNLOAD:
+                            raise ValueError("Installed Vault candidate exceeds collection budget")
+                        authenticate_vault_archive(package_raw, matches[0], proof, candidate)
+                        vault_proof = {**proof, "runId": run_id}
                     verify_webhosting_retention_workflow(report, run.get("path"))
                     verify_alive_grace_workflow(report, run.get("path"))
                     verify_bind_failure_native_workflow(report, run.get("path"))
@@ -2384,6 +2462,8 @@ def main(arguments=()):
         validate_matrix_summary(json.loads(result.stdout), candidate, len(selected_matrix["slots"]), coverage, selection)
         summary["status"] = "passed"
         summary.update(qualification_profiles.summary_fields(selection,True))
+        if vault_proof is not None:
+            summary["nativeVaultCleanupRestart"] = vault_proof
     finally:
         (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print("Committed mandatory matrix passed; full feature specifications remain separately tracked" if profile=="full" else f"Declared {profile} profile passed; omitted environments remain unqualified")

@@ -1,16 +1,54 @@
 """Offline scoped evidence parity and promotion refusals; no cloud execution."""
 import certops_qualification_manifest as qualification_manifest
+import hashlib
+import io
 import json
 import importlib.util
 from pathlib import Path
 import subprocess
 import unittest
+import zipfile
 import certops_qualification_profiles as profiles
 
 ROOT=Path(__file__).resolve().parent.parent
 
 
 class ProfileTests(unittest.TestCase):
+    def test_vault_cleanup_binds_exact_artifact_and_package_bytes(self):
+        spec = importlib.util.spec_from_file_location("vault_profile_collector", ROOT / "scripts/certops-release-collector.py")
+        collector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(collector)
+        candidate = "a" * 40
+        package = b"fixture archive bytes"
+        digest = hashlib.sha256(package).hexdigest()
+        name = "tokentimer-agent-linux-0.19.2-rc.1.tgz"
+        proof = {"artifactId": "42", "packageSha256": digest}
+        receipt = {"schemaVersion": 1, "candidateSha": candidate, "archive": name, "sha256": digest,
+                   "sourceKind": "workflow-checkout", "buildMode": "linux-vault-cleanup-candidate"}
+
+        def artifact(payload):
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as archive:
+                archive.writestr("artifact.json", json.dumps(receipt))
+                archive.writestr(name, payload)
+                archive.writestr(name + ".sha256", f"{digest}  {name}\n")
+            raw = buffer.getvalue()
+            return raw, {"id": 42, "digest": "sha256:" + hashlib.sha256(raw).hexdigest()}
+
+        raw, metadata = artifact(package)
+        collector.authenticate_vault_archive(raw, metadata, proof, candidate)
+        with self.assertRaises(ValueError):
+            collector.authenticate_vault_archive(raw, {**metadata, "id": 43}, proof, candidate)
+        with self.assertRaises(ValueError):
+            collector.authenticate_vault_archive(raw, {**metadata, "digest": "sha256:" + "b" * 64}, proof, candidate)
+        with self.assertRaises(ValueError):
+            collector.authenticate_vault_archive(raw, metadata, proof, "b" * 40)
+        changed_raw, changed_metadata = artifact(b"other archive bytes")
+        with self.assertRaises(ValueError):
+            collector.authenticate_vault_archive(changed_raw, changed_metadata, proof, candidate)
+        with self.assertRaises(ValueError):
+            collector.validate_report_workflow({"suite": collector.VAULT_CLEANUP_SUITE}, collector.CI_WORKFLOW)
+
     def test_native_adcs_collector_cannot_hide_deferred_scopes_or_promote_full(self):
         spec = importlib.util.spec_from_file_location("adcs_profile_collector", ROOT / "scripts/certops-release-collector.py")
         collector = importlib.util.module_from_spec(spec)

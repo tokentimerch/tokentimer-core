@@ -358,7 +358,7 @@ function claimEnvelope(agentId, maxJobs = 1) {
 
 async function cleanupSeededRows() {
   if (!pool || !seeded.workspaceId) return;
-  if (process.env.CERTOPS_REAL_LINUX_SYSTEMD_REQUIRED === "1") require("../../scripts/certops-linux-systemd-ownership").assertHostReceiptRemoved(process.env.RUNNER_TEMP);
+  require("../../scripts/certops-linux-systemd-ownership").assertProtocolHostReceiptRemoved();
   if(process.env.CERTOPS_REAL_WINDOWS_REQUIRED === "1") require("./windows-real-journey").assertAllCleanupSafe();
   const ws = seeded.workspaceId;
   await pool.query(
@@ -411,7 +411,7 @@ describe("CertOps agent surface E2E", () => {
       return;
     }
     assert.equal(process.env.CERTOPS_PROTOCOL_DISPOSABLE_STACK, "1", "Protocol qualification requires an explicitly disposable database");
-    if (process.env.CERTOPS_REAL_LINUX_SYSTEMD_REQUIRED === "1") require("../../scripts/certops-linux-systemd-ownership").assertHostReceiptRemoved(process.env.RUNNER_TEMP);
+    require("../../scripts/certops-linux-systemd-ownership").assertProtocolHostReceiptRemoved();
     services = loadServices();
     await ensureOwnableSigningKey();
     await seedWorkspace();
@@ -419,7 +419,7 @@ describe("CertOps agent surface E2E", () => {
   });
 
   beforeEach(() => {
-    if (process.env.CERTOPS_REAL_LINUX_SYSTEMD_REQUIRED === "1") require("../../scripts/certops-linux-systemd-ownership").assertHostReceiptRemoved(process.env.RUNNER_TEMP);
+    require("../../scripts/certops-linux-systemd-ownership").assertProtocolHostReceiptRemoved();
   });
 
   after(async () => {
@@ -442,6 +442,19 @@ describe("CertOps agent surface E2E", () => {
     it("real Linux systemd: installer registers non-root agent protects credentials recovers and retires without restart", { timeout: 600000 }, async () => {
       assert.equal(dbAvailable, true, "Linux systemd journey requires migrated PostgreSQL");
       await require("./linux-systemd-real-journey")({ pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot });
+    });
+  }
+  if (process.env.TT_CLEANUP_NATIVE_VAULT === "1") {
+    it("installed Linux Vault cleanup resumes after lost delete response", { timeout: 240000 }, async () => {
+      assert.equal(dbAvailable, true);
+      const vaultCleanup = require("../../scripts/certops-linux-published-package").prepareVaultCleanupCandidate();
+      const proof = await require("./linux-systemd-real-journey")({
+        pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot, vaultCleanup,
+      });
+      const fs = require("node:fs");
+      fs.writeFileSync(path.join(process.env.TT_CLEANUP_EVIDENCE_DIR, "native-facts.json"), JSON.stringify({
+        ...proof, artifactId: vaultCleanup.artifactId, packageSha256: vaultCleanup.archiveSha256,
+      }), { flag: "wx" });
     });
   }
   if (process.env.CERTOPS_REAL_WINDOWS_FIXED_ROOT_REQUIRED === "1") {
