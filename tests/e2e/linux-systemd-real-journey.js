@@ -219,8 +219,17 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
   assert.equal(spawnSync("getent", ["passwd", USER]).status, 2, "refuse an existing agent account");
   assert.equal(spawnSync("getent", ["group", USER]).status, 2, "refuse an existing agent group");
   assert.equal(serviceProperty("LoadState"), "not-found", "refuse any existing vendor/unit configuration");
-  const manager = spawnSync("systemctl", ["is-system-running"], { encoding: "utf8", timeout: 10000 });
-  assert.ok(["running", "degraded"].includes(manager.stdout.trim()), "a live systemd manager is required");
+  const manager = spawnSync("systemctl", ["is-system-running", "--wait"], { encoding: "utf8", timeout: 60000 });
+  if (manager.error || manager.signal) {
+    const code = manager.error?.code === "ETIMEDOUT" ? "SYSTEMD_TIMEOUT" : "SYSTEMD_PROBE_FAILED";
+    throw Object.assign(new Error("The systemd readiness probe did not complete"), { code });
+  }
+  const managerState = manager.stdout?.trim();
+  if (!["running", "degraded"].includes(managerState)) {
+    const state = ["initializing", "starting", "maintenance", "stopping", "offline", "unknown"].includes(managerState)
+      ? managerState.toUpperCase() : "UNRECOGNIZED_STATE";
+    throw Object.assign(new Error("A live systemd manager is required"), { code: `SYSTEMD_${state}` });
+  }
   const installer = path.join(repoRoot, "packages/agent/scripts/install-agent.sh");
   const published = process.env.CERTOPS_LINUX_PUBLISHED_INPUTS ? require("../../scripts/certops-linux-published-package").loadManifest(process.env.CERTOPS_LINUX_PUBLISHED_INPUTS) : null;
   assert.ok(!vaultCleanup || !published);
@@ -236,7 +245,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
   const runId=crypto.randomBytes(5).toString("hex");const writeRoot=`/var/lib/tokentimer-qualification-${runId}`;
   const writeFixture={runId,root:writeRoot,allowed:writeRoot+"/allowed",denied:writeRoot+"/denied",probe:writeRoot+"/write-probe.js",probeSha256:digest(path.join(repoRoot,"tests/e2e/helpers/linux-systemd-write-probe.js"))};
   require("../../scripts/certops-linux-systemd-ownership").validateWriteFixture(writeFixture);assert.equal(fs.lstatSync(writeRoot,{throwIfNoEntry:false}),undefined);
-  const writeGate=require("../../packages/agent/scripts/host-gate").createHostGate({suite:"linux-systemd-writepath",strict:true,debugDetail:false,evidenceLevel:"real-host",reportPath:path.join(repoRoot,"qualification-results/linux-systemd-writepath.json"),fixtureSource:{file:"tests/e2e/linux-systemd-real-journey.js",sha256:digest(__filename)},requiredCapabilities:["linux","systemd"],probeCapabilities:()=>({linux:{available:process.platform==="linux"},systemd:{available:["running","degraded"].includes(manager.stdout.trim()),evidence:"native systemctl is-system-running"}})});
+  const writeGate=require("../../packages/agent/scripts/host-gate").createHostGate({suite:"linux-systemd-writepath",strict:true,debugDetail:false,evidenceLevel:"real-host",reportPath:path.join(repoRoot,"qualification-results/linux-systemd-writepath.json"),fixtureSource:{file:"tests/e2e/linux-systemd-real-journey.js",sha256:digest(__filename)},requiredCapabilities:["linux","systemd"],probeCapabilities:()=>({linux:{available:process.platform==="linux"},systemd:{available:["running","degraded"].includes(managerState),evidence:"native systemctl is-system-running"}})});
   let owned = false, ownershipHandle, ownershipVerified = false;
   let agentId, agentRowId, installAttempted = false;
   let primaryError;
