@@ -87,13 +87,11 @@ Use `cert-manager` or connect an external executor with a machine token for supp
   The audit log records who requested or approved a job. Approval hashes bind the
   decision to the exact job. For supported deployments, installation and live TLS
   checks record separate results.
-  [CertOps audit events](docs/certops/audit-events.md)
+- **Approval gates, a kill switch, and renewal-failure alerts** give operators control.
+  Private keys and Vault or DNS credentials stay in your infrastructure. The TokenTimer
+  control plane never receives or stores certificate private keys.
 
-Approval gates, a kill switch, and renewal-failure alerts give operators control.
-Private keys and Vault or DNS credentials stay in your infrastructure. The TokenTimer
-control plane never receives or stores certificate private keys.
-
-[Watch the certificate operations demo from 7:00](https://www.youtube.com/watch?v=9dlDbMt8Ino&t=420s).
+[watch the certificate operations demo](https://www.youtube.com/watch?v=9dlDbMt8Ino&t=420s).
 
 <p align="center">
   <img src="docs/assets/certops-certificates.png" alt="Managed certificate inventory with status, days left, renewal policy, key locality, and source for every certificate" width="888" />
