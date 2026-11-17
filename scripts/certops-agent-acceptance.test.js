@@ -1,6 +1,7 @@
 "use strict";
 // Synthetic API/decision fixtures only. No real acceptance or qualification.
 const test = require("node:test"), assert = require("node:assert/strict");
+const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
 const subject = require("./certops-agent-acceptance.cjs");
 const { CAPABILITIES, TOOLCHAIN } = require("./certops-azure-keyvault-package.cjs");
 const source = "a".repeat(40), merge = "b".repeat(40), head = "c".repeat(40), digest = "d".repeat(64);
@@ -129,10 +130,29 @@ function contentSuite(t) {
 test("content gate authenticates ZIP bytes and accepts only complete synthetic profiles bound to the archive", async t => {
   const suite = contentSuite(t);
   subject.verify(suite.value, suite.candidate.digest);
-  await subject.verifyGithub(suite.value, suite.dependencies());
+  const files = await subject.verifyGithub(suite.value, suite.dependencies());
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "tt-accepted-output-"));
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const output = path.join(parent, "agent-dist"), name = "tokentimer-agent-0.20.0.tgz";
+  subject.stageReleaseArchive(output, files);
+  assert.deepEqual(fs.readdirSync(output).sort(), [name, name + ".sha256"]);
+  assert.equal(fixture.hash(fs.readFileSync(path.join(output, name))), suite.candidate.digest);
+  assert.deepEqual(fs.readFileSync(path.join(output, name + ".sha256")), files.get(name + ".sha256"));
+  assert.throws(() => subject.stageReleaseArchive(output, files));
   const dependencies = suite.dependencies(), id = suite.value.evidence["azure-provider-and-cleanup"].artifactId;
   const changed = Buffer.from(suite.payloads.get(id)); changed[40] ^= 1;
   await assert.rejects(subject.verifyGithub(suite.value, { ...dependencies, download: async key => key === id ? changed : suite.payloads.get(key) }));
+});
+
+test("release source may apply only the reviewed capability projection and its unpackaged test change", () => {
+  const { renderGeneratedModule } = require("../packages/agent/scripts/build-qualified-capabilities");
+  const manifest = JSON.stringify({ qualified: CAPABILITIES }), generated = renderGeneratedModule(CAPABILITIES);
+  const projection = ["qualified-capabilities.json", "qualified-capabilities.generated.js", "capabilities.test.js"]
+    .map(name => "packages/agent/src/capabilities/" + name);
+  subject.requireReleaseAgentSource(projection, manifest, generated);
+  assert.throws(() => subject.requireReleaseAgentSource([...projection, "packages/agent/bin/tokentimer-agent.js"], manifest, generated));
+  assert.throws(() => subject.requireReleaseAgentSource(projection, JSON.stringify({ qualified: CAPABILITIES.slice(0, -1) }), generated));
+  assert.throws(() => subject.requireReleaseAgentSource(projection, manifest, renderGeneratedModule(CAPABILITIES.slice(0, -1))));
 });
 
 test("green metadata cannot substitute provider-only, generic PASS, wrong source or incomplete native/operator payloads", async t => {

@@ -7,6 +7,13 @@ const { CAPABILITIES, TOOLCHAIN } = require("./certops-azure-keyvault-package.cj
 const zip = require("./certops-artifact-zip.cjs"), profiles = require("./certops-final-package-evidence.cjs");
 const REPOSITORY = "tokentimerch/tokentimer-core";
 const RECEIPT = ".github/releases/0.20.0-agent-acceptance.json";
+const ARCHIVE = "tokentimer-agent-0.20.0.tgz";
+const CAPABILITY_DIRECTORY = "packages/agent/src/capabilities";
+const PROJECTED_SOURCE_FILES = new Set([
+  `${CAPABILITY_DIRECTORY}/qualified-capabilities.json`,
+  `${CAPABILITY_DIRECTORY}/qualified-capabilities.generated.js`,
+  `${CAPABILITY_DIRECTORY}/capabilities.test.js`,
+]);
 // The advertised Azure auth modes remain required until explicitly rescoped.
 const REQUIRED = Object.freeze(["azure-provider-and-cleanup", "azure-operator-http-real-ca", "openbao-operator-http-real-ca",
   "azure-imds-managed-identity", "azure-natural-access-token-expiration"]);
@@ -90,17 +97,18 @@ function packageIdentity(receipt) {
     candidateSha: receipt.packageSourceSha, packageSha256: receipt.packageSha256, packageVersion: "0.20.0", capabilities: CAPABILITIES };
 }
 function verifyPackage(receipt, files) {
-  const archive = "tokentimer-agent-0.20.0.tgz";
-  assert.deepEqual([...files.keys()].sort(), ["artifact.json", archive, archive + ".sha256"].sort());
+  assert.deepEqual([...files.keys()].sort(), ["artifact.json", ARCHIVE, ARCHIVE + ".sha256"].sort());
   const base = fs.realpathSync(os.tmpdir()), directory = fs.mkdtempSync(path.join(base, "tt-accepted-package-"));
   assert.equal(path.dirname(directory), base);
   try {
     for (const [name, bytes] of files) fs.writeFileSync(path.join(directory, name), bytes, { flag: "wx", mode: 0o600 });
     require("./certops-azure-keyvault-package.cjs").inspect(directory, receipt.packageSourceSha, receipt.packageSha256);
     // Bound tar expansion before the existing traversal/link-safe extractor.
-    require("node:zlib").gunzipSync(files.get(archive), { maxOutputLength: 64 * 1024 * 1024 });
-    return require("./certops-agent-package").extractVerified({ tarball: path.join(directory, archive),
-      expectedSha256: receipt.packageSha256, destination: path.join(directory, "extracted") }).files;
+    require("node:zlib").gunzipSync(files.get(ARCHIVE), { maxOutputLength: 64 * 1024 * 1024 });
+    const { files: installed } = require("./certops-agent-package").extractVerified({ tarball: path.join(directory, ARCHIVE),
+      expectedSha256: receipt.packageSha256, destination: path.join(directory, "extracted") });
+    assert.ok(!Object.hasOwn(installed, "src/capabilities/capabilities.test.js"));
+    return installed;
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 }
 function verifyContent(receipt, scope, files, metadata, installedFiles) {
@@ -129,15 +137,34 @@ async function verifyGithub(receipt, { read, isAncestor, download }) {
     assert.equal(crypto.createHash("sha256").update(bytes).digest("hex"), item.proof.artifactSha256);
     contents.set(item.proof.artifactId, zip.read(bytes));
   }
-  const installedFiles = verifyPackage(receipt, contents.get(receipt.packageArtifact.artifactId));
+  const packageFiles = contents.get(receipt.packageArtifact.artifactId);
+  const installedFiles = verifyPackage(receipt, packageFiles);
   for (const scope of REQUIRED) verifyContent(receipt, scope, contents.get(receipt.evidence[scope].artifactId),
     metadata.find(item => item.proof === receipt.evidence[scope]), installedFiles);
+  return packageFiles;
 }
-async function main(file, expectedSha256, env = process.env) {
+
+function requireReleaseAgentSource(changedPaths, manifest, generated) {
+  for (const changedPath of changedPaths) {
+    assert.ok(PROJECTED_SOURCE_FILES.has(changedPath), "Agent sources changed since qualification");
+  }
+  assert.deepEqual(JSON.parse(manifest), { qualified: CAPABILITIES });
+  assert.equal(generated, require("../packages/agent/scripts/build-qualified-capabilities").renderGeneratedModule(CAPABILITIES));
+}
+
+function stageReleaseArchive(directory, files) {
+  fs.mkdirSync(directory);
+  for (const name of [ARCHIVE, ARCHIVE + ".sha256"]) {
+    fs.writeFileSync(path.join(directory, name), files.get(name), { flag: "wx" });
+  }
+}
+
+async function main(file, expectedSha256, directory, env = process.env) {
   assert.equal(file, RECEIPT);
   assert.equal(env.GITHUB_ACTIONS, "true");
   assert.equal(env.GITHUB_REPOSITORY, REPOSITORY);
   assert.equal(env.GITHUB_EVENT_NAME, "push");
+  assert.equal(directory, "agent-dist");
   assert.match(env.GITHUB_REF || "", /^refs\/tags\/v0\.20\.0(?:-[0-9A-Za-z.-]+)?$/);
   assert.match(env.GITHUB_SHA || "", /^[a-f0-9]{40}$/);
   const stat = fs.lstatSync(file);
@@ -174,9 +201,24 @@ async function main(file, expectedSha256, env = process.env) {
     return Buffer.concat(chunks);
   };
   assert.equal(execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", timeout: 15000 }).trim(), env.GITHUB_SHA);
-  await verifyGithub(receipt, { read, isAncestor, download });
+  const changedPaths = execFileSync("git", ["diff", "--name-only", "--no-renames", "-z",
+    receipt.packageSourceSha, env.GITHUB_SHA, "--", "packages/agent"], { encoding: "utf8", timeout: 15000 });
+  const readCapability = name => {
+    const file = `${CAPABILITY_DIRECTORY}/${name}`;
+    const stat = fs.lstatSync(file);
+    assert.ok(stat.isFile() && (stat.mode & 0o111) === 0);
+    return fs.readFileSync(file, "utf8");
+  };
+  requireReleaseAgentSource(changedPaths.split("\0").filter(Boolean),
+    readCapability("qualified-capabilities.json"), readCapability("qualified-capabilities.generated.js"));
+  const files = await verifyGithub(receipt, { read, isAncestor, download });
+  stageReleaseArchive(directory, files);
+  assert.ok(env.GITHUB_OUTPUT);
+  fs.appendFileSync(env.GITHUB_OUTPUT,
+    `source_sha=${receipt.packageSourceSha}\nproducer_run_id=${receipt.packageArtifact.runId}\n`);
 }
-module.exports = { REQUIRED, RECEIPT, verify, verifyMetadata, verifyGithub, verifyPackage, verifyContent, packageIdentity, main };
+module.exports = { REQUIRED, RECEIPT, verify, verifyMetadata, verifyGithub, verifyPackage, verifyContent, packageIdentity,
+  requireReleaseAgentSource, stageReleaseArchive, main };
 if (require.main === module) main(...process.argv.slice(2)).catch(() => {
   console.error("CERTOPS_AGENT_ACCEPTANCE_REJECTED"); process.exitCode = 1;
 });
