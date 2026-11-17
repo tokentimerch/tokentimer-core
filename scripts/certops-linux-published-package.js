@@ -38,8 +38,8 @@ function inspect(archive,checksum,published=false){
  if(published){assert.equal(name,`tokentimer-agent-${baseline.version}.tgz`);assert.equal(actual,baseline.sha256);assert.equal(fs.statSync(archive).size,baseline.size);assert.equal(pkg.version,baseline.version);}else laterVersion(pkg.version);
  return {version:pkg.version,archiveSha256:actual,archiveSize:fs.statSync(archive).size,fileInventory:archiveInventory(archive)};
 }
-function inspectLinuxCandidate(archive, receipt, provider = "vault-kv2") {
-  const linuxCleanup = require("./certops-linux-cleanup-case.cjs")(provider);
+function inspectLinuxCandidate(archive, receipt, provider = "vault-kv2", staging = false) {
+  const linuxCleanup = require("./certops-linux-cleanup-case.cjs")(provider, staging);
   assert.equal(receipt.schemaVersion, 1);
   assert.equal(receipt.buildMode, linuxCleanup.buildMode);
   assert.equal(receipt.sourceKind, "workflow-checkout");
@@ -66,23 +66,23 @@ function inspectLinuxCandidate(archive, receipt, provider = "vault-kv2") {
   assert.equal(embedded, require("../packages/agent/scripts/build-qualified-capabilities").renderGeneratedModule(receipt.capabilities));
   return inspected;
 }
-function prepareVaultCleanupCandidate(provider = "vault-kv2") {
+function prepareVaultCleanupCandidate(provider = "vault-kv2", staging = false) {
   require("./certops-linux-systemd-ownership").validateHostedEnvironment(process.env);
   assert.equal(process.env.GITHUB_REF, "refs/heads/main");
   assert.match(process.env.TT_CLEANUP_ARTIFACT_ID || "", /^[1-9]\d{0,15}$/);
   const root = fs.realpathSync(process.env.RUNNER_TEMP);
-  const candidateDir = path.join(root, require("./certops-linux-cleanup-case.cjs")(provider).directory);
+  const candidateDir = path.join(root, require("./certops-linux-cleanup-case.cjs")(provider, staging).directory);
   const receipt = JSON.parse(fs.readFileSync(path.join(candidateDir, "artifact.json"), "utf8"));
   assert.equal(receipt.candidateSha, process.env.GITHUB_SHA);
   assert.equal(receipt.sha256, process.env.TT_CLEANUP_ARTIFACT_SHA256);
   assert.equal(receipt.archive, path.basename(receipt.archive));
   const archive = path.join(candidateDir, "artifacts", receipt.archive);
-  const inspected = inspectLinuxCandidate(archive, receipt, provider);
+  const inspected = inspectLinuxCandidate(archive, receipt, provider, staging);
   const directory = path.join(candidateDir, "installed-input");
   fs.mkdirSync(directory, { mode: 0o755 });
   run(["-xzf", archive, "--strip-components=1", "--no-same-owner", "-C", directory]);
   verifyTree(directory, inspected.fileInventory);
-  return { ...inspected, directory, receipt, artifactId: process.env.TT_CLEANUP_ARTIFACT_ID };
+  return { ...inspected, directory, receipt, staging, artifactId: process.env.TT_CLEANUP_ARTIFACT_ID };
 }
 function verifyReleaseMetadata(value){assert.equal(value.tag_name,baseline.tag);assert.equal(value.draft,false);assert.equal(value.prerelease,false);const matches=value.assets.filter(asset=>asset.id===baseline.assetId);assert.equal(matches.length,1);const asset=matches[0];assert.equal(asset.name,`tokentimer-agent-${baseline.version}.tgz`);assert.equal(asset.size,baseline.size);assert.equal(asset.digest,`sha256:${baseline.sha256}`);assert.equal(asset.browser_download_url,baseline.url);return true;}
 function prepare(oldArchive,oldChecksum,newArchive,newChecksum,output){

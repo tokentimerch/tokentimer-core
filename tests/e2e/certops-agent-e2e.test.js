@@ -444,13 +444,14 @@ describe("CertOps agent surface E2E", () => {
       await require("./linux-systemd-real-journey")({ pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot });
     });
   }
-  if (process.env.TT_CLEANUP_NATIVE_VAULT === "1" || process.env.TT_CLEANUP_NATIVE_OPENBAO === "1") {
+  if (process.env.TT_CLEANUP_NATIVE_VAULT === "1" || process.env.TT_CLEANUP_NATIVE_OPENBAO === "1" || process.env.TT_CLEANUP_NATIVE_STAGING === "1") {
+    const staging = process.env.TT_CLEANUP_NATIVE_STAGING === "1";
     const provider = process.env.TT_CLEANUP_NATIVE_OPENBAO === "1" ? "openbao-kv2" : "vault-kv2";
-    const { testName } = require("../../scripts/certops-linux-cleanup-case.cjs")(provider);
+    const { testName } = require("../../scripts/certops-linux-cleanup-case.cjs")(provider, staging);
     it(testName, { timeout: 240000 }, async () => {
       assert.equal(dbAvailable, true);
       assert.equal(process.env.TT_CLEANUP_PROVIDER, provider);
-      const vaultCleanup = require("../../scripts/certops-linux-published-package").prepareVaultCleanupCandidate(provider);
+      const vaultCleanup = require("../../scripts/certops-linux-published-package").prepareVaultCleanupCandidate(provider, staging);
       const proof = await require("./linux-systemd-real-journey")({
         pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot, vaultCleanup,
       });

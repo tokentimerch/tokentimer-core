@@ -3,7 +3,7 @@ const crypto=require("node:crypto");
 const {pool}=require("../../apps/api/db/database");
 const operations=require("../../apps/api/services/certops/distributionOperations");
 const {createCertificateIssuanceJob}=require("../../apps/api/services/certops/issuance");
-async function fixture({requireApproval=false,published=true,validDays=30,materialProvider="vault-kv2",fingerprint:providedFingerprint,providerVersion=materialProvider==="azure-key-vault"?"a".repeat(32):1, enrolled=null}={}) {
+async function fixture({requireApproval=false,published=true,validDays=30,validTo=null,materialProvider="vault-kv2",fingerprint:providedFingerprint,providerVersion=materialProvider==="azure-key-vault"?"a".repeat(32):1, enrolled=null}={}) {
   const workspaceId=enrolled?.workspaceId ?? crypto.randomUUID();
   async function user(){return (await pool.query(`INSERT INTO users(email,display_name,password_hash,auth_method)
     VALUES($1,'Lifecycle fixture','synthetic-test-only','local') RETURNING id`,[`${crypto.randomUUID()}@example.test`])).rows[0].id;}
@@ -30,8 +30,8 @@ async function fixture({requireApproval=false,published=true,validDays=30,materi
   const identity=(await pool.query(`INSERT INTO certops_certificate_identities(workspace_id,fingerprint_sha256) VALUES($1,$2) RETURNING id`,[workspaceId,fingerprint])).rows[0].id;
   // Public synthetic receipt metadata only; no service execution is claimed.
   if(published){await pool.query(`UPDATE certops_material_versions SET state='published',certificate_identity_id=$2,provider_version=$5,provider_version_ref=$6,
-    fingerprint_sha256=$3,valid_to=clock_timestamp()+($7 * interval '1 day'),published_at=clock_timestamp(),publishing_claim_id=$4 WHERE id=$1`,
-    [materialVersionId,identity,fingerprint,crypto.randomUUID(),typeof providerVersion==="number"?providerVersion:null,typeof providerVersion==="string"?providerVersion:null,validDays]);
+    fingerprint_sha256=$3,valid_to=COALESCE($8::timestamptz,clock_timestamp()+($7 * interval '1 day')),published_at=clock_timestamp(),publishing_claim_id=$4 WHERE id=$1`,
+    [materialVersionId,identity,fingerprint,crypto.randomUUID(),typeof providerVersion==="number"?providerVersion:null,typeof providerVersion==="string"?providerVersion:null,validDays,validTo]);
   await pool.query(`UPDATE certops_distribution_groups SET latest_material_version_id=$3 WHERE workspace_id=$1 AND id=$2`,[workspaceId,groupId,materialVersionId]);
   await pool.query(`UPDATE certificate_jobs SET status='succeeded',completed_at=NOW() WHERE id=$1`,[issued.job.id]);}
   const bindingId=crypto.randomUUID(),binding={agentId:consumer,deploymentProfileRef:"web",profileRevision:1,required:true,wave:0,verificationPolicy:"served",freshnessSeconds:3600,state:"active"};

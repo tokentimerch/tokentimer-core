@@ -11,6 +11,10 @@ on:
         type: choice
         options: [vault-kv2, openbao-kv2]
         default: vault-kv2
+      native_linux_staging:
+        description: Run only installed Linux staging outside activation
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -18,7 +22,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   postgres:
-    if: github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup
+    if: github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup && !inputs.native_linux_staging
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -41,7 +45,7 @@ jobs:
             qualification-results/distribution-vault-*/summary.json
           if-no-files-found: error
   agent-lab:
-    if: github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup
+    if: github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup && !inputs.native_linux_staging
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -130,7 +134,7 @@ jobs:
           if-no-files-found: error
   functional-summary:
     needs: [postgres, agent-lab]
-    if: ${{ always() && github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && !inputs.native_vault_cleanup && !inputs.native_linux_staging }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -157,11 +161,12 @@ jobs:
           path: qualification-results/distribution-functional-summary.json
           if-no-files-found: error
   native-vault-cleanup:
-    if: github.ref == 'refs/heads/main' && inputs.native_vault_cleanup
+    if: github.ref == 'refs/heads/main' && (inputs.native_vault_cleanup || inputs.native_linux_staging)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       NATIVE_CLEANUP_STORE: ${{ inputs.native_cleanup_provider == 'openbao-kv2' && 'openbao' || 'vault' }}
+      NATIVE_CASE: ${{ inputs.native_linux_staging && 'staging' || (inputs.native_cleanup_provider == 'openbao-kv2' && 'openbao-cleanup' || 'vault-cleanup') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -169,10 +174,16 @@ jobs:
       - uses: ./.github/actions/certops-node-setup
       - name: Build the Linux candidate once
         id: package
+        env:
+          CLEANUP_SELECTED: ${{ inputs.native_vault_cleanup }}
         run: |
           set -euo pipefail
-          candidate="$RUNNER_TEMP/certops-linux-$NATIVE_CLEANUP_STORE-cleanup"
-          node scripts/certops-agent-package.js "build-linux-$NATIVE_CLEANUP_STORE-cleanup" "$candidate"
+          if [[ "$NATIVE_CASE" == staging && ( "$CLEANUP_SELECTED" == true || "$NATIVE_CLEANUP_STORE" != vault ) ]]; then
+            echo "Select only the Linux staging case and leave its provider at Vault."
+            exit 1
+          fi
+          candidate="$RUNNER_TEMP/certops-linux-$NATIVE_CASE"
+          node scripts/certops-agent-package.js "build-linux-$NATIVE_CASE" "$candidate"
           node -p '"sha256=" + require(process.argv[1]).sha256' "$candidate/artifact.json" >> "$GITHUB_OUTPUT"
           cp "$candidate/artifact.json" "$candidate/artifacts/"
       - name: Scan the exact unpacked Linux candidate
@@ -183,7 +194,7 @@ jobs:
           scan="$(mktemp -d "$RUNNER_TEMP/native-cleanup-scan.XXXXXX")"
           trap 'rm -rf "$scan"' EXIT
           mkdir "$scan/package"
-          archive=("$RUNNER_TEMP/certops-linux-$NATIVE_CLEANUP_STORE-cleanup/artifacts/"*.tgz)
+          archive=("$RUNNER_TEMP/certops-linux-$NATIVE_CASE/artifacts/"*.tgz)
           test "${#archive[@]}" = 1
           tar -xzf "${archive[0]}" -C "$scan/package"
           curl -fsSL https://github.com/anchore/grype/releases/download/v0.112.0/grype_0.112.0_linux_amd64.tar.gz -o "$scan/grype.tgz"
@@ -195,7 +206,7 @@ jobs:
           EXPECTED_ARCHIVE_SHA256: ${{ steps.package.outputs.sha256 }}
         run: |
           set -euo pipefail
-          source="$RUNNER_TEMP/certops-linux-$NATIVE_CLEANUP_STORE-cleanup/artifacts"
+          source="$RUNNER_TEMP/certops-linux-$NATIVE_CASE/artifacts"
           archive=("$source"/*.tgz)
           test "${#archive[@]}" = 1
           test -f "$source/artifact.json" && test ! -L "$source/artifact.json"
@@ -204,7 +215,7 @@ jobs:
           (cd "$source" && sha256sum -c "$(basename "${archive[0]}").sha256")
           node -e 'const fs=require("fs"),crypto=require("crypto"),path=require("path"),assert=require("assert/strict"),file=process.argv[1],receipt=JSON.parse(fs.readFileSync(process.argv[2])); const sha=crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex"); assert.match(process.env.EXPECTED_ARCHIVE_SHA256,/^[a-f0-9]{64}$/); assert.equal(sha,process.env.EXPECTED_ARCHIVE_SHA256); assert.equal(receipt.sha256,sha); assert.equal(receipt.archive,path.basename(file));' "${archive[0]}" "$source/artifact.json"
           mkdir -p qualification-results
-          destination="qualification-results/linux-$NATIVE_CLEANUP_STORE-candidate"
+          destination="qualification-results/linux-$NATIVE_CASE-candidate"
           mkdir "$destination"
           cp -- "$source/artifact.json" "${archive[0]}" "${archive[0]}.sha256" "$destination/"
           cmp -- "$source/artifact.json" "$destination/artifact.json"
@@ -216,37 +227,41 @@ jobs:
         id: candidate
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: linux-${{ env.NATIVE_CLEANUP_STORE }}-cleanup-candidate
-          path: qualification-results/linux-${{ env.NATIVE_CLEANUP_STORE }}-candidate/
+          name: linux-${{ env.NATIVE_CASE }}-candidate
+          path: qualification-results/linux-${{ env.NATIVE_CASE }}-candidate/
           if-no-files-found: error
-      - name: Run the installed cleanup restart case
+      - name: Run the selected installed restart case
         env:
           TT_CLEANUP_ARTIFACT_ID: ${{ steps.candidate.outputs.artifact-id }}
           TT_CLEANUP_ARTIFACT_SHA256: ${{ steps.package.outputs.sha256 }}
         run: |
+          mode="--native-$NATIVE_CLEANUP_STORE-restart"
+          if [[ "$NATIVE_CASE" == staging ]]; then mode=--native-staging; fi
           sudo env PATH="$PATH" GITHUB_ACTIONS=true GITHUB_SHA="$GITHUB_SHA" GITHUB_REF="$GITHUB_REF" \
             GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
             RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_TEMP="$RUNNER_TEMP" CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST=1 \
             TT_CLEANUP_ARTIFACT_ID="$TT_CLEANUP_ARTIFACT_ID" TT_CLEANUP_ARTIFACT_SHA256="$TT_CLEANUP_ARTIFACT_SHA256" \
-            "$(command -v node)" scripts/run-cleanup-completion-acceptance.cjs "--native-$NATIVE_CLEANUP_STORE-restart"
+            "$(command -v node)" scripts/run-cleanup-completion-acceptance.cjs "$mode"
       - name: Verify teardown of only the owned host and containers
         if: always()
         run: |
+          mode="--cleanup-native-$NATIVE_CLEANUP_STORE"
+          if [[ "$NATIVE_CASE" == staging ]]; then mode=--cleanup-native-staging; fi
           sudo env PATH="$PATH" GITHUB_ACTIONS=true GITHUB_SHA="$GITHUB_SHA" GITHUB_REF="$GITHUB_REF" \
             GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
             RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_TEMP="$RUNNER_TEMP" CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST=1 \
-            "$(command -v node)" scripts/run-cleanup-completion-acceptance.cjs "--cleanup-native-$NATIVE_CLEANUP_STORE"
+            "$(command -v node)" scripts/run-cleanup-completion-acceptance.cjs "$mode"
       - name: Preserve the native case receipt
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: linux-${{ env.NATIVE_CLEANUP_STORE }}-cleanup-receipt
-          path: qualification-results/linux-${{ env.NATIVE_CLEANUP_STORE }}-cleanup-restart.json
+          name: linux-${{ env.NATIVE_CASE }}-receipt
+          path: qualification-results/linux-${{ env.NATIVE_CASE }}-restart.json
           if-no-files-found: error
       - name: Preserve the bounded native failure report
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: linux-${{ env.NATIVE_CLEANUP_STORE }}-cleanup-failure
-          path: qualification-results/linux-${{ env.NATIVE_CLEANUP_STORE }}-cleanup-failure.json
+          name: linux-${{ env.NATIVE_CASE }}-failure
+          path: qualification-results/linux-${{ env.NATIVE_CASE }}-failure.json
           if-no-files-found: warn

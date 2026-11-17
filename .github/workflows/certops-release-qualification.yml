@@ -6,7 +6,7 @@ on:
         description: Evidence scope; adcs-native collects runnable native AD CS cells and reports all omitted environments
         type: choice
         default: full
-        options: [full, standard-hosted, adcs, adcs-native, extended-adcs, vault-cleanup, openbao-cleanup]
+        options: [full, standard-hosted, adcs, adcs-native, extended-adcs, vault-cleanup, openbao-cleanup, linux-staging]
       candidate_sha:
         description: Exact trusted main candidate commit (40 lowercase hexadecimal characters)
         required: true

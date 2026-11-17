@@ -50,6 +50,45 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             collector.validate_report_workflow({"suite": collector.OPENBAO_CLEANUP_SUITE}, collector.CI_WORKFLOW)
 
+    def test_linux_staging_requires_the_matching_profile_capability_and_closed_activation(self):
+        spec = importlib.util.spec_from_file_location("staging_profile_collector", ROOT / "scripts/certops-release-collector.py")
+        collector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(collector)
+        candidate, package = "a" * 40, b"fixture staging archive bytes"
+        digest = hashlib.sha256(package).hexdigest()
+        name = "tokentimer-agent-linux-0.19.2-rc.1.tgz"
+        proof = {"artifactId": "42", "packageSha256": digest, "provider": "vault-kv2", "authenticatedAttempts": 1,
+                 "authenticatedReads": 1, "destinationMutations": 0,
+                 "installedTreeVerified": True, "stagedAcrossRestart": True, "activationBlocked": True, "destinationUnchanged": True}
+        report = {"suite": collector.LINUX_STAGING_SUITE, "platform": "linux", "architecture": "x64",
+                  "nativeLinuxStagingRestart": proof}
+        self.assertEqual(collector.linux_staging_fields(report), proof)
+        collector.validate_report_workflow(report, collector.VAULT_CLEANUP_WORKFLOW)
+        with self.assertRaises(ValueError):
+            collector.validate_report_workflow(report, collector.CI_WORKFLOW)
+        for invalid in ({"activationBlocked": False}, {"authenticatedReads": 0}, {"destinationMutations": 1}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                collector.linux_staging_fields({**report, "nativeLinuxStagingRestart": {**proof, **invalid}})
+        baseline = json.loads((ROOT / "packages/agent/src/capabilities/qualified-capabilities.json").read_text(encoding="utf-8"))["qualified"]
+        for capability in ("material-consumer-staging-v1", "material-cleanup-vault-kv2-v1"):
+            with self.subTest(capability=capability):
+                receipt = {"schemaVersion": 1, "candidateSha": candidate, "archive": name, "sha256": digest,
+                           "sourceKind": "workflow-checkout", "buildMode": "linux-staging-candidate", "capabilities": [*baseline, capability]}
+                buffer = io.BytesIO()
+                with zipfile.ZipFile(buffer, "w") as archive:
+                    archive.writestr("artifact.json", json.dumps(receipt))
+                    archive.writestr(name, package)
+                    archive.writestr(name + ".sha256", f"{digest}  {name}\n")
+                raw = buffer.getvalue()
+                metadata = {"id": 42, "digest": "sha256:" + hashlib.sha256(raw).hexdigest()}
+                if capability == "material-consumer-staging-v1":
+                    collector.authenticate_vault_archive(raw, metadata, proof, candidate, staging=True)
+                else:
+                    with self.assertRaises(ValueError):
+                        collector.authenticate_vault_archive(raw, metadata, proof, candidate, staging=True)
+                with self.assertRaises(ValueError):
+                    collector.authenticate_vault_archive(raw, metadata, proof, candidate)
+
     def test_vault_cleanup_binds_exact_artifact_and_package_bytes(self):
         spec = importlib.util.spec_from_file_location("vault_profile_collector", ROOT / "scripts/certops-release-collector.py")
         collector = importlib.util.module_from_spec(spec)

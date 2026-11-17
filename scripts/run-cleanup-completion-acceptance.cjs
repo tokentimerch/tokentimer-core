@@ -12,12 +12,15 @@ const nativeVault = process.argv.includes("--native-vault-restart");
 const nativeOpenBao = process.argv.includes("--native-openbao-restart");
 const cleanupVault = process.argv.includes("--cleanup-native-vault");
 const cleanupOpenBao = process.argv.includes("--cleanup-native-openbao");
+const nativeStaging = process.argv.includes("--native-staging");
+const cleanupStaging = process.argv.includes("--cleanup-native-staging");
 const openbao = process.argv.includes("--openbao") || nativeOpenBao || cleanupOpenBao;
-const cleanupCase = require("./certops-linux-cleanup-case.cjs")(openbao ? "openbao-kv2" : "vault-kv2");
+const staging = nativeStaging || cleanupStaging;
+const cleanupCase = require("./certops-linux-cleanup-case.cjs")(openbao ? "openbao-kv2" : "vault-kv2", staging);
 const { provider, store, suite, testName, proofField } = cleanupCase;
 const keepLab = process.argv.includes("--keep-lab");
-const native = nativeVault || nativeOpenBao;
-const cleanupNative = cleanupVault || cleanupOpenBao;
+const native = nativeVault || nativeOpenBao || nativeStaging;
+const cleanupNative = cleanupVault || cleanupOpenBao || cleanupStaging;
 function validateNativePreconditions() {
  if (!(native || cleanupNative)) return;
   const assert = require("node:assert/strict");
@@ -25,7 +28,7 @@ function validateNativePreconditions() {
   assert.equal(process.platform, "linux");
   assert.equal(process.getuid(), 0);
   assert.equal(process.env.GITHUB_REF, "refs/heads/main");
-  assert.equal([nativeVault, nativeOpenBao, cleanupVault, cleanupOpenBao].filter(Boolean).length, 1);
+  assert.equal([nativeVault, nativeOpenBao, cleanupVault, cleanupOpenBao, nativeStaging, cleanupStaging].filter(Boolean).length, 1);
   assert.equal(openbao, nativeOpenBao || cleanupOpenBao);
   assert.equal(keepLab, false);
   assert.match(process.env.GITHUB_RUN_ID || "", /^[1-9]\d{0,15}$/);
@@ -36,10 +39,10 @@ function validateNativePreconditions() {
   }
 }
 const nonce = native || cleanupNative
-  ? crypto.createHash("sha256").update(`linux-${store}:${process.env.GITHUB_RUN_ID}:${process.env.GITHUB_RUN_ATTEMPT}`).digest("hex").slice(0, 16)
+  ? crypto.createHash("sha256").update(`linux-${staging ? "staging" : store}:${process.env.GITHUB_RUN_ID}:${process.env.GITHUB_RUN_ATTEMPT}`).digest("hex").slice(0, 16)
   : crypto.randomBytes(8).toString("hex");
 const output = path.join(root, "qualification-results", `cleanup-completion-${nonce}`);
-const failureReport = path.join(root, "qualification-results", `linux-${store}-cleanup-failure.json`);
+const failureReport = path.join(root, "qualification-results", suite.replace(/-restart$/, "-failure.json"));
 let nativeStage = "preconditions";
 
 function recordNativeFailure(error) {
@@ -141,7 +144,7 @@ async function main() {
       error.fixtureStates = states;
       throw error;
     }
-    const env = { ...process.env, NODE_ENV: "test", CERTOPS_ENABLED: "true", CERTOPS_MATERIAL_CLEANUP_ENABLED: "true",
+    const env = { ...process.env, NODE_ENV: "test", CERTOPS_ENABLED: "true", CERTOPS_MATERIAL_CLEANUP_ENABLED: staging ? "false" : "true",
       DB_HOST: "127.0.0.1", DB_PORT: pgPort, DB_NAME: database, DB_USER: "certops_fixture", DB_PASSWORD: "synthetic-completion-only",
       CERTOPS_SIGNING_ENCRYPTION_KEY: crypto.randomBytes(32).toString("hex"), CERTOPS_REGISTRATION_ENCRYPTION_KEY: crypto.randomBytes(32).toString("hex"),
       TT_CLEANUP_COMPLETION_DISPOSABLE: "1", TT_CLEANUP_VAULT_ADDRESS: vaultAddress, TT_CLEANUP_PROVIDER: provider, TT_CLEANUP_EVIDENCE_DIR: output };
@@ -160,7 +163,7 @@ async function main() {
     const args = ["--test", "--test-force-exit", "--test-concurrency=1"];
     if (native) {
       Object.assign(env, { TT_CLEANUP_NATIVE_VAULT: nativeVault ? "1" : "0", TT_CLEANUP_NATIVE_OPENBAO: nativeOpenBao ? "1" : "0", CERTOPS_E2E_REQUIRED: "1",
-        CERTOPS_PROTOCOL_DISPOSABLE_STACK: "1", CERTOPS_CSR_DISPOSABLE_STACK: "1" });
+        TT_CLEANUP_NATIVE_STAGING: nativeStaging ? "1" : "0", CERTOPS_PROTOCOL_DISPOSABLE_STACK: "1", CERTOPS_CSR_DISPOSABLE_STACK: "1" });
       const reporter = pathToFileURL(path.join(__dirname, "certops-linux-vault-cleanup-failure.cjs")).href;
       args.push("--test-reporter=tap", "--test-reporter-destination=stdout",
         `--test-reporter=${reporter}`, `--test-reporter-destination=${failureReport}`,
@@ -190,8 +193,16 @@ async function main() {
       assert.equal(nativeFacts.artifactId, process.env.TT_CLEANUP_ARTIFACT_ID);
       assert.equal(nativeFacts.packageSha256, process.env.TT_CLEANUP_ARTIFACT_SHA256);
       assert.equal(nativeFacts.installedTreeVerified, true);
-      assert.equal(nativeFacts.actualDeleteRequests, 1);
-      assert.equal(nativeFacts.authenticatedAttempts, 2);
+      if (nativeStaging) {
+        assert.equal(nativeFacts.provider, provider);
+        assert.equal(nativeFacts.authenticatedAttempts, 1);
+        assert.equal(nativeFacts.authenticatedReads, 1);
+        assert.equal(nativeFacts.destinationMutations, 0);
+        for (const fact of ["stagedAcrossRestart", "activationBlocked", "destinationUnchanged"]) assert.equal(nativeFacts[fact], true);
+      } else {
+        assert.equal(nativeFacts.actualDeleteRequests, 1);
+        assert.equal(nativeFacts.authenticatedAttempts, 2);
+      }
     } else console.log(log);
   } catch (error) {
     summary.status = "failed";
@@ -222,7 +233,7 @@ async function main() {
       require("node:assert/strict").equal(process.arch, "x64");
       require("node:assert/strict").ok(process.report.getReport().header.glibcVersionRuntime);
       const matrix = require("./certops-qualification-manifest");
-      const { source, requiredSources } = matrix.slots.find(slot => slot.id === "linux-vault-cleanup-restart");
+      const { source, requiredSources } = matrix.slots.find(slot => slot.id === (staging ? suite : "linux-vault-cleanup-restart"));
       const sourceRecord = file => ({ file, sha256: require("./certops-agent-package").digest(path.join(root, file)) });
       fs.writeFileSync(path.join(root, "qualification-results", suite + ".json"), JSON.stringify({
         schemaVersion: 1, suite, strict: true, status: "passed", evidenceLevel: "real-host",
