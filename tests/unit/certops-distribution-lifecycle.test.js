@@ -3,6 +3,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {DEFAULT_POLICY,validatePolicy,approvalMatches} = require("../../apps/api/services/certops/distributionLifecycle");
 const {computeJobPayloadApprovalHash} = require("../../apps/api/services/certops/jobApprovals");
+const {publicFailureCode} = require("../../apps/api/services/certops/materialDistribution");
+
+test("reports bounded IIS wildcard and inventory failures without forwarding arbitrary details",()=>{
+  for(const code of ["material_windows_wildcard_conflict","material_windows_binding_inventory_unavailable"])
+    assert.equal(publicFailureCode(code,"failed"),code);
+  assert.equal(publicFailureCode("sensitive-address-canary","failed"),"agent_result_failed");
+});
 
 test("existing installations default to manual, verification disabled, retention report-only",()=>{
   const policy=validatePolicy(structuredClone(DEFAULT_POLICY));

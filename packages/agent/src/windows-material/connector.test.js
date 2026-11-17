@@ -43,6 +43,45 @@ test("Windows IIS accepts qualified key algorithms and rejects P-521 before nati
   });
   assert.doesNotThrow(() => validateWindowsKey(publicKey));
 });
+
+test("activation reports bounded conflict and inventory errors without exposing details", async (t) => {
+  const stateDir=fs.mkdtempSync(path.join(os.tmpdir(),"tt-win-conflict-"));
+  t.after(() => fs.rmSync(stateDir,{recursive:true,force:true}));
+  for (const [reason, expected] of [
+    ["WILDCARD_PRECEDENCE_CONFLICT","material_windows_wildcard_conflict"],
+    ["QUERY_FAILED","material_windows_binding_inventory_unavailable"],
+    ["BIND_FAILED","material_windows_activation_failed"],
+  ]) {
+    let calls=0;
+    const connector=createWindowsConnector({binding,stateDir,
+      execFileImpl:(_file,_args,_options,callback)=>{calls++;callback(null,JSON.stringify({ok:true}),"");},
+      deployBinding:async()=>({ok:false,code:reason,detail:"sensitive-address-canary"}),
+    });
+    await assert.rejects(connector.activate({certificatePem:"unused"}), error => {
+      assert.equal(error.code,expected);
+      assert.doesNotMatch(error.message,/sensitive-address-canary/);
+      return true;
+    });
+    assert.equal(calls,1,"commit is not attempted after a rejected bind");
+  }
+});
+test("verification refuses a wildcard masked by a conflicting specific IP without activating", async (t) => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-win-verify-mask-"));
+  t.after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+  const certificatePem = fs.readFileSync(path.join(__dirname, "../verify/fixtures/selfsigned.crt.pem"), "utf8");
+  const thumbprint = new crypto.X509Certificate(certificatePem).fingerprint.replace(/:/g, "");
+  const items = [["0.0.0.0:443", thumbprint], ["10.2.3.4:443", "AA".repeat(20)]].map(([key, hash]) =>
+    ({ kind: "SslBindingInfo", key, values: { SslCertHash: Array.from(Buffer.from(hash, "hex")) } }));
+  const target = { ...binding, target: { ...binding.target, binding: { ...binding.target.binding, address: "*", sniHost: undefined } } };
+  let activations = 0;
+  const connector = createWindowsConnector({ binding: target, stateDir,
+    deployBinding: async () => { activations++; throw new Error("must not activate"); },
+    execFileImpl: (_file, args, _options, callback) => callback(null,
+      JSON.stringify(String(args.at(-1)).includes("SslBindingInfo") ? { items } : { ok: true }), ""),
+  });
+  assert.equal(await connector.verify({ certificatePem, fingerprintSha256: "a".repeat(64) }), false);
+  assert.equal(activations, 0);
+});
 test("Windows connector permits only the exact typed IIS rebind surface", () => {
   const policy = {
     checkTargetScope: (ref) => ({ allowed: ref === "iis-customer" }),

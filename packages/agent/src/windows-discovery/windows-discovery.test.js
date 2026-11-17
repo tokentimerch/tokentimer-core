@@ -419,6 +419,7 @@ describe("buildHttpSysBindingQueryScript", () => {
     const script = buildHttpSysBindingQueryScript();
     assert.match(script, /'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters'/);
     assert.match(script, /@\('SslBindingInfo', 'SslSniBindingInfo'\)/);
+    assert.match(buildHttpSysBindingQueryScript({strict:true}), /@\('SslBindingInfo', 'SslSniBindingInfo', 'SslCcsBindingInfo'\)/);
   });
 
   it("uses only constructs that Constrained Language Mode allows, and no double quotes", () => {
@@ -678,6 +679,20 @@ describe("listMachineStoreCertificates", () => {
 // ---------------------------------------------------------------------------
 
 describe("listHttpSysBindings", () => {
+  it("strict mode refuses unknown CCS and malformed selectors without changing ordinary discovery", async () => {
+    for (const item of [
+      {kind:"SslCcsBindingInfo",key:"443",values:{}},
+      {kind:"SslBindingInfo",key:"not-an-ip:443",values:{SslCertHash:Array(20).fill(1)}},
+      {kind:"SslBindingInfo",key:"127.0.0.1:443",values:{SslCertHash:[1,2,3]}},
+    ]) {
+      const stdout = JSON.stringify({items:[item]});
+      const strict = await listHttpSysBindings({execFileImpl:makeExecStub({stdout}),strict:true});
+      assert.equal(strict.ok,false);
+    }
+    const ordinary = await listHttpSysBindings({execFileImpl:makeExecStub({stdout:JSON.stringify({items:[{kind:"SslCcsBindingInfo",key:"443",values:{}}]})})});
+    assert.equal(ordinary.ok,true);
+    assert.deepEqual(ordinary.bindings,[]);
+  });
   it("returns parsed bindings on success", async () => {
     const execFileImpl = makeExecStub({ stdout: HTTPSYS_JSON });
     const result = await listHttpSysBindings({ execFileImpl });

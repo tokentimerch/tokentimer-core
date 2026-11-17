@@ -8,6 +8,8 @@ const {
   assertValidBinding,
   deployIisBinding,
   queryCurrentBinding,
+  checkWildcardPrecedence,
+  WILDCARD_BINDING_ADDRESSES,
 } = require("../windows-iis");
 const {
   acquireStoreLock,
@@ -90,6 +92,7 @@ function createWindowsConnector({
   binding,
   stateDir,
   execFileImpl = childProcess.execFile,
+  deployBinding = deployIisBinding,
 }) {
   const target = binding.target.binding;
   const powershellPath = path.join(
@@ -205,10 +208,14 @@ function createWindowsConnector({
       timeoutMs: 30000,
       signal,
     });
-    return (
-      current.ok === true &&
-      current.thumbprint === computeSha1ThumbprintFromPem(bundle.certificatePem)
-    );
+    const thumbprint = computeSha1ThumbprintFromPem(bundle.certificatePem);
+    if (current.ok !== true || current.thumbprint !== thumbprint) return false;
+    if (!target.sniHost && Object.hasOwn(WILDCARD_BINDING_ADDRESSES, target.address)) {
+      const check = await checkWildcardPrecedence({ binding: target, newThumbprint: thumbprint,
+        execFileImpl, powershellPath, timeoutMs: 30000, signal });
+      if (!check.ok) return false;
+    }
+    return true;
   }
   return {
     withLock,
@@ -216,7 +223,7 @@ function createWindowsConnector({
     import: (bundle, signal) => invoke("import", bundle, signal),
     async activate(bundle, signal) {
       await invoke("preflight", null, signal);
-      const result = await deployIisBinding({
+      const result = await deployBinding({
         binding: target,
         certificatePem: bundle.certificatePem,
         execFileImpl,
@@ -224,7 +231,14 @@ function createWindowsConnector({
         netshPath: windowsSystem32Tool("netsh"),
         signal,
       });
-      if (!result.ok) throw failure("material_windows_activation_failed");
+      if (!result.ok) {
+        const code = result.code === "WILDCARD_PRECEDENCE_CONFLICT"
+          ? "material_windows_wildcard_conflict"
+          : result.code === "QUERY_FAILED"
+            ? "material_windows_binding_inventory_unavailable"
+            : "material_windows_activation_failed";
+        throw failure(code);
+      }
       await invoke("commit", bundle, signal);
       if (!(await verify(bundle, signal)))
         throw failure("material_windows_binding_mismatch");
