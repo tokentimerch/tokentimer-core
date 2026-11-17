@@ -3,6 +3,16 @@
 // existing Core requestJson transport; never returns tokens or assertions.
 const assert = require("node:assert/strict");
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+function exchangeAssertion(target, assertion, requestJson) {
+  assert.match(target.tenantId, UUID);
+  assert.match(target.clientId, UUID);
+  assert.ok(/^[A-Za-z0-9_.-]{20,16384}$/.test(assertion), "invalid projected assertion");
+  return requestJson(new URL(`https://login.microsoftonline.com/${target.tenantId}/oauth2/v2.0/token`), {
+    method: "POST", timeoutMs: 10000, maxBytes: 32768,
+    headers: {"Content-Type":"application/x-www-form-urlencoded"},
+    body: new URLSearchParams({client_id:target.clientId,grant_type:"client_credentials",scope:"https://vault.azure.net/.default",client_assertion:assertion,client_assertion_type:"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}).toString(),
+  });
+}
 async function crossExchange({ issuer, consumer, federationMismatchCodes, readAssertion, requestJson }) {
   for (const role of [issuer, consumer]) {
     assert.match(role?.tenantId || "", UUID); assert.match(role?.clientId || "", UUID);
@@ -13,13 +23,7 @@ async function crossExchange({ issuer, consumer, federationMismatchCodes, readAs
   assert.equal(typeof readAssertion, "function"); assert.equal(typeof requestJson, "function");
   async function exchange(source, target) {
     const assertion = String(await readAssertion(source.assertionFile)).trim();
-    assert.match(assertion, /^[A-Za-z0-9_.-]{20,16384}$/);
-    const response = await requestJson(new URL(`https://login.microsoftonline.com/${target.tenantId}/oauth2/v2.0/token`), {
-      method: "POST", timeoutMs: 10000, maxBytes: 32768,
-      headers: {"Content-Type":"application/x-www-form-urlencoded"},
-      body: new URLSearchParams({client_id:target.clientId,grant_type:"client_credentials",scope:"https://vault.azure.net/.default",client_assertion:assertion,client_assertion_type:"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}).toString(),
-    });
-    return response;
+    return exchangeAssertion(target, assertion, requestJson);
   }
   for (const role of [issuer, consumer]) {
     const response = await exchange(role, role);
@@ -34,4 +38,4 @@ async function crossExchange({ issuer, consumer, federationMismatchCodes, readAs
   }
   return { status:"supporting-pass", releaseQualification:"not-established", ownRoleExchanges:2, crossRoleRejected:2 };
 }
-module.exports = { crossExchange };
+module.exports = { crossExchange, exchangeAssertion };
