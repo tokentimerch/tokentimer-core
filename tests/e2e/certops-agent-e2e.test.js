@@ -18,7 +18,7 @@
  * database. Run: pnpm test:e2e:agent.
  */
 
-const { describe, it, before, after } = require("node:test");
+const { describe, it, before, beforeEach, after } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const path = require("node:path");
@@ -358,6 +358,7 @@ function claimEnvelope(agentId, maxJobs = 1) {
 
 async function cleanupSeededRows() {
   if (!pool || !seeded.workspaceId) return;
+  if (process.env.CERTOPS_REAL_LINUX_SYSTEMD_REQUIRED === "1") require("../../scripts/certops-linux-systemd-ownership").assertHostReceiptRemoved(process.env.RUNNER_TEMP);
   if(process.env.CERTOPS_REAL_WINDOWS_REQUIRED === "1") require("./windows-real-journey").assertAllCleanupSafe();
   const ws = seeded.workspaceId;
   await pool.query(
@@ -410,10 +411,15 @@ describe("CertOps agent surface E2E", () => {
       return;
     }
     assert.equal(process.env.CERTOPS_PROTOCOL_DISPOSABLE_STACK, "1", "Protocol qualification requires an explicitly disposable database");
+    if (process.env.CERTOPS_REAL_LINUX_SYSTEMD_REQUIRED === "1") require("../../scripts/certops-linux-systemd-ownership").assertHostReceiptRemoved(process.env.RUNNER_TEMP);
     services = loadServices();
     await ensureOwnableSigningKey();
     await seedWorkspace();
     await startApiServer();
+  });
+
+  beforeEach(() => {
+    if (process.env.CERTOPS_REAL_LINUX_SYSTEMD_REQUIRED === "1") require("../../scripts/certops-linux-systemd-ownership").assertHostReceiptRemoved(process.env.RUNNER_TEMP);
   });
 
   after(async () => {

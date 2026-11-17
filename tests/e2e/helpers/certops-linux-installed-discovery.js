@@ -48,10 +48,12 @@ const REQUIRED_SOURCES = Object.freeze([
     ...discovery.REQUIRED_SOURCES,
     "tests/e2e/helpers/certops-linux-installed-discovery.js",
     "tests/e2e/linux-systemd-real-journey.js",
+    "tests/e2e/certops-agent-e2e.test.js",
     "tests/e2e/helpers/certops-api-fixture.js",
     "scripts/certops-linux-systemd.js",
     "scripts/certops-linux-systemd-cleanup.js",
     "scripts/certops-linux-systemd-ownership.js",
+    "scripts/certops-linux-systemd-db-ownership.js",
     "scripts/certops_linux_installed_discovery_proof.py",
     "packages/agent/scripts/install-agent.sh",
     "packages/agent/scripts/host-gate.js",
@@ -60,6 +62,8 @@ const REQUIRED_SOURCES = Object.freeze([
     "packages/agent/src/protocol/index.js",
     "packages/agent/vendor/log-scrub/secret-material.js",
     "apps/api/services/certops/agentRegistry.js",
+    "apps/api/services/certops/consumerDiscovery.js",
+    "apps/api/services/certops/materialDistribution.js",
     "apps/api/services/certops/agentDispatch.js",
     "apps/api/services/certops/csrWorkflow.js",
     "apps/api/services/certops/renewalProfile.js",
@@ -443,6 +447,7 @@ async function qualifyInstalledDiscovery(context) {
     pool,
     workspaceId,
     agentId,
+    agentRowId,
     baseUrl,
     repoRoot,
     writeFixture,
@@ -455,8 +460,13 @@ async function qualifyInstalledDiscovery(context) {
     serviceProperty,
     registerResource,
   } = context;
-  let complete = false;
+  let complete = false, leafPath, consumerProof;
   const resource = {
+    ownedConsumer() {
+      assert.equal(complete, true, "Installed discovery recovery remains unresolved");
+      assert.ok(consumerProof, "Owned discovery identity is unavailable");
+      return { ...consumerProof };
+    },
     hasOwnershipReceipt: () =>
       !complete || fs.existsSync(guardPath(process.env.RUNNER_TEMP)),
     assertCleanupSafe() {
@@ -677,6 +687,7 @@ async function qualifyInstalledDiscovery(context) {
     fixtureStat = fs.lstatSync(fixtureDir, { bigint: true });
     const cert = path.join(fixtureDir, "server.crt"),
       key = path.join(fixtureDir, "server.key");
+    leafPath = cert;
     const generated = spawnSync(
       "openssl",
       [
@@ -815,6 +826,19 @@ async function qualifyInstalledDiscovery(context) {
                     `${agentId}/${require("node:os").hostname()}/${cert}`,
               ),
             );
+            const hostname = require("node:os").hostname();
+            const serviceKey = require("../../../apps/api/services/certops/consumerDiscovery").serviceKey({
+              agentRowId, targetHost: hostname, locationKind: "filesystem", filePath: cert,
+            });
+            const consumers = (await pool.query(
+              "SELECT id FROM certops_discovered_consumers WHERE workspace_id=$1 AND agent_id=$2 AND source_kind='filesystem' AND service_identity=$3 AND material_location=$3 AND observed_fingerprint_sha256=$4 AND target_host=$5 AND service_key=$6",
+              [workspaceId, agentRowId, cert, leafFingerprint, hostname, serviceKey],
+            )).rows;
+            assert.equal(consumers.length, 1, "Owned discovery consumer must resolve uniquely");
+            assert.match(consumers[0].id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+            const nextProof = { id: consumers[0].id, serviceKey, path: cert, fingerprint: leafFingerprint, hostname };
+            if (consumerProof) assert.ok(Object.keys(nextProof).every((key) => nextProof[key] === consumerProof[key]), "Owned discovery consumer identity changed");
+            consumerProof = Object.freeze(nextProof);
             scanCount = new Set(
               rows.map((row) => new Date(row.observed_at).toISOString()),
             ).size;
