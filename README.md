@@ -78,11 +78,12 @@ Use `cert-manager` or connect an external executor with a machine token for supp
 - **Windows IIS and Microsoft AD CS** let the Windows agent enroll and renew IIS
   certificates from an enterprise CA on domain-joined hosts.
 - **Certificate distribution** publishes one ordinary, SAN, or wildcard certificate
-  version to your Vault or OpenBao KV v2. Assigned Linux consumers can install the
-  files or deploy them with service reload and live TLS verification for NGINX, Apache,
+  version to your Vault or OpenBao KV v2, or Azure Key Vault Secrets. Assigned Linux
+  consumers can install the files or deploy them with service reload and live TLS
+  verification for NGINX, Apache,
   or HAProxy. Reviewed rollouts support canary waves, maintenance calendars, recurring
-  verification, and recovery after partial deployment. Azure Key Vault material storage
-  and shared Windows/IIS distribution await separate qualification and enablement.
+  verification, and recovery after partial deployment. Shared Windows/IIS distribution
+  awaits separate qualification and enablement.
 - **CA trust** distribution and revocation update machine trust stores on Windows,
   Debian/Ubuntu, and RHEL/Fedora.
 - **Job timelines and audit evidence** capture timestamped results for renewal,
@@ -219,8 +220,8 @@ New to TokenTimer? [Watch the guided product tour](https://www.youtube.com/watch
 | [Install an agent on Linux](docs/certops/agent/install-linux.md) | systemd installation and registration · [Linux renewal video](https://www.youtube.com/watch?v=mPhUbYYnfgo) |
 | [Install an agent on Windows](docs/certops/agent/install-windows.md) | Native service installation and registration · [IIS renewal video](https://www.youtube.com/watch?v=WPqcaMPul4I) |
 | [Microsoft AD CS enrollment](docs/certops/agent/adcs.md) | Domain-joined Windows enrollment from an enterprise CA, allowlists, and qualification scope · [Video](https://www.youtube.com/watch?v=_f4amEJGjFA) |
-| [Certificate distribution](docs/certops/distribution-lifecycle.md) | Vault or OpenBao KV v2, Linux consumers, reviewed rollouts, verification, and recovery · [Vault video](https://www.youtube.com/watch?v=BYe8S1Ux9PI) |
-| [Distribution providers and availability](docs/certops/distribution-extensions.md) | OpenBao configuration and qualification gates for Azure Key Vault and shared Windows/IIS deployment |
+| [Certificate distribution](docs/certops/distribution-lifecycle.md) | Vault/OpenBao KV v2 and Azure Key Vault Secrets, Linux consumers, reviewed rollouts, verification, and recovery · [Vault video](https://www.youtube.com/watch?v=BYe8S1Ux9PI) |
+| [Distribution providers and availability](docs/certops/distribution-extensions.md) | Provider configuration and availability, including shared Windows/IIS deployment |
 | [Trust anchors and OS trust stores](docs/certops/agent/trust-and-key-rotation.md#establish-ca-trust-on-a-host) | Distribute and remove CA trust anchors on Linux and Windows · [Video](https://www.youtube.com/watch?v=nAY7Yx9Pd8Q) |
 | [docs/certops/executor-api.md](docs/certops/executor-api.md) | Machine API tokens and executor job API for external renewal tooling |
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | Auth model, admin bootstrap, invitations, RBAC |
