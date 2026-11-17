@@ -8,6 +8,7 @@ nor enables AD CS, and experimental/supporting reports cannot fill native slots.
 import certops_qualification_manifest as qualification_manifest
 import io
 import hashlib
+import gzip
 from datetime import datetime
 import json
 import os
@@ -16,6 +17,7 @@ import re
 import stat
 import subprocess
 import tarfile
+import tempfile
 import sys
 import certops_qualification_profiles as qualification_profiles
 import urllib.error
@@ -70,6 +72,7 @@ OPENBAO_CLEANUP_SUITE = "linux-openbao-cleanup-restart"
 LINUX_STAGING_SUITE = "linux-staging-restart"
 OPENBAO_STAGING_SUITE = "linux-openbao-staging-restart"
 LINUX_DISTRIBUTION_CAPABILITIES = ["material-cleanup-vault-kv2-v1", "material-cleanup-openbao-kv2-v1", "material-consumer-staging-v1", "windows-material-iis-v1"]
+MAX_DISTRIBUTION_TAR = 256 * 1024 * 1024
 WORKFLOWS = {
     ".github/workflows/" + name for name in (
         "certops-qualification.yml", "certops-real-acme.yml", "certops-acme-native-console.yml", "certops-acme-browser-lifecycle.yml",
@@ -296,12 +299,30 @@ def authenticate_linux_distribution_archive(raw, artifact, proof, candidate):
         checksum = hashlib.sha256(package).hexdigest()
         if checksum != proof["packageSha256"] or archive.read(name + ".sha256").decode("ascii").strip() != f"{checksum}  {name}":
             raise ValueError("Combined distribution package checksum mismatch")
-        with tarfile.open(fileobj=io.BytesIO(package), mode="r:gz") as tar:
+        # tarfile processes PAX/GNU extension bodies before yielding a member.
+        # Bound the entire decompressed stream before exposing it to tarfile.
+        with tempfile.TemporaryFile() as unpacked:
+            with gzip.GzipFile(fileobj=io.BytesIO(package), mode="rb") as compressed:
+                size = 0
+                while True:
+                    block = compressed.read(min(1024 * 1024, MAX_DISTRIBUTION_TAR + 1 - size))
+                    if not block:
+                        break
+                    size += len(block)
+                    if size > MAX_DISTRIBUTION_TAR:
+                        raise ValueError("Combined package exceeds decompressed archive budget")
+                    unpacked.write(block)
+            unpacked.seek(0)
+            verify_linux_distribution_tar(unpacked)
+
+
+def verify_linux_distribution_tar(unpacked):
+        with tarfile.open(fileobj=unpacked, mode="r:") as tar:
             required = ("package/package.json", "package/src/capabilities/qualified-capabilities.generated.js")
             names, identity, total_size = set(), {}, 0
             for entry in tar:
                 total_size += entry.size
-                if len(names) >= 10000 or total_size > 256 * 1024 * 1024:
+                if len(names) >= 10000 or total_size > MAX_DISTRIBUTION_TAR:
                     raise ValueError("Combined package exceeds archive inventory budget")
                 if entry.name in names:
                     raise ValueError("Combined package has ambiguous embedded identity")

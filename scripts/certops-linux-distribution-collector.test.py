@@ -76,6 +76,17 @@ class DistributionCollectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "archive inventory budget"):
             collector.authenticate_linux_distribution_archive(raw, artifact, proof, "a" * 40)
 
+    def test_extended_tar_header_body_cannot_exceed_decompressed_budget(self):
+        for kind in (tarfile.XHDTYPE, tarfile.GNUTYPE_LONGNAME):
+            with self.subTest(kind=kind), patch.object(collector, "MAX_DISTRIBUTION_TAR", 4096):
+                entry = tarfile.TarInfo("extended")
+                entry.type = kind
+                entry.size = 4096
+                package = gzip.compress(entry.tobuf() + b"x" * entry.size)
+                raw, artifact, proof = self.candidate(package_override=package)
+                with self.assertRaisesRegex(ValueError, "decompressed archive budget"):
+                    collector.authenticate_linux_distribution_archive(raw, artifact, proof, "a" * 40)
+
     def test_job_attempt_and_all_teardowns_are_required(self):
         run = {"id": 123, "run_attempt": 2, "event": "workflow_dispatch"}
         names = ["release-distribution-candidate", "release-native-vault-cleanup", "release-native-openbao-cleanup",
