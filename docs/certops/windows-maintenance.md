@@ -21,6 +21,7 @@ If an elevated editor gets Access denied, agent-created config may be SYSTEM-onl
 - The ACME client's TLS settings must trust its directory's HTTPS endpoint.
 - Before IIS activation, install the approved root in `LocalMachine\Root` and intermediate issuers in `LocalMachine\CA`; they may differ from the directory's transport CA. A probe's `trustCaFile` does not configure these Windows stores. Shared import does not grant root trust. After a trust correction, verify the served chain; HTTP.sys may need the exact affected HTTPS binding refreshed before [read-only reconciliation](distribution-extensions.md#failure-recovery-and-rollback).
 - Independent probes validate the served hostname and chain.
+- A concrete HTTP.sys IP binding can take precedence over a wildcard on the same port. Before changing the wildcard, the agent refuses when a same-family IP binding would serve a different certificate or when the binding inventory cannot be read completely. Review those bindings and check the certificate served at each relevant IP before retrying.
 
 Retrieve CA certificates through a trusted administrative/export channel and compare their identity independently. Do not disable TLS validation to bootstrap trust.
 

@@ -1466,6 +1466,83 @@ describe("deployIisBinding precedenceWarning wiring", () => {
   });
 });
 
+describe("wildcard deployment and concrete HTTP.sys bindings", () => {
+  const wildcard = { ...VALID_BINDING, address: "*" };
+  const deploy = (execFileImpl, binding = wildcard) => deployIisBinding({
+    binding, certificatePem: FIXTURE_CERT_PEM, execFileImpl,
+    connectImpl: makeConnectStub({ peerDer: fixtureX509.raw }),
+  });
+  it("refuses before mutation when an IP-specific certificate would mask the wildcard", async () => {
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint: OTHER_THUMBPRINT },
+      { ipPort: "10.239.80.7:443", thumbprint: OTHER_THUMBPRINT },
+    ) : { error: null, stdout: "" });
+    const result = await deploy(exec);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "WILDCARD_PRECEDENCE_CONFLICT");
+    assert.match(result.detail, /specific HTTP\.sys binding/);
+    assert.doesNotMatch(result.detail, /10\.239\.80\.7/);
+    assert.equal(exec.calls.some(call => ["add", "delete"].includes(call.args[1])), false);
+  });
+  it("permits a concrete binding already using the incoming certificate", async () => {
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT },
+      { ipPort: "10.239.80.7:443", thumbprint: FIXTURE_THUMBPRINT },
+    ) : { error: null, stdout: "" });
+    assert.equal((await deploy(exec)).ok, true);
+  });
+  it("fails closed when an entry cannot be interpreted", async () => {
+    const exec = makeExecStub(key => key === "query" ? { stdout: JSON.stringify({items:[{kind:"unexpected",key:"bad",values:{}}]}) } : {});
+    const result = await deploy(exec);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "QUERY_FAILED");
+    assert.equal(exec.calls.some(call => ["add", "delete"].includes(call.args[1])), false);
+  });
+  it("fails closed if the strict inventory query fails after the original binding query", async () => {
+    let queries=0;
+    const exec=makeExecStub(key => key === "query" ? (++queries === 1
+      ? bindingsOutput({ipPort:"0.0.0.0:443",thumbprint:OTHER_THUMBPRINT})
+      : {error:Object.assign(new Error("access denied"),{code:5})}) : {});
+    const result=await deploy(exec);
+    assert.equal(result.code,"QUERY_FAILED");
+    assert.equal(exec.calls.some(call => ["add","delete"].includes(call.args[1])),false);
+  });
+  it("does not report success if a conflicting IP binding appears during verification", async () => {
+    let queries=0;
+    const exec=makeExecStub(key => key === "query" ? (++queries < 3
+      ? bindingsOutput({ipPort:"0.0.0.0:443",thumbprint:FIXTURE_THUMBPRINT})
+      : bindingsOutput({ipPort:"0.0.0.0:443",thumbprint:FIXTURE_THUMBPRINT},
+        {ipPort:"10.239.80.7:443",thumbprint:OTHER_THUMBPRINT})) : {});
+    const result=await deploy(exec);
+    assert.equal(result.code,"WILDCARD_PRECEDENCE_CONFLICT");
+    assert.match(result.detail,/may already have changed/);
+    assert.equal(result.rolledBack,false);
+  });
+  it("blocks an IPv6-specific certificate shadowing an IPv6 wildcard", async () => {
+    const exec=makeExecStub(key => key === "query" ? bindingsOutput(
+      {ipPort:"[::]:443",thumbprint:OTHER_THUMBPRINT},
+      {ipPort:"[2001:db8::1]:443",thumbprint:OTHER_THUMBPRINT},
+    ) : {});
+    const result=await deploy(exec,{...wildcard,address:"::"});
+    assert.equal(result.code,"WILDCARD_PRECEDENCE_CONFLICT");
+    assert.equal(exec.calls.some(call => ["add","delete"].includes(call.args[1])),false);
+  });
+  it("uses the bracketed HTTP.sys selector for an unbracketed IPv6 wildcard", async () => {
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "[::]:443", thumbprint: FIXTURE_THUMBPRINT },
+    ) : {});
+    assert.equal((await deploy(exec, { ...wildcard, address: "::" })).ok, true);
+    assert.equal(formatBindingSelector({ ...wildcard, address: "::" }), "ipport=[::]:443");
+  });
+  it("does not confuse IPv6-specific bindings with an IPv4 wildcard", async () => {
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT },
+      { ipPort: "[::1]:443", thumbprint: OTHER_THUMBPRINT },
+    ) : { error: null, stdout: "" });
+    assert.equal((await deploy(exec)).ok, true);
+  });
+});
+
 describe("IIS bind AbortSignal cancellation", () => {
   it("aborts an in-flight netsh delete and does not start add", async () => {
     const ac = new AbortController();
