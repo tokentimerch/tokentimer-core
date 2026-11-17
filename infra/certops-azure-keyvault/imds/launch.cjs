@@ -7,7 +7,7 @@ const { sha256 } = require("./probe.cjs");
 
 const COMPUTE_API = "2024-07-01";
 const RG_API = "2022-09-01";
-const VAULT_API = "2026-02-01";
+const VAULT_API = "2024-11-01";
 const ROLE_API = "2022-04-01";
 const WORKFLOW = ".github/workflows/certops-azure-imds-qualification.yml";
 const ENVIRONMENT = "certops-azure-imds-lab";
