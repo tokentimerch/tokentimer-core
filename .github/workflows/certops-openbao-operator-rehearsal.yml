@@ -1,0 +1,157 @@
+name: CertOps / OpenBao native operator rehearsal
+on:
+  workflow_dispatch:
+    inputs:
+      package_run_id:
+        description: Successful Azure final-package producer run ID
+        required: true
+        type: string
+      package_artifact_id:
+        description: Immutable azure-release-candidate artifact ID
+        required: true
+        type: string
+      package_sha256:
+        description: Expected final agent archive SHA-256
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  native-openbao:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST: '1'
+      LAB_PROJECT: tt-wildcard-ux-qual-openbao-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/certops-node-setup
+      - name: Verify and stage the exact archive from a prior trusted run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_RUN_ID: ${{ inputs.package_run_id }}
+          PACKAGE_ARTIFACT_ID: ${{ inputs.package_artifact_id }}
+          PACKAGE_SHA256: ${{ inputs.package_sha256 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$GITHUB_REPOSITORY" = tokentimerch/tokentimer-core
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir "$RUNNER_TEMP/openbao-owned"
+          area="$RUNNER_TEMP/openbao-owned"
+          node scripts/certops-final-package-source.cjs \
+            "$PACKAGE_RUN_ID" "$PACKAGE_ARTIFACT_ID" "$PACKAGE_SHA256" "$area/package" > "$area/identity.json"
+          candidate_sha="$(node -p 'require(process.argv[1]).candidateSha' "$area/identity.json")"
+          [[ "$candidate_sha" =~ ^[a-f0-9]{40}$ ]]
+          git merge-base --is-ancestor "$candidate_sha" "$GITHUB_SHA"
+          git diff --quiet "$candidate_sha" "$GITHUB_SHA" -- tests/wildcard-vault/ux-lab \
+            scripts/certops-agent-package.js scripts/certops-azure-keyvault-package.cjs \
+            scripts/certops-linux-systemd-ownership.js tests/e2e/linux-systemd-real-journey.js
+          git worktree add --detach "$area/candidate" "$candidate_sha"
+          test "$(git -C "$area/candidate" rev-parse HEAD)" = "$candidate_sha"
+      - name: Build immutable lab images from the selected producer checkout
+        run: |
+          set -euo pipefail
+          umask 077
+          area="$RUNNER_TEMP/openbao-owned"
+          candidate_sha="$(node -p 'require(process.argv[1]).candidateSha' "$area/identity.json")"
+          cd "$area/candidate"
+          test "$(git rev-parse HEAD)" = "$candidate_sha"
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+          for role in api worker customers; do
+            case "$role" in
+              api) dockerfile=deploy/compose/Dockerfile.api ;;
+              worker) dockerfile=deploy/compose/Dockerfile.worker ;;
+              customers) dockerfile=tests/wildcard-vault/Dockerfile.fixture ;;
+            esac
+            docker build --iidfile "$area/$role.iid" --file "$dockerfile" \
+              --label "io.tokentimer.certops.source-sha=$candidate_sha" .
+            test "$(docker image inspect --format '{{.Id}}' "$(cat "$area/$role.iid")")" = "$(cat "$area/$role.iid")"
+          done
+      - name: Claim an empty namespace and start ordinary OpenBao operator lab
+        run: |
+          set -euo pipefail
+          umask 077
+          area="$RUNNER_TEMP/openbao-owned"
+          export TT_UX_CANDIDATE_REPO="$area/candidate"
+          cd "$TT_UX_CANDIDATE_REPO"
+          harness=tests/wildcard-vault/ux-lab/azure-operator-review
+          node "$harness/project-freshness.cjs" "$LAB_PROJECT"
+          node - "$area/identity.json" "$area/owned.json" "$LAB_PROJECT" <<'NODE'
+          const fs = require("node:fs");
+          const [identityPath, output, project] = process.argv.slice(2);
+          const { runId, candidateSha, packageSha256 } = require(identityPath);
+          fs.writeFileSync(output, JSON.stringify({ project, producerRunId: runId, candidateSha,
+            archiveSha256: packageSha256 }) + "\n", { flag: "wx", mode: 0o600 });
+          NODE
+          run="$(node -p 'require(process.argv[1]).runId' "$area/identity.json")"
+          artifact="$(node -p 'require(process.argv[1]).artifactId' "$area/identity.json")"
+          digest="$(node -p 'require(process.argv[1]).packageSha256' "$area/identity.json")"
+          if ! pwsh -NoProfile -File "$harness/run.ps1" -Action Up -Project "$LAB_PROJECT" -BasePort 60800 \
+            -CertificateMode ordinary -MaterialProvider openbao-kv2 -PackageAcceptance -NativeOpenBao \
+            -ApiImage "$(cat "$area/api.iid")" -WorkerImage "$(cat "$area/worker.iid")" \
+            -CustomerImage "$(cat "$area/customers.iid")" -SuppliedPackageDirectory "$area/package" \
+            -SuppliedProducerRunId "$run" -SuppliedArtifactId "$artifact" -SuppliedArchiveSha256 "$digest" \
+            > "$area/up.log" 2>&1; then
+            echo '::error::OpenBao owned setup failed; cleanup will run'
+            exit 1
+          fi
+      - name: Exercise the exact archive and installed Linux consumer
+        run: |
+          set -euo pipefail
+          umask 077
+          area="$RUNNER_TEMP/openbao-owned"
+          candidate="$area/candidate"
+          cd "$candidate"
+          if ! sudo --non-interactive env PATH="$PATH" HOME="$HOME" PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright" \
+            GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$candidate" \
+            GITHUB_ACTIONS="$GITHUB_ACTIONS" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" GITHUB_REF="$GITHUB_REF" \
+            GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
+            GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_TEMP="$RUNNER_TEMP" \
+            CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST="$CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST" TT_UX_CANDIDATE_REPO="$candidate" \
+            "$(command -v pwsh)" -NoProfile -File tests/wildcard-vault/ux-lab/azure-operator-review/run.ps1 \
+            -Action Test -Phase all -Project "$LAB_PROJECT" > "$area/journey.log" 2>&1; then
+            echo '::error::OpenBao installed journey failed; cleanup will run'
+            exit 1
+          fi
+      - name: Independently clean owned native service and Compose resources
+        if: always()
+        run: |
+          set -euo pipefail
+          area="$RUNNER_TEMP/openbao-owned"
+          if [[ ! -f "$area/owned.json" ]]; then exit 0; fi
+          candidate="$area/candidate"
+          cd "$candidate"
+          harness=tests/wildcard-vault/ux-lab/azure-operator-review
+          output="$candidate/.scratch/$LAB_PROJECT"
+          sudo --non-interactive env PATH="$PATH" \
+            GITHUB_ACTIONS="$GITHUB_ACTIONS" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" GITHUB_REF="$GITHUB_REF" \
+            GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
+            GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_TEMP="$RUNNER_TEMP" \
+            CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST="$CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST" \
+            TT_UX_PROJECT="$LAB_PROJECT" TT_WILDCARD_UX_OUTPUT="$output" \
+            "$(command -v node)" "$harness/native-openbao-support.cjs" "$area/owned.json"
+          node "$harness/project-freshness.cjs" "$LAB_PROJECT"
+          if sudo --non-interactive test -f "$output/native-openbao-support.json"; then
+            mkdir -p "$GITHUB_WORKSPACE/qualification-results"
+            sudo --non-interactive install -m 0600 -o "$(id -u)" -g "$(id -g)" \
+              "$output/native-openbao-support.json" "$GITHUB_WORKSPACE/qualification-results/native-openbao-support.json"
+          fi
+          rm -f -- "$area/up.log" "$area/journey.log"
+      - name: Require post-teardown native observation
+        run: test -s qualification-results/native-openbao-support.json
+      - name: Retain bounded supporting evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-openbao-support
+          path: qualification-results/native-openbao-support.json
+          if-no-files-found: warn
