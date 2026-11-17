@@ -1,0 +1,7 @@
+services:
+  customers:
+    environment:
+      TT_UX_NATIVE_OPENBAO: "1"
+    ports:
+      - "127.0.0.1:${TT_UX_NATIVE_API_PORT:?}:18443"
+      - "127.0.0.1:${TT_UX_NATIVE_BAO_PORT:?}:18201"

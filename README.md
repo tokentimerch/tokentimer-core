@@ -79,7 +79,9 @@ Use `cert-manager` or connect an external executor with a machine token for supp
 - **Certificate distribution** publishes one ordinary, SAN, or wildcard certificate
   version to your Vault or OpenBao KV v2. Assigned Linux consumers can install the
   files or deploy them with service reload and live TLS verification for NGINX, Apache,
-  or HAProxy.
+  or HAProxy. Reviewed rollouts support canary waves, maintenance calendars, recurring
+  verification, and recovery after partial deployment. Azure Key Vault Secrets and
+  shared Windows/IIS distribution require separate qualification and enablement.
 - **CA trust** distribution and revocation update machine trust stores on Windows,
   Debian/Ubuntu, and RHEL/Fedora.
 - **Job timelines and audit evidence** capture timestamped results for renewal,

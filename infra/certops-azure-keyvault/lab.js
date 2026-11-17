@@ -51,7 +51,21 @@ function load(file) {
     policy.fail("AZURE_KV_PRIVATE_STATE_DENIED");
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
-function arm(method, resource, body, permission, allowMissing = false) {
+function strictArmMissingCode(stderr) {
+  const match = /^ERROR:\s+Not Found\s*\(([\s\S]+)\)$/i.exec(stderr?.trim() || "");
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1]).error?.code;
+  } catch {
+    return null;
+  }
+}
+function arm(method, resource, body, permission, allowMissing = false, {
+  timeoutMs = 120000, missingCodes,
+} = {}) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120000 ||
+    (missingCodes && (method !== "GET" || !allowMissing)))
+    policy.fail("AZURE_KV_ARM_OPTIONS_DENIED");
   if (!resource.startsWith("/subscriptions/") || /[\r\n#]/.test(resource))
     policy.fail("AZURE_KV_ARM_SCOPE_DENIED");
   if (!permission) {
@@ -85,17 +99,17 @@ function arm(method, resource, body, permission, allowMissing = false) {
   if (body !== undefined) args.push("--body", JSON.stringify(body));
   const result = cp.spawnSync("az", args, {
     encoding: "utf8",
-    timeout: 120000,
+    timeout: timeoutMs,
     windowsHide: true,
     maxBuffer: 4 * 1024 * 1024,
   });
   if (result.error || result.status !== 0) {
     // Azure CLI error bodies/diagnostics are deliberately not forwarded.
     if (
-      allowMissing &&
-      /\b(?:ResourceGroupNotFound|ResourceNotFound|RoleAssignmentNotFound|RoleAssignmentDoesNotExist)\b/.test(
-        result.stderr || "",
-      )
+      allowMissing && !result.error &&
+      (missingCodes
+        ? missingCodes.includes(strictArmMissingCode(result.stderr))
+        : /\b(?:ResourceGroupNotFound|ResourceNotFound|RoleAssignmentNotFound|RoleAssignmentDoesNotExist)\b/.test(result.stderr || ""))
     )
       return null;
     policy.fail(
