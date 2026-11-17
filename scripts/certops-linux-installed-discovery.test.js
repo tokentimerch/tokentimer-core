@@ -45,7 +45,7 @@ test("retained file restores exact original bytes without changing original iden
     assert.equal(fs.statSync(file).ino, stat.ino);
   }));
 
-test("database cleanup refuses an existing or dangling ownership receipt", () =>
+test("database cleanup refuses an existing or dangling ownership receipt", { skip: process.platform !== "linux" && "Native /run ownership guard requires Linux" }, () =>
   fixture(({ root }) => {
     const {
       assertHostReceiptRemoved,
@@ -201,7 +201,9 @@ test("actual independent cleanup refuses missing completion even after its activ
     fs.writeFileSync(receiptPath, JSON.stringify(receipt));
     let nativeCalls = 0,
       acceptRestoration = false,
-      destructiveCalls = 0;
+      destructiveCalls = 0,
+      databaseSafe = false,
+      ownerExited = false;
     const localRequire = (name) => {
       if (name === "node:fs")
         return {
@@ -249,6 +251,13 @@ test("actual independent cleanup refuses missing completion even after its activ
             );
           },
         };
+      // Isolate the real discovery/host cleanup ordering from the separate
+      // Linux-only /run marker implementation, which has its own tests.
+      if (name === "./certops-linux-systemd-db-ownership")
+        return {
+          assertSafe() { assert.ok(databaseSafe, "Database ownership unresolved"); return { state: "done" }; },
+          assertOwnerExited() { assert.ok(ownerExited, "Database owner still running"); },
+        };
       if (
         acceptRestoration &&
         name === "../tests/e2e/helpers/certops-linux-installed-discovery"
@@ -282,6 +291,12 @@ test("actual independent cleanup refuses missing completion even after its activ
     );
     const guard = helper.guardPath(root);
     fs.writeFileSync(guard, "owned unresolved restoration");
+    assert.throws(cleanup, /Database ownership unresolved/);
+    assert.equal(nativeCalls, 0);
+    databaseSafe = true;
+    assert.throws(cleanup, /Database owner still running/);
+    assert.equal(nativeCalls, 0);
+    ownerExited = true;
     assert.throws(cleanup, /Active discovery guard preserves installed state/);
     assert.equal(nativeCalls, 0);
     fs.unlinkSync(guard);
@@ -397,6 +412,11 @@ test("actual parent finally preserves private roots, accounts and database after
     "ownershipHandle",
     "ownershipVerified",
     "agentId",
+    "agentRowId",
+    "installAttempted",
+    "assertInstallIdentityResolved",
+    "cleanupInstalledAgent",
+    "dbOwnership",
     "pool",
     "workspaceId",
     "assert",
@@ -412,6 +432,7 @@ test("actual parent finally preserves private roots, accounts and database after
     { receiptMissing: true },
     { receiptChanged: true },
     { receiptMismatch: true },
+    { databaseFailure: true },
   ]) {
     const calls = [],
       errors = [],
@@ -484,6 +505,19 @@ test("actual parent finally preserves private roots, accounts and database after
       state.receiptMissing ? undefined : { assertUnchanged() { if (state.receiptChanged) throw Error("controlled receipt replacement"); } },
       !state.receiptMismatch,
       "owned-agent",
+      "d89b4df5-f82a-4db7-a10d-53f45a507181",
+      true,
+      require("../tests/e2e/linux-systemd-real-journey").assertInstallIdentityResolved,
+      async () => {
+        calls.push("database-delete");
+        if (state.databaseFailure) throw Error("controlled database cleanup failure");
+        return "d89b4df5-f82a-4db7-a10d-53f45a507181";
+      },
+      {
+        markDone() { calls.push("database-done"); },
+        assertSafe() { calls.push("database-proof"); return { state: "done" }; },
+        remove() { calls.push("database-marker-delete"); },
+      },
       {
         async query() {
           calls.push("database-delete");
@@ -500,9 +534,20 @@ test("actual parent finally preserves private roots, accounts and database after
       "private-delete",
       "account-query",
       "receipt-delete",
-      "database-delete",
     ])
       assert.equal(calls.includes(action), !unresolved, action);
+    // Database cleanup occurs only after host drain; when it itself fails, it
+    // was attempted but must not allow marker, receipt or host deletion.
+    assert.equal(calls.includes("database-delete"), !unresolved || state.databaseFailure === true);
+    if (!unresolved) {
+      assert.ok(calls.indexOf("database-delete") < calls.indexOf("database-done"));
+      assert.ok(calls.indexOf("database-done") < calls.indexOf("private-delete"));
+      assert.ok(calls.indexOf("private-delete") < calls.indexOf("database-marker-delete"));
+      assert.ok(calls.indexOf("database-marker-delete") < calls.indexOf("receipt-delete"));
+    } else {
+      assert.equal(calls.includes("database-done"), false);
+      assert.equal(calls.includes("database-marker-delete"), false);
+    }
   }
 });
 test("byte-identical foreign replacement is refused before either original or replacement mutation", () =>

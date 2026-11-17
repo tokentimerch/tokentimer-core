@@ -15,6 +15,7 @@ const errors = (artifact, version = "24.04") =>
   });
 test("both current-source native Ubuntu installed discovery reports satisfy only their declared cells", () => {
   for (const version of ["22.04", "24.04"]) {
+    assert.deepEqual(new Set(slot(version).requiredSources), new Set(helper.REQUIRED_SOURCES));
     assert.deepEqual(errors(fixture.artifact(version), version), []);
     assert.ok(
       errors(fixture.artifact(version), version === "22.04" ? "24.04" : "22.04")
