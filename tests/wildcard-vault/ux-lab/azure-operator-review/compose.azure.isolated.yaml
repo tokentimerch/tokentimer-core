@@ -1,0 +1,50 @@
+# Role-local customer supervisors; not wired into Up while authority and sink
+# isolation verification, host-side controls and recovery are incomplete.
+services:
+  # The shared legacy supervisor must not start alongside isolated roles.
+  customers:
+    profiles: [legacy]
+  issuer:
+    image: ${TT_UX_ROLE_IMAGE:?verified candidate role image required}
+    command: [node, /lab-scratch/customer-host.cjs]
+    environment:
+      TT_UX_ISOLATED_ROLE: issuer
+      TT_UX_MATERIAL_PROVIDER: azure-key-vault
+      TT_UX_PACKAGE_ACCEPTANCE: "1"
+      TT_UX_CORE_COMMIT: ${TT_UX_CORE_COMMIT:?}
+      TT_UX_CERTIFICATE_MODE: ${TT_UX_CERTIFICATE_MODE:-ordinary}
+    volumes:
+      - { type: bind, source: '${TT_UX_CANDIDATE_REPO:?}', target: /repo, read_only: true }
+      - { type: bind, source: '${TT_UX_REVIEW_HARNESS:?}', target: /lab-scratch, read_only: true }
+      - { type: bind, source: '${TT_UX_PUBLIC_PACKAGE_INPUT:?}', target: /lab-input, read_only: true }
+      - { type: bind, source: '${TT_UX_ISSUER_DESCRIPTOR:?}', target: /lab-azure-input/azure-identities.json, read_only: true }
+      - { type: volume, source: azure-issuer-state, target: /lab }
+      - { type: bind, source: '${TT_UX_ISSUER_SINK:?}', target: /run/tt-issuer, read_only: true }
+    depends_on: [api, pebble]
+  consumer:
+    image: ${TT_UX_ROLE_IMAGE:?verified candidate role image required}
+    command: [node, /lab-scratch/customer-host.cjs]
+    environment:
+      TT_UX_ISOLATED_ROLE: consumer
+      TT_UX_MATERIAL_PROVIDER: azure-key-vault
+      TT_UX_PACKAGE_ACCEPTANCE: "1"
+      TT_UX_CORE_COMMIT: ${TT_UX_CORE_COMMIT:?}
+      TT_UX_CERTIFICATE_MODE: ${TT_UX_CERTIFICATE_MODE:-ordinary}
+    volumes:
+      - { type: bind, source: '${TT_UX_CANDIDATE_REPO:?}', target: /repo, read_only: true }
+      - { type: bind, source: '${TT_UX_REVIEW_HARNESS:?}', target: /lab-scratch, read_only: true }
+      - { type: bind, source: '${TT_UX_PUBLIC_PACKAGE_INPUT:?}', target: /lab-input, read_only: true }
+      - { type: bind, source: '${TT_UX_CONSUMER_DESCRIPTOR:?}', target: /lab-azure-input/azure-identities.json, read_only: true }
+      - { type: volume, source: azure-consumer-state, target: /lab }
+      - { type: bind, source: '${TT_UX_CONSUMER_SINK:?}', target: /run/tt-consumer, read_only: true }
+    ports:
+      - '127.0.0.1:${TT_UX_WEB_PORT:?}:8080'
+      - '127.0.0.1:${TT_UX_NGINX_PORT:?}:8443'
+      - '127.0.0.1:${TT_UX_HAPROXY_PORT:?}:9443'
+    networks:
+      default:
+        aliases: [customers]
+    depends_on: [api, pebble]
+volumes:
+  azure-issuer-state:
+  azure-consumer-state:
