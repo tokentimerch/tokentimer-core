@@ -14,7 +14,7 @@ function fixture() {
     location: "swedencentral", group: "tt-imds-1234-1", vault: "ttimds" + "c".repeat(18),
     secret: "tt-imds-" + "d".repeat(32), pinnedVersion: "1".repeat(32), newerVersion: "2".repeat(32),
     createdAt: now - 60000, expiresAt: now + 7000000, runId: "1234", sourceSha: "a".repeat(40), attempt: "1",
-    valueSha256: "b".repeat(64), probeSha256: "c".repeat(64), packageArtifact: { artifactId: "11" },
+    valueSha256: "b".repeat(64), probeSha256: "c".repeat(64), packageArtifact: { runId: "5678", artifactId: "11", packageSha256: "a".repeat(64) },
     subscriptionId: digitGuid("1"), tenantId: digitGuid("2"), runnerClientId: digitGuid("a"),
     runnerPrincipalId: digitGuid("b"), runnerRoleDefinition: digitGuid("c"),
     hosts: {
@@ -104,7 +104,8 @@ test("recognizes only the exact resource inventory, VM roles and private network
 test("derives the deadline anchor from the authenticated in-progress job and independent review", () => {
   const plan = fixture();
   const startedAt = plan.createdAt;
-  const env = { GITHUB_RUN_ID: plan.runId, GITHUB_RUN_ATTEMPT: "1", GITHUB_SHA: plan.sourceSha,
+  const env = { GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "tokentimerch/tokentimer-core", GITHUB_REF: "refs/heads/main",
+    GITHUB_RUN_ID: plan.runId, GITHUB_RUN_ATTEMPT: "1", GITHUB_SHA: plan.sourceSha,
     GITHUB_ACTOR_ID: "18", GITHUB_EVENT_NAME: "workflow_dispatch", RUNNER_ENVIRONMENT: "github-hosted",
     RUNNER_NAME: "runner", CERTOPS_AZURE_IMDS_LAB_ENABLED: "true" };
   const run = { id: Number(plan.runId), actor: { id: 18 }, triggering_actor: { id: 18 },
@@ -118,6 +119,17 @@ test("derives the deadline anchor from the authenticated in-progress job and ind
   assert.equal(validateGitHub(plan, env, run, approvals, jobs), startedAt);
   approvals[0].user.id = 18;
   assert.throws(() => validateGitHub(plan, env, run, approvals, jobs));
+  const { runId, artifactId, packageSha256 } = plan.packageArtifact;
+  const scope = {
+    environment: "certops-azure-imds-lab", runId: plan.runId, actorId: env.GITHUB_ACTOR_ID, headSha: plan.sourceSha,
+    producerRunId: runId, artifactId, packageSha256, expiresAt: Date.now() + 60000,
+  };
+  const temporary = {
+    ...env, TT_IMDS_PACKAGE_RUN_ID: runId, TT_IMDS_PACKAGE_ARTIFACT_ID: artifactId,
+    TT_IMDS_PACKAGE_SHA256: packageSha256, TT_AZURE_LAB_SELF_APPROVAL: JSON.stringify(scope),
+  };
+  assert.equal(validateGitHub(plan, temporary, run, approvals, jobs), startedAt);
+  assert.throws(() => validateGitHub(plan, { ...temporary, TT_IMDS_PACKAGE_ARTIFACT_ID: "12345" }, run, approvals, jobs));
   approvals[0].user.id = 19;
   jobs.jobs[0].runner_name = "stale";
   assert.throws(() => validateGitHub(plan, env, run, approvals, jobs));

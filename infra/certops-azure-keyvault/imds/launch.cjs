@@ -4,13 +4,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { sha256 } = require("./probe.cjs");
+const policy = require("../policy.js");
 
 const COMPUTE_API = "2024-07-01";
 const RG_API = "2022-09-01";
 const VAULT_API = "2024-11-01";
 const ROLE_API = "2022-04-01";
-const WORKFLOW = ".github/workflows/certops-azure-imds-qualification.yml";
-const ENVIRONMENT = "certops-azure-imds-lab";
+const ENVIRONMENT = policy.IMDS_ENV;
 const ROLES = ["issuer", "consumer"];
 const GUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -97,23 +97,8 @@ function validateGitHub(plan, env, run, approvalHistory, jobs) {
   assert.equal(env.GITHUB_RUN_ID, plan.runId);
   assert.equal(env.GITHUB_RUN_ATTEMPT, plan.attempt);
   assert.equal(env.GITHUB_SHA, plan.sourceSha);
-  assert.equal(env.GITHUB_EVENT_NAME, "workflow_dispatch");
-  assert.equal(env.RUNNER_ENVIRONMENT, "github-hosted");
-  assert.equal(env.CERTOPS_AZURE_IMDS_LAB_ENABLED, "true");
-  assert.equal(String(run.id), plan.runId);
-  assert.equal(run.run_attempt, 1);
-  assert.equal(run.path, WORKFLOW);
-  assert.equal(run.head_sha, plan.sourceSha);
-  assert.equal(run.head_branch, "main");
-  assert.equal(run.event, "workflow_dispatch");
   assert.equal(run.status, "in_progress");
-  assert.equal(String(run.actor.id), env.GITHUB_ACTOR_ID);
-  assert.equal(String(run.triggering_actor.id), env.GITHUB_ACTOR_ID);
-  const approvals = approvalHistory.filter(record => record.environments?.some(item => item.name === ENVIRONMENT));
-  assert.equal(approvals.length, 1);
-  assert.equal(approvals[0].state, "approved");
-  assert.ok(Number.isSafeInteger(approvals[0].user.id) && approvals[0].user.id > 0);
-  assert.notEqual(String(approvals[0].user.id), env.GITHUB_ACTOR_ID);
+  policy.requireLabApproval(run, approvalHistory, env, ENVIRONMENT);
   assert.ok(jobs.total_count === jobs.jobs.length && jobs.jobs.length < 100);
   const selected = jobs.jobs.filter(job => job.name === "IMDS qualification");
   assert.equal(selected.length, 1);
@@ -387,7 +372,6 @@ function approvedPlanBytes(encoded, digest) {
 }
 
 async function run(action, planDigest, artifactDirectory, env = process.env) {
-  const policy = require("../policy.js");
   const { arm, github, load, save, privateRoot, sleep } = require("../lab.js");
   const { inspect, verifyIdentity } = require("../../../scripts/certops-azure-keyvault-package.cjs");
   policy.requireTrusted(env, false);
@@ -423,7 +407,6 @@ async function run(action, planDigest, artifactDirectory, env = process.env) {
     const environment = await github(prefix + "/environments/" + ENVIRONMENT, env);
     const branches = await github(prefix + "/environments/" + ENVIRONMENT + "/deployment-branch-policies", env);
     policy.requireEnvironment(environment, branches, ENVIRONMENT);
-    assert.ok(environment.protection_rules?.find(rule => rule.type === "required_reviewers")?.reviewers?.length);
     assert.equal(env.TT_IMDS_INDEPENDENT_TEARDOWN_READY, "true");
     const deadline = leaseDeadline - 600000;
     assert.ok(plan.createdAt <= Date.now() && Date.now() + 300000 < deadline);

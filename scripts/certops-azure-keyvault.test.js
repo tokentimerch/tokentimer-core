@@ -536,7 +536,7 @@ test("only a fresh exact run with an independent lab reviewer may authenticate",
     user: { id: 11 },
     environments: [{ name: subject.LAB_ENV }],
   };
-  subject.requireIndependentApproval(run, [approval], context);
+  subject.requireLabApproval(run, [approval], context);
   for (const patch of [
     { id: 12345679 },
     { run_attempt: 2 },
@@ -548,7 +548,7 @@ test("only a fresh exact run with an independent lab reviewer may authenticate",
     { triggering_actor: { id: 11 } },
   ])
     assert.throws(() =>
-      subject.requireIndependentApproval(
+      subject.requireLabApproval(
         { ...run, ...patch },
         [approval],
         context,
@@ -564,7 +564,7 @@ test("only a fresh exact run with an independent lab reviewer may authenticate",
     [{ ...approval, environments: [{ name: subject.CLEANUP_ENV }] }],
   ])
     assert.throws(() =>
-      subject.requireIndependentApproval(run, reviews, context),
+      subject.requireLabApproval(run, reviews, context),
     );
   for (const patch of [
     { GITHUB_RUN_ATTEMPT: "2" },
@@ -572,12 +572,57 @@ test("only a fresh exact run with an independent lab reviewer may authenticate",
     { GITHUB_RUN_ID: "../other" },
   ])
     assert.throws(() =>
-      subject.requireIndependentApproval(run, [approval], {
+      subject.requireLabApproval(run, [approval], {
         ...context,
         ...patch,
       }),
     );
 });
+test("a temporary lab approval is tied to its first attempt and exact retained package", () => {
+  const packageSha256 = "c".repeat(64);
+  const base = { ...env(), GITHUB_ACTOR_ID: "10", RUNNER_ENVIRONMENT: "github-hosted", TT_AZURE_PACKAGE_SHA256: packageSha256 };
+  const run = {
+    id: Number(base.GITHUB_RUN_ID), run_attempt: 1, event: "workflow_dispatch", status: "in_progress",
+    head_branch: "main", head_sha: base.GITHUB_SHA, path: subject.WORKFLOW,
+    actor: { id: 10 }, triggering_actor: { id: 10 },
+  };
+  const approval = { state: "approved", user: { id: 10 }, environments: [{ name: subject.LAB_ENV }] };
+  const scope = {
+    environment: subject.LAB_ENV, runId: base.GITHUB_RUN_ID, actorId: base.GITHUB_ACTOR_ID,
+    headSha: base.GITHUB_SHA, producerRunId: base.GITHUB_RUN_ID, artifactId: "67", packageSha256,
+    expiresAt: Date.now() + 60000,
+  };
+  const context = { ...base, TT_AZURE_FINAL_PACKAGE: "1", TT_AZURE_PACKAGE_ARTIFACT_ID: "67" };
+  const checked = (record = scope, contextOverrides = {}, runOverrides = {}, reviews = [approval]) =>
+    subject.requireLabApproval({ ...run, ...runOverrides }, reviews, {
+      ...context, TT_AZURE_LAB_SELF_APPROVAL: JSON.stringify(record), ...contextOverrides,
+    });
+
+  assert.equal(checked(), true);
+  for (const patch of [
+    { runId: "200" }, { actorId: "11" }, { headSha: "b".repeat(40) },
+    { producerRunId: "200" }, { artifactId: "68" }, { packageSha256: "d".repeat(64) },
+    { environment: subject.IMDS_ENV }, { expiresAt: Date.now() - 1 },
+    { expiresAt: Date.now() + 10800000 },
+  ]) assert.throws(() => checked({ ...scope, ...patch }));
+  for (const patch of [
+    { TT_AZURE_LAB_SELF_APPROVAL: "" }, { TT_AZURE_LAB_SELF_APPROVAL: "invalid json" },
+    { GITHUB_REF: "refs/heads/release/0.20.0" }, { GITHUB_RUN_ATTEMPT: "2" },
+    { RUNNER_ENVIRONMENT: "self-hosted" }, { TT_AZURE_FINAL_PACKAGE: "0" },
+  ]) assert.throws(() => checked(scope, patch));
+  assert.throws(() => checked(scope, {}, { status: "completed" }));
+  assert.throws(() => checked(scope, {}, {}, []));
+  assert.throws(() => checked(scope, {}, {}, [approval, approval]));
+
+  const expiry = {
+    TT_AZURE_FINAL_PACKAGE: undefined, TT_AZURE_EXPIRY_PACKAGE_RUN_ID: "200",
+    TT_AZURE_EXPIRY_PACKAGE_ARTIFACT_ID: "68",
+  };
+  const expiryScope = { ...scope, producerRunId: "200", artifactId: "68" };
+  assert.equal(checked(expiryScope, expiry), true);
+  assert.throws(() => checked(scope, expiry));
+});
+
 test("approval entry point rechecks live policy and approval before returning", async (t) => {
   const context = { ...env(), GITHUB_ACTOR_ID: "10", GH_TOKEN: "synthetic" };
   const run = {

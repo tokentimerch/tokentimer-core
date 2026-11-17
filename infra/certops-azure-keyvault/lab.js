@@ -157,17 +157,25 @@ async function githubPreflight(env = process.env) {
   )
     policy.fail("AZURE_KV_TRUSTED_JANITOR_REQUIRED");
 }
-async function githubApproval(env = process.env) {
-  // Recheck protected environments after the environment gate and before OIDC.
-  await githubPreflight(env);
+async function githubApproval(env = process.env, environment = policy.LAB_ENV) {
+  // Recheck the environment after its gate and before OIDC.
+  if (environment === policy.IMDS_ENV) {
+    policy.requireTrusted(env, false);
+    const path = `/repos/${policy.REPOSITORY}/environments/${environment}`;
+    policy.requireEnvironment(await github(path, env), await github(path + "/deployment-branch-policies", env), environment);
+  } else {
+    await githubPreflight(env);
+  }
   if (!/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID || ""))
     policy.fail("AZURE_KV_APPROVAL_RUN_CONTEXT_INVALID");
   const root = `/repos/${policy.REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
-  policy.requireIndependentApproval(
+  const selfApproved = policy.requireLabApproval(
     await github(root, env),
     await github(root + "/approvals", env),
     env,
+    environment,
   );
+  if (selfApproved) console.log("Temporary administrator approval verified for this lab run.");
 }
 const groupId = (p) =>
   `/subscriptions/${p.subscriptionId}/resourceGroups/${p.group}`;
@@ -591,6 +599,7 @@ if (require.main === module) {
   const actions = {
     "github-preflight": githubPreflight,
     "github-approval": githubApproval,
+    "github-imds-approval": () => githubApproval(process.env, policy.IMDS_ENV),
     provision,
     cleanup,
     janitor,
