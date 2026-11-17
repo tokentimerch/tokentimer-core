@@ -37,6 +37,9 @@ const EXPIRY_UPLOAD_IF = "success() && steps.expiry-observation.outcome == 'succ
 const IMDS_IF = MAIN + " && vars.CERTOPS_AZURE_IMDS_LAB_ENABLED == 'true'";
 const IMDS_UPLOAD_IF = "success() && steps.collect.outcome == 'success' && steps.scrub.outcome == 'success'";
 const LIFECYCLE_IF = MAIN;
+const SELF_APPROVAL = "TT_AZURE_LAB_SELF_APPROVAL";
+const SELF_APPROVAL_REFERENCE = "${{ secrets.CERTOPS_AZURE_LAB_SELF_APPROVAL }}";
+const hasScopedApproval = step => step?.env?.[SELF_APPROVAL] === SELF_APPROVAL_REFERENCE;
 function allowedCondition(name, value) {
   if (name === KV) return [PROVIDER_IF, EXPIRY_IF, KEYVAULT_IF + " && inputs.final_package"].includes(value);
   if (name === IMDS) return value === IMDS_IF;
@@ -66,12 +69,16 @@ function imdsPolicy(workflow, errors) {
   const [checkout, node, verify, login, launch, reauth, collect, scrub, upload] = job.steps || [];
   const loginStep = step => step?.shell === "pwsh" && step.run === "./infra/certops-azure-keyvault/login-oidc.ps1" && !step.if;
   if (job.steps?.length !== 9 || job.steps.some(step =>
-      step["continue-on-error"] || (step !== launch && step.env?.TT_IMDS_APPROVED_PLAN_B64 !== undefined)) ||
+      step["continue-on-error"] || (step !== launch && step.env?.TT_IMDS_APPROVED_PLAN_B64 !== undefined) ||
+      (![verify, launch, collect].includes(step) && step.env?.[SELF_APPROVAL] !== undefined)) ||
       !checkout?.uses?.startsWith("actions/checkout@") || checkout.if ||
       checkout.with?.["persist-credentials"] !== false || checkout.with.ref || checkout.with.repository ||
       !node?.uses?.startsWith("actions/setup-node@") || node.if || node.with?.["node-version"] !== "24.22.3" ||
       verify?.id !== "verify-package" || verify.if || !verify.run?.includes("scripts/certops-final-package-source.cjs") ||
-      job.env?.TT_IMDS_APPROVED_PLAN_B64 !== undefined ||
+      !verify.run?.trimEnd().endsWith("node infra/certops-azure-keyvault/lab.js github-imds-approval") ||
+      ![verify, launch, collect].every(hasScopedApproval) ||
+      JSON.stringify(workflow).split(SELF_APPROVAL_REFERENCE).length !== 4 ||
+      job.env?.TT_IMDS_APPROVED_PLAN_B64 !== undefined || job.env?.[SELF_APPROVAL] !== undefined ||
       !loginStep(login) || launch?.id !== "launch" || launch.if ||
       launch.env?.TT_IMDS_APPROVED_PLAN_B64 !== "${{ secrets.TT_IMDS_APPROVED_PLAN_B64 }}" ||
       !launch.run?.includes("infra/certops-azure-keyvault/imds/launch.cjs launch") || !loginStep(reauth) ||
@@ -108,7 +115,7 @@ function expiryPolicy(job, provider) {
       TT_AZURE_PACKAGE_SHA256: "${{ inputs.package_sha256 }}",
     }) &&
     provider?.if === PROVIDER_IF &&
-    steps.length === 11 && steps.every(step => !step.env && !step["continue-on-error"]) &&
+    steps.length === 11 && steps.every(step => (step === approval ? Object.keys(step.env || {}).length === 1 && hasScopedApproval(step) : !step.env) && !step["continue-on-error"]) &&
     checkout?.uses?.startsWith("actions/checkout@") && !checkout.if &&
     checkout.with?.["persist-credentials"] === false && !checkout.with.ref && !checkout.with.repository &&
     node?.uses?.startsWith("actions/setup-node@") && !node.if && node.with?.["node-version"] === "24.22.3" &&
@@ -187,7 +194,8 @@ function keyvaultPolicy(name, workflow, errors) {
     [...text.matchAll(/\bAZURE_[A-Z0-9_]+/g)].some(
       (match) => !allowedAzure.has(match[0]),
     ) ||
-    /\$\{\{\s*secrets\./.test(text)
+    /\$\{\{\s*secrets\./.test(janitor ? text : text.replaceAll(SELF_APPROVAL_REFERENCE, "")) ||
+    (!janitor && text.split(SELF_APPROVAL_REFERENCE).length !== 3)
   )
     errors.push(
       "Only reviewed OIDC variable references are allowed, never Azure credential secrets",
@@ -338,7 +346,9 @@ function keyvaultPolicy(name, workflow, errors) {
           steps[approval].run !==
             "node infra/certops-azure-keyvault/lab.js github-approval" ||
           steps[approval].if ||
-          steps[approval]["continue-on-error"] ||
+          steps[approval]["continue-on-error"] || !hasScopedApproval(steps[approval]) ||
+          job.env?.[SELF_APPROVAL] !== undefined ||
+          steps.some((step, index) => index !== approval && step.env?.[SELF_APPROVAL] !== undefined) ||
           steps
             .slice(0, approval)
             .some(
@@ -364,7 +374,7 @@ function keyvaultPolicy(name, workflow, errors) {
           )
         )
           errors.push(
-            "Independent run approval must precede Azure login and guard cleanup authentication",
+            "Protected run approval must precede Azure login and guard cleanup authentication",
           );
       }
       if (
