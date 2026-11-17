@@ -84,6 +84,15 @@ test("the cleanup barrier permits no-worker and drained-worker states only", () 
     assert.throws(() => launcher.requireDrain(marker), { message: "AZURE_EXPIRY_DRAIN_UNVERIFIED" });
 });
 
+test("a longer job still reserves cleanup against the earlier absolute deadline and caps Azure at two hours", () => {
+  const minute = 60000;
+  const budget = { jobDeadlineMs: now + 125 * minute, resourceDeadlineMs: now + 118 * minute, cleanupReserveMs: 10 * minute };
+  assert.equal(expiry.workDeadline(budget, now), now + 108 * minute);
+  assert.equal(expiry.workDeadline({ ...budget, jobDeadlineMs: now + 112 * minute }, now), now + 102 * minute);
+  for (const invalid of [{ jobDeadlineMs: now + 125 * minute + 1 }, { resourceDeadlineMs: now + 120 * minute + 1 }])
+    assert.throws(() => expiry.workDeadline({ ...budget, ...invalid }, now), { code: "AZURE_EXPIRY_BUDGET_INVALID" });
+});
+
 test("bounds the expiry job and preserves package, approval and proof ordering", () => {
   const { createRequire } = require("node:module");
   const yaml = createRequire(require.resolve("mocha/package.json"))("js-yaml");
@@ -91,6 +100,7 @@ test("bounds the expiry job and preserves package, approval and proof ordering",
   const filename = "certops-azure-keyvault-qualification.yml";
   const workflow = yaml.load(fs.readFileSync(path.join(__dirname, "../.github/workflows", filename), "utf8"));
   assert.deepEqual(guard.validateWorkflow(workflow, filename), []);
+  assert.equal(workflow.jobs.lab["timeout-minutes"], 90);
   assert.equal(workflow.jobs["natural-expiry"]["timeout-minutes"] * 60000, launcher.JOB_TIMEOUT_MS);
   for (const mutate of [
     job => { [job.steps[3], job.steps[4]] = [job.steps[4], job.steps[3]]; },

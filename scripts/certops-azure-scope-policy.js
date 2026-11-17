@@ -99,7 +99,7 @@ function expiryPolicy(job, provider) {
   const loginCommand = "./infra/certops-azure-keyvault/login-oidc.ps1";
   const evidence = "azure-natural-expiration-final-package";
   return job.needs === "preflight" && job.if === EXPIRY_IF && job["runs-on"] === "ubuntu-latest" &&
-    job["timeout-minutes"] === 90 && job.environment === "certops-azure-keyvault-lab" &&
+    job["timeout-minutes"] === 125 && job.environment === "certops-azure-keyvault-lab" &&
     JSON.stringify(job.permissions) === JSON.stringify({ contents: "read", actions: "read", "id-token": "write" }) &&
     !job.services && !job.strategy &&
     JSON.stringify(job.env) === JSON.stringify({

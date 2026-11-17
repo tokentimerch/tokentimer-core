@@ -6,9 +6,11 @@ const path = require("node:path");
 const assert = require("node:assert/strict");
 
 const MAX_DURATION_MS = 3 * 60 * 60 * 1000;
+const MAX_JOB_DURATION_MS = 125 * 60 * 1000;
 const MIN_CLEANUP_RESERVE_MS = 10 * 60 * 1000;
 const EXPIRY_GRACE_MS = 10 * 60 * 1000;
 const POLL_MS = 15000;
+const WINDOW_ERROR_CODES = Object.freeze(["AZURE_EXPIRY_TOKEN_TIMES_INVALID", "AZURE_EXPIRY_OUTSIDE_BUDGET"]);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function fail(code) {
@@ -19,7 +21,7 @@ function fail(code) {
 
 function workDeadline({ jobDeadlineMs, resourceDeadlineMs, cleanupReserveMs }, now) {
   if (![jobDeadlineMs, resourceDeadlineMs, cleanupReserveMs, now].every(Number.isSafeInteger) ||
-      cleanupReserveMs < MIN_CLEANUP_RESERVE_MS || jobDeadlineMs > now + 90 * 60 * 1000 ||
+      cleanupReserveMs < MIN_CLEANUP_RESERVE_MS || jobDeadlineMs > now + MAX_JOB_DURATION_MS ||
       resourceDeadlineMs > now + 2 * 60 * 60 * 1000) fail("AZURE_EXPIRY_BUDGET_INVALID");
   const deadline = Math.min(jobDeadlineMs, resourceDeadlineMs) - cleanupReserveMs;
   if (deadline <= now) fail("AZURE_EXPIRY_BUDGET_INVALID");
@@ -43,7 +45,9 @@ async function observe({ acquire, read, fetchVersion, renewAssertion, verifyOwne
   const first = await acquire();
   if (!Number.isSafeInteger(first.issuedAt) || !Number.isSafeInteger(first.expiresAt) ||
       first.issuedAt < Math.floor(started / 1000) - 30 || first.expiresAt <= first.issuedAt ||
-      first.expiresAt * 1000 + EXPIRY_GRACE_MS > deadline || first.expiresAt * 1000 <= now() + 30000)
+      first.expiresAt * 1000 <= now() + 30000)
+    fail("AZURE_EXPIRY_TOKEN_TIMES_INVALID");
+  if (first.expiresAt * 1000 + EXPIRY_GRACE_MS > deadline)
     fail("AZURE_EXPIRY_OUTSIDE_BUDGET");
   let before;
   try { before = await read(first.token); } catch { fail("AZURE_EXPIRY_NETWORK_BEFORE"); }
@@ -90,7 +94,7 @@ async function runNaturalExpiry({ candidateRoot, config, store, providerVersion,
   const getToken = credential(config, 15000, async (target, options) => {
     const response = await requestJson(target, options);
     if (response.status === 200) {
-      expiry = Number(response.json?.expires_on);
+      expiry = Number(response.json?.expires_on || NaN);
       if (!Number.isSafeInteger(expiry)) {
         try {
           // A missing/opaque expiry is refused rather than inventing a TTL.
@@ -115,4 +119,4 @@ async function runNaturalExpiry({ candidateRoot, config, store, providerVersion,
   return { ...facts, forced401: false, clockOverridden: false, pinnedVersion: providerVersion };
 }
 
-module.exports = { runNaturalExpiry, workDeadline, MAX_DURATION_MS, _offline: { observe, validateScope } };
+module.exports = { runNaturalExpiry, workDeadline, MAX_DURATION_MS, MAX_JOB_DURATION_MS, WINDOW_ERROR_CODES, _offline: { observe, validateScope } };
