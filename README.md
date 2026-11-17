@@ -136,17 +136,6 @@ Use `cert-manager` or connect an external executor with a machine token for supp
   <img src="docs/assets/dashboard-workflow.gif" alt="Subdomain discovery and monitored certificate import, Vault scanning and import, and filtering the resulting inventory" width="888" />
 </p>
 
-### MCP assistant access
-
-- **Connect over HTTPS** with browser sign-in on Core 0.19 and later. Self-hosted
-  deployments must enable MCP before connecting a Model Context Protocol (MCP) assistant.
-- **Read access** is the default. Search inventory and inspect certificates and jobs
-  within one workspace.
-- **Optional write grants** allow reviewed inventory changes and ACME issuance or
-  renewal requests. Certificate requests follow the workspace’s Job approval setting.
-
-[Setup guide](https://tokentimer.ch/docs/api/mcp-setup) · [Video walkthrough](https://www.youtube.com/watch?v=UM4vT69EC4E)
-
 ### Flexible multi-channel alerting
 
 - **Delivery and escalation** can use email, Slack, Microsoft Teams, Discord, PagerDuty,
@@ -157,6 +146,17 @@ Use `cert-manager` or connect an external executor with a machine token for supp
 <p align="center">
   <img src="docs/assets/workspace-alerting.png" alt="Workspace alerting preferences: expiry thresholds, delivery window, contacts, and webhook setup guides for Slack, Discord, Teams, and PagerDuty" width="888" />
 </p>
+
+### MCP assistant access
+
+- **Connect over HTTPS** with browser sign-in on Core 0.19 and later. Self-hosted
+  deployments must enable MCP before connecting a Model Context Protocol (MCP) assistant.
+- **Read access** is the default. Search inventory and inspect certificates and jobs
+  within one workspace.
+- **Optional write grants** allow reviewed inventory changes and ACME issuance or
+  renewal requests. Certificate requests follow the workspace’s Job approval setting.
+
+[Setup guide](https://tokentimer.ch/docs/api/mcp-setup) · [Video walkthrough](https://www.youtube.com/watch?v=UM4vT69EC4E)
 
 ### Built for teams and audits
 
