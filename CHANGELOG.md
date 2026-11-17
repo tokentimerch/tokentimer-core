@@ -9,22 +9,19 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed
-
-- **Operator action:** `TRUST_PROXY_HOPS` now defaults to `0` instead of `2` for deployments that relied on the previous default. Before upgrading a proxied deployment, set it to the actual number of trusted HTTP proxy hops; restrict direct API access and ensure proxies sanitize forwarding headers. Otherwise client IP rate limits and HTTPS callback detection can be incorrect. See [configuration](docs/CONFIGURATION.md).
+## [0.20.0] - 2026-11-17
 
 ### Added
 
 - **Import filters across providers.** AWS, Azure Key Vault, Entra ID and GCP expose include/exclude rules for name, description and location, with exact or regex matching. Excluding inventory does not silence its alerts; contact groups, preferences and alert controls remain separate.
-- **Separate Entra managed identities.** Scan all identities (default), exclude managed identities, or scan only managed identities, covering both assigned types. Managed credentials use `azure-ad:managedIdentities/...` locations without changing source identity; saved location rules also match the old path. **Operator guidance:** for Enterprise schedules, create and run a managed-only configuration before changing the remaining one to exclude. Keep cleanup off for both first runs and inspect associations before enabling it. Multiple configurations require System settings activation. See the [import and sync guide](docs/AUTO_SYNC.md#safely-split-a-saved-entra-connection).
-- **Certificate distribution lifecycle.** Adds consumer administration, exact-version review and reviewed automation, canary/calendar controls, recurring verification, incident recovery, safe resumption after partial success, public preflight and retention management. An independently approved read-only inspection can reconcile an uncertain original deployment when its assigned agent retains the exact installation proof. Linux independent staging, Azure material storage, shared Windows/IIS material deployment and exact-version Vault/OpenBao cleanup retain their separate closed capability gates. **Operator action:** apply the composed migrations through 114 before matching API/workers; migration 97 requires fresh independent review of existing distribution authorizations. See the [distribution guide](docs/certops/distribution-lifecycle.md) for supported capabilities and recovery.
-
-## [0.19.2-rc.1] - 2026-11-11
-
-### Added
+- **Separate Entra managed identities.** Scan all identities (default), exclude managed identities, or scan only managed identities, covering both assigned types. Managed credentials use `azure-ad:managedIdentities/...` locations without changing source identity; saved location rules also match the old path. **Operator guidance:** keep cleanup off on the first run when changing filters or identity mode. Verify inventory and alert associations before enabling it. See the [import and sync guide](docs/AUTO_SYNC.md).
+- **Certificate distribution.** Manage consumers and run reviewed, exact-version Vault and OpenBao KV v2 rollouts to Linux, with canary controls, verification, recovery and report-only retention. The release includes code for Azure Key Vault material storage, shared Windows/IIS deployment, independent Linux staging and exact-version Vault/OpenBao cleanup. Those capabilities are disabled in production packages. **Operator action:** apply migrations through 114 before starting matching API and workers, update consumer agents, and request fresh independent review of existing distribution authorizations after migration 97. See the [distribution guide](docs/certops/distribution-lifecycle.md).
 
 - **Verified workspace-member recipients.** Contacts matching a current member's exact verified email can receive workspace notifications without another confirmation. Membership removal or lost mailbox proof ends this eligibility; explicit refusals still apply. Self-hosted verification remains off by default; use `shadow` to observe eligibility before enabling `enforce`.
+
 ### Changed
+
+- **Operator action:** `TRUST_PROXY_HOPS` now defaults to `0` instead of `2` for deployments that relied on the previous default. Before upgrading a proxied deployment, set it to the actual number of trusted HTTP proxy hops; restrict direct API access and ensure proxies sanitize forwarding headers. Otherwise client IP rate limits and HTTPS callback detection can be incorrect. See [configuration](docs/CONFIGURATION.md).
 
 - **MCP contact creation.** When recipient verification is enforced, the response reports confirmation status for each email or WhatsApp destination. Creating a contact does not send an invitation.
 
@@ -43,6 +40,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Webhook proxy delivery.** HTTP and HTTPS webhook requests use the configured proxy correctly when `NODE_USE_ENV_PROXY=1`, without being sent through the proxy twice.
 
 - **API logging.** Successful health and metrics probes no longer generate completion logs; failed probes remain logged with their matching `X-Request-Id`. Background logs no longer inherit an unrelated request ID after its response ends.
+
+- **GitLab PAT imports.** Incomplete scans, including incomplete owner classification, cannot trigger inventory cleanup.
 
 ## [0.19.1] - 2026-11-06
 

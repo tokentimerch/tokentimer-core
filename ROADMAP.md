@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-12.
+Last reviewed: 2026-11-17 (0.20.0 candidate, main c40d92c1).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -34,21 +34,12 @@ compliance reporting are not deliverables of this repository.
 These are the remaining pilot asks. They ship in 0.x. v1.0.0 is not
 called stable while they are open.
 
-- **CLM destinations: store issued material and distribute it**
+- **CLM destination extensions**
   ([#248](https://github.com/tokentimerch/tokentimer-core/issues/248)).
-  Name filesystem, IIS, or Vault locations on a certificate.
-  One issuance can deploy to those destinations. The control plane
-  never stores private keys. Shared-key Vault mode is explicit opt-in.
-  [PR #329](https://github.com/tokentimerch/tokentimer-core/pull/329) adds
-  publication through your Vault and independent consumer rollouts for any shared
-  certificate, including ordinary and wildcard certificates, shipped in 0.18.0
-  (see [CHANGELOG.md](CHANGELOG.md)); the remaining destination scope stays
-  open on the issue.
-  Distribution adds reviewed rollouts, consumer management, maintenance,
-  verification, recovery and retention. OpenBao distribution is supported.
-  Azure material storage, shared Windows/IIS material deployment, independent
-  Linux staging and exact-version Vault/OpenBao cleanup remain separately gated.
-  See the [distribution guide](docs/certops/distribution-lifecycle.md).
+  Qualify Azure Key Vault material storage, shared Windows/IIS deployment,
+  independent Linux staging and exact-version Vault/OpenBao cleanup for production.
+  See the [distribution guide](docs/certops/distribution-lifecycle.md) for the
+  supported Vault/OpenBao Linux rollout scope.
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   Wire offline mode and outbound allowlists into API and worker egress.
