@@ -62,8 +62,14 @@ class DistributionCollectorTests(unittest.TestCase):
             with self.assertRaises(ValueError): collector.authenticate_linux_distribution_archive(raw, {**artifact, **change}, proof, "a" * 40)
         with self.assertRaises(ValueError): collector.authenticate_linux_distribution_archive(raw, artifact, proof, "b" * 40)
         capabilities = collector.linux_distribution_capabilities()
+        self.assertEqual(collector.LINUX_DISTRIBUTION_CAPABILITIES, [
+            "material-cleanup-vault-kv2-v1", "material-cleanup-openbao-kv2-v1", "material-consumer-staging-v1",
+        ])
+        self.assertNotIn("windows-material-iis-v1", capabilities)
         for receipt, embedded in (({"capabilities": capabilities[:-1]}, None), ({"packageVersion": "0.19.2"}, None),
                                   ({"buildMode": "linux-staging-candidate"}, None), (None, {"capabilities": capabilities[:-1]}),
+                                  ({"capabilities": [*capabilities, "windows-material-iis-v1"]}, None),
+                                  (None, {"capabilities": [*capabilities, "windows-material-iis-v1"]}),
                                   (None, {"capabilities": list(reversed(capabilities))}), (None, {"version": "0.19.2"})):
             raw, artifact, proof = self.candidate(receipt, embedded)
             with self.assertRaises(ValueError): collector.authenticate_linux_distribution_archive(raw, artifact, proof, "a" * 40)
@@ -75,6 +81,18 @@ class DistributionCollectorTests(unittest.TestCase):
         raw, artifact, proof = self.candidate(package_override=package)
         with self.assertRaisesRegex(ValueError, "archive inventory budget"):
             collector.authenticate_linux_distribution_archive(raw, artifact, proof, "a" * 40)
+
+    def test_iis_in_the_baseline_is_refused(self):
+        original = Path.read_text
+        baseline_path = ROOT / "packages/agent/src/capabilities/qualified-capabilities.json"
+        baseline = json.loads(original(baseline_path))["qualified"]
+        def read_text(path, *args, **kwargs):
+            if path == baseline_path:
+                return json.dumps({"qualified": [*baseline, "windows-material-iis-v1"]})
+            return original(path, *args, **kwargs)
+        with patch.object(Path, "read_text", read_text):
+            with self.assertRaisesRegex(ValueError, "baseline contains a restricted capability"):
+                collector.linux_distribution_capabilities()
 
     def test_extended_tar_header_body_cannot_exceed_decompressed_budget(self):
         for kind in (tarfile.XHDTYPE, tarfile.GNUTYPE_LONGNAME):
