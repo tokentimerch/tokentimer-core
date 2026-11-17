@@ -56,10 +56,14 @@ test("normal CI selects only its AD CS reports while supporting stacks retain al
 test("release collector installs pinned dependencies after trusted checkout before verification",()=>{
  const yaml=require("node:module").createRequire(require.resolve("mocha/package.json"))("js-yaml");
  const workflow=yaml.load(fs.readFileSync(path.join(root,".github/workflows/certops-release-qualification.yml"),"utf8"));
- const steps=workflow.jobs.collect.steps, checkout=steps.findIndex(s=>s.name==="Verify candidate belongs to trusted main history"), setup=steps.findIndex(s=>String(s.uses||"").startsWith("pnpm/action-setup@")), install=steps.findIndex(s=>s.name==="Install candidate dependencies"), collect=steps.findIndex(s=>s.name==="Collect explicit trusted candidate runs and verify every matrix slot");
- assert.ok(checkout>=0&&setup>checkout&&install>setup&&collect>install);
+ const steps=workflow.jobs.collect.steps, checkout=steps.findIndex(s=>s.name==="Verify candidate belongs to trusted main history"), setup=steps.findIndex(s=>String(s.uses||"").startsWith("pnpm/action-setup@")), install=steps.findIndex(s=>s.name==="Install candidate dependencies"), tests=steps.findIndex(s=>s.name==="Run collector regression tests"), collect=steps.findIndex(s=>s.name==="Collect explicit trusted candidate runs and verify every matrix slot");
+ assert.ok(checkout>=0&&setup>checkout&&install>setup&&tests>install&&collect>tests);
  assert.equal(steps[setup].with.version,"11.28.8");
  assert.equal(steps[install].run,"pnpm install --frozen-lockfile");
- assert.match(steps[collect].run,/node scripts\/run-certops-collector-tests\.js/);
- assert.match(steps[collect].run,/python3 scripts\/certops-release-collector\.py/);
+ assert.match(steps[tests].run,/node scripts\/run-certops-collector-tests\.js/);
+ assert.match(steps[tests].run,/node --test scripts\/certops-release-qualification\.test\.js scripts\/certops-arm64-release\.test\.js/);
+ assert.equal(workflow.jobs.collect.env.CERTOPS_QUALIFICATION_PROFILE,undefined);
+ assert.equal(steps[tests].env?.CERTOPS_QUALIFICATION_PROFILE,undefined);
+ assert.equal(steps[collect].env.CERTOPS_QUALIFICATION_PROFILE,"${{ inputs.profile }}");
+ assert.equal(steps[collect].run,'python3 scripts/certops-release-collector.py --profile "$CERTOPS_QUALIFICATION_PROFILE"');
 });
