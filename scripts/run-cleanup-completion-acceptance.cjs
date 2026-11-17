@@ -12,7 +12,8 @@ const provider = process.argv.includes("--openbao") ? "openbao-kv2" : "vault-kv2
 const keepLab = process.argv.includes("--keep-lab");
 const native = process.argv.includes("--native-vault-restart");
 const cleanupNative = process.argv.includes("--cleanup-native-vault");
-if (native || cleanupNative) {
+function validateNativePreconditions() {
+ if (!(native || cleanupNative)) return;
   const assert = require("node:assert/strict");
   require("./certops-linux-systemd-ownership").validateHostedEnvironment(process.env);
   assert.equal(process.platform, "linux");
@@ -32,11 +33,16 @@ const nonce = native || cleanupNative
   : crypto.randomBytes(8).toString("hex");
 const output = path.join(root, "qualification-results", `cleanup-completion-${nonce}`);
 const failureReport = path.join(root, "qualification-results", "linux-vault-cleanup-failure.json");
-let nativeStage = "checkout";
-if (!cleanupNative) fs.mkdirSync(output, { recursive: true });
+let nativeStage = "preconditions";
 
 function recordNativeFailure(error) {
-  if (!native || fs.statSync(failureReport, { throwIfNoEntry: false })?.size) return;
+  if (!native) return;
+  const existing = fs.lstatSync(failureReport, { throwIfNoEntry: false });
+  if (existing?.isSymbolicLink()) throw new Error("Failure report path is not owned");
+  if (existing?.size) return;
+  const directory = path.dirname(failureReport);
+  fs.mkdirSync(directory, { recursive: true });
+  if (fs.lstatSync(directory).isSymbolicLink()) throw new Error("Failure report directory is not owned");
   const exitCode = Number.isInteger(error.exitCode) && error.exitCode >= 0 && error.exitCode <= 255 ? error.exitCode : null;
   fs.writeFileSync(failureReport, JSON.stringify({
     schemaVersion: 1, suite: "linux-vault-cleanup-restart", status: "failed",
@@ -228,10 +234,15 @@ async function main() {
   }
 }
 
-(cleanupNative ? Promise.resolve().then(cleanupNativeRun) : main())
+Promise.resolve().then(() => {
+  validateNativePreconditions();
+  if (!cleanupNative) fs.mkdirSync(output, { recursive: true });
+  nativeStage = "checkout";
+  return cleanupNative ? cleanupNativeRun() : main();
+})
   .catch(error => {
     if (native) {
-      recordNativeFailure(error);
+      try { recordNativeFailure(error); } catch { console.error("Vault qualification diagnostic unavailable"); }
       console.error("Installed Vault qualification failed. See linux-vault-cleanup-failure.json for diagnostic details.");
     } else console.error(error.message);
     process.exitCode = 1;

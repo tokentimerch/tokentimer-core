@@ -209,7 +209,7 @@ jobs:
         with:
           name: linux-vault-cleanup-candidate
           path: qualification-results/linux-vault-candidate/
-          if-no-files-found: warn
+          if-no-files-found: error
       - name: Run the installed Vault cleanup restart case
         env:
           TT_CLEANUP_ARTIFACT_ID: ${{ steps.candidate.outputs.artifact-id }}
