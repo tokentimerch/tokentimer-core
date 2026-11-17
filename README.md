@@ -245,7 +245,7 @@ We welcome contributions. Start by reading the documentation above and exploring
 
 # Reporting a security issue
 
-If you've found a security-related issue with TokenTimer, please email [support@tokentimer.ch](mailto:support@tokentimer.ch). Submitting to GitHub makes the vulnerability public, making it easy to exploit. We'll do a public disclosure of the security issue once it's been fixed.
+If you've found a security-related issue with TokenTimer, please email [security@tokentimer.ch](mailto:security@tokentimer.ch). Submitting to GitHub makes the vulnerability public, making it easy to exploit. We'll do a public disclosure of the security issue once it's been fixed.
 
 After receiving a report, TokenTimer will take the following steps:
 

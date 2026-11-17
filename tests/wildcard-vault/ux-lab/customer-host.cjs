@@ -18,6 +18,11 @@ const agents = new Map();
 const agentAccounts = new Set();
 const processAccount = packageMode ? { uid: 10001, gid: 10001 } : {};
 const scannerRequests = [];
+const nativeOpenBao = process.env.TT_UX_NATIVE_OPENBAO === "1" &&
+  packageMode && process.env.TT_UX_MATERIAL_PROVIDER === "openbao-kv2"
+    ? require("./azure-operator-review/native-openbao-transport.cjs")
+      .createNativeOpenBaoTransport((req, res) => forward(req, res, "vault", 8200))
+    : null;
 // Retain only genuine signed dispatches, in customer memory. The adversarial
 // transport re-delivers these bytes; it never signs jobs or fabricates results.
 const dispatches = new Map(), credentials = new Map();
@@ -287,6 +292,23 @@ async function rotateMaterialToken(name, workspaceId, groupId) {
 async function control(body) {
   const { action, name = "issuer" } = body;
   assert.ok(["issuer", "nginx", "haproxy", "cancel-issuer"].includes(name));
+  if (action === "native-openbao-prepare") {
+    assert.ok(nativeOpenBao && acceptance && name === "issuer", "native OpenBao setup not selected");
+    const plan = { workspaceId: body.workspaceId, groupId: body.groupId, materialVersionId: body.materialVersionId, providerVersion: body.providerVersion };
+    const scope = config("issuer").materialStores?.customer?.groups?.[plan.groupId];
+    assert.ok(scope?.workspaceId === plan.workspaceId, "native scope must be the owned issuer's group");
+    nativeOpenBao.arm(plan);
+    const directory = "/run/tt-native-openbao";
+    fs.mkdirSync(directory, { mode: 0o700 });
+    const credentials = await acceptance.prepareNativeRole(plan);
+    fs.writeFileSync(directory + "/role.json", JSON.stringify(credentials), { flag: "wx", mode: 0o600 });
+    return { prepared: true };
+  }
+  if (action === "native-openbao-facts") {
+    assert.ok(nativeOpenBao && name === "issuer");
+    return nativeOpenBao.facts();
+  }
+
   if (action === "package-proof") {
     assert.ok(acceptance, "Package acceptance was not requested");
     assert.ok(["issuer", "nginx", "haproxy"].every(role => agentAccounts.has(role)));
@@ -616,6 +638,7 @@ async function main() {
       forward(req, res, "vault", 8200, { vault: true }),
     )
     .listen(18200, "127.0.0.1");
+  if (nativeOpenBao) https.createServer(tls, nativeOpenBao.forward).listen(18201, "0.0.0.0");
   http
     .createServer((req, res) => forward(req, res, "challtestsrv", 8055))
     .listen(18055, "127.0.0.1");

@@ -1025,11 +1025,48 @@ test("mandatory campaign and baseline fail closed outside a trusted configured r
   }
   const qualified =
     require("../packages/agent/src/capabilities/qualified-capabilities.json").qualified;
-  for (const capability of [
-    "material-store-azure-key-vault-v1",
-    "windows-material-iis-v1",
-  ])
-    assert.equal(qualified.includes(capability), false);
+  assert.equal(qualified.includes("windows-material-iis-v1"), false);
+  const final = require("./certops-azure-keyvault-package.cjs").CAPABILITIES;
+  assert.ok(JSON.stringify(qualified) === JSON.stringify(final) ||
+    JSON.stringify(qualified) === JSON.stringify(final.slice(0, -1)));
+});
+
+test("final Azure package workflow preserves immutable identity, pre-credential scanning and scoped collection", () => {
+  const name = "certops-azure-keyvault-qualification.yml", w = workflow(name);
+  const validate = value => [ ...scope.validate(name, value),
+    ...require("./certops-workflow-security").validateWorkflow(value, name) ];
+  assert.deepEqual(validate(w), []);
+  for (const mutate of [
+    w => { delete w.jobs.preflight.steps[0].env.PACKAGE_SHA256; },
+    w => { w.jobs.preflight.steps.find(step => step.name?.startsWith("Scan the retained")).if = "false"; },
+    w => { w.jobs.lab.steps.find(step => step.uses?.startsWith("actions/download-artifact@")).with["digest-mismatch"] = "warn"; },
+    w => { w.jobs.lab.env.TT_AZURE_PACKAGE_ARTIFACT_ID = "123"; },
+    w => { w.jobs["collect-final-package"].permissions["id-token"] = "write"; },
+    w => { w.jobs["collect-final-package"].environment = "certops-azure-keyvault-lab"; },
+    w => { w.jobs["collect-final-package"].needs = ["preflight"]; },
+    w => { w.jobs["collect-final-package"].steps.find(step => step.uses?.startsWith("actions/download-artifact@")).with["artifact-ids"] = "123"; },
+    w => { w.jobs["collect-final-package"].steps[0].with.ref = "foreign"; },
+    w => { w.jobs["collect-final-package"]["continue-on-error"] = true; },
+  ]) {
+    const changed = structuredClone(w); mutate(changed);
+    assert.ok(validate(changed).length, mutate.toString());
+  }
+  const release = workflow("release.yml").jobs["pack-agent"].steps;
+  const guard = release.findIndex(step => step.name === "Require exact qualified 0.20.0 agent bytes");
+  const upload = release.findIndex(step => step.with?.name === "agent-release");
+  assert.ok(guard >= 0 && guard < upload);
+  assert.equal(release[guard].if, "github.ref == 'refs/tags/v0.20.0' || startsWith(github.ref, 'refs/tags/v0.20.0-')");
+  assert.equal(release[guard].env.QUALIFIED_AGENT_SHA256, "${{ vars.CORE_0200_QUALIFIED_AGENT_SHA256 }}");
+  assert.match(release[guard].run, /certops-azure-keyvault-package\.cjs verify-release/);
+  const acceptance = release.findIndex(step => step.id === "accepted-agent");
+  const pack = release.findIndex(step => step.name === "Pack agent release tarball");
+  assert.ok(acceptance >= 0 && acceptance < pack && pack < guard);
+  assert.equal(release[acceptance].if, release[guard].if);
+  assert.match(release[acceptance].run, /certops-agent-acceptance\.cjs .* agent-dist$/);
+  assert.equal(release[pack].if, "steps.accepted-agent.outcome == 'skipped'");
+  assert.equal(workflow("release.yml").jobs["build-and-push-docker"].needs, "pack-agent");
+  assert.equal(workflow("release.yml").jobs["pack-agent"].env.GOFLAGS, "-buildvcs=false");
+  assert.match(release.find(step => step.name === "Pack agent release tarball").run, /test "\$\(npm --version\)" = 11\.19\.1/);
 });
 test("offline fault-boundary contract preserves TLS and only loses successful owned responses", async (t) => {
   const https = require("node:https"),
