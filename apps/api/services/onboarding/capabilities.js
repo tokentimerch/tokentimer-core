@@ -21,7 +21,7 @@ const FACTS = Object.freeze([
 const QUALIFIED_FEATURES = Object.freeze({
   // Qualified in 0.18.0 (agent qualified-capabilities manifest). Add an id here
   // with false for a feature that ships ahead of its real-host qualification.
-  "certops.material_store_azure_key_vault": false,
+  "certops.material_store_azure_key_vault": true,
   "certops.windows_material_iis": false,
 });
 
