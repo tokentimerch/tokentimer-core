@@ -124,7 +124,7 @@ try {
       $ports = @($BasePort,($BasePort+1),($BasePort+3),($BasePort+5),($BasePort+43),($BasePort+143))
       if ($NativeOpenBao) {
         if ($CustomerImage -cnotmatch '^sha256:[a-f0-9]{64}$') { throw 'Supply the immutable customer image ID.' }
-        $ports += @($BasePort+6,$BasePort+7)
+        $ports += @(($BasePort + 6), ($BasePort + 7))
       }
       foreach ($port in $ports) {
         $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
