@@ -76,6 +76,7 @@ async function main() {
     throw new Error("Native cleanup requires a clean trusted-main checkout at the candidate SHA");
   }
   try {
+    if (native) run(process.execPath, ["--test", "scripts/certops-linux-systemd-db-ownership.test.js"], { log: "ownership-preflight.log", timeout: 60000 });
     const pg = `tt-cleanup-pg-${nonce}`, vault = `tt-cleanup-vault-${nonce}`;
     const database = `distribution_lifecycle_${nonce}_test`;
     for (const [name, args] of [
