@@ -58,6 +58,7 @@ class ProfileTests(unittest.TestCase):
         digest = hashlib.sha256(package).hexdigest()
         name = "tokentimer-agent-linux-0.19.2-rc.1.tgz"
         proof = {"artifactId": "42", "packageSha256": digest, "provider": "vault-kv2", "authenticatedAttempts": 1,
+                 "authenticatedReads": 1, "destinationMutations": 0,
                  "installedTreeVerified": True, "stagedAcrossRestart": True, "activationBlocked": True, "destinationUnchanged": True}
         report = {"suite": collector.LINUX_STAGING_SUITE, "platform": "linux", "architecture": "x64",
                   "nativeLinuxStagingRestart": proof}
@@ -65,8 +66,9 @@ class ProfileTests(unittest.TestCase):
         collector.validate_report_workflow(report, collector.VAULT_CLEANUP_WORKFLOW)
         with self.assertRaises(ValueError):
             collector.validate_report_workflow(report, collector.CI_WORKFLOW)
-        with self.assertRaises(ValueError):
-            collector.linux_staging_fields({**report, "nativeLinuxStagingRestart": {**proof, "activationBlocked": False}})
+        for invalid in ({"activationBlocked": False}, {"authenticatedReads": 0}, {"destinationMutations": 1}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                collector.linux_staging_fields({**report, "nativeLinuxStagingRestart": {**proof, **invalid}})
         baseline = json.loads((ROOT / "packages/agent/src/capabilities/qualified-capabilities.json").read_text(encoding="utf-8"))["qualified"]
         for capability in ("material-consumer-staging-v1", "material-cleanup-vault-kv2-v1"):
             with self.subTest(capability=capability):

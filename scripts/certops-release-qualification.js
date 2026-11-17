@@ -218,6 +218,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           const { architecture, platform, cleanup, nativeLinuxStagingRestart: proof, qualificationEnvironment: env } = artifact.report;
           if (platform !== "linux" || architecture !== "x64" || env.executionSurface !== "host" || env.libc !== "glibc" ||
               cleanup?.status !== "passed" || proof?.provider !== "vault-kv2" || proof.authenticatedAttempts !== 1 ||
+              proof.authenticatedReads !== 1 || proof.destinationMutations !== 0 ||
               !["installedTreeVerified", "stagedAcrossRestart", "activationBlocked", "destinationUnchanged"].every(key => proof[key] === true) ||
               typeof proof.artifactId !== "string" || !/^[1-9]\d{0,15}$/.test(proof.artifactId) ||
               typeof proof.packageSha256 !== "string" || !/^[a-f0-9]{64}$/.test(proof.packageSha256)) {

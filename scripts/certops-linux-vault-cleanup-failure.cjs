@@ -7,6 +7,7 @@ const sources = new Set([
   "tests/e2e/linux-systemd-real-journey.js",
   "tests/e2e/helpers/linux-vault-cleanup-restart.js",
   "tests/e2e/helpers/linux-material-staging-restart.js",
+  "tests/e2e/helpers/linux-staging-destination.js",
   "tests/e2e/helpers/certops-api-fixture.js",
   "tests/helpers/distribution-lifecycle-fixture.cjs",
   "scripts/certops-linux-published-package.js",

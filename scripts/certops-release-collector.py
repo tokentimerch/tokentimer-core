@@ -239,10 +239,12 @@ def linux_staging_fields(value):
             or not isinstance(facts.get("artifactId"), str) or not re.fullmatch(r"[1-9][0-9]{0,15}", facts["artifactId"])
             or not isinstance(facts.get("packageSha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", facts["packageSha256"])
             or type(facts.get("authenticatedAttempts")) is not int or facts["authenticatedAttempts"] != 1
+            or type(facts.get("authenticatedReads")) is not int or facts["authenticatedReads"] != 1
+            or type(facts.get("destinationMutations")) is not int or facts["destinationMutations"] != 0
             or any(facts.get(key) is not True for key in booleans)
             or value.get("platform") != "linux" or value.get("architecture") != "x64"):
         raise ValueError("Invalid installed Linux staging evidence")
-    return {key: facts[key] for key in (*booleans, "provider", "artifactId", "packageSha256", "authenticatedAttempts")}
+    return {key: facts[key] for key in (*booleans, "provider", "artifactId", "packageSha256", "authenticatedAttempts", "authenticatedReads", "destinationMutations")}
 
 
 def authenticate_vault_archive(raw, artifact, proof, candidate, store="vault", *, staging=False):

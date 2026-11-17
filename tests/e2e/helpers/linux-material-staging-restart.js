@@ -10,6 +10,7 @@ const { createApiFixture } = require("./certops-api-fixture");
 const { fixture } = require("../../helpers/distribution-lifecycle-fixture.cjs");
 const operations = require("../../../apps/api/services/certops/distributionOperations");
 const { activationDecision } = require("../../../packages/contracts/certops/activation-calendar.cjs");
+const watchDestination = require("./linux-staging-destination");
 
 function issueFixtureCertificate(command, stateDir, name, san, authority = false) {
   const certificate = path.join(stateDir, name + ".crt");
@@ -23,12 +24,16 @@ function issueFixtureCertificate(command, stateDir, name, san, authority = false
   return { path: certificate, certificate: fs.readFileSync(certificate, "utf8"), privateKey };
 }
 
-async function startPinnedReadEndpoint(vault, tls, pinnedVersionPath) {
+async function startPinnedReadEndpoint(vault, tls, pinnedVersionPath, token) {
+  let authenticatedReads = 0;
   const server = https.createServer({ cert: tls.certificate, key: tls.privateKey }, (request, response) => {
-    if (request.method !== "GET" || request.url !== pinnedVersionPath) return response.writeHead(403).end();
+    if (request.method !== "GET" || request.url !== pinnedVersionPath || request.headers["x-vault-token"] !== token) {
+      return response.writeHead(403).end();
+    }
     const upstream = http.request(new URL(pinnedVersionPath, vault), {
-      headers: { "X-Vault-Token": request.headers["x-vault-token"] || "" }, timeout: 5000,
+      headers: { "X-Vault-Token": token }, timeout: 5000,
     }, reply => {
+      if (reply.statusCode === 200) response.once("finish", () => { if (reply.complete) authenticatedReads++; });
       response.writeHead(reply.statusCode, { "Content-Type": "application/json" });
       reply.pipe(response);
     });
@@ -42,6 +47,7 @@ async function startPinnedReadEndpoint(vault, tls, pinnedVersionPath) {
   });
   return {
     address: `https://127.0.0.1:${server.address().port}`,
+    authenticatedReads: () => authenticatedReads,
     close: () => new Promise((resolve, reject) => {
       server.close(error => error ? reject(error) : resolve());
       server.closeAllConnections();
@@ -62,7 +68,7 @@ module.exports = async function qualifyStaging({
       headers: { "X-Vault-Token": "isolated-completion-fixture-only", "Content-Type": "application/json" },
       body: JSON.stringify(body) });
   }
-  let endpoint, primaryError;
+  let endpoint, destinationWatch, primaryError;
   try {
     const actor = await createApiFixture(baseUrl);
     vaultFixture.sessions.push(actor);
@@ -75,9 +81,8 @@ module.exports = async function qualifyStaging({
     const leaf = issueFixtureCertificate(command, stateDir, "staged-leaf", `DNS:${san}`);
     const cert = new X509Certificate(leaf.certificate);
     const fingerprint = createHash("sha256").update(cert.raw).digest("hex");
-    const f = await fixture({ fingerprint, enrolled: { workspaceId, actor: actor.userId, approver: reviewer.userId, issuer: agentRowId } });
-    await pool.query("UPDATE certops_material_versions SET valid_to=$3 WHERE workspace_id=$1 AND id=$2",
-      [workspaceId, f.materialVersionId, new Date(cert.validTo).toISOString()]);
+    const f = await fixture({ fingerprint, validTo: new Date(cert.validTo).toISOString(),
+      enrolled: { workspaceId, actor: actor.userId, approver: reviewer.userId, issuer: agentRowId } });
     const prefix = `${workspaceId}/${f.groupId}`;
     const materialPath = `/v1/secret/data/${prefix}/bundles/${f.materialVersionId}`;
     const bundle = { schemaVersion: 1, workspaceId, groupId: f.groupId, materialVersionId: f.materialVersionId,
@@ -95,7 +100,7 @@ module.exports = async function qualifyStaging({
     fs.writeFileSync(tokenFile, token, { flag: "wx", mode: 0o600 });
     fs.chownSync(tokenFile, uid, gid);
     const tls = issueFixtureCertificate(command, stateDir, "staging-provider", "IP:127.0.0.1", true);
-    endpoint = await startPinnedReadEndpoint(vault, tls, materialPath + "?version=1");
+    endpoint = await startPinnedReadEndpoint(vault, tls, materialPath + "?version=1", token);
 
     const api = `/api/v1/workspaces/${workspaceId}/certops`;
     const group = `${api}/distribution-groups/${f.groupId}`;
@@ -114,8 +119,19 @@ module.exports = async function qualifyStaging({
     const destination = writeFixture.allowed;
     const certPath = path.join(destination, "live.crt");
     const keyPath = path.join(destination, "live.key");
+    const live = issueFixtureCertificate(command, stateDir, "live-leaf", `DNS:${san}`);
+    const previous = new X509Certificate(live.certificate);
+    assert.notEqual(previous.fingerprint256, cert.fingerprint256);
+    assert.ok(previous.checkHost(san) && previous.checkPrivateKey(createPrivateKey(live.privateKey)));
+    fs.writeFileSync(certPath, live.certificate, { flag: "wx", mode: 0o644 });
+    fs.writeFileSync(keyPath, live.privateKey, { flag: "wx", mode: 0o600 });
+    for (const file of [certPath, keyPath]) fs.chownSync(file, uid, gid);
+    const initialCertificate = fs.readFileSync(certPath);
+    const initialKey = fs.readFileSync(keyPath);
     const initialDirectory = fs.readdirSync(destination).sort();
-    assert.ok(!fs.existsSync(certPath) && !fs.existsSync(keyPath));
+    assert.deepEqual(initialDirectory, [path.basename(certPath), path.basename(keyPath)].sort());
+    destinationWatch = watchDestination(destination, waitFor);
+    assert.equal(await destinationWatch.checkpoint(), 0);
     const configPath = path.join(stateDir, "config.json");
     command("systemctl", ["stop", "tokentimer-agent.service"]);
     assert.equal(mainPid(), 0);
@@ -189,14 +205,21 @@ module.exports = async function qualifyStaging({
     command("systemctl", ["restart", "tokentimer-agent.service"]);
     assert.notEqual(await identity(), originalPid);
     assert.ok(fs.readFileSync(stagedBundle).equals(bytes), "Protected stage survives actual service restart");
+    const destinationMutations = await destinationWatch.checkpoint();
+    assert.equal(destinationMutations, 0, "Live destination was modified during staging or restart");
     assert.deepEqual(fs.readdirSync(destination).sort(), initialDirectory);
-    assert.ok(!fs.existsSync(certPath) && !fs.existsSync(keyPath));
+    assert.ok(fs.readFileSync(certPath).equals(initialCertificate), "Live certificate bytes changed");
+    assert.ok(fs.readFileSync(keyPath).equals(initialKey), "Live key bytes changed");
     assert.equal((await deployment()).job_id, null);
-    return { provider: "vault-kv2", authenticatedAttempts: 1, stagedAcrossRestart: true, activationBlocked: true, destinationUnchanged: true };
+    const authenticatedReads = endpoint.authenticatedReads();
+    assert.equal(authenticatedReads, 1, "One complete authenticated Vault read for the pinned version");
+    return { provider: "vault-kv2", authenticatedAttempts: staged.attempt_count, authenticatedReads, destinationMutations,
+      stagedAcrossRestart: true, activationBlocked: true, destinationUnchanged: true };
   } catch (error) {
     primaryError = error;
     throw error;
   } finally {
+    destinationWatch?.close();
     try { await endpoint?.close(); }
     catch (error) {
       if (primaryError) throw new AggregateError([primaryError, error], "Staging and its provider endpoint cleanup failed");

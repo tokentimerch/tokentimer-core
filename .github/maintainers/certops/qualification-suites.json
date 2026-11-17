@@ -1066,6 +1066,7 @@
       "suite": "linux-staging-restart",
       "source": "tests/e2e/helpers/linux-material-staging-restart.js",
       "requiredSources": [
+        "tests/e2e/helpers/linux-staging-destination.js",
         "scripts/certops-linux-cleanup-case.cjs",
         ".github/workflows/certops-distribution-qualification.yml",
         "scripts/run-cleanup-completion-acceptance.cjs",

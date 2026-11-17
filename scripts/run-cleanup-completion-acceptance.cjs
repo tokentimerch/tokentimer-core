@@ -196,6 +196,8 @@ async function main() {
       if (nativeStaging) {
         assert.equal(nativeFacts.provider, provider);
         assert.equal(nativeFacts.authenticatedAttempts, 1);
+        assert.equal(nativeFacts.authenticatedReads, 1);
+        assert.equal(nativeFacts.destinationMutations, 0);
         for (const fact of ["stagedAcrossRestart", "activationBlocked", "destinationUnchanged"]) assert.equal(nativeFacts[fact], true);
       } else {
         assert.equal(nativeFacts.actualDeleteRequests, 1);
