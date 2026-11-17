@@ -60,12 +60,13 @@ async function startFaultEndpoint({ vault, cert, key, metadata, deletion }) {
   };
 }
 
-module.exports = async function qualifyVaultRestart({
+module.exports = async function qualifyCleanupRestart({
   pool, workspaceId, agentRowId, baseUrl, command, identity, mainPid, waitFor,
   stateDir, uid, gid, vaultFixture,
 }) {
   assert.equal(process.env.TT_CLEANUP_COMPLETION_DISPOSABLE, "1");
-  assert.equal(process.env.TT_CLEANUP_PROVIDER, "vault-kv2");
+  assert.ok(process.env.TT_CLEANUP_PROVIDER);
+  const { provider: materialProvider, capability } = require("../../../scripts/certops-linux-cleanup-case.cjs")(process.env.TT_CLEANUP_PROVIDER);
   assert.match(process.env.TT_CLEANUP_VAULT_ADDRESS || "", /^http:\/\/127\.0\.0\.1:[1-9]\d*$/);
   const vault = process.env.TT_CLEANUP_VAULT_ADDRESS;
   const bootstrapCredential = "isolated-completion-fixture-only";
@@ -84,7 +85,7 @@ module.exports = async function qualifyVaultRestart({
     vaultFixture.sessions.push(reviewer);
     await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES ($1,$2,'admin'),($1,$3,'workspace_manager')",
       [workspaceId, actor.userId, reviewer.userId]);
-    const f = await fixture({ enrolled: { workspaceId, actor: actor.userId, approver: reviewer.userId, issuer: agentRowId } });
+    const f = await fixture({ materialProvider, enrolled: { workspaceId, actor: actor.userId, approver: reviewer.userId, issuer: agentRowId } });
     const versions = await seedCleanupHistory(f);
     const materialVersionId = versions[2];
     const prefix = `${workspaceId}/${f.groupId}`;
@@ -129,7 +130,7 @@ module.exports = async function qualifyVaultRestart({
     config.heartbeatIntervalMs = 3000;
     config.execution = { enabled: true, dryRun: false };
     config.declaredTargetSelectors = [f.groupId];
-    config.materialStores = { customer: { provider: "vault-kv2", address: endpoint.address, caFile: certFile,
+    config.materialStores = { customer: { provider: materialProvider, address: endpoint.address, caFile: certFile,
       mount: "secret", tokenFile: path.join(stateDir, "unused-publication-token"), groups: {
         [f.groupId]: { workspaceId, prefix, sans: ["shared.example.test"], keyAlgorithm: "rsa",
           cleanup: { softDelete: true, profileRevision: 1, minimumSeconds: 0, tokenFile } },
@@ -142,9 +143,9 @@ module.exports = async function qualifyVaultRestart({
     command("systemctl", ["start", "tokentimer-agent.service"]);
     const beforePid = await identity();
     await waitFor(async () => (await pool.query(`SELECT 1 FROM certops_agents WHERE workspace_id=$1 AND id=$2
-      AND supported_operations ? 'cleanup-from-store' AND declared_capabilities ? 'material-cleanup-vault-kv2-v1'
+      AND supported_operations ? 'cleanup-from-store' AND declared_capabilities ? $4
       AND declared_target_selectors ? $3`,
-    [workspaceId, f.issuer, f.groupId])).rowCount === 1, "installed agent advertises cleanup and its target");
+    [workspaceId, f.issuer, f.groupId, capability])).rowCount === 1, "installed agent advertises cleanup and its target");
 
     const apiRoot = `/api/v1/workspaces/${workspaceId}/certops`;
     const group = `${apiRoot}/distribution-groups/${f.groupId}`;
@@ -207,6 +208,7 @@ module.exports = async function qualifyVaultRestart({
     assert.ok(completed.fenced_at);
     assert.equal(completed.receipt.materialVersionId, materialVersionId);
     assert.equal(completed.receipt.providerVersion, 1);
+    assert.equal(completed.receipt.method, `${materialProvider}-soft-delete`);
     assert.deepEqual(completed.receipt, finalJournal.receipt);
     const audit = (await pool.query("SELECT count(*)::int AS n FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_MATERIAL_CLEANUP_COMPLETED'", [workspaceId])).rows[0];
     assert.equal(audit.n, 1);

@@ -38,9 +38,10 @@ function inspect(archive,checksum,published=false){
  if(published){assert.equal(name,`tokentimer-agent-${baseline.version}.tgz`);assert.equal(actual,baseline.sha256);assert.equal(fs.statSync(archive).size,baseline.size);assert.equal(pkg.version,baseline.version);}else laterVersion(pkg.version);
  return {version:pkg.version,archiveSha256:actual,archiveSize:fs.statSync(archive).size,fileInventory:archiveInventory(archive)};
 }
-function inspectLinuxCandidate(archive, receipt) {
+function inspectLinuxCandidate(archive, receipt, provider = "vault-kv2") {
+  const linuxCleanup = require("./certops-linux-cleanup-case.cjs")(provider);
   assert.equal(receipt.schemaVersion, 1);
-  assert.equal(receipt.buildMode, "linux-vault-cleanup-candidate");
+  assert.equal(receipt.buildMode, linuxCleanup.buildMode);
   assert.equal(receipt.sourceKind, "workflow-checkout");
   assert.match(receipt.candidateSha, /^[a-f0-9]{40}$/);
   assert.match(receipt.sha256, /^[a-f0-9]{64}$/);
@@ -52,8 +53,8 @@ function inspectLinuxCandidate(archive, receipt) {
   assert.equal(path.basename(archive), receipt.archive);
   assert.equal(receipt.packagerSha256, sha(path.resolve(__dirname, "../packages/agent/scripts/pack-release.js")));
   const baseline = require("../packages/agent/src/capabilities/qualified-capabilities.json").qualified;
-  assert.equal(baseline.includes("material-cleanup-vault-kv2-v1"), false);
-  assert.deepEqual(receipt.capabilities, [...baseline, "material-cleanup-vault-kv2-v1"]);
+  assert.equal(baseline.includes(linuxCleanup.capability), false);
+  assert.deepEqual(receipt.capabilities, [...baseline, linuxCleanup.capability]);
   const inspected = inspect(archive, archive + ".sha256");
   assert.equal(inspected.archiveSha256, receipt.sha256);
   assert.equal(inspected.version, version);
@@ -65,18 +66,18 @@ function inspectLinuxCandidate(archive, receipt) {
   assert.equal(embedded, require("../packages/agent/scripts/build-qualified-capabilities").renderGeneratedModule(receipt.capabilities));
   return inspected;
 }
-function prepareVaultCleanupCandidate() {
+function prepareVaultCleanupCandidate(provider = "vault-kv2") {
   require("./certops-linux-systemd-ownership").validateHostedEnvironment(process.env);
   assert.equal(process.env.GITHUB_REF, "refs/heads/main");
   assert.match(process.env.TT_CLEANUP_ARTIFACT_ID || "", /^[1-9]\d{0,15}$/);
   const root = fs.realpathSync(process.env.RUNNER_TEMP);
-  const candidateDir = path.join(root, "certops-linux-vault-cleanup");
+  const candidateDir = path.join(root, require("./certops-linux-cleanup-case.cjs")(provider).directory);
   const receipt = JSON.parse(fs.readFileSync(path.join(candidateDir, "artifact.json"), "utf8"));
   assert.equal(receipt.candidateSha, process.env.GITHUB_SHA);
   assert.equal(receipt.sha256, process.env.TT_CLEANUP_ARTIFACT_SHA256);
   assert.equal(receipt.archive, path.basename(receipt.archive));
   const archive = path.join(candidateDir, "artifacts", receipt.archive);
-  const inspected = inspectLinuxCandidate(archive, receipt);
+  const inspected = inspectLinuxCandidate(archive, receipt, provider);
   const directory = path.join(candidateDir, "installed-input");
   fs.mkdirSync(directory, { mode: 0o755 });
   run(["-xzf", archive, "--strip-components=1", "--no-same-owner", "-C", directory]);

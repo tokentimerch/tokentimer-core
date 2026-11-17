@@ -202,8 +202,9 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/ipv6-wildcard-fixture").verifyProof(artifact.report.nativeIpv6WildcardPrecedence);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/ipv4-wildcard-fixture").verifyProof(artifact.report.nativeIpv4WildcardPrecedence);
         if (slot.suite === "linux-systemd-published-upgrade") require("../tests/e2e/helpers/linux-systemd-published-upgrade").verifyProof(artifact.report.nativePublishedLinuxUpgrade);
-        if (slot.suite === "linux-vault-cleanup-restart") {
-          const { architecture, platform, cleanup, nativeVaultCleanupRestart: proof, qualificationEnvironment: env } = artifact.report;
+        if (["linux-vault-cleanup-restart", "linux-openbao-cleanup-restart"].includes(slot.suite)) {
+          const { architecture, platform, cleanup, qualificationEnvironment: env } = artifact.report;
+          const proof = artifact.report[slot.suite === "linux-openbao-cleanup-restart" ? "nativeOpenBaoCleanupRestart" : "nativeVaultCleanupRestart"];
           if (platform !== "linux" || architecture !== "x64" || env.executionSurface !== "host" || env.libc !== "glibc" ||
               cleanup?.status !== "passed" || proof?.installedTreeVerified !== true ||
               proof.actualDeleteRequests !== 1 || proof.authenticatedAttempts !== 2 ||

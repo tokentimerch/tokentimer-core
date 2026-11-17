@@ -7,6 +7,7 @@ EXTENDED = {"enterprise-adcs-elapsed-pending-real", "windows-domain-adcs-retenti
 ADCS_NATIVE = {"enterprise-adcs-real", "enterprise-adcs-hierarchy-real", "native-adcs-issuer-reassignment", "adcs-browser-enrollment", "adcs-uncertain-abandon"}
 PROFILES = {"full": {"hosted", "domain-adcs", "extended-domain-adcs"}, "standard-hosted": {"hosted"}, "adcs": {"domain-adcs"}, "adcs-native": {"domain-adcs"}, "extended-adcs": {"extended-domain-adcs"}}
 PROFILES["vault-cleanup"] = {"vault-cleanup"}
+PROFILES["openbao-cleanup"] = {"openbao-cleanup"}
 
 
 def select_profile(matrix, profile="full", capabilities=None):
@@ -22,6 +23,7 @@ def select_profile(matrix, profile="full", capabilities=None):
         raise ValueError("Unique committed qualification slot IDs required")
     def category(slot):
         if slot.get("suite") == "linux-vault-cleanup-restart": return "vault-cleanup"
+        if slot.get("suite") == "linux-openbao-cleanup-restart": return "openbao-cleanup"
         if slot.get("suite") in DOMAIN: return "domain-adcs"
         if slot.get("suite") in EXTENDED: return "extended-domain-adcs"
         if "domain" in capabilities.get(slot.get("suite"),[]):

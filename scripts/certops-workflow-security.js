@@ -103,9 +103,13 @@ function validateWorkflow(workflow,name="workflow"){
     if(job.permissions)for(const [key,value] of Object.entries(job.permissions))if(!(["contents","actions"].includes(key)&&value==="read")&&!(key==="id-token"&&value==="write"))fail(`${id} expands token permissions`);
     if((permissions["id-token"]==="write"||job.permissions?.["id-token"]==="write")&&!job.environment)fail(`${id} OIDC requires a protected qualification environment`);
     const steps=job.steps||[],runs=steps.map(step=>step.run||"").join("\n");
-    if(name==="certops-distribution-qualification.yml"&&id==="native-vault-cleanup"){
-      const failureUploads=steps.filter(step=>step.with?.name==="linux-vault-cleanup-failure");
-      if(failureUploads.length!==1||failureUploads[0].if!=="failure()"||failureUploads[0].with?.path!=="qualification-results/linux-vault-cleanup-failure.json")fail(`${id} requires only the bounded failure report on failure`);
+    const nativeCleanup=name==="certops-distribution-qualification.yml"&&id==="native-vault-cleanup";
+    const cleanupFailure="linux-${{ env.NATIVE_CLEANUP_STORE }}-cleanup-failure";
+    if(nativeCleanup){
+      const provider=workflow.on.workflow_dispatch?.inputs?.native_cleanup_provider;
+      if(provider?.type!=="choice"||provider.default!=="vault-kv2"||JSON.stringify(provider.options)!==JSON.stringify(["vault-kv2","openbao-kv2"])||job.env?.NATIVE_CLEANUP_STORE!=="${{ inputs.native_cleanup_provider == 'openbao-kv2' && 'openbao' || 'vault' }}")fail(`${id} requires its two exact KV v2 provider choices`);
+      const failureUploads=steps.filter(step=>step.with?.name===cleanupFailure);
+      if(failureUploads.length!==1||failureUploads[0].if!=="failure()"||failureUploads[0].with?.path!==`qualification-results/${cleanupFailure}.json`)fail(`${id} requires only the bounded failure report on failure`);
     }
     const retainedDay=name==="certops-retention24h-prepare.yml"&&retainedDayProtocol(workflow,id,job);
     const retainedCadence=name==="certops-retention-cadence-prepare.yml"&&retainedCadenceProtocol(workflow,id,job);
@@ -131,7 +135,7 @@ function validateWorkflow(workflow,name="workflow"){
         // an unconditional upload could expose a malformed sensitive report.
         const sanitizedKeyVaultUpload = name === "certops-azure-keyvault-qualification.yml" && step.if === "always() && steps.evidence-check.outcome == 'success'";
         const earlyAdcsFailureUpload = name === "certops-enterprise-adcs-qualification.yml" && id === "lab" && step.if === "failure() && !inputs.debug_mode" && step.with?.path === "qualification-results/enterprise-adcs-real.json" && step["continue-on-error"] === true && step["timeout-minutes"] === 2 && steps.some(other => other !== step && other.uses?.startsWith("actions/upload-artifact@") && other.if === "always()" && other.with?.path === "qualification-results/enterprise-adcs-*.json");
-        const vaultFailureUpload=name==="certops-distribution-qualification.yml"&&id==="native-vault-cleanup"&&step.if==="failure()"&&step.with?.name==="linux-vault-cleanup-failure"&&step.with?.path==="qualification-results/linux-vault-cleanup-failure.json";
+        const vaultFailureUpload=nativeCleanup&&step.if==="failure()"&&step.with?.name===cleanupFailure&&step.with?.path===`qualification-results/${cleanupFailure}.json`;
         if(step.if!=="always()"&&!sanitizedKeyVaultUpload&&!earlyAdcsFailureUpload&&!vaultFailureUpload)fail(`${id} must preserve diagnostic reports after failure`);
         const artifact=String(step.with?.path||"");if(!artifact||artifact.split(/\r?\n/).some(line=>line&&(!/^((candidate\/)?qualification-results\/)/.test(line)||line.replace(/\\/g,"/").split("/").includes(".."))))fail(`${id} artifacts must stay in the sanitized report directory`);
       }

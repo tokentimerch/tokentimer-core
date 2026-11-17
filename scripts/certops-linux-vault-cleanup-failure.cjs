@@ -14,7 +14,7 @@ const sources = new Set([
 ]);
 const types = new Set(["testCodeFailure", "hookFailed", "testTimeoutFailure", "cancelledByParent"]);
 const codes = new Set(["ERR_ASSERTION", "ENOENT", "EACCES", "EPERM", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET", "23503", "23505", "42P01"]);
-const caseName = "installed Linux Vault cleanup resumes after lost delete response";
+const { testName: caseName, suite } = require("./certops-linux-cleanup-case.cjs")(process.env.TT_CLEANUP_PROVIDER);
 const suiteName = "CertOps agent surface E2E";
 
 function locations(error) {
@@ -57,5 +57,5 @@ module.exports = async function* vaultFailureReport(events) {
       locations: locations(error),
     });
   }
-  if (failures.length) yield JSON.stringify({ schemaVersion: 1, suite: "linux-vault-cleanup-restart", status: "failed", failures }) + "\n";
+  if (failures.length) yield JSON.stringify({ schemaVersion: 1, suite, status: "failed", failures }) + "\n";
 };
