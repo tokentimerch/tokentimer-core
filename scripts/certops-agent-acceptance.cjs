@@ -1,9 +1,10 @@
 "use strict";
 // A reviewed acceptance decision binds immutable evidence to the shipped bytes.
 // This validator never creates a decision or upgrades a scoped provider verdict.
-const assert = require("node:assert/strict"), fs = require("node:fs");
+const assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), os = require("node:os"), crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const { CAPABILITIES, TOOLCHAIN } = require("./certops-azure-keyvault-package.cjs");
+const zip = require("./certops-artifact-zip.cjs"), profiles = require("./certops-final-package-evidence.cjs");
 const REPOSITORY = "tokentimerch/tokentimer-core";
 const RECEIPT = ".github/releases/0.20.0-agent-acceptance.json";
 // The advertised Azure auth modes remain required until explicitly rescoped.
@@ -38,7 +39,7 @@ function verify(receipt, expectedSha256) {
   assert.equal(receipt.packageArtifact.sourceSha, receipt.packageSourceSha);
   return receipt;
 }
-async function verifyGithub(receipt, { read, isAncestor }) {
+async function verifyMetadata(receipt, { read, isAncestor }) {
   const prefix = `repos/${REPOSITORY}`;
   const pr = await read(`${prefix}/pulls/${receipt.review.pullRequest}`);
   assert.equal(pr.merged, true);
@@ -58,7 +59,7 @@ async function verifyGithub(receipt, { read, isAncestor }) {
   const file = await read(`${prefix}/contents/${RECEIPT}?ref=${pr.merge_commit_sha}`);
   assert.equal(file.encoding, "base64");
   assert.deepEqual(JSON.parse(Buffer.from(file.content, "base64").toString("utf8")), receipt);
-  await Promise.all([receipt.packageArtifact, ...Object.values(receipt.evidence)].map(async proof => {
+  return Promise.all([receipt.packageArtifact, ...Object.values(receipt.evidence)].map(async proof => {
     assert.ok(isAncestor(proof.sourceSha));
     const [run, artifact] = await Promise.all([
       read(`${prefix}/actions/runs/${proof.runId}`), read(`${prefix}/actions/artifacts/${proof.artifactId}`),
@@ -76,7 +77,61 @@ async function verifyGithub(receipt, { read, isAncestor }) {
     assert.equal(artifact.workflow_run.head_sha, proof.sourceSha);
     assert.equal(artifact.expired, false);
     assert.equal(artifact.digest, `sha256:${proof.artifactSha256}`);
+    assert.ok(Number.isSafeInteger(artifact.size_in_bytes) && artifact.size_in_bytes > 0 && artifact.size_in_bytes <= zip.LIMIT);
+    return { proof, run, artifact };
   }));
+}
+function json(files, name) {
+  const bytes = files.get(name); assert.ok(bytes && bytes.length < 131072);
+  return JSON.parse(bytes.toString("utf8"));
+}
+function packageIdentity(receipt) {
+  return { artifactId: receipt.packageArtifact.artifactId, runId: receipt.packageArtifact.runId,
+    candidateSha: receipt.packageSourceSha, packageSha256: receipt.packageSha256, packageVersion: "0.20.0", capabilities: CAPABILITIES };
+}
+function verifyPackage(receipt, files) {
+  const archive = "tokentimer-agent-0.20.0.tgz";
+  assert.deepEqual([...files.keys()].sort(), ["artifact.json", archive, archive + ".sha256"].sort());
+  const base = fs.realpathSync(os.tmpdir()), directory = fs.mkdtempSync(path.join(base, "tt-accepted-package-"));
+  assert.equal(path.dirname(directory), base);
+  try {
+    for (const [name, bytes] of files) fs.writeFileSync(path.join(directory, name), bytes, { flag: "wx", mode: 0o600 });
+    require("./certops-azure-keyvault-package.cjs").inspect(directory, receipt.packageSourceSha, receipt.packageSha256);
+    // Bound tar expansion before the existing traversal/link-safe extractor.
+    require("node:zlib").gunzipSync(files.get(archive), { maxOutputLength: 64 * 1024 * 1024 });
+    return require("./certops-agent-package").extractVerified({ tarball: path.join(directory, archive),
+      expectedSha256: receipt.packageSha256, destination: path.join(directory, "extracted") }).files;
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+}
+function verifyContent(receipt, scope, files, metadata, installedFiles) {
+  const identity = packageIdentity(receipt), proof = receipt.evidence[scope];
+  if (scope === "azure-provider-and-cleanup") {
+    assert.equal(proof.runId, receipt.packageArtifact.runId);
+    assert.deepEqual([...files.keys()].sort(), ["azure-keyvault-cleanup.json", "azure-keyvault-evidence.json"]);
+    const reports = require("./certops-azure-keyvault-report");
+    const report = json(files, "azure-keyvault-evidence.json"), cleanup = json(files, "azure-keyvault-cleanup.json");
+    reports.verify(report, { sourceSha: proof.sourceSha }); reports.verifyCleanup(cleanup, proof.sourceSha);
+    assert.equal(cleanup.cleanup, "completed"); assert.deepEqual(report.packageArtifact, identity);
+  } else {
+    const file = profiles.PROFILES[scope].file;
+    assert.deepEqual([...files.keys()], [file]);
+    profiles.verify(scope, json(files, file), { sourceSha: proof.sourceSha, runId: proof.runId, packageIdentity: identity,
+      files: installedFiles, requireNative: receipt.nativeAgentEvidence === scope, run: metadata.run });
+  }
+}
+async function verifyGithub(receipt, { read, isAncestor, download }) {
+  const metadata = await verifyMetadata(receipt, { read, isAncestor }), contents = new Map();
+  // Download one artifact at a time; retain only bounded decoded members.
+  for (const item of metadata) {
+    if (contents.has(item.proof.artifactId)) continue;
+    const bytes = await download(item.proof.artifactId);
+    assert.equal(bytes.length, item.artifact.size_in_bytes);
+    assert.equal(crypto.createHash("sha256").update(bytes).digest("hex"), item.proof.artifactSha256);
+    contents.set(item.proof.artifactId, zip.read(bytes));
+  }
+  const installedFiles = verifyPackage(receipt, contents.get(receipt.packageArtifact.artifactId));
+  for (const scope of REQUIRED) verifyContent(receipt, scope, contents.get(receipt.evidence[scope].artifactId),
+    metadata.find(item => item.proof === receipt.evidence[scope]), installedFiles);
 }
 async function main(file, expectedSha256, env = process.env) {
   assert.equal(file, RECEIPT);
@@ -103,10 +158,25 @@ async function main(file, expectedSha256, env = process.env) {
     execFileSync("git", ["merge-base", "--is-ancestor", sha, "HEAD"], { stdio: "ignore", timeout: 15000 });
     return true;
   };
+  const download = async id => {
+    const response = await fetch(`https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${id}/zip`, {
+      headers: { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: "application/vnd.github+json" },
+      redirect: "manual", signal: AbortSignal.timeout(60000),
+    });
+    assert.equal(response.status, 302);
+    const url = new URL(response.headers.get("location"));
+    assert.equal(url.protocol, "https:");
+    assert.ok(url.hostname.endsWith(".blob.core.windows.net") || url.hostname.endsWith(".actions.githubusercontent.com"));
+    const archive = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(60000) });
+    assert.equal(archive.status, 200);
+    const chunks = []; let size = 0;
+    for await (const chunk of archive.body) { size += chunk.length; assert.ok(size <= zip.LIMIT); chunks.push(chunk); }
+    return Buffer.concat(chunks);
+  };
   assert.equal(execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", timeout: 15000 }).trim(), env.GITHUB_SHA);
-  await verifyGithub(receipt, { read, isAncestor });
+  await verifyGithub(receipt, { read, isAncestor, download });
 }
-module.exports = { REQUIRED, RECEIPT, verify, verifyGithub, main };
+module.exports = { REQUIRED, RECEIPT, verify, verifyMetadata, verifyGithub, verifyPackage, verifyContent, packageIdentity, main };
 if (require.main === module) main(...process.argv.slice(2)).catch(() => {
   console.error("CERTOPS_AGENT_ACCEPTANCE_REJECTED"); process.exitCode = 1;
 });
