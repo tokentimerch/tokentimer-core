@@ -1,5 +1,6 @@
 """Offline provenance checks for the shared release-distribution candidate."""
 import hashlib
+import gzip
 import importlib.util
 import io
 import json
@@ -27,7 +28,7 @@ class DistributionCollectorTests(unittest.TestCase):
         self.version_patch.start()
         self.addCleanup(self.version_patch.stop)
 
-    def candidate(self, receipt_patch=None, embedded_patch=None):
+    def candidate(self, receipt_patch=None, embedded_patch=None, package_override=None):
         capabilities = collector.linux_distribution_capabilities()
         embedded = {"version": "0.20.0", "capabilities": capabilities, **(embedded_patch or {})}
         source = subprocess.run(["node", "-e", "const b=require('./packages/agent/scripts/build-qualified-capabilities');process.stdout.write(b.renderGeneratedModule(JSON.parse(process.argv[1])))", json.dumps(embedded["capabilities"])], cwd=ROOT, capture_output=True, text=True, check=True).stdout
@@ -40,7 +41,8 @@ class DistributionCollectorTests(unittest.TestCase):
         with tarfile.open(fileobj=content, mode="w:gz") as tar:
             for name, data in files.items():
                 entry = tarfile.TarInfo(name); entry.size = len(data); tar.addfile(entry, io.BytesIO(data))
-        package = content.getvalue(); digest = hashlib.sha256(package).hexdigest()
+        package = content.getvalue() if package_override is None else package_override
+        digest = hashlib.sha256(package).hexdigest()
         name = "tokentimer-agent-0.20.0.tgz"
         receipt = {"schemaVersion": 1, "candidateSha": "a" * 40, "archive": name, "sha256": digest,
                    "sourceKind": "workflow-checkout", "buildMode": "release-distribution-candidate", "packageVersion": "0.20.0",
@@ -65,6 +67,14 @@ class DistributionCollectorTests(unittest.TestCase):
                                   (None, {"capabilities": list(reversed(capabilities))}), (None, {"version": "0.19.2"})):
             raw, artifact, proof = self.candidate(receipt, embedded)
             with self.assertRaises(ValueError): collector.authenticate_linux_distribution_archive(raw, artifact, proof, "a" * 40)
+
+    def test_declared_oversized_tar_entry_is_refused_before_reading_its_body(self):
+        entry = tarfile.TarInfo("package/oversized")
+        entry.size = 256 * 1024 * 1024 + 1
+        package = gzip.compress(entry.tobuf())  # Deliberately no body: rejection must precede iteration over it.
+        raw, artifact, proof = self.candidate(package_override=package)
+        with self.assertRaisesRegex(ValueError, "archive inventory budget"):
+            collector.authenticate_linux_distribution_archive(raw, artifact, proof, "a" * 40)
 
     def test_job_attempt_and_all_teardowns_are_required(self):
         run = {"id": 123, "run_attempt": 2, "event": "workflow_dispatch"}

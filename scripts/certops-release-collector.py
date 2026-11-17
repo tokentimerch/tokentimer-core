@@ -251,6 +251,13 @@ def linux_staging_fields(value, store="vault"):
 
 
 def linux_distribution_capabilities():
+    """Qualify an exact build overlay on a trusted checkout with no promoted bits.
+
+    A checkout whose baseline already contains an overlay capability is refused.
+    This proof applies to the overlaid archive: release promotion must reuse those
+    bytes or separately establish byte identity. The workflow still requires a
+    successful trusted-main run; an unmerged draft is not eligible.
+    """
     baseline = json.loads((ROOT / "packages/agent/src/capabilities/qualified-capabilities.json").read_text(encoding="utf-8"))["qualified"]
     if (not isinstance(baseline, list) or len(set(baseline)) != len(baseline)
             or any(capability in baseline for capability in LINUX_DISTRIBUTION_CAPABILITIES)):
@@ -290,16 +297,23 @@ def authenticate_linux_distribution_archive(raw, artifact, proof, candidate):
         if checksum != proof["packageSha256"] or archive.read(name + ".sha256").decode("ascii").strip() != f"{checksum}  {name}":
             raise ValueError("Combined distribution package checksum mismatch")
         with tarfile.open(fileobj=io.BytesIO(package), mode="r:gz") as tar:
-            members = tar.getmembers()
-            names = [entry.name for entry in members]
             required = ("package/package.json", "package/src/capabilities/qualified-capabilities.generated.js")
-            if (len(names) > 10000 or sum(entry.size for entry in members) > 256 * 1024 * 1024
-                    or len(names) != len(set(names)) or any(names.count(path) != 1 for path in required)):
+            names, identity, total_size = set(), {}, 0
+            for entry in tar:
+                total_size += entry.size
+                if len(names) >= 10000 or total_size > 256 * 1024 * 1024:
+                    raise ValueError("Combined package exceeds archive inventory budget")
+                if entry.name in names:
+                    raise ValueError("Combined package has ambiguous embedded identity")
+                names.add(entry.name)
+                if entry.name in required:
+                    identity[entry.name] = entry
+            if set(identity) != set(required):
                 raise ValueError("Combined package has ambiguous embedded identity")
-            if any(not tar.getmember(path).isfile() or tar.getmember(path).size > MAX_REPORT for path in required):
+            if any(not identity[path].isfile() or identity[path].size > MAX_REPORT for path in required):
                 raise ValueError("Combined package embedded identity is not a bounded file")
-            package_metadata = json.load(tar.extractfile(required[0]))
-            source = tar.extractfile(required[1]).read().decode("utf-8")
+            package_metadata = json.load(tar.extractfile(identity[required[0]]))
+            source = tar.extractfile(identity[required[1]]).read().decode("utf-8")
             generated = subprocess.run(["node", "-e", "const b=require('./packages/agent/scripts/build-qualified-capabilities');process.stdout.write(b.renderGeneratedModule(JSON.parse(process.argv[1])))", json.dumps(linux_distribution_capabilities())], cwd=ROOT, capture_output=True, text=True, timeout=30, check=True).stdout
             if package_metadata.get("name") != "@tokentimer/agent" or package_metadata.get("version") != "0.20.0" or source != generated:
                 raise ValueError("Combined package embedded version or capability list mismatch")
