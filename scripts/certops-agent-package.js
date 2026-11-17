@@ -189,7 +189,26 @@ function buildLinuxCandidate(outputRoot, linuxCleanup) {
   return buildCandidate({ sourcePackage: path.join(root, "packages/agent"), outputRoot: expectedOutput,
     capabilities: linuxCleanup.capabilities ?? [linuxCleanup.capability], candidateSha, linuxCleanup });
 }
-module.exports = { buildCandidate, extractVerified, verifyInstalled, inventory, digest, verifyAdcsAcceptance, verifyOperatorScope, ADCS_ACCEPTANCE_SCENARIOS };
+
+function verifyReleaseDistributionCandidate(directory, expectedSha256, { nodeVersion, npmVersion, goVersion }) {
+  assert.match(expectedSha256 || "", /^[a-f0-9]{64}$/, "An exact expected package SHA-256 is required");
+  const receipt = JSON.parse(fs.readFileSync(path.join(directory, "artifact.json"), "utf8"));
+  const provenance = JSON.parse(fs.readFileSync(path.join(directory, "native-provenance.json"), "utf8"));
+  assert.equal(receipt.archive, "tokentimer-agent-0.20.0.tgz");
+  assert.equal(receipt.nodeVersion, `v${nodeVersion}`, "Unexpected candidate Node version");
+  assert.equal(receipt.npmVersion, npmVersion, "Unexpected candidate npm version");
+  assert.equal(provenance.goVersion, `go${goVersion}`, "Unexpected candidate Go version");
+  assert.equal(provenance.status, "passed");
+  assert.equal(provenance.sourceSha, receipt.candidateSha);
+  assert.equal(provenance.archive, receipt.archive);
+  assert.equal(receipt.sha256, expectedSha256, "Candidate package receipt SHA-256 differs from the expected SHA-256");
+  assert.equal(provenance.archiveSha256, expectedSha256, "Candidate binary provenance has a different package SHA-256");
+  const actualSha256 = digest(path.join(directory, "artifacts", receipt.archive));
+  assert.equal(actualSha256, expectedSha256, "Candidate tarball bytes differ from the expected SHA-256");
+  return actualSha256;
+}
+module.exports = { buildCandidate, extractVerified, verifyInstalled, inventory, digest, verifyAdcsAcceptance, verifyOperatorScope,
+  verifyReleaseDistributionCandidate, ADCS_ACCEPTANCE_SCENARIOS };
 if (require.main === module) {
   try {
     const [sourcePackage, outputRoot, candidateSha, capabilityList] = process.argv.slice(2);
@@ -199,6 +218,12 @@ if (require.main === module) {
     else if (sourcePackage === "build-linux-openbao-cleanup") buildLinuxCandidate(outputRoot, linuxCase()("openbao-kv2"));
     else if (sourcePackage === "build-linux-staging") buildLinuxCandidate(outputRoot, linuxCase()("vault-kv2", true));
     else if (sourcePackage === "build-release-distribution-candidate") buildLinuxCandidate(outputRoot, linuxCase().distribution);
+    else if (sourcePackage === "verify-release-distribution-candidate") {
+      const sha256 = verifyReleaseDistributionCandidate(outputRoot, candidateSha, {
+        nodeVersion: process.env.NODE_VERSION, npmVersion: process.env.NPM_VERSION, goVersion: process.env.GO_VERSION,
+      });
+      process.stdout.write(`sha256=${sha256}\n`);
+    }
     else buildCandidate({ sourcePackage, outputRoot, candidateSha, capabilities: capabilityList.split(",") });
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

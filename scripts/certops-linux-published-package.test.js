@@ -32,6 +32,29 @@ test("native staging keeps the Vault candidate separate and requires the shared 
     "material-consumer-staging-v1", "windows-material-iis-v1",
   ]);
 });
+test("exact release candidate requires a digest and rejects changed tarball bytes", t => {
+  const { digest, verifyReleaseDistributionCandidate } = require("./certops-agent-package");
+  const root = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "tt-release-distribution-digest-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const versions = { nodeVersion: "24.22.3", npmVersion: "11.19.1", goVersion: "1.26.10" };
+  assert.throws(() => verifyReleaseDistributionCandidate(root, undefined, versions), /expected package SHA-256 is required/);
+
+  const archive = "tokentimer-agent-0.20.0.tgz";
+  const candidateSha = "a".repeat(40);
+  const artifacts = path.join(root, "artifacts");
+  const tarball = path.join(artifacts, archive);
+  fs.mkdirSync(artifacts);
+  fs.writeFileSync(tarball, "synthetic package bytes");
+  const sha256 = digest(tarball);
+  fs.writeFileSync(path.join(root, "artifact.json"), JSON.stringify({ archive, candidateSha, sha256,
+    nodeVersion: `v${versions.nodeVersion}`, npmVersion: versions.npmVersion }));
+  fs.writeFileSync(path.join(root, "native-provenance.json"), JSON.stringify({ archive, status: "passed",
+    sourceSha: candidateSha, archiveSha256: sha256, goVersion: `go${versions.goVersion}` }));
+  assert.equal(verifyReleaseDistributionCandidate(root, sha256, versions), sha256);
+  assert.throws(() => verifyReleaseDistributionCandidate(root, sha256, { ...versions, npmVersion: "11.19.0" }), /Unexpected candidate npm version/);
+  fs.writeFileSync(tarball, "different package bytes");
+  assert.throws(() => verifyReleaseDistributionCandidate(root, sha256, versions), /tarball bytes differ from the expected SHA-256/);
+});
 test("published predecessor is exact and true upgrade rejects same/older candidate versions",()=>{assert.equal(baseline.assetId,612562598);assert.equal(baseline.sha256,"c602fe36825c74d423c2c9b89680df3b1ac76542f71804de14dc5e2ec5aa85bf");assert.equal(laterVersion("0.17.3"),"0.17.3");assert.equal(laterVersion("0.17.3-rc.1"),"0.17.3-rc.1");assert.equal(laterVersion("1.0.0"),"1.0.0");for(const value of ["0.17.2","0.17.2-rc.1","0.17.1","0.16.9","0.17.3-beta","0.17.3-rc.01","latest","v0.17.3"])assert.throws(()=>laterVersion(value));});
 test("archive member guard rejects traversal roots alternate separators control text and duplicates",()=>{validateMembers(["package/package.json","package/scripts/install-agent.sh"]);for(const members of [[],["/etc/passwd"],["package/../escape"],["package/a\\b"],["package/a\nfile"],["package/a","package/a"]])assert.throws(()=>validateMembers(members));});
 function proof(){return {baselineVersion:"0.17.2",publishedAssetId:baseline.assetId,publishedArchiveSha256:baseline.sha256,publishedArchiveSize:baseline.size,candidateVersion:require("../packages/agent/package.json").version,candidateArchiveSha256:"a".repeat(64),publishedFilesVerified:true,baselineJobExecuted:true,candidateFilesVerified:true,configBytesPreserved:true,credentialBytesPreserved:true,sameRegistration:true,bootstrapUnconsumed:true,freshHeartbeat:true,candidateJobExecuted:true,oldJobHistoryUnchanged:true,oldReplayEntryPreserved:true,privatePermissionsPreserved:true,originalConfigRestored:true,beforePid:123,afterPid:456,rollbackClaimed:false};}
