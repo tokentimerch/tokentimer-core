@@ -79,6 +79,9 @@ function assertSafe(receipt,runnerTemp,opts={}){
   if(states[0]==="pre")return validatePreOrActive(receipt,runnerTemp,"pre",opts);if(states[0]==="done")return validateDone(receipt,runnerTemp,opts);
   throw Error("Database ownership unresolved; preserve receipt and state");
 }
+function assertActive(receipt, runnerTemp, opts) {
+  return validatePreOrActive(receipt, runnerTemp, "active", opts);
+}
 function remove(receipt,runnerTemp,proof,opts={}){
   assert.ok(proof&&["pre","done"].includes(proof.state));const current=assertSafe(receipt,runnerTemp,opts);
   assert.equal(current.state,proof.state);assert.equal(current.dev,proof.dev);assert.equal(current.ino,proof.ino);assert.equal(current.sha256,proof.sha256);
@@ -90,4 +93,4 @@ function assertOwnerExited(receipt,kill=process.kill){
   try{kill(receipt.dbOwnerPid,0);}catch(error){if(error&&error.code==="ESRCH")return;throw Error("Database owner process state uncertain");}
   throw Error("Database owner process still exists");
 }
-module.exports={preparePre,start,markDone,assertSafe,remove,assertNoMarkers,assertOwnerExited};
+module.exports={preparePre,start,markDone,assertActive,assertSafe,remove,assertNoMarkers,assertOwnerExited};

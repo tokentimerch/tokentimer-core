@@ -16,7 +16,7 @@ assert.match(process.env.DB_NAME || "", /^distribution_lifecycle_[a-f0-9]+_test$
 assert.match(process.env.TT_CLEANUP_VAULT_ADDRESS || "", /^http:\/\/127\.0\.0\.1:\d+$/);
 
 const { pool } = require("../../apps/api/db/database");
-const { fixture } = require("../helpers/distribution-lifecycle-fixture.cjs");
+const { fixture, seedCleanupHistory } = require("../helpers/distribution-lifecycle-fixture.cjs");
 const operations = require("../../apps/api/services/certops/distributionOperations");
 const lifecycle = require("../../apps/api/services/certops/distributionLifecycle");
 const cleanup = require("../../apps/api/services/certops/materialCleanup");
@@ -69,21 +69,7 @@ async function setup(t) {
     supported_operations=supported_operations||'["cleanup-from-store"]'::jsonb,
     declared_target_selectors=declared_target_selectors||$4::jsonb WHERE id=$1`,
   [f.issuer, credential.credentialPrefix, credential.credentialHash, JSON.stringify([f.groupId]), JSON.stringify([`material-cleanup-${provider}-v1`])]);
-  const group = (await pool.query("SELECT * FROM certops_distribution_groups WHERE id=$1", [f.groupId])).rows[0];
-  const old = [];
-  for (let n = 0; n < 3; n++) {
-    const id = crypto.randomUUID();
-    const job = (await pool.query(`INSERT INTO certificate_jobs(workspace_id,operation,status,source,
-      subject_type,subject_id,assigned_agent_id,management_period_id) VALUES($1,'renew','succeeded','api',
-      'managed_certificate',$2,$3,$4) RETURNING id`, [f.workspaceId, f.certificateId, f.issuer, group.management_period_id])).rows[0];
-    await pool.query(`INSERT INTO certops_material_versions(id,workspace_id,group_id,management_period_id,
-      publishing_job_id,profile_revision,state,provider_version,certificate_identity_id,fingerprint_sha256,
-      valid_to,published_at,publishing_claim_id,created_at)
-      VALUES($1,$2,$3,$4,$5,1,'published',1,$6,$7,clock_timestamp()+interval '30 days',
-      clock_timestamp()-($8*interval '1 day'),$9,clock_timestamp()-($8*interval '1 day'))`,
-    [id, f.workspaceId, f.groupId, group.management_period_id, job.id, f.identity, f.fingerprint, 100 + n, crypto.randomUUID()]);
-    old.push(id);
-  }
+  const old = await seedCleanupHistory(f);
   const policy = structuredClone(lifecycle.DEFAULT_POLICY);
   Object.assign(policy.retention, { minimumSeconds: 0, minimumVersions: 2, rollbackSeconds: 0, cleanupEnabled: true, reportOnly: false });
   const saved = await lifecycle.putPolicy({ ...f, policy, expectedRevision: 0, actorUserId: f.actor });

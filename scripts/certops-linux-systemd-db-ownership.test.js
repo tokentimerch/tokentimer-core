@@ -1,6 +1,6 @@
 "use strict";
 const test=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),os=require("node:os"),path=require("node:path"),crypto=require("node:crypto");
-const db=require("./certops-linux-systemd-db-ownership"),linuxTest=(name,fn)=>test(name,{skip:process.platform!=="linux"},fn);
+const db=require("./certops-linux-systemd-db-ownership"),linuxTest=(name,fn)=>test(name,{skip:process.platform!=="linux" || process.getuid()!==0},fn);
 const workspaceId="52d0545a-5844-4e07-8bd1-4524416c970a",agentRowId="d89b4df5-f82a-4db7-a10d-53f45a507181",agentId="candidate-linux-42";
 function setup(t,prepare=true){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),"tt-db-marker-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
@@ -9,6 +9,12 @@ function setup(t,prepare=true){
   if(prepare)db.preparePre(receipt,runner,workspaceId,opts);return {root,runner,guardRoot,opts,receipt,guard};
 }
 const file=(guard,state)=>path.join(guard,`${state}.json`);
+test("non-root-owned guard parent is rejected before marker creation", {skip:process.platform!=="linux"}, t=>{
+  const {runner,receipt,opts,guard,guardRoot}=setup(t,false);
+  if(process.getuid()===0)fs.chownSync(guardRoot,65534,65534);
+  assert.throws(()=>db.preparePre(receipt,runner,workspaceId,opts),/parent not private to root/);
+  assert.equal(fs.lstatSync(guard,{throwIfNoEntry:false}),undefined);
+});
 linuxTest("pre permits cleanup before installation and removal preserves no marker",t=>{
   const {runner,receipt,opts}=setup(t),state=db.assertSafe(receipt,runner,opts);assert.equal(state.state,"pre");db.remove(receipt,runner,state,opts);db.assertNoMarkers(runner,opts);
 });

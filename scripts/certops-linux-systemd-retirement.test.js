@@ -1,7 +1,8 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { resolveInstalledAgentRowId, retireInstalledAgent, cleanupInstalledAgent, assertInstallIdentityResolved } = require("../tests/e2e/linux-systemd-real-journey");
+const { resolveInstalledAgentRowId, retireInstalledAgent, cleanupInstalledAgent, assertInstallIdentityResolved, uninstallVaultAgent } = require("../tests/e2e/linux-systemd-real-journey");
+const { assertProtocolHostReceiptRemoved } = require("./certops-linux-systemd-ownership");
 const EXPECTED_ROW_ID="d89b4df5-f82a-4db7-a10d-53f45a507181", CONSUMER_ID="a89b4df5-f82a-4db7-a10d-53f45a507181", SERVICE_KEY="b".repeat(64);
 const ownedProof=()=>({id:CONSUMER_ID,serviceKey:SERVICE_KEY,path:"/owned/installed-discovery-random/server.crt",fingerprint:"a".repeat(64),hostname:"test-host"});
 
@@ -133,4 +134,53 @@ test("replacement of the anchored consumer UUID refuses and rolls back",async()=
   await assert.rejects(cleanupInstalledAgent({pool:f.pool,workspaceId:"workspace",agentId:"candidate-host-42",agentRowId:f.rowId,discoveryResources:[{ownedConsumer:ownedProof}]}),/identity changed/);
   assert.ok(!f.calls.some(c=>/DELETE FROM/.test(c.sql)));
   assert.ok(f.calls.some(c=>c.sql==="ROLLBACK"));
+});
+
+test("Vault teardown stops before uninstall when service stop or cgroup drainage fails", () => {
+  for (const failure of ["stop", "pid", "cgroup"]) {
+    const commands = [];
+    assert.throws(() => uninstallVaultAgent({
+      installer: "/owned/install-agent.sh",
+      run(file, args) {
+        commands.push([file, ...args]);
+        if (failure === "stop") throw new Error("stop failed");
+      },
+      mainPid: () => failure === "pid" ? 123 : 0,
+      readCgroup: () => failure === "cgroup" ? "456" : "",
+    }));
+    assert.deepEqual(commands, [["systemctl", "stop", "tokentimer-agent.service"]]);
+  }
+});
+
+test("Vault protocol fixture cleanup requires an absent host receipt", () => {
+  const env = { TT_CLEANUP_NATIVE_VAULT: "1", RUNNER_TEMP: "/owned" };
+  function unresolved(temp) {
+    assert.equal(temp, env.RUNNER_TEMP);
+    throw new Error("owned receipt remains");
+  }
+  assert.throws(() => assertProtocolHostReceiptRemoved(env, unresolved), /owned receipt remains/);
+  assert.doesNotThrow(() => assertProtocolHostReceiptRemoved({}, unresolved));
+});
+
+test("Vault workspace cleanup verifies the anchored agent and rolls back if the cascade leaves it", async () => {
+  const workspaceId = "52d0545a-5844-4e07-8bd1-4524416c970a";
+  for (const agentSurvives of [false, true]) {
+    const calls = [];
+    const client = { async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.startsWith("SELECT id FROM certops_agents")) return { rows: [{ id: EXPECTED_ROW_ID }] };
+      if (sql.startsWith("DELETE FROM workspaces")) return { rowCount: 1 };
+      if (sql.startsWith("SELECT 1 FROM certops_agents")) return { rows: agentSurvives ? [{}] : [] };
+      return { rows: [] };
+    }, release() {} };
+    const result = cleanupInstalledAgent({ pool: { connect: async () => client }, workspaceId,
+      agentId: "vault-fixture", agentRowId: EXPECTED_ROW_ID, discoveryResources: [], vaultWorkspace: true });
+    if (agentSurvives) await assert.rejects(result, /agent survived workspace cleanup/);
+    else assert.equal(await result, EXPECTED_ROW_ID);
+    assert.match(calls[1].sql, /FOR UPDATE$/);
+    const deletions = calls.filter(call => call.sql.startsWith("DELETE FROM"));
+    assert.ok(deletions.some(call => call.sql.startsWith("DELETE FROM workspaces")));
+    assert.ok(deletions.every(call => call.params.length === 1 && call.params[0].length === 1 && call.params[0][0] === workspaceId));
+    assert.equal(calls.at(-1).sql, agentSurvives ? "ROLLBACK" : "COMMIT");
+  }
 });

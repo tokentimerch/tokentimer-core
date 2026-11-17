@@ -6,10 +6,11 @@
  * see README.md). This does not sign the artifact — signing infrastructure is
  * not present in this repository yet.
  *
- *   node scripts/pack-release.js [--out-dir DIR]
+ *   node scripts/pack-release.js [--out-dir DIR] [--linux-only]
  */
 
 const fs = require("node:fs");
+const assert = require("node:assert/strict");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -163,20 +164,23 @@ function assertExecutableEntries(tarballPath, { platform = process.platform } = 
 
 function parseArgs(argv) {
   let outDir = path.join(packageRoot, "dist");
+  let linuxOnly = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--out-dir") {
       outDir = path.resolve(argv[++i] || "");
     } else if (arg.startsWith("--out-dir=")) {
       outDir = path.resolve(arg.slice("--out-dir=".length));
+    } else if (arg === "--linux-only") {
+      linuxOnly = true;
     } else if (arg === "-h" || arg === "--help") {
-      process.stdout.write("Usage: node scripts/pack-release.js [--out-dir DIR]\n");
+      process.stdout.write("Usage: node scripts/pack-release.js [--out-dir DIR] [--linux-only]\n");
       process.exit(0);
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
-  return { outDir };
+  return { outDir, linuxOnly };
 }
 
 function sha256File(filePath) {
@@ -193,7 +197,12 @@ function main(argv = process.argv.slice(2)) {
     );
   }
 
-  const { outDir } = parseArgs(argv);
+  const { outDir, linuxOnly } = parseArgs(argv);
+  if (linuxOnly) {
+    assert.equal(process.platform, "linux");
+    assert.deepEqual(pkg.os, ["linux"]);
+    assert.ok(pkg.files.every(file => !/\.exe$|install-agent\.ps1$/i.test(file)));
+  }
   fs.mkdirSync(outDir, { recursive: true });
 
   // The Windows service host binaries ship inside bin/ (see package.json's
@@ -204,14 +213,16 @@ function main(argv = process.argv.slice(2)) {
   // process.argv --out-dir (agent-dist/), which would write the host exes
   // next to the tarball instead of packages/agent/bin/ and leave the
   // packed tarball without the Windows service host.
-  buildWindowsServiceHost([]);
-  // Rebuild the chain/store-survivor helper for each shipped architecture too.
-  // Source-tree reference/dist executables are never distribution inputs.
-  buildWindowsChainHelper([]);
-  for (const arch of TARGET_ARCHES) buildWindowsHelper(arch, path.join(packageRoot, "bin"), {
-    sourceDir: path.join(packageRoot, "reference/adcs-cmc"),
-    outputName: `tokentimer-adcs-cmc-${arch}.exe`,
-  });
+  if (!linuxOnly) {
+    buildWindowsServiceHost([]);
+    // Rebuild the chain/store-survivor helper for each shipped architecture too.
+    // Source-tree reference/dist executables are never distribution inputs.
+    buildWindowsChainHelper([]);
+    for (const arch of TARGET_ARCHES) buildWindowsHelper(arch, path.join(packageRoot, "bin"), {
+      sourceDir: path.join(packageRoot, "reference/adcs-cmc"),
+      outputName: `tokentimer-adcs-cmc-${arch}.exe`,
+    });
+  }
 
   const pack = spawnSync(
     "npm",
@@ -228,13 +239,18 @@ function main(argv = process.argv.slice(2)) {
     );
   }
 
-  const tarballName = pack.stdout
+  let tarballName = pack.stdout
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
     .pop();
   if (!tarballName || !tarballName.endsWith(".tgz")) {
     throw new Error(`npm pack did not report a tarball name: ${pack.stdout}`);
+  }
+  if (linuxOnly) {
+    const linuxName = `tokentimer-agent-linux-${pkg.version}.tgz`;
+    fs.renameSync(path.join(outDir, tarballName), path.join(outDir, linuxName));
+    tarballName = linuxName;
   }
 
   const tarballPath = path.join(outDir, tarballName);

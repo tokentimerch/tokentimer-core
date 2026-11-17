@@ -38,6 +38,51 @@ function inspect(archive,checksum,published=false){
  if(published){assert.equal(name,`tokentimer-agent-${baseline.version}.tgz`);assert.equal(actual,baseline.sha256);assert.equal(fs.statSync(archive).size,baseline.size);assert.equal(pkg.version,baseline.version);}else laterVersion(pkg.version);
  return {version:pkg.version,archiveSha256:actual,archiveSize:fs.statSync(archive).size,fileInventory:archiveInventory(archive)};
 }
+function inspectLinuxCandidate(archive, receipt) {
+  assert.equal(receipt.schemaVersion, 1);
+  assert.equal(receipt.buildMode, "linux-vault-cleanup-candidate");
+  assert.equal(receipt.sourceKind, "workflow-checkout");
+  assert.match(receipt.candidateSha, /^[a-f0-9]{40}$/);
+  assert.match(receipt.sha256, /^[a-f0-9]{64}$/);
+  assert.match(receipt.nodeVersion, /^v24\.\d+\.\d+$/);
+  assert.match(receipt.npmVersion, /^\d+\.\d+\.\d+$/);
+  const { version } = require("../packages/agent/package.json");
+  assert.equal(receipt.version, version);
+  assert.equal(receipt.archive, `tokentimer-agent-linux-${version}.tgz`);
+  assert.equal(path.basename(archive), receipt.archive);
+  assert.equal(receipt.packagerSha256, sha(path.resolve(__dirname, "../packages/agent/scripts/pack-release.js")));
+  const baseline = require("../packages/agent/src/capabilities/qualified-capabilities.json").qualified;
+  assert.equal(baseline.includes("material-cleanup-vault-kv2-v1"), false);
+  assert.deepEqual(receipt.capabilities, [...baseline, "material-cleanup-vault-kv2-v1"]);
+  const inspected = inspect(archive, archive + ".sha256");
+  assert.equal(inspected.archiveSha256, receipt.sha256);
+  assert.equal(inspected.version, version);
+  assert.ok(inspected.fileInventory.every(entry => !/\.exe$|install-agent\.ps1$/i.test(entry.file)));
+  const pkg = JSON.parse(run(["-xOf", archive, "package/package.json"]));
+  assert.equal(pkg.private, true);
+  assert.deepEqual(pkg.os, ["linux"]);
+  const embedded = run(["-xOf", archive, "package/src/capabilities/qualified-capabilities.generated.js"]);
+  assert.equal(embedded, require("../packages/agent/scripts/build-qualified-capabilities").renderGeneratedModule(receipt.capabilities));
+  return inspected;
+}
+function prepareVaultCleanupCandidate() {
+  require("./certops-linux-systemd-ownership").validateHostedEnvironment(process.env);
+  assert.equal(process.env.GITHUB_REF, "refs/heads/main");
+  assert.match(process.env.TT_CLEANUP_ARTIFACT_ID || "", /^[1-9]\d{0,15}$/);
+  const root = fs.realpathSync(process.env.RUNNER_TEMP);
+  const candidateDir = path.join(root, "certops-linux-vault-cleanup");
+  const receipt = JSON.parse(fs.readFileSync(path.join(candidateDir, "artifact.json"), "utf8"));
+  assert.equal(receipt.candidateSha, process.env.GITHUB_SHA);
+  assert.equal(receipt.sha256, process.env.TT_CLEANUP_ARTIFACT_SHA256);
+  assert.equal(receipt.archive, path.basename(receipt.archive));
+  const archive = path.join(candidateDir, "artifacts", receipt.archive);
+  const inspected = inspectLinuxCandidate(archive, receipt);
+  const directory = path.join(candidateDir, "installed-input");
+  fs.mkdirSync(directory, { mode: 0o755 });
+  run(["-xzf", archive, "--strip-components=1", "--no-same-owner", "-C", directory]);
+  verifyTree(directory, inspected.fileInventory);
+  return { ...inspected, directory, receipt, artifactId: process.env.TT_CLEANUP_ARTIFACT_ID };
+}
 function verifyReleaseMetadata(value){assert.equal(value.tag_name,baseline.tag);assert.equal(value.draft,false);assert.equal(value.prerelease,false);const matches=value.assets.filter(asset=>asset.id===baseline.assetId);assert.equal(matches.length,1);const asset=matches[0];assert.equal(asset.name,`tokentimer-agent-${baseline.version}.tgz`);assert.equal(asset.size,baseline.size);assert.equal(asset.digest,`sha256:${baseline.sha256}`);assert.equal(asset.browser_download_url,baseline.url);return true;}
 function prepare(oldArchive,oldChecksum,newArchive,newChecksum,output){
  assert.equal(process.platform,"linux");require("./certops-linux-systemd-ownership").validateHostedEnvironment(process.env);assert.match(process.env.GITHUB_SHA||"",/^[a-f0-9]{40}$/);
@@ -55,4 +100,4 @@ function loadManifest(file){
  assert.equal(value.baseline.assetId,baseline.assetId);assert.equal(value.baseline.sha256,baseline.sha256);assert.equal(value.candidate.version,require("../packages/agent/package.json").version);return value;
 }
 if(require.main===module){try{if(process.argv[2]==="--verify-release")verifyReleaseMetadata(JSON.parse(fs.readFileSync(process.argv[3],"utf8")));else prepare(...process.argv.slice(2));}catch(error){console.error(error.message);process.exitCode=1;}}
-module.exports={baseline,inspect,prepare,loadManifest,validateMembers,laterVersion,verifyReleaseMetadata,treeInventory,verifyTree};
+module.exports={baseline,inspect,prepare,loadManifest,validateMembers,laterVersion,verifyReleaseMetadata,treeInventory,verifyTree,inspectLinuxCandidate,prepareVaultCleanupCandidate};
