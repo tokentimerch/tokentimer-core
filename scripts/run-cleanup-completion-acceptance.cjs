@@ -231,8 +231,7 @@ async function main() {
       require("node:assert/strict").equal(process.arch, "x64");
       require("node:assert/strict").ok(process.report.getReport().header.glibcVersionRuntime);
       const matrix = require("./certops-qualification-manifest");
-      const { source: cleanupSource, requiredSources } = matrix.slots.find(slot => slot.id === "linux-vault-cleanup-restart");
-      const source = staging ? "tests/e2e/helpers/linux-material-staging-restart.js" : cleanupSource;
+      const { source, requiredSources } = matrix.slots.find(slot => slot.id === (staging ? suite : "linux-vault-cleanup-restart"));
       const sourceRecord = file => ({ file, sha256: require("./certops-agent-package").digest(path.join(root, file)) });
       fs.writeFileSync(path.join(root, "qualification-results", suite + ".json"), JSON.stringify({
         schemaVersion: 1, suite, strict: true, status: "passed", evidenceLevel: "real-host",

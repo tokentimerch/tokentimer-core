@@ -31,10 +31,12 @@ const PROFILES = Object.freeze({
   "extended-adcs": ["extended-domain-adcs"],
   "vault-cleanup": ["vault-cleanup"],
   "openbao-cleanup": ["openbao-cleanup"],
+  "linux-staging": ["linux-staging"],
 });
 function classify(slot) {
   if (slot.suite === "linux-vault-cleanup-restart") return "vault-cleanup";
   if (slot.suite === "linux-openbao-cleanup-restart") return "openbao-cleanup";
+  if (slot.suite === "linux-staging-restart") return "linux-staging";
   if (DOMAIN.includes(slot.suite)) return "domain-adcs";
   if (EXTENDED.includes(slot.suite)) return "extended-domain-adcs";
   const caps =

@@ -66,6 +66,7 @@ CI_API_SUITES = {'adcs-enrollment-policy-api', 'adcs-installation-recovery-api',
 VAULT_CLEANUP_WORKFLOW = ".github/workflows/certops-distribution-qualification.yml"
 VAULT_CLEANUP_SUITE = "linux-vault-cleanup-restart"
 OPENBAO_CLEANUP_SUITE = "linux-openbao-cleanup-restart"
+LINUX_STAGING_SUITE = "linux-staging-restart"
 WORKFLOWS = {
     ".github/workflows/" + name for name in (
         "certops-qualification.yml", "certops-real-acme.yml", "certops-acme-native-console.yml", "certops-acme-browser-lifecycle.yml",
@@ -204,15 +205,15 @@ def migration_evidence(value):
 
 def collectable_artifact(run, artifact):
     if run.get("path") == VAULT_CLEANUP_WORKFLOW:
-        return artifact.get("name") in {"linux-vault-cleanup-receipt", "linux-openbao-cleanup-receipt"}
+        return artifact.get("name") in {"linux-vault-cleanup-receipt", "linux-openbao-cleanup-receipt", "linux-staging-receipt"}
     # Normal CI also uploads logs, JUnit and other unrelated artifacts. Only its
     # dedicated sanitized AD CS report collection belongs in qualification.
     return run.get('path') != CI_WORKFLOW or artifact.get('name') == 'certops-adcs-api'
 
 def validate_report_workflow(report, workflow):
-    is_cleanup_receipt = isinstance(report, dict) and report.get("suite") in {VAULT_CLEANUP_SUITE, OPENBAO_CLEANUP_SUITE}
-    if is_cleanup_receipt != (workflow == VAULT_CLEANUP_WORKFLOW):
-        raise ValueError("Installed Vault cleanup receipt requires its dedicated producer")
+    is_linux_receipt = isinstance(report, dict) and report.get("suite") in {VAULT_CLEANUP_SUITE, OPENBAO_CLEANUP_SUITE, LINUX_STAGING_SUITE}
+    if is_linux_receipt != (workflow == VAULT_CLEANUP_WORKFLOW):
+        raise ValueError("Installed Linux distribution receipt requires its dedicated producer")
     if workflow == CI_WORKFLOW and (not isinstance(report, dict) or report.get('suite') not in CI_API_SUITES):
         raise ValueError('Normal CI may supply only AD CS API qualification reports')
 
@@ -231,9 +232,23 @@ def vault_cleanup_fields(value, store="vault"):
     return {key: facts[key] for key in keys}
 
 
-def authenticate_vault_archive(raw, artifact, proof, candidate, store="vault"):
-    if store not in {"vault", "openbao"}:
-        raise ValueError("Unknown cleanup provider")
+def linux_staging_fields(value):
+    facts = value.get("nativeLinuxStagingRestart")
+    booleans = ("installedTreeVerified", "stagedAcrossRestart", "activationBlocked", "destinationUnchanged")
+    if (not isinstance(facts, dict) or facts.get("provider") != "vault-kv2"
+            or not isinstance(facts.get("artifactId"), str) or not re.fullmatch(r"[1-9][0-9]{0,15}", facts["artifactId"])
+            or not isinstance(facts.get("packageSha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", facts["packageSha256"])
+            or type(facts.get("authenticatedAttempts")) is not int or facts["authenticatedAttempts"] != 1
+            or any(facts.get(key) is not True for key in booleans)
+            or value.get("platform") != "linux" or value.get("architecture") != "x64"):
+        raise ValueError("Invalid installed Linux staging evidence")
+    return {key: facts[key] for key in (*booleans, "provider", "artifactId", "packageSha256", "authenticatedAttempts")}
+
+
+def authenticate_vault_archive(raw, artifact, proof, candidate, store="vault", *, staging=False):
+    if store not in {"vault", "openbao"} or (staging and store != "vault"):
+        raise ValueError("Unknown provider for this installed Linux case")
+    build_mode = "linux-staging-candidate" if staging else f"linux-{store}-cleanup-candidate"
     if (str(artifact.get("id")) != proof["artifactId"]
             or artifact.get("digest") != "sha256:" + hashlib.sha256(raw).hexdigest()):
         raise ValueError("Installed Vault candidate archive digest or identity mismatch")
@@ -250,11 +265,15 @@ def authenticate_vault_archive(raw, artifact, proof, candidate, store="vault"):
                 or set(archive.namelist()) != {"artifact.json", name, name + ".sha256"}
                 or receipt.get("schemaVersion") != 1
                 or receipt.get("sourceKind") != "workflow-checkout"
-                or receipt.get("buildMode") != f"linux-{store}-cleanup-candidate"
+                or receipt.get("buildMode") != build_mode
                 or (store == "openbao" and receipt.get("capabilities") != json.loads((ROOT / "packages/agent/src/capabilities/qualified-capabilities.json").read_text(encoding="utf-8"))["qualified"] + ["material-cleanup-openbao-kv2-v1"])
                 or receipt.get("candidateSha") != candidate or receipt.get("sha256") != proof["packageSha256"]
                 or archive.getinfo(name + ".sha256").file_size > 256):
             raise ValueError("Installed Vault candidate receipt mismatch")
+        if staging:
+            baseline = json.loads((ROOT / "packages/agent/src/capabilities/qualified-capabilities.json").read_text(encoding="utf-8"))["qualified"]
+            if "material-consumer-staging-v1" in baseline or receipt.get("capabilities") != [*baseline, "material-consumer-staging-v1"]:
+                raise ValueError("Installed Linux staging candidate does not advertise the exact staged capability")
         checksum = hashlib.sha256(archive.read(name)).hexdigest()
         if (checksum != proof["packageSha256"]
                 or archive.read(name + ".sha256").decode("ascii").strip() != f"{checksum}  {name}"):
@@ -1381,6 +1400,9 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             store = "openbao" if value.get("suite") == OPENBAO_CLEANUP_SUITE else "vault"
             result["nativeOpenBaoCleanupRestart" if store == "openbao" else "nativeVaultCleanupRestart"] = vault_cleanup_fields(value, store)
             result.update(platform="linux", architecture="x64")
+        if value.get("suite") == LINUX_STAGING_SUITE:
+            result["nativeLinuxStagingRestart"] = linux_staging_fields(value)
+            result.update(platform="linux", architecture="x64")
         if "cleanup" in value:
             cleanup = value["cleanup"]
             if not isinstance(cleanup, dict) or cleanup.get("status") not in ("passed", "failed", "not-run"):
@@ -2351,7 +2373,7 @@ def main(arguments=()):
     output = ROOT / "qualification-results/release-collection"
     output.mkdir(parents=True, exist_ok=True)
     files = []
-    vault_proof = None
+    linux_proofs = {}
     archive_count = 0
     downloaded_bytes = 0
     coverage = catalog_coverage()
@@ -2368,8 +2390,8 @@ def main(arguments=()):
                 owner_auth.validate_finalizer_run(run, repository, run_id)
             else:
                 validate_run(run, candidate, repository)
-            if profile in {"vault-cleanup", "openbao-cleanup"} and run.get("path") != VAULT_CLEANUP_WORKFLOW:
-                raise ValueError("Vault cleanup profile accepts only its dedicated workflow runs")
+            if profile in {"vault-cleanup", "openbao-cleanup", "linux-staging"} and run.get("path") != VAULT_CLEANUP_WORKFLOW:
+                raise ValueError("Installed Linux distribution profile accepts only its dedicated workflow runs")
             data = json.loads(download(endpoint + "/artifacts?per_page=100", token))
             if data.get("total_count", 0) > MAX_ARTIFACTS_PER_RUN:
                 raise ValueError("Artifact inventory exceeds explicit bound")
@@ -2418,16 +2440,20 @@ def main(arguments=()):
                 reports = extract_reports(raw, suites, scopes, database_scopes, authenticate_report=authenticate_elapsed_report) if elapsed_finalizer else extract_reports(raw, suites, scopes, database_scopes)
                 for suffix, report in reports:
                     validate_report_workflow(report, run.get("path"))
-                    if isinstance(report, dict) and report.get("suite") in {VAULT_CLEANUP_SUITE, OPENBAO_CLEANUP_SUITE}:
+                    if isinstance(report, dict) and report.get("suite") in {VAULT_CLEANUP_SUITE, OPENBAO_CLEANUP_SUITE, LINUX_STAGING_SUITE}:
                         store = "openbao" if report["suite"] == OPENBAO_CLEANUP_SUITE else "vault"
-                        if artifact.get("name") != f"linux-{store}-cleanup-receipt":
-                            raise ValueError("Cleanup receipt artifact name mismatch")
-                        if vault_proof is not None:
-                            raise ValueError("Expected one installed Vault cleanup receipt")
-                        proof = report["nativeOpenBaoCleanupRestart" if store == "openbao" else "nativeVaultCleanupRestart"]
+                        staging = report["suite"] == LINUX_STAGING_SUITE
+                        if staging:
+                            proof_field = "nativeLinuxStagingRestart"
+                        else:
+                            proof_field = "nativeOpenBaoCleanupRestart" if store == "openbao" else "nativeVaultCleanupRestart"
+                        stem = "linux-staging" if staging else f"linux-{store}-cleanup"
+                        if proof_field in linux_proofs or artifact.get("name") != stem + "-receipt":
+                            raise ValueError("Expected one matching installed Linux distribution receipt")
+                        proof = report[proof_field]
                         matches = [item for item in data.get("artifacts", [])
                                    if str(item.get("id")) == proof["artifactId"]]
-                        if (len(matches) != 1 or matches[0].get("name") != f"linux-{store}-cleanup-candidate"
+                        if (len(matches) != 1 or matches[0].get("name") != stem + "-candidate"
                                 or matches[0].get("expired") is not False
                                 or type(matches[0].get("id")) is not int
                                 or type(matches[0].get("size_in_bytes")) is not int
@@ -2439,8 +2465,8 @@ def main(arguments=()):
                         downloaded_bytes += len(package_raw)
                         if archive_count > limits["archives"] or downloaded_bytes > MAX_TOTAL_DOWNLOAD:
                             raise ValueError("Installed Vault candidate exceeds collection budget")
-                        authenticate_vault_archive(package_raw, matches[0], proof, candidate, store)
-                        vault_proof = {**proof, "runId": run_id, "store": store}
+                        authenticate_vault_archive(package_raw, matches[0], proof, candidate, store, staging=staging)
+                        linux_proofs[proof_field] = {**proof, "runId": run_id}
                     verify_webhosting_retention_workflow(report, run.get("path"))
                     verify_alive_grace_workflow(report, run.get("path"))
                     verify_bind_failure_native_workflow(report, run.get("path"))
@@ -2470,9 +2496,7 @@ def main(arguments=()):
         validate_matrix_summary(json.loads(result.stdout), candidate, len(selected_matrix["slots"]), coverage, selection)
         summary["status"] = "passed"
         summary.update(qualification_profiles.summary_fields(selection,True))
-        if vault_proof is not None:
-            store = vault_proof.pop("store")
-            summary["nativeOpenBaoCleanupRestart" if store == "openbao" else "nativeVaultCleanupRestart"] = vault_proof
+        summary.update(linux_proofs)
     finally:
         (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print("Committed mandatory matrix passed; full feature specifications remain separately tracked" if profile=="full" else f"Declared {profile} profile passed; omitted environments remain unqualified")

@@ -214,6 +214,16 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           }
         }
         if (slot.suite === "linux-systemd-reapply") require("../tests/e2e/helpers/linux-systemd-reapply").verifyProof(artifact.report.nativeInstallerReapply);
+        if (slot.suite === "linux-staging-restart") {
+          const { architecture, platform, cleanup, nativeLinuxStagingRestart: proof, qualificationEnvironment: env } = artifact.report;
+          if (platform !== "linux" || architecture !== "x64" || env.executionSurface !== "host" || env.libc !== "glibc" ||
+              cleanup?.status !== "passed" || proof?.provider !== "vault-kv2" || proof.authenticatedAttempts !== 1 ||
+              !["installedTreeVerified", "stagedAcrossRestart", "activationBlocked", "destinationUnchanged"].every(key => proof[key] === true) ||
+              typeof proof.artifactId !== "string" || !/^[1-9]\d{0,15}$/.test(proof.artifactId) ||
+              typeof proof.packageSha256 !== "string" || !/^[a-f0-9]{64}$/.test(proof.packageSha256)) {
+            throw new Error("Installed Linux staging restart evidence is incomplete");
+          }
+        }
         if (slot.suite === "native-agent-api") {
           require("../tests/e2e/helpers/certops-native-certificate-dry-run").verifyFacts(artifact.report.nativeCertificateDryRun);
           require("../tests/e2e/helpers/certops-native-dispatch-timing").verifyTimingFacts(artifact.report.nativeDispatchTiming);
