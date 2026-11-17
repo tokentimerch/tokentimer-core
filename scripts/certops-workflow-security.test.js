@@ -184,6 +184,9 @@ test("release distribution requires four isolated jobs consuming the one verifie
   for (const change of [
     jobs => { delete jobs["release-native-linux-staging-openbao"]; },
     jobs => { jobs["release-distribution-candidate"].steps.find(step => step.name === "Require the exact trusted main dispatch SHA").run = "true"; },
+    jobs => { delete jobs["release-distribution-candidate"].steps.find(step => step.id === "package").env.EXPECTED_PACKAGE_SHA256; },
+    jobs => { const step = jobs["release-distribution-candidate"].steps.find(step => step.id === "package");
+      step.run = step.run.replace("verify-release-distribution-candidate", "skip-verification"); },
     jobs => { jobs["release-native-vault-cleanup"].needs = "postgres"; },
     jobs => { jobs["release-native-linux-staging-openbao"].env.NATIVE_MODE = "--native-staging"; },
     jobs => { jobs["release-native-linux-staging-vault"].steps.find(step => step.uses?.startsWith("actions/download-artifact@")).with["artifact-ids"] = "1"; },
