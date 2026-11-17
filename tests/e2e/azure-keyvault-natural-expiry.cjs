@@ -8,12 +8,12 @@ const { spawnSync } = require("node:child_process");
 const lab = require("../../infra/certops-azure-keyvault/lab");
 const policy = require("../../infra/certops-azure-keyvault/policy");
 const io = require("./helpers/azure-keyvault-live-io.cjs");
-const { runNaturalExpiry, workDeadline } = require("./helpers/azure-natural-token-expiry.cjs");
+const { runNaturalExpiry, workDeadline, MAX_JOB_DURATION_MS, WINDOW_ERROR_CODES } = require("./helpers/azure-natural-token-expiry.cjs");
 const { runBoundedWorker } = require("./helpers/azure-natural-token-supervisor.cjs");
 
 const ID = /^[1-9][0-9]{0,15}$/;
 const JOB = "natural-expiry";
-const JOB_TIMEOUT_MS = 90 * 60000;
+const JOB_TIMEOUT_MS = MAX_JOB_DURATION_MS;
 const CLEANUP_RESERVE_MS = 10 * 60000;
 const STATE = "expiry-worker.json";
 const PROFILE = "azure-natural-access-token-expiration";
@@ -229,7 +229,7 @@ if (require.main === module) {
   if (process.send) {
     observe().then(
       facts => process.send(facts, () => process.exit(0)),
-      error => process.send({ failure: error.code === "AZURE_EXPIRY_OUTSIDE_BUDGET" ?
+      error => process.send({ failure: WINDOW_ERROR_CODES.includes(error.code) ?
         error.code : "AZURE_EXPIRY_WORKER_FAILED" }, () => process.exit(1)),
     );
   } else {

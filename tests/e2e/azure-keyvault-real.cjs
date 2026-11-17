@@ -593,17 +593,32 @@ async function run() {
           renewed.publicationReceipt,
           authFor("consumer"),
         );
-        let checks = 0;
+        const { certPath, keyPath } = deployment.target;
+        check(
+          !fs.existsSync(certPath) && !fs.existsSync(keyPath),
+          "AZURE_KV_INTERRUPTION_TARGET_NOT_EMPTY",
+        );
+        let interruptionObserved = false;
         const interrupted = await bridge.lifecycle.executePinnedDeployment({
           ...deployment.options,
           checkLease: async () => {
             await deployment.lease();
-            if (++checks === 3)
-              policy.fail("AZURE_KV_CONTROLLED_INTERRUPTION_AFTER_INSTALL");
+            if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) return;
+            check(
+              io.verifyMaterial({
+                certificatePem: fs.readFileSync(certPath, "utf8"),
+                privateKeyPem: readProtectedFile(keyPath),
+              }) === second.bundle.fingerprintSha256,
+              "AZURE_KV_INTERRUPTION_INSTALLED_PAIR_MISMATCH",
+            );
+            interruptionObserved = true;
+            policy.fail("AZURE_KV_CONTROLLED_INTERRUPTION_AFTER_INSTALL");
           },
         });
         check(
-          interrupted.status === "orphaned_unknown_effect",
+          interruptionObserved &&
+            interrupted.status === "orphaned_unknown_effect" &&
+            interrupted.deploymentReceipt.installed === true,
           "AZURE_KV_INTERRUPTION_NOT_UNCERTAIN",
         );
         const record = path.join(

@@ -62,6 +62,56 @@ async function findOpenEnrollment(db, workspaceId, certificateId) {
   return result.rows[0] || null;
 }
 
+// A store observation and an IIS observation can refer to the same local binding.
+async function assertIisTargetAvailable(tx, { workspaceId, certificateId, agentId, target, source }) {
+  const reference = String(target.reference || "").trim().toLowerCase();
+  const site = String(target.binding.site || "").trim().toLowerCase();
+  const port = String(target.binding.port || "");
+  const sni = String(target.binding.sniHost || "").trim().toLowerCase();
+  const lockKey = JSON.stringify([
+    String(workspaceId).toLowerCase(), String(agentId || "").toLowerCase(),
+    reference, site, port, sni,
+  ]);
+  await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))", [
+    `certops-iis-enrollment:${lockKey}`,
+  ]);
+  const result = await tx.query(
+    `SELECT 1 FROM certificate_enrollments e
+      WHERE e.workspace_id = $1 AND e.agent_id = $2
+        AND e.deploy_target->>'type' = 'windows-iis'
+        AND lower(btrim(e.deploy_target->>'reference')) = $3
+        AND lower(btrim(e.deploy_target->'binding'->>'site')) = $4
+        AND e.deploy_target->'binding'->>'port' = $5
+        AND lower(btrim(COALESCE(e.deploy_target->'binding'->>'sniHost', ''))) = $6
+        AND (
+          e.state = ANY($7::text[])
+          OR ($8::boolean AND e.state = 'installed' AND EXISTS (
+            SELECT 1 FROM managed_certificates current_cert
+            JOIN certops_certificate_identities identity
+              ON identity.workspace_id = current_cert.workspace_id
+             AND identity.fingerprint_sha256 = certops_normalize_fingerprint(current_cert.fingerprint_sha256)
+            JOIN certops_management_associations association
+              ON association.workspace_id = identity.workspace_id AND association.identity_id = identity.id
+            JOIN certops_management_periods period
+              ON period.workspace_id = association.workspace_id AND period.id = association.period_id
+            WHERE current_cert.workspace_id = $1 AND current_cert.id = $9
+              AND period.managed_certificate_id = e.certificate_id
+              AND association.associated_at <= e.created_at
+              AND (association.superseded_at IS NULL OR association.superseded_at >= e.created_at)
+          ))
+        ) LIMIT 1`,
+    [workspaceId, agentId, reference, site, port, sni, OPEN_ENROLLMENT_STATES, source === "automation", certificateId || null],
+  );
+  if (result.rows.length) {
+    const error = serviceError(
+      "This agent's IIS binding already has an enrollment in progress or was renewed for this certificate.",
+      "CERTOPS_ENROLLMENT_OPEN",
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+}
+
 async function identityRetired(client, workspaceId, certificateId) {
   if (!CERTIFICATE_ID_UUID.test(String(certificateId || ""))) return false;
   const result = await client.query(
@@ -373,6 +423,7 @@ function createEnrollment({
         throw error;
       }
     }
+    await assertIisTargetAvailable(tx, { workspaceId, certificateId, agentId, target, source });
     let resolvedIssuerId = issuerId;
     if (profileId) {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(profileId))) {

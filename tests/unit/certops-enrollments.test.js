@@ -275,7 +275,7 @@ const WEBHOSTING = {
 function profileEnrollmentDb(versionRow) {
   return {
     async query(sql) {
-      if (sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
+      if (sql.includes("SELECT 1 FROM certificate_enrollments e") || sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
       if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: ISSUER }] };
       if (sql.includes("FROM certificate_issuer_versions")) {
@@ -365,7 +365,7 @@ function rowDb() {
         checkpoint = null;
         return { rows: [] };
       }
-      if (text.includes("pg_advisory_xact_lock")) return { rows: [] };
+      if (text.includes("SELECT 1 FROM certificate_enrollments e") || text.includes("pg_advisory_xact_lock")) return { rows: [] };
       if (text.startsWith("SELECT id FROM certificate_enrollments") && text.includes("state = ANY")) {
         return { rows: [...enrollments.values()].filter(row => row.workspace_id === params[0] && row.certificate_id === params[1] && params[2].includes(row.state)).slice(0, 1) };
       }
@@ -1310,7 +1310,7 @@ describe("enrollment rows", () => {
   it("keeps ACME profiles off the AD CS enrollment path", async () => {
     const db = {
       async query(sql) {
-        if (sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
+        if (sql.includes("SELECT 1 FROM certificate_enrollments e") || sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
         if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
         if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: null }] };
         throw new Error(sql);
@@ -1339,7 +1339,7 @@ describe("enrollment rows", () => {
     const other = "99999999-9999-4999-8999-999999999999";
     const db = {
       async query(sql) {
-        if (sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
+        if (sql.includes("SELECT 1 FROM certificate_enrollments e") || sql.includes("pg_advisory_xact_lock") || (sql.includes("SELECT id FROM certificate_enrollments") && sql.includes("state = ANY"))) return { rows: [] };
         if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
         if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: other }] };
         throw new Error(sql);

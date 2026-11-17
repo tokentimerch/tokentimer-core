@@ -49,8 +49,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.22.3'
-      - name: Verify the retained package before Azure login
+      - name: Verify the retained package and protected approval before Azure login
         id: verify-package
+        env:
+          TT_AZURE_LAB_SELF_APPROVAL: ${{ secrets.CERTOPS_AZURE_LAB_SELF_APPROVAL }}
         run: |
           set -euo pipefail
           test "$TT_IMDS_INDEPENDENT_TEARDOWN_READY" = true
@@ -58,6 +60,7 @@ jobs:
           node scripts/certops-final-package-source.cjs \
             "$TT_IMDS_PACKAGE_RUN_ID" "$TT_IMDS_PACKAGE_ARTIFACT_ID" "$TT_IMDS_PACKAGE_SHA256" \
             "$RUNNER_TEMP/tt-imds-candidate-$GITHUB_RUN_ID"
+          node infra/certops-azure-keyvault/lab.js github-imds-approval
       - name: Authenticate the isolated IMDS lab identity
         shell: pwsh
         run: ./infra/certops-azure-keyvault/login-oidc.ps1
@@ -65,6 +68,7 @@ jobs:
         id: launch
         env:
           TT_IMDS_APPROVED_PLAN_B64: ${{ secrets.TT_IMDS_APPROVED_PLAN_B64 }}
+          TT_AZURE_LAB_SELF_APPROVAL: ${{ secrets.CERTOPS_AZURE_LAB_SELF_APPROVAL }}
         run: |
           node infra/certops-azure-keyvault/imds/launch.cjs launch \
             "$TT_IMDS_APPROVED_PLAN_SHA256" "$RUNNER_TEMP/tt-imds-candidate-$GITHUB_RUN_ID"
@@ -73,6 +77,8 @@ jobs:
         run: ./infra/certops-azure-keyvault/login-oidc.ps1
       - name: Observe owned teardown and collect the verified profile
         id: collect
+        env:
+          TT_AZURE_LAB_SELF_APPROVAL: ${{ secrets.CERTOPS_AZURE_LAB_SELF_APPROVAL }}
         run: |
           node infra/certops-azure-keyvault/imds/launch.cjs collect \
             "$TT_IMDS_APPROVED_PLAN_SHA256" "$RUNNER_TEMP/tt-imds-candidate-$GITHUB_RUN_ID" \

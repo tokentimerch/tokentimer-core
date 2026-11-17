@@ -5,7 +5,7 @@
 const { fork } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
-const { workDeadline } = require("./azure-natural-token-expiry.cjs");
+const { workDeadline, WINDOW_ERROR_CODES } = require("./azure-natural-token-expiry.cjs");
 const DRAIN_TIMEOUT_MS = 2000;
 
 function hasLiveGroup(group) {
@@ -45,7 +45,7 @@ function safeFacts(value) {
     value.forced401 === false && value.clockOverridden === false && /^[a-f0-9]{32}$/.test(value.pinnedVersion);
 }
 
-// Caller contract: authenticate the job startedAt (+90 minutes) and the owned
+// Caller contract: authenticate the job start and the owned
 // resource expiresAt (existing two-hour TTL), reserving at least ten minutes
 // for cleanup. Pass these same absolute budget values to supervisor and worker;
 // Date.now() plus a fresh ceiling is not the original deadline. All descendants
@@ -88,7 +88,7 @@ function runBoundedWorker({ workerPath, budget, signal, onDrained = () => {} }) 
         try { onDrained(); } catch { return reject(new Error("AZURE_EXPIRY_DRAIN_RECEIPT_FAILED")); }
       }
       if (stopReason) return reject(new Error(stopReason));
-      if (code === 1 && !childSignal && result?.failure === "AZURE_EXPIRY_OUTSIDE_BUDGET" &&
+      if (code === 1 && !childSignal && WINDOW_ERROR_CODES.includes(result?.failure) &&
           Object.keys(result).length === 1)
         return reject(new Error(result.failure));
       if (!started || code !== 0 || childSignal || !safeFacts(result))
