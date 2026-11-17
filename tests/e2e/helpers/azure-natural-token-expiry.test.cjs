@@ -8,6 +8,8 @@ function fixture() {
   const state = { statuses: [200, 200, 401, 200], networkAt: -1, expiryOffset: 60 };
   const options = {
     now: () => clock, pause: async ms => { clock += ms; },
+    budget: { jobDeadlineMs: clock + 80 * 60 * 1000, resourceDeadlineMs: clock + 110 * 60 * 1000,
+      cleanupReserveMs: 10 * 60 * 1000 },
     acquire: async () => {
       acquisitions++;
       return { token: `private-token-${acquisitions}`, issuedAt: Math.floor(clock / 1000),
@@ -29,6 +31,13 @@ test("offline orchestration observes expiry and renewed access without returning
 
 test("refuses a lifetime outside the bounded run before accessing the vault", async () => {
   const f = fixture(); f.state.expiryOffset = 4 * 60 * 60;
+  await assert.rejects(() => _offline.observe(f.options), { code: "AZURE_EXPIRY_OUTSIDE_BUDGET" });
+  assert.equal(f.counts().reads, 0);
+});
+
+test("refuses a real expiry beyond the externally reserved cleanup window before waiting", async () => {
+  const f = fixture(); f.state.expiryOffset = 61 * 60;
+  f.options.budget.jobDeadlineMs = f.options.now() + 70 * 60 * 1000;
   await assert.rejects(() => _offline.observe(f.options), { code: "AZURE_EXPIRY_OUTSIDE_BUDGET" });
   assert.equal(f.counts().reads, 0);
 });

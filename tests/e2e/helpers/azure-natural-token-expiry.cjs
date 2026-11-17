@@ -6,6 +6,7 @@ const path = require("node:path");
 const assert = require("node:assert/strict");
 
 const MAX_DURATION_MS = 3 * 60 * 60 * 1000;
+const MIN_CLEANUP_RESERVE_MS = 10 * 60 * 1000;
 const EXPIRY_GRACE_MS = 10 * 60 * 1000;
 const POLL_MS = 15000;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -14,6 +15,15 @@ function fail(code) {
   const error = new Error(code);
   error.code = code;
   throw error;
+}
+
+function workDeadline({ jobDeadlineMs, resourceDeadlineMs, cleanupReserveMs }, now) {
+  if (![jobDeadlineMs, resourceDeadlineMs, cleanupReserveMs, now].every(Number.isSafeInteger) ||
+      cleanupReserveMs < MIN_CLEANUP_RESERVE_MS || jobDeadlineMs > now + 90 * 60 * 1000 ||
+      resourceDeadlineMs > now + 2 * 60 * 60 * 1000) fail("AZURE_EXPIRY_BUDGET_INVALID");
+  const deadline = Math.min(jobDeadlineMs, resourceDeadlineMs) - cleanupReserveMs;
+  if (deadline <= now) fail("AZURE_EXPIRY_BUDGET_INVALID");
+  return Math.min(deadline, now + MAX_DURATION_MS);
 }
 
 function validateScope(config, store, version) {
@@ -27,8 +37,8 @@ function validateScope(config, store, version) {
 }
 
 // Injected clocks and requests are for offline orchestration tests only.
-async function observe({ acquire, read, fetchVersion, renewAssertion, verifyOwned, now, pause }) {
-  const started = now(), deadline = started + MAX_DURATION_MS;
+async function observe({ acquire, read, fetchVersion, renewAssertion, verifyOwned, now, pause, budget }) {
+  const started = now(), deadline = workDeadline(budget, started);
   await verifyOwned();
   const first = await acquire();
   if (!Number.isSafeInteger(first.issuedAt) || !Number.isSafeInteger(first.expiresAt) ||
@@ -39,6 +49,8 @@ async function observe({ acquire, read, fetchVersion, renewAssertion, verifyOwne
   try { before = await read(first.token); } catch { fail("AZURE_EXPIRY_NETWORK_BEFORE"); }
   if (before !== 200) fail("AZURE_EXPIRY_INITIAL_ACCESS_DENIED");
   await fetchVersion();
+  if (now() >= deadline || first.expiresAt * 1000 + EXPIRY_GRACE_MS > deadline)
+    fail("AZURE_EXPIRY_OUTSIDE_BUDGET");
   const delay = first.expiresAt * 1000 - now();
   if (delay > 0) await pause(delay);
   let expiredAt;
@@ -66,8 +78,9 @@ async function observe({ acquire, read, fetchVersion, renewAssertion, verifyOwne
     azureStatusBefore: 200, azureStatusExpired: 401, azureStatusAfter: 200 };
 }
 
-async function runNaturalExpiry({ candidateRoot, config, store, providerVersion, renewAssertion, verifyOwned }) {
+async function runNaturalExpiry({ candidateRoot, config, store, providerVersion, renewAssertion, verifyOwned, budget }) {
   assert.ok(path.isAbsolute(candidateRoot));
+  workDeadline(budget || {}, Date.now());
   assert.equal(typeof renewAssertion, "function");
   assert.equal(typeof verifyOwned, "function");
   const url = validateScope(config, store, providerVersion);
@@ -97,9 +110,9 @@ async function runNaturalExpiry({ candidateRoot, config, store, providerVersion,
     read: async token => (await requestJson(url, { timeoutMs: 15000, maxBytes: 100000,
       headers: { Authorization: `Bearer ${token}` } })).status,
     fetchVersion: () => store.fetch(providerVersion),
-    renewAssertion, verifyOwned, now: Date.now, pause: sleep,
+    renewAssertion, verifyOwned, now: Date.now, pause: sleep, budget,
   });
   return { ...facts, forced401: false, clockOverridden: false, pinnedVersion: providerVersion };
 }
 
-module.exports = { runNaturalExpiry, MAX_DURATION_MS, _offline: { observe, validateScope } };
+module.exports = { runNaturalExpiry, workDeadline, MAX_DURATION_MS, _offline: { observe, validateScope } };
