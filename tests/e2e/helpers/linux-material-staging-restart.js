@@ -24,13 +24,13 @@ function issueFixtureCertificate(command, stateDir, name, san, authority = false
   return { path: certificate, certificate: fs.readFileSync(certificate, "utf8"), privateKey };
 }
 
-async function startPinnedReadEndpoint(vault, tls, pinnedVersionPath, token) {
+async function startPinnedReadEndpoint(storeAddress, tls, pinnedVersionPath, token) {
   let authenticatedReads = 0;
   const server = https.createServer({ cert: tls.certificate, key: tls.privateKey }, (request, response) => {
     if (request.method !== "GET" || request.url !== pinnedVersionPath || request.headers["x-vault-token"] !== token) {
       return response.writeHead(403).end();
     }
-    const upstream = http.request(new URL(pinnedVersionPath, vault), {
+    const upstream = http.request(new URL(pinnedVersionPath, storeAddress), {
       headers: { "X-Vault-Token": token }, timeout: 5000,
     }, reply => {
       if (reply.statusCode === 200) response.once("finish", () => { if (reply.complete) authenticatedReads++; });
@@ -60,11 +60,12 @@ module.exports = async function qualifyStaging({
   stateDir, writeFixture, uid, gid, vaultFixture,
 }) {
   assert.equal(process.env.TT_CLEANUP_COMPLETION_DISPOSABLE, "1");
-  assert.equal(process.env.TT_CLEANUP_PROVIDER, "vault-kv2");
-  const vault = process.env.TT_CLEANUP_VAULT_ADDRESS;
-  assert.match(vault || "", /^http:\/\/127\.0\.0\.1:[1-9]\d*$/);
-  function provider(route, method, body) {
-    return fetch(new URL(route, vault), { method, signal: AbortSignal.timeout(5000), redirect: "error",
+  const provider = process.env.TT_CLEANUP_PROVIDER;
+  assert.ok(provider === "vault-kv2" || provider === "openbao-kv2");
+  const storeAddress = process.env.TT_CLEANUP_VAULT_ADDRESS;
+  assert.match(storeAddress || "", /^http:\/\/127\.0\.0\.1:[1-9]\d*$/);
+  function requestProvider(route, method, body) {
+    return fetch(new URL(route, storeAddress), { method, signal: AbortSignal.timeout(5000), redirect: "error",
       headers: { "X-Vault-Token": "isolated-completion-fixture-only", "Content-Type": "application/json" },
       body: JSON.stringify(body) });
   }
@@ -81,26 +82,26 @@ module.exports = async function qualifyStaging({
     const leaf = issueFixtureCertificate(command, stateDir, "staged-leaf", `DNS:${san}`);
     const cert = new X509Certificate(leaf.certificate);
     const fingerprint = createHash("sha256").update(cert.raw).digest("hex");
-    const f = await fixture({ fingerprint, validTo: new Date(cert.validTo).toISOString(),
+    const f = await fixture({ fingerprint, materialProvider: provider, validTo: new Date(cert.validTo).toISOString(),
       enrolled: { workspaceId, actor: actor.userId, approver: reviewer.userId, issuer: agentRowId } });
     const prefix = `${workspaceId}/${f.groupId}`;
     const materialPath = `/v1/secret/data/${prefix}/bundles/${f.materialVersionId}`;
     const bundle = { schemaVersion: 1, workspaceId, groupId: f.groupId, materialVersionId: f.materialVersionId,
       certificatePem: leaf.certificate, privateKeyPem: leaf.privateKey, fingerprintSha256: fingerprint, sans: [san] };
-    assert.equal((await provider(materialPath, "POST", { data: bundle })).status, 200);
-    assert.equal((await provider("/v1/sys/policies/acl/installed-staging", "PUT",
+    assert.equal((await requestProvider(materialPath, "POST", { data: bundle })).status, 200);
+    assert.equal((await requestProvider("/v1/sys/policies/acl/installed-staging", "PUT",
       { policy: `path "${materialPath.slice(4)}" { capabilities = ["read"] }` })).status, 204);
-    const createdToken = await provider("/v1/auth/token/create", "POST", { policies: ["installed-staging"], no_default_policy: true, ttl: "15m" });
+    const createdToken = await requestProvider("/v1/auth/token/create", "POST", { policies: ["installed-staging"], no_default_policy: true, ttl: "15m" });
     assert.equal(createdToken.status, 200);
     const token = (await createdToken.json()).auth.client_token;
     vaultFixture.revokeToken = async () => {
-      assert.equal((await provider("/v1/auth/token/revoke", "POST", { token })).status, 204);
+      assert.equal((await requestProvider("/v1/auth/token/revoke", "POST", { token })).status, 204);
     };
     const tokenFile = path.join(stateDir, "staging-token");
     fs.writeFileSync(tokenFile, token, { flag: "wx", mode: 0o600 });
     fs.chownSync(tokenFile, uid, gid);
     const tls = issueFixtureCertificate(command, stateDir, "staging-provider", "IP:127.0.0.1", true);
-    endpoint = await startPinnedReadEndpoint(vault, tls, materialPath + "?version=1", token);
+    endpoint = await startPinnedReadEndpoint(storeAddress, tls, materialPath + "?version=1", token);
 
     const api = `/api/v1/workspaces/${workspaceId}/certops`;
     const group = `${api}/distribution-groups/${f.groupId}`;
@@ -143,7 +144,7 @@ module.exports = async function qualifyStaging({
     config.execution = { enabled: true, dryRun: false };
     config.declaredTargetSelectors = [f.bindingId];
     config.policy = { allowedPaths: [destination] };
-    config.materialStores = { customer: { provider: "vault-kv2", address: endpoint.address, caFile: tls.path,
+    config.materialStores = { customer: { provider, address: endpoint.address, caFile: tls.path,
       mount: "secret", tokenFile, groups: { [f.groupId]: { workspaceId, prefix, sans: [san], keyAlgorithm: "rsa" } } } };
     config.materialBindings = { [f.bindingId]: { workspaceId, groupId: f.groupId, agentId, materialStoreRef: "customer",
       deploymentProfileRef: binding.deploymentProfileRef, profileRevision: binding.profileRevision,
@@ -212,8 +213,8 @@ module.exports = async function qualifyStaging({
     assert.ok(fs.readFileSync(keyPath).equals(initialKey), "Live key bytes changed");
     assert.equal((await deployment()).job_id, null);
     const authenticatedReads = endpoint.authenticatedReads();
-    assert.equal(authenticatedReads, 1, "One complete authenticated Vault read for the pinned version");
-    return { provider: "vault-kv2", authenticatedAttempts: staged.attempt_count, authenticatedReads, destinationMutations,
+    assert.equal(authenticatedReads, 1, "One complete authenticated provider read for the pinned version");
+    return { provider, authenticatedAttempts: staged.attempt_count, authenticatedReads, destinationMutations,
       stagedAcrossRestart: true, activationBlocked: true, destinationUnchanged: true };
   } catch (error) {
     primaryError = error;

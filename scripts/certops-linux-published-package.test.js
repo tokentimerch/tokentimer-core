@@ -14,14 +14,23 @@ test("native OpenBao packaging refuses a Vault candidate before extraction", () 
     schemaVersion: 1, buildMode: cleanupCase("vault-kv2").buildMode,
   }, "openbao-kv2"), /linux-openbao-cleanup-candidate/);
 });
-test("native staging requires its own Linux candidate and refuses another provider", () => {
+test("native staging keeps the Vault candidate separate and requires the shared archive for OpenBao", () => {
   const { inspectLinuxCandidate } = require("./certops-linux-published-package");
   const cleanupCase = require("./certops-linux-cleanup-case.cjs");
   assert.equal(cleanupCase("vault-kv2", true).capability, "material-consumer-staging-v1");
-  assert.throws(() => cleanupCase("openbao-kv2", true), /vault-kv2/);
+  assert.equal(cleanupCase("openbao-kv2", true).suite, "linux-openbao-staging-restart");
+  assert.equal(cleanupCase("openbao-kv2", true).proofField, "nativeLinuxStagingRestart");
+  assert.throws(() => inspectLinuxCandidate("unused", {}, "openbao-kv2", true), /shared Linux distribution candidate/);
   assert.throws(() => inspectLinuxCandidate("unused", {
     schemaVersion: 1, buildMode: cleanupCase("vault-kv2").buildMode,
   }, "vault-kv2", true), /linux-staging-candidate/);
+  assert.throws(() => inspectLinuxCandidate("unused", {
+    schemaVersion: 1, buildMode: cleanupCase("vault-kv2", true).buildMode,
+  }, "openbao-kv2", true, { distribution: true }), /release-distribution-candidate/);
+  assert.deepEqual(cleanupCase.distribution.capabilities, [
+    "material-cleanup-vault-kv2-v1", "material-cleanup-openbao-kv2-v1",
+    "material-consumer-staging-v1", "windows-material-iis-v1",
+  ]);
 });
 test("published predecessor is exact and true upgrade rejects same/older candidate versions",()=>{assert.equal(baseline.assetId,612562598);assert.equal(baseline.sha256,"c602fe36825c74d423c2c9b89680df3b1ac76542f71804de14dc5e2ec5aa85bf");assert.equal(laterVersion("0.17.3"),"0.17.3");assert.equal(laterVersion("0.17.3-rc.1"),"0.17.3-rc.1");assert.equal(laterVersion("1.0.0"),"1.0.0");for(const value of ["0.17.2","0.17.2-rc.1","0.17.1","0.16.9","0.17.3-beta","0.17.3-rc.01","latest","v0.17.3"])assert.throws(()=>laterVersion(value));});
 test("archive member guard rejects traversal roots alternate separators control text and duplicates",()=>{validateMembers(["package/package.json","package/scripts/install-agent.sh"]);for(const members of [[],["/etc/passwd"],["package/../escape"],["package/a\\b"],["package/a\nfile"],["package/a","package/a"]])assert.throws(()=>validateMembers(members));});
