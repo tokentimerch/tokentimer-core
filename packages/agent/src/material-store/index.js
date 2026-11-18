@@ -179,7 +179,7 @@ function createVaultStore(stores, intent, options = {}) {
           if (response.statusCode === 404) { resolve({ missing: true }); return; }
           if (response.statusCode === 400 && method === "POST" && area === "data") { resolve({ conflict: true }); return; }
           if (response.statusCode < 200 || response.statusCode >= 300) {
-            reject(failure(response.statusCode === 403 ? "material_auth_denied" : "material_store_unavailable")); return;
+            reject(failure([401, 403].includes(response.statusCode) ? "material_auth_denied" : "material_store_unavailable")); return;
           }
           // KV v2 publication requires JSON. An empty data response is an
           // uncertain write and must follow publish's exact-version recovery.
@@ -206,14 +206,33 @@ function createVaultStore(stores, intent, options = {}) {
     return bundle;
   }
 
-  async function publish(bundle) {
+  async function publish(bundle, {
+    writeAttempted = false,
+    beforeWrite = () => {},
+    writeRejected = () => {},
+  } = {}) {
     const facts = validateBundle(bundle, intent, scope);
-    let response;
-    try { response = await request("POST", "", { options: { cas: 0 }, data: bundle }); }
-    catch { response = { uncertain: true }; }
-    if (response.data?.version !== 1 && !response.conflict && !response.uncertain) throw failure("material_publication_uncertain");
     let stored;
-    try { stored = await fetch(1); } catch { throw failure(response.conflict ? "material_cas_conflict" : "material_publication_uncertain"); }
+    try { stored = await fetch(1); }
+    catch (error) {
+      if (writeAttempted) throw failure("material_publication_uncertain");
+      if (error.code !== "material_version_unavailable") throw error;
+    }
+    if (!stored) {
+      await beforeWrite();
+      let response;
+      try { response = await request("POST", "", { options: { cas: 0 }, data: bundle }); }
+      catch (error) {
+        if (["material_auth_unavailable", "material_auth_denied"].includes(error.code)) {
+          await writeRejected();
+          throw error;
+        }
+        response = { uncertain: true };
+      }
+      if (response.data?.version !== 1 && !response.conflict && !response.uncertain) throw failure("material_publication_uncertain");
+      try { stored = await fetch(1); }
+      catch { throw failure(response.conflict ? "material_cas_conflict" : "material_publication_uncertain"); }
+    }
     // Matching public fingerprint alone is insufficient: verify the exact key
     // and complete bundle belong to this logical publication, never adopt a
     // conflicting existing object after CAS failure or a lost response.

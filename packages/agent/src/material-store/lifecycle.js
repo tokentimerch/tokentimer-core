@@ -8,6 +8,7 @@ const { applyRestrictivePermissions } = require("../platform");
 const { deployCertificateAndKey } = require("../deploy");
 const { canonicalizeJobPayload } = require("../signing");
 const {validateActivationPolicy,activationDecision}=require("../../vendor/contracts/activation-calendar.cjs");
+const { providerOf } = require("../../vendor/contracts/material-provider.cjs");
 
 // Locks are never stolen on elapsed time: DNS/ACME/device operations can still
 // be active after an arbitrary TTL. A crashed process requires reconciliation.
@@ -65,13 +66,18 @@ function publicationSession({ job, stores, stateDir, keysDir, fixtureLoopbackHtt
     const saved = JSON.parse(readProtectedFile(checkpointFile, 16384));
     if (saved.jobId !== job.jobId || saved.materialVersionId !== intent.materialVersionId || saved.groupId !== intent.groupId) throw failure("material_staging_invalid");
     if (typeof saved.keyRotated === "boolean") keyRotated = saved.keyRotated;
-    writeAttempted = saved.writeAttempted === true;
+    // Older KV v2 stages did not record whether the request reached the provider.
+    // A saved stage can only recover from an exact provider read in that case.
+    const legacyKvStage = providerOf(intent) !== "azure-key-vault" &&
+      saved.phase === "validated_staging" && saved.writeAttemptTracked !== true;
+    writeAttempted = saved.writeAttempted === true || saved.phase === "published" || legacyKvStage;
   }
 
   function checkpoint(phase) {
     // Metadata journal and key-bearing artifacts are deliberately separate.
     writeProtectedJson(checkpointFile, { schemaVersion: 1, jobId: job.jobId,
-      groupId: intent.groupId, materialVersionId: intent.materialVersionId, phase, keyRotated, writeAttempted });
+      groupId: intent.groupId, materialVersionId: intent.materialVersionId, phase, keyRotated,
+      writeAttempted, writeAttemptTracked: true });
   }
   async function publish(bundle, checkLease) {
     validateBundle(bundle, intent, scope);
@@ -112,6 +118,7 @@ function publicationSession({ job, stores, stateDir, keysDir, fixtureLoopbackHtt
     await checkLease();
     try {
       const bundle = await store.recover();
+      writeAttempted = true;
       return publish(bundle, checkLease);
     } catch (error) {
       if (error.code !== "material_version_unavailable") throw error;
