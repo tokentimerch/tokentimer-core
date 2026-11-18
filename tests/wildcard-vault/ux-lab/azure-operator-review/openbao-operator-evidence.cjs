@@ -11,6 +11,9 @@ const { verifyIdentity } = require("../../../../scripts/certops-azure-keyvault-p
 const { extractVerified } = require("../../../../scripts/certops-agent-package");
 
 const profile = "openbao-operator-http-real-ca";
+const observationName = "openbao-operator-observation.json";
+const finalEvidenceName = "openbao-operator-final-package.json";
+const cleanupStages = new Set(["native-host", "docker", "ca-credentials", "http-sessions"]);
 const scenarios = [
   "public-http-configuration", "real-ca-protocol-issuance", "independent-approval", "signed-agent-job-execution",
   "distinct-renewable-role-identities", "cross-role-denials", "exact-provider-version-pin",
@@ -25,13 +28,18 @@ function readJson(file) {
 
 async function closeOwned({ output, ownerFile, owner, project }) {
   const failures = [];
-  let docker;
   try { cleanupHost(); }
-  catch (error) { failures.push(error); }
-  try { docker = await cleanupDocker(["--execute", ownerFile]); }
-  catch (error) { failures.push(error); }
+  catch (cause) { failures.push(new Error("native-host", { cause })); }
+  try {
+    const docker = await cleanupDocker(["--execute", ownerFile]);
+    assert.equal(docker.project, project);
+    assert.equal(docker.candidateSha, owner.candidateSha);
+    assert.equal(docker.producerRunId, owner.producerRunId);
+    assert.equal(docker.archiveSha256, owner.archiveSha256);
+    assert.ok(docker.ownedContainersAbsent && docker.ownedVolumesAbsent && docker.ownedNetworksAbsent);
+  } catch (cause) { failures.push(new Error("docker", { cause })); }
   try { dispose(output + "-operator-ca-private", path.join(output, "operator-ca")); }
-  catch (error) { failures.push(error); }
+  catch (cause) { failures.push(new Error("ca-credentials", { cause })); }
   for (const name of ["session-owner.json", "session-approver.json"]) {
     try {
       const file = path.join(output, name);
@@ -40,14 +48,9 @@ async function closeOwned({ output, ownerFile, owner, project }) {
         assert.ok(stat.isFile(), "Expected an owned disposable session");
         fs.unlinkSync(file);
       }
-    } catch (error) { failures.push(error); }
+    } catch (cause) { failures.push(new Error("http-sessions", { cause })); }
   }
   if (failures.length) throw new AggregateError(failures, "Owned operator teardown was incomplete");
-  assert.equal(docker.project, project);
-  assert.equal(docker.candidateSha, owner.candidateSha);
-  assert.equal(docker.producerRunId, owner.producerRunId);
-  assert.equal(docker.archiveSha256, owner.archiveSha256);
-  assert.ok(docker.ownedContainersAbsent && docker.ownedVolumesAbsent && docker.ownedNetworksAbsent);
   return { database: "completed", provider: "completed", agent: "completed", credentials: "completed", resources: "completed" };
 }
 
@@ -63,6 +66,14 @@ async function retain({ output, ownerFile, project, sourceSha, runId }, close = 
   let closePromise;
   const closeOnce = () => closePromise ??= Promise.resolve().then(() => close({ output, ownerFile, owner, project }));
   try {
+    const observation = path.join(output, observationName);
+    // A failed startup still needs teardown. No observation means no proof,
+    // and the workflow's subsequent artifact requirement still fails.
+    if (!fs.lstatSync(observation, { throwIfNoEntry: false })) {
+      assert.equal(fs.lstatSync(path.join(output, finalEvidenceName), { throwIfNoEntry: false }), undefined,
+        "Pre-existing final evidence refused");
+      return null;
+    }
     const stage = path.join(output, "agent-package");
     const packageIdentity = verifyIdentity(readJson(path.join(stage, "harness-input.json")).packageArtifact);
     assert.equal(packageIdentity.candidateSha, owner.candidateSha);
@@ -78,7 +89,7 @@ async function retain({ output, ownerFile, project, sourceSha, runId }, close = 
       profile, context: { sourceSha, runId, packageIdentity, files, requireNative: true },
       outputDirectory: output,
       observe() {
-        const observed = readJson(path.join(output, "openbao-operator-observation.json"));
+        const observed = readJson(observation);
         assert.equal(observed.sourceSha, sourceSha);
         assert.equal(observed.runId, runId);
         return { packageArtifact: observed.packageArtifact, facts: observed.facts, nativeService: observed.nativeService,
@@ -103,5 +114,12 @@ if (require.main === module) {
     assert.equal(output, path.join(candidate, ".scratch", process.env.TT_UX_PROJECT));
     return retain({ output, ownerFile: process.argv[2], project: process.env.TT_UX_PROJECT,
       sourceSha: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID });
-  }).catch(() => { console.error("OpenBao operator evidence or owned teardown refused"); process.exitCode = 1; });
+  }).then(report => {
+    if (!report) console.log("OpenBao owned teardown verified; no operator observation");
+  }).catch(error => {
+    const failures = Array.isArray(error.errors) ? error.errors : [];
+    const stages = [...new Set(failures.map(failure => failure.message).filter(stage => cleanupStages.has(stage)))];
+    console.error(stages.length ? "OpenBao owned teardown failed at " + stages.join(", ") : "OpenBao operator evidence refused");
+    process.exitCode = 1;
+  });
 }

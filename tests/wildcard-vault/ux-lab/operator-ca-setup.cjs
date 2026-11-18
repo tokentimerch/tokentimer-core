@@ -73,12 +73,17 @@ function create(privateDirectory, outputDirectory) {
   }
 }
 
-function dispose(privateDirectory, outputDirectory) {
+function ownedRun(privateDirectory, outputDirectory) {
   assert.ok(path.isAbsolute(privateDirectory) && path.isAbsolute(outputDirectory));
   assert.equal(path.basename(outputDirectory), "operator-ca");
   const run = path.dirname(outputDirectory);
   assert.match(path.basename(run), /^tt-wildcard-ux-qual-[a-z0-9-]+$/);
   assert.equal(privateDirectory, run + "-operator-ca-private");
+  return run;
+}
+
+function dispose(privateDirectory, outputDirectory) {
+  ownedRun(privateDirectory, outputDirectory);
   const remove = (file, directory) => {
     const stat = fs.lstatSync(file, { throwIfNoEntry: false });
     if (!stat) return false;
@@ -192,6 +197,12 @@ async function initialize(outputDirectory) {
 
 async function main([action, directory, output]) {
   if (action === "create") return create(directory, output);
+  if (action === "create-owned") {
+    const run = ownedRun(directory, output);
+    assert.equal(fs.realpathSync(run), run, "The owned run directory must be canonical");
+    assert.ok(fs.lstatSync(run).isDirectory());
+    return create(directory, output);
+  }
   if (action === "dispose") return dispose(directory, output);
   assert.equal(action, "initialize");
   assert.ok(path.isAbsolute(directory));
@@ -199,7 +210,10 @@ async function main([action, directory, output]) {
 }
 
 if (require.main === module) main(process.argv.slice(2)).catch(error => {
-  process.stderr.write(`Operator CA setup failed (${error.code || error.name})\n`);
+  const action = ["create", "create-owned", "initialize", "dispose"].includes(process.argv[2]) ? process.argv[2] : "invalid";
+  const code = error.cause?.code || error.code || error.name;
+  const kind = /^[A-Za-z0-9_]{1,32}$/.test(code || "") ? code : "Error";
+  process.stderr.write(`OPENBAO_CA_SETUP_FAILED ${action} ${kind}\n`);
   process.exitCode = 1;
 });
 
