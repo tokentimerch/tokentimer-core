@@ -214,8 +214,8 @@ function ProfileWizard({ isOpen, onClose, workspaceId, issuers, onCreated }) {
   const [issuerId, setIssuerId] = useState('');
   const [reference, setReference] = useState('');
   const [extraNames, setExtraNames] = useState('');
-  const [site, setSite] = useState('Default Web Site');
-  const [port, setPort] = useState('443');
+  const [site, setSite] = useState('');
+  const [port, setPort] = useState('');
   const [sniHost, setSniHost] = useState('');
   const [store, setStore] = useState('My');
   const [keyAlgorithm, setKeyAlgorithm] = useState('rsa');
@@ -246,8 +246,8 @@ function ProfileWizard({ isOpen, onClose, workspaceId, issuers, onCreated }) {
       setIssuerId('');
       setReference('');
       setExtraNames('');
-      setSite('Default Web Site');
-      setPort('443');
+      setSite('');
+      setPort('');
       setSniHost('');
       setStore('My');
       setKeyAlgorithm('rsa');
@@ -557,6 +557,7 @@ function ProfileWizard({ isOpen, onClose, workspaceId, issuers, onCreated }) {
                     <Input
                       {...modal.fieldProps}
                       aria-label='IIS site'
+                      placeholder='Default Web Site'
                       value={site}
                       onChange={event => setSite(event.target.value)}
                     />
@@ -566,6 +567,7 @@ function ProfileWizard({ isOpen, onClose, workspaceId, issuers, onCreated }) {
                     <Input
                       {...modal.fieldProps}
                       aria-label='IIS port'
+                      placeholder='443'
                       value={port}
                       onChange={event => setPort(event.target.value)}
                     />

@@ -52,6 +52,7 @@ import KeyLocalityList from './KeyLocalityList.jsx';
 import RenewalBadge from './RenewalBadge.jsx';
 import RenewalScheduleFacts from './RenewalScheduleFacts.jsx';
 import RenewalPathBadge from './RenewalPathBadge.jsx';
+import { jobSubjectHref } from './certopsResourceLinks.js';
 import {
   expiryDescriptor,
   AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
@@ -179,10 +180,14 @@ function DetailRow({
 // Collapsed by default; lives at the end of Certificate operations.
 function CertificateDiagnostics({
   certificate,
+  workspaceId,
   tableStyle,
   propertyValueStyle,
 }) {
   const rowProps = { tableStyle, propertyValueStyle };
+  const certificateHref = workspaceId
+    ? jobSubjectHref('managed_certificate', certificate?.id, workspaceId)
+    : null;
   return (
     <Box as='details' data-testid='certificate-diagnostics'>
       <Box
@@ -211,6 +216,11 @@ function CertificateDiagnostics({
               size='sm'
               color='dashboard.modal.text'
             />
+            {certificateHref ? (
+              <Link as={RouterLink} to={certificateHref} color='blue.500'>
+                Open managed certificate
+              </Link>
+            ) : null}
           </DetailRow>
         ) : null}
       </Box>
@@ -899,6 +909,13 @@ export default function CertificateDetailsModal({
                   hasDiagnostics ? (
                     <CertificateDiagnostics
                       certificate={certificate}
+                      workspaceId={
+                        isViewer || identityPanel
+                          ? null
+                          : workspaceId ||
+                            certOps.workspaceId ||
+                            token.workspace_id
+                      }
                       tableStyle={compactTableSections}
                       propertyValueStyle={propertyValueRows}
                     />

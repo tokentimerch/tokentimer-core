@@ -861,6 +861,9 @@ it('preselects the only current registration and lets the operator pick an ended
     ['reg-ended', true],
     ['reg-current', false],
   ]);
+  identity.sources[0].source = 'agent_windows';
+  identity.sources[0].sourceRef =
+    'agent-7/server.example.test/windows_store/LocalMachine/My';
   getIdentityMock.mockResolvedValue(identity);
   getCertificateMock.mockImplementation((_workspace, id) =>
     Promise.resolve({
@@ -897,6 +900,17 @@ it('preselects the only current registration and lets the operator pick an ended
     )
   );
   expect(getCertificateMock).toHaveBeenCalledWith('workspace-1', 'reg-current');
+  const management = screen.getByRole('table', {
+    name: 'Certificate management',
+  });
+  const registration =
+    'Windows certificate store · server.example.test · LocalMachine/My';
+  expect(within(management).queryByText(registration)).not.toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole('checkbox', { name: 'Show stopped registrations' })
+  );
+  expect(within(management).getByText(registration)).toBeVisible();
+  expect(within(management).getByText('Source reference')).toBeInTheDocument();
 
   fireEvent.change(select, { target: { value: 'reg-ended' } });
   await waitFor(() =>

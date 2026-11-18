@@ -11,6 +11,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Certificate dashboard.** Distinguish same-name certificates by fingerprint and observed Windows use, inspect existing management events by certificate and period, and run a signed no-op simulation from the job form. AD CS issuer choices refresh immediately after confirmation.
+
 - **Operator action:** `TRUST_PROXY_HOPS` now defaults to `0` instead of `2` for deployments that relied on the previous default. Before upgrading a proxied deployment, set it to the actual number of trusted HTTP proxy hops; restrict direct API access and ensure proxies sanitize forwarding headers. Otherwise client IP rate limits and HTTPS callback detection can be incorrect. See [configuration](docs/CONFIGURATION.md).
 
 ### Added

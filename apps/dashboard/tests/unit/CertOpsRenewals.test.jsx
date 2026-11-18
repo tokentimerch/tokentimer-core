@@ -739,6 +739,12 @@ describe('CertOpsRenewals page', () => {
     fireEvent.change(screen.getByLabelText('Certificate name'), {
       target: { value: dnsName },
     });
+    fireEvent.change(screen.getByLabelText('IIS site'), {
+      target: { value: 'Default Web Site' },
+    });
+    fireEvent.change(screen.getByLabelText('IIS port'), {
+      target: { value: '443' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Review' }));
     fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
     expect(await screen.findByText('4. Attach')).toBeInTheDocument();
@@ -763,7 +769,9 @@ describe('CertOpsRenewals page', () => {
       )
     ).toBeInTheDocument();
     expect(screen.getByText(/Open Certificates later/)).toBeInTheDocument();
-    expect(screen.getByText(/inside the deployment renewal window/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/inside the deployment renewal window/)
+    ).toBeInTheDocument();
     expect(readdManagingSourceMock).not.toHaveBeenCalled();
     expect(stopManagingSourceMock).not.toHaveBeenCalled();
   });

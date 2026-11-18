@@ -10,6 +10,10 @@ The inventory search matches public properties across all management sources:
 certificate and identity IDs, names, SANs, issuers, serial numbers, algorithms,
 validity dates, key modes, source types and references, and token/profile IDs.
 Source filters include observed locations as well as management provenance.
+Use the short fingerprint to tell same-name certificates apart. The inventory
+lists confirmed Windows certificate-store or IIS use when the location is
+visible to your role. In Asset Inventory, expiry and a linked certificate's
+retirement are shown separately.
 The default **All (except retired)** view excludes revoked and decommissioned certificates. Select
 **Revoked** or **Decommissioned** to view them; fresh presence evidence adds
 **Still observed** to their lifecycle label. They never count as active.

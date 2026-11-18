@@ -39,6 +39,22 @@ import {
   sourceLabel,
 } from './certopsFormat.js';
 
+const WINDOWS_REGISTRATION_LABELS = {
+  windows_store: 'Windows certificate store',
+  iis_binding: 'IIS binding',
+  http_sys: 'HTTP.sys binding',
+};
+
+function registrationLabel(source) {
+  if (source.source !== 'agent_windows') return sourceLabel(source.source);
+  const match = source.sourceRef?.match(
+    /^[^/]+\/([^/]+)\/(windows_store|iis_binding|http_sys)\/(.+)$/
+  );
+  if (!match) return sourceLabel(source.source);
+  const [, host, kind, slot] = match;
+  return `${WINDOWS_REGISTRATION_LABELS[kind]} · ${host} · ${slot}`;
+}
+
 function SectionContent({ children }) {
   return (
     <Box py={1} sx={{ '& > :last-child': { borderBottom: 0 } }}>
@@ -110,6 +126,7 @@ function IdentityDetailSession({
   const [profiles, setProfiles] = useState([]);
   const [profileIds, setProfileIds] = useState({});
   const [showHistory, setShowHistory] = useState(false);
+  const [showStopped, setShowStopped] = useState(false);
   const [showLocationHistory, setShowLocationHistory] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -160,6 +177,7 @@ function IdentityDetailSession({
     setCertificateFields(null);
     setError('');
     setShowHistory(false);
+    setShowStopped(false);
     setShowLocationHistory(false);
     setProfileIds({});
     if (certificate.identityId) {
@@ -460,20 +478,27 @@ function IdentityDetailSession({
         (!detail.identityId ||
           source.currentIdentityId === detail.identityId) &&
         !openSourceIds.has(source.managedCertificateId)));
-  const periodSources = showHistory
-    ? detail.sources || []
-    : (detail.sources || []).filter(
-        source => activeSources.includes(source) || canRestart(source)
-      );
+  const allSources = detail.sources || [];
+  const restartableSources = detail.restartableSources || [];
+  const includeStopped = showStopped || activeSources.length === 0;
+  const hasStopped =
+    restartableSources.length > 0 || allSources.some(canRestart);
+  const periodSources = allSources.filter(source => {
+    if (activeSources.includes(source)) return true;
+    return canRestart(source) ? includeStopped : showHistory;
+  });
   const visibleSources = [
     ...periodSources,
-    ...(detail.restartableSources || []).map(source => ({
+    ...(includeStopped ? restartableSources : []).map(source => ({
       ...source,
       restartCandidate: true,
     })),
   ];
-  const hiddenPeriodCount =
-    (detail.sources || []).length - periodSources.length;
+  const hiddenPeriodCount = showHistory
+    ? 0
+    : allSources.filter(
+        source => !activeSources.includes(source) && !canRestart(source)
+      ).length;
   // Job history and deployment details follow an explicitly selected registration.
   // An immutable identity ID is never a managed certificate ID.
   const managedCertificateId = selectedManagedId;
@@ -710,9 +735,11 @@ function IdentityDetailSession({
                     key={source.managedCertificateId}
                     value={source.managedCertificateId}
                   >
-                    {sourceLabel(source.source)} ·{' '}
-                    {source.sourceRef || `Registration ${index + 1}`} ·{' '}
+                    {registrationLabel(source)} ·{' '}
                     {isEndedSource(source) ? 'Ended' : 'Current'}
+                    {registrationLabel(source) === sourceLabel(source.source)
+                      ? ` · Registration ${index + 1}`
+                      : ''}
                   </option>
                 ))}
               </Select>
@@ -726,6 +753,23 @@ function IdentityDetailSession({
                   profile.
                 </Text>
               ) : null}
+            </FormControl>
+          ) : null}
+          {hasStopped && activeSources.length ? (
+            <FormControl display='flex' alignItems='center' mb={3}>
+              <Switch
+                id='certificate-management-stopped'
+                isChecked={showStopped}
+                onChange={event => setShowStopped(event.target.checked)}
+                mr={2}
+              />
+              <FormLabel
+                htmlFor='certificate-management-stopped'
+                mb={0}
+                fontSize='sm'
+              >
+                Show stopped registrations
+              </FormLabel>
             </FormControl>
           ) : null}
           <FormControl display='flex' alignItems='center' mb={3}>
@@ -779,10 +823,11 @@ function IdentityDetailSession({
                       >
                         <Td>
                           <Text fontSize='sm' fontWeight='semibold'>
-                            {sourceLabel(source.source)}
+                            {registrationLabel(source)}
                           </Text>
                           {source.sourceRef ? (
                             <Box
+                              as='details'
                               maxW='100%'
                               overflowWrap='anywhere'
                               sx={{
@@ -792,6 +837,9 @@ function IdentityDetailSession({
                                 },
                               }}
                             >
+                              <Box as='summary' cursor='pointer' fontSize='xs'>
+                                Source reference
+                              </Box>
                               <CopyableId id={source.sourceRef} size='xs' />
                             </Box>
                           ) : null}

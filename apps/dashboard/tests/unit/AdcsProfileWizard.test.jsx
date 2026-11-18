@@ -67,7 +67,15 @@ it('ignores profile creation that completes after a workspace switch', async () 
   fireEvent.change(await screen.findByLabelText('Certificate name'), {
     target: { value: 'one.example.test' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  const review = screen.getByRole('button', { name: 'Review' });
+  const site = screen.getByLabelText('IIS site');
+  const port = screen.getByLabelText('IIS port');
+  expect(site).toHaveValue('');
+  expect(port).toHaveValue('');
+  expect(review).toBeDisabled();
+  fireEvent.change(site, { target: { value: 'Public Site' } });
+  fireEvent.change(port, { target: { value: '443' } });
+  fireEvent.click(review);
   fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
   expect(createProfileMock).toHaveBeenCalledWith(
     'ws-1',
