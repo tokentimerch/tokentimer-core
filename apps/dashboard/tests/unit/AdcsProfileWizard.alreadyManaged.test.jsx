@@ -66,6 +66,12 @@ async function openAtAttachStep(sources, expectAttach = true) {
   fireEvent.change(screen.getByLabelText('Certificate name'), {
     target: { value: 'app.example' },
   });
+  fireEvent.change(screen.getByLabelText('IIS site'), {
+    target: { value: 'Default Web Site' },
+  });
+  fireEvent.change(screen.getByLabelText('IIS port'), {
+    target: { value: '443' },
+  });
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
   if (!expectAttach) {

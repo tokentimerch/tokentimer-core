@@ -196,9 +196,16 @@ describe('ACME configuration form', () => {
   });
 
   it('only shows reload commands when a server is selected', () => {
-    mount(<ConfigStep ctx={makeCtx('certops_automate', { ...linuxAcme, reloadService: '' })} />);
+    mount(
+      <ConfigStep
+        ctx={makeCtx('certops_automate', { ...linuxAcme, reloadService: '' })}
+      />
+    );
     expect(screen.queryByText(/The agent runs a check, then/)).toBeNull();
-    fireEvent.change(screen.getByLabelText(/After issuing, reload a web server/), { target: { value: 'nginx' } });
+    fireEvent.change(
+      screen.getByLabelText(/After issuing, reload a web server/),
+      { target: { value: 'nginx' } }
+    );
     expect(screen.getByText(/The agent runs a check, then/)).toBeTruthy();
   });
 
@@ -300,7 +307,11 @@ describe('AD CS field helpers', () => {
     expect(screen.getByTestId('template-helper').textContent).toMatch(
       /common name from the CA console/
     );
-    expect(screen.getByTestId('iis-site-helper')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Choose the IIS binding when creating the renewal profile.'
+      )
+    ).toBeInTheDocument();
   });
 });
 

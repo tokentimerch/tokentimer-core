@@ -70,12 +70,7 @@ const RETIRED_STATUS_META = {
   },
 };
 
-/**
- * Resolves the badge a row should show: a retired managed-certificate state
- * (revoked/decommissioned) wins over the expiry-derived status, so retired
- * certs read as retired rather than "expired/healthy".
- */
-function effectiveStatusMeta(token, getStatusMeta) {
+function certificateRetirementStatus(token) {
   if (isRetiredStatus(token.cert_lifecycle_status)) {
     return RETIRED_STATUS_META[token.cert_lifecycle_status.toLowerCase()];
   }
@@ -96,7 +91,7 @@ function effectiveStatusMeta(token, getStatusMeta) {
       RETIRED_STATUS_META.decommissioned
     );
   }
-  return getStatusMeta(token.expiresAt);
+  return null;
 }
 
 const CATEGORY_ICON_META = {
@@ -444,13 +439,12 @@ function resolveStatusBadgeStyles(status, isLight) {
   };
 }
 
-function StatusPill({ status, styles, minW, justify = 'flex-start' }) {
+function StatusPill({ status, styles }) {
   return (
     <Box
       as='span'
       display='inline-flex'
       alignItems='center'
-      justifyContent={justify}
       bg={styles.bg}
       color={styles.color}
       border='1px solid'
@@ -461,7 +455,6 @@ function StatusPill({ status, styles, minW, justify = 'flex-start' }) {
       fontWeight='semibold'
       fontSize='xs'
       lineHeight='short'
-      minW={minW}
       flexShrink={0}
       whiteSpace='nowrap'
       sx={{ color: `${styles.color} !important` }}
@@ -508,28 +501,51 @@ function MobileMetaItem({ label, value, children }) {
   );
 }
 
-function StatusBadge({ token, getStatusMeta }) {
+function AssetStatusPills({ token, getStatusMeta }) {
   const { colorMode } = useColorMode();
-  const status = effectiveStatusMeta(token, getStatusMeta);
-  const styles = resolveStatusBadgeStyles(status, colorMode === 'light');
+  const retired = certificateRetirementStatus(token);
+  const expiry = getStatusMeta(token.expiresAt);
+  const expiryStatus =
+    retired && expiry.key === 'healthy'
+      ? { ...expiry, label: 'Within validity' }
+      : expiry;
   const managed = token.__managedCert;
   const lifecycle = certificateLifecycleDescriptor(managed);
-  // Skip the lifecycle badge when it says the same thing as the pill above
-  // it (e.g. both read "expired") instead of adding a distinct state like
-  // "provisioning" or "renewing".
-  const managedStatusIsRedundant =
-    lifecycle.status && String(lifecycle.status).toLowerCase() === status.key;
+  const showLifecycle =
+    lifecycle.status && String(lifecycle.status).toLowerCase() !== expiry.key;
+  const isLight = colorMode === 'light';
 
   return (
-    <HStack spacing={2} flexWrap='wrap'>
-      <StatusPill status={status} styles={styles} />
-      {lifecycle.status &&
-      !isRetiredStatus(lifecycle.status) &&
-      !managedStatusIsRedundant ? (
+    <>
+      <Tooltip label='Asset expiry' shouldWrapChildren>
+        <StatusPill
+          status={expiryStatus}
+          styles={resolveStatusBadgeStyles(expiryStatus, isLight)}
+        />
+      </Tooltip>
+      {retired ? (
+        <Tooltip
+          label='Managed certificate lifecycle status'
+          shouldWrapChildren
+        >
+          <StatusPill
+            status={retired}
+            styles={resolveStatusBadgeStyles(retired, isLight)}
+          />
+        </Tooltip>
+      ) : showLifecycle ? (
         <Tooltip label='Managed certificate lifecycle status'>
           <CertificateLifecycleBadge certificate={managed} />
         </Tooltip>
       ) : null}
+    </>
+  );
+}
+
+function StatusBadge({ token, getStatusMeta }) {
+  return (
+    <HStack spacing={2} flexWrap='wrap'>
+      <AssetStatusPills token={token} getStatusMeta={getStatusMeta} />
       {token.monitor_health_status && (
         <Tooltip
           label={`${token.monitor_url || 'Endpoint'}: ${token.monitor_health_status}${
@@ -919,9 +935,6 @@ function AssetInventoryMobileCard({
   onToggleSelect,
   helpers,
 }) {
-  const { colorMode } = useColorMode();
-  const status = effectiveStatusMeta(token, helpers.getStatusMeta);
-  const statusStyles = resolveStatusBadgeStyles(status, colorMode === 'light');
   const cardTitleColor = useColorModeValue('gray.900', 'white');
   const cardBg = useColorModeValue('white', 'rgba(13, 19, 26, 0.96)');
   const cardHoverBg = useColorModeValue('gray.50', 'rgba(17, 24, 39, 0.98)');
@@ -1049,11 +1062,9 @@ function AssetInventoryMobileCard({
               ) : null}
               <Box mt={2}>
                 <HStack spacing={2} flexWrap='wrap'>
-                  <StatusPill
-                    status={status}
-                    styles={statusStyles}
-                    minW='96px'
-                    justify='center'
+                  <AssetStatusPills
+                    token={token}
+                    getStatusMeta={helpers.getStatusMeta}
                   />
                 </HStack>
               </Box>

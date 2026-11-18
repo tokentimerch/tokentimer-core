@@ -289,16 +289,15 @@ export function evaluateVerification({
         const ready =
           (adcs?.issuers || []).some(i => i.confirmed && i.safe) &&
           (adcs?.profiles || 0) > 0;
-        // The server sees the issuer, the profile and whether a CA-signed
-        // certificate reached the install step.
+        // The installed-enrollment count is reported for the whole workspace.
         const installed = (adcs?.installedEnrollments || 0) > 0;
         checks.push(
           installed
             ? check(
                 'adcs',
                 CHECK_STATUS.PASS,
-                'A certificate from your CA is installed',
-                'An enrollment finished and the certificate is bound to the HTTPS listener.'
+                'The workspace reports an installed AD CS certificate',
+                'Confirm the enrollment for your certificate in Certificate Management and check the HTTPS binding.'
               )
             : check(
                 'adcs',
