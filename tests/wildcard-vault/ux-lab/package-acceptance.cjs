@@ -22,7 +22,7 @@ function create({ root, build, receiptPath, artifactsRoot }) {
     const sink = path.join(root, name, "material-token");
     if (fs.existsSync(sink)) privateFile(path.join(root, name, "credential-history", crypto.randomUUID() + ".vault-token"), fs.readFileSync(sink));
   }
-  async function request(route, method = "GET", body, token = "ux-lab-only-vault-token") {
+  async function request(route, method = "GET", body, token = "ux-lab-only-vault-token", deniedStatuses) {
     const result = await new Promise((resolve, reject) => {
       const req = https.request(new URL(route, "https://127.0.0.1:18200/v1/"), {
         method, ca: fs.readFileSync(path.join(root, "transport.crt")), rejectUnauthorized: true,
@@ -34,6 +34,10 @@ function create({ root, build, receiptPath, artifactsRoot }) {
       req.setTimeout(10000, () => req.destroy(new Error("Vault runbook request timed out")));
       req.on("error", reject); req.end(body ? JSON.stringify(body) : undefined);
     });
+    if (deniedStatuses) {
+      assert.ok(deniedStatuses.includes(result.status), "OpenBao did not refuse a scoped role probe");
+      return result.status;
+    }
     assert.ok(result.status >= 200 && result.status < 300, "Vault runbook request failed; private response withheld");
     return result.body;
   }
@@ -143,6 +147,36 @@ auto_auth {
     assert.match(secretId, ids);
     return { roleId, secretId };
   }
+  async function observeOpenBaoRoles({ workspaceId, groupId }) {
+    const { Id, sha256 } = require("./azure-operator-review/openbao-operator-observer.cjs");
+    for (const id of [workspaceId, groupId]) assert.match(id, Id);
+    const credential = name => {
+      assert.equal(roles.get(name)?.role, `tt-${name}-${groupId}`);
+      const read = file => fs.readFileSync(path.join(root, name, file), "utf8").trim();
+      const roleId = read("vault-agent/role-id");
+      const secretId = read("vault-agent/secret-id");
+      for (const id of [roleId, secretId]) assert.match(id, Id);
+      return { roleId, secretId, token: read("material-token") };
+    };
+    const issuer = credential("issuer");
+    const consumer = credential("nginx");
+    assert.notEqual(issuer.roleId, consumer.roleId);
+    assert.notEqual(issuer.secretId, consumer.secretId);
+    const consumerWriteStatus = await request(
+      `secret/data/tokentimer/${workspaceId}/${groupId}/bundles/${crypto.randomUUID()}`,
+      "POST", { options: { cas: 1 }, data: { scopeProbe: true } }, consumer.token, [403],
+    );
+    const facts = [];
+    for (const [role, current, opposite] of [["issuer", issuer, consumer], ["consumer", consumer, issuer]]) {
+      const renewed = await request("auth/token/renew-self", "POST", {}, current.token);
+      assert.equal(renewed.auth.renewable, true);
+      await request("auth/approle/login", "POST", { role_id: opposite.roleId, secret_id: current.secretId },
+        current.token, [400, 403]);
+      facts.push({ role, subjectSha256: sha256(current.roleId), tokenRenewals: 1, crossRoleDenials: 1,
+        crossRoleDeniedOperation: "opposite-identity-acquisition", consumerWriteStatus: role === "consumer" ? consumerWriteStatus : null });
+    }
+    return facts;
+  }
 
   return {
     prepare() {
@@ -151,7 +185,7 @@ auto_auth {
       files = extracted.files;
       return extracted.root;
     },
-    verify(packageRoot) { verifyInstalled(files, packageRoot); }, rotate, stop, prepareNativeRole,
+    verify(packageRoot) { verifyInstalled(files, packageRoot); }, rotate, stop, prepareNativeRole, observeOpenBaoRoles,
     async revoke(name) {
       await stop(name); rememberToken(name);
       await request("auth/token/revoke", "POST", { token: fs.readFileSync(path.join(root, name, "material-token"), "utf8").trim() });
