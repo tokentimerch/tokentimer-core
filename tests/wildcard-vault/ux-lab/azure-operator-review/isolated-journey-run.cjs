@@ -3,16 +3,21 @@
 // must already exist and their identities are verified by docker-role-transport.
 const {spawn}=require("node:child_process"),crypto=require("node:crypto"),path=require("node:path");
 const {createBridge}=require("./role-control-bridge.cjs"),{createDockerSender}=require("./docker-role-transport.cjs");
-async function run({project,issuerContainerId,consumerContainerId,roleMounts,phase="all"}) {
+async function withControl({project,issuerContainerId,consumerContainerId,roleMounts}, observe) {
   const send=createDockerSender({project,issuerContainerId,consumerContainerId,roleMounts}),token=crypto.randomBytes(32).toString("hex");
   const server=createBridge({send,token});
   await new Promise((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve);});
   try {
-    return await new Promise((resolve,reject)=>{
-      const child=spawn(process.execPath,[path.join(__dirname,"..","journey.cjs"),phase],{stdio:"inherit",env:{...process.env,TT_UX_CONTROL_PORT:String(server.address().port),TT_UX_CONTROL_TOKEN:token}});
-      child.once("error",reject);child.once("exit",(code,signal)=>code===0?resolve():reject(new Error(`journey failed (${signal || code})`)));
-    });
+    return await observe({ port: String(server.address().port), token });
   } finally { await new Promise(resolve=>server.close(resolve)); }
 }
+async function run({phase="all",...environment}) {
+  return withControl(environment, ({ port, token }) => new Promise((resolve,reject)=>{
+    const child=spawn(process.execPath,[path.join(__dirname,"..","journey.cjs"),phase],
+      {stdio:"inherit",env:{...process.env,TT_UX_CONTROL_PORT:port,TT_UX_CONTROL_TOKEN:token}});
+    child.once("error",reject);
+    child.once("exit",(code,signal)=>code===0?resolve():reject(new Error("journey failed (" + (signal || code) + ")")));
+  }));
+}
 if(require.main===module){const [project,issuerContainerId,consumerContainerId,phase]=process.argv.slice(2);run({project,issuerContainerId,consumerContainerId,phase}).catch(()=>{process.stderr.write("Isolated journey failed; inspect protected local evidence.\n");process.exitCode=1;});}
-module.exports={run};
+module.exports={run,withControl};

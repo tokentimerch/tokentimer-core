@@ -18,6 +18,7 @@ const root = "/lab";
 let build = "/lab/experimental-agent", acceptance, azurePackage;
 const roleBuilds = new Map();
 const azureObservations = new Map();
+const signedJobs = new Map();
 const packageMode = process.env.TT_UX_PACKAGE_ACCEPTANCE === "1";
 const source = "/repo/packages/agent";
 const agents = new Map();
@@ -55,6 +56,19 @@ function run(command, args) {
 function reply(res, value, status = 200) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(value));
+}
+function observeSignedDispatch(envelope, name, expectedId) {
+  const build = roleBuilds.get(name);
+  const { readSigningKeyPin } = require(path.join(build, "src/config"));
+  const { verifyJobEnvelope } = require(path.join(build, "src/signing"));
+  const pin = readSigningKeyPin(path.join(root, name));
+  if (!pin) return;
+  const verdict = verifyJobEnvelope({ claimed: envelope, publicKeyPem: pin.publicKeyPem,
+    pinnedSigningKeyId: pin.signingKeyId });
+  const jobId = verdict.job?.jobId;
+  if (!verdict.allowed || verdict.job.agentId !== expectedId || !/^[a-f0-9-]{36}$/.test(jobId || "")) return;
+  assert.ok(signedJobs.size < 128 || signedJobs.has(jobId), "Azure signed dispatch limit exceeded");
+  signedJobs.set(jobId, { agent: name, signerKeyIdSha256: crypto.createHash("sha256").update(pin.signingKeyId).digest("hex") });
 }
 function forward(req, res, host, port, { vault = false } = {}) {
   const claim = host === "api" && req.url === "/api/v1/certops/agent/jobs/claim";
@@ -98,9 +112,12 @@ function forward(req, res, host, port, { vault = false } = {}) {
             for (const envelope of result.jobs || []) {
               const signed = envelope.envelopeVersion === 2
                 ? JSON.parse(Buffer.from(envelope.payloadB64, "base64")) : envelope;
-              if (!signed.materialDeployment) continue;
-              for (const name of ["nginx", "haproxy"]) {
-                if (config(name).agentId === signed.agentId) {
+              const names = azurePackage ? roleBuilds.keys() : ["nginx", "haproxy"];
+              for (const name of names) {
+                const file = path.join(root, name, "config.json");
+                if (fs.existsSync(file) && JSON.parse(fs.readFileSync(file, "utf8")).agentId === signed.agentId) {
+                  if (azurePackage) observeSignedDispatch(envelope, name, signed.agentId);
+                  if (!signed.materialDeployment) continue;
                   dispatches.set(name, structuredClone(envelope));
                   credentials.set(name, req.headers.authorization);
                 }
@@ -357,6 +374,12 @@ async function control(body) {
     const candidates = selected.phase === "resume" ? ["interrupt", "resume"] : [selected.phase];
     return Object.fromEntries(candidates.map(phase => [phase, readEvents({ ...selected, phase })]));
   }
+  if (action === "signed-job-proof") {
+    assert.ok(azurePackage && /^[a-f0-9-]{36}$/.test(body.jobId || ""));
+    const proof = signedJobs.get(body.jobId);
+    assert.equal(proof?.agent, name, "verified signed dispatch for requested agent absent");
+    return { signerKeyIdSha256: proof.signerKeyIdSha256 };
+  }
   const { action, name = "issuer" } = body;
   assert.ok(["issuer", "nginx", "haproxy", "cancel-issuer"].includes(name));
   if (action === "package-proof") {
@@ -438,7 +461,8 @@ async function control(body) {
     assert.ok(["nginx", "haproxy"].includes(name));
     return new Promise((resolve, reject) => {
       const socket = tls.connect({ host: "127.0.0.1", port: name === "nginx" ? 8443 : 9443,
-        servername: name + ".wildcard.test", ca: fs.readFileSync("/lab/issuer-root.pem"), rejectUnauthorized: true });
+        servername: process.env.TT_UX_CERTIFICATE_MODE === "ordinary" ? "nginx.wildcard.test" : name + ".wildcard.test",
+        ca: fs.readFileSync("/lab/issuer-root.pem"), rejectUnauthorized: true });
       socket.setTimeout(5000, () => socket.destroy(new Error("TLS proof timed out")));
       socket.once("error", reject);
       socket.once("secureConnect", () => {

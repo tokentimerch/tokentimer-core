@@ -4,7 +4,7 @@
 const assert = require("node:assert/strict");
 const ROLE = Object.freeze({ issuer: "issuer", nginx: "consumer", haproxy: "consumer" });
 const COMMON = new Set(["configure", "enroll", "start", "stop", "facts", "prepare-signed-dry-run", "package-proof",
-  "rotate-material-token", "revoke-material-token", "azure-provider-observe", "azure-provider-events"]);
+  "rotate-material-token", "revoke-material-token", "azure-provider-observe", "azure-provider-events", "signed-job-proof"]);
 const ISSUER = new Set(["fault", "clear-fault", "scanner-requests"]);
 const CONSUMER = new Set(["enable-discovery", "fail-reload", "repair-reload", "reconcile-binding", "tls-proof", "replace-local-material", "hold-reload", "release-reload", "transport-fault"]);
 function authorizeRole(body, expectedRole) {
