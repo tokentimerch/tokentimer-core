@@ -3,8 +3,8 @@
 // must already exist and their identities are verified by docker-role-transport.
 const {spawn}=require("node:child_process"),crypto=require("node:crypto"),path=require("node:path");
 const {createBridge}=require("./role-control-bridge.cjs"),{createDockerSender}=require("./docker-role-transport.cjs");
-async function withControl({project,issuerContainerId,consumerContainerId,roleMounts}, observe) {
-  const send=createDockerSender({project,issuerContainerId,consumerContainerId,roleMounts}),token=crypto.randomBytes(32).toString("hex");
+async function withControl({project,issuerContainerId,consumerContainerId,roleMounts,execute}, observe) {
+  const send=createDockerSender({project,issuerContainerId,consumerContainerId,roleMounts,execute}),token=crypto.randomBytes(32).toString("hex");
   const server=createBridge({send,token});
   await new Promise((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve);});
   try {

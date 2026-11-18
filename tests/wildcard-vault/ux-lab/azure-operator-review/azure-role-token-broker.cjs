@@ -14,6 +14,7 @@ const ROLES = ["issuer", "consumer"];
 const UID = { issuer: 10001, consumer: 10002 };
 const MISMATCH_CODES = [70021, 700213];
 const CERTIFICATE_MISMATCH_CODE = 700027;
+const APPLICATION_NOT_FOUND = 700016;
 const GUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const ID = /^[1-9][0-9]{0,15}$/;
 const SHA = /^[a-f0-9]{40}$/;
@@ -60,7 +61,7 @@ function validateAssertion(value, binding, role, now) {
 // Core's provider transport intentionally discards every error body. This
 // exchange-only adapter recognizes a closed set of Entra rejection codes and
 // keeps bodies and OAuth diagnostics out of errors, logs and observations.
-async function requestEntra(url, { method, headers, body, timeoutMs, maxBytes }, fetchImpl = fetch) {
+async function requestEntra(url, { method, headers, body, timeoutMs, maxBytes }, fetchImpl = fetch, retirement = false) {
   const bad = "AZURE_BROKER_ENTRA_REFUSED";
   requireCondition(url.origin === "https://login.microsoftonline.com" &&
     GUID.test(url.pathname.split("/")[1]) && url.pathname.endsWith("/oauth2/v2.0/token") &&
@@ -87,7 +88,8 @@ async function requestEntra(url, { method, headers, body, timeoutMs, maxBytes },
     }
     return { status: response.status, json: { error: value.error === "invalid_client" ? "invalid_client" : null,
       error_codes: Array.isArray(value.error_codes)
-        ? value.error_codes.filter(code => MISMATCH_CODES.includes(code) || code === CERTIFICATE_MISMATCH_CODE)
+        ? value.error_codes.filter(code =>
+          MISMATCH_CODES.includes(code) || code === CERTIFICATE_MISMATCH_CODE || retirement && code === APPLICATION_NOT_FOUND)
         : [] } };
   } catch {
     throw new Error(bad);
@@ -181,6 +183,34 @@ function createBroker(options) {
     io: fs, platform: process.platform, owner: process.geteuid?.(), now: Date.now, setTimeout, clearTimeout,
     request: requestEntra, createSink: createTokenSink,
   });
+}
+
+function createRetirementProbe({ certificateRoot, issuer, consumer, deadlineMs }) {
+  const owner = process.geteuid?.();
+  requireCondition(process.platform === "linux" && owner === 0, "AZURE_BROKER_LINUX_REQUIRED");
+  for (const source of [issuer, consumer])
+    requireCondition(GUID.test(source?.tenantId) && GUID.test(source?.clientId), "AZURE_BROKER_IDENTITY_REFUSED");
+  requireCondition(issuer.tenantId === consumer.tenantId && issuer.clientId !== consumer.clientId,
+    "AZURE_BROKER_IDENTITIES_MUST_DIFFER");
+  const check = pinnedDirectory(certificateRoot, owner, owner, fs);
+  const roles = { issuer, consumer };
+  const source = certificateSource({ roleConfig: roles, credentialRoot: certificateRoot, now: Date.now, deadlineMs,
+    read(file) {
+      check();
+      return readProjection(file, owner, fs);
+    },
+  });
+  return async () => {
+    requireCondition(Date.now() + 10000 < deadlineMs, "AZURE_BROKER_DEADLINE_OR_STOP");
+    const observations = await Promise.all(ROLES.map(async role => {
+      const { assertion } = source.acquire(role);
+      const response = await exchangeAssertion(roles[role], assertion, (url, options) =>
+        requestEntra(url, options, fetch, true));
+      return [400, 401].includes(response.status) && response.json?.error === "invalid_client" &&
+        response.json.error_codes?.includes(APPLICATION_NOT_FOUND);
+    }));
+    return observations.every(Boolean);
+  };
 }
 
 function broker({ binding, projectionRoot, certificateRoot, deadlineMs, issuer, consumer }, deps) {
@@ -329,4 +359,4 @@ function broker({ binding, projectionRoot, certificateRoot, deadlineMs, issuer, 
   }, stop, observations, signal: controller.signal };
 }
 
-module.exports = { createBroker, _offline: { broker, validateAssertion, requestEntra, roleTrust, certificateSource } };
+module.exports = { createBroker, createRetirementProbe, _offline: { broker, validateAssertion, requestEntra, roleTrust, certificateSource } };

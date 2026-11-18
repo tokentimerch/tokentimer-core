@@ -240,6 +240,9 @@ test("Entra transport keeps only the reviewed error shape and refuses oversized 
   const mismatch = await requestEntra(url, input, async () =>
     Response.json({ error: "invalid_client", error_codes: [700027, 700016] }, { status: 401 }));
   assert.deepEqual(mismatch, { status: 401, json: { error: "invalid_client", error_codes: [700027] } });
+  const retired = await requestEntra(url, input, async () =>
+    Response.json({ error: "invalid_client", error_codes: [700016, 700227] }, { status: 400 }), true);
+  assert.deepEqual(retired, { status: 400, json: { error: "invalid_client", error_codes: [700016] } });
   await assert.rejects(requestEntra(new URL("https://example.test/"), input, () => { throw new Error("unexpected call"); }),
     { message: "AZURE_BROKER_ENTRA_REFUSED" });
   await assert.rejects(requestEntra(url, input, async () => new Response("x".repeat(32769), { status: 400 })),

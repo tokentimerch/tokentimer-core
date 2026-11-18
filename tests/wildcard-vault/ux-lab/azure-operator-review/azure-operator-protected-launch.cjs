@@ -8,7 +8,7 @@ const { describeRoles, assertRoleMounts } = require("./azure-isolated-role.cjs")
 const { createDataPlane } = require("./azure-operator-data-plane.cjs");
 const { exercise } = require("./azure-operator-public-journey.cjs");
 const { withControl } = require("./isolated-journey-run.cjs");
-const { inspectCandidateImages, inspectDocker } = require("./candidate-images.cjs");
+const { inspectCandidateImages } = require("./candidate-images.cjs");
 const { requireFresh } = require("./project-freshness.cjs");
 const { stage } = require("./stage-supplied-package.cjs");
 const { createDockerTransport } = require("./docker-transport.cjs");
@@ -22,7 +22,7 @@ const lab = path.resolve(__dirname, "..");
 const harness = path.resolve(lab, "../../..");
 const runCommand = (name, args, env = process.env) =>
   execFileSync(name, args, { env, encoding: "utf8", timeout: 300000, maxBuffer: 1024 * 1024 });
-const inside = (parent, child) => parent === child || child.startsWith(parent + "/");
+const inside = (parent, child) => parent === child || parent === "/" || child.startsWith(parent + "/");
 
 function trustedBinding(env) {
   assert.equal(process.platform, "linux");
@@ -44,6 +44,34 @@ function write(file, value) { fs.writeFileSync(file, JSON.stringify(value) + "\n
 function hostEnvironment(env) {
   const names = ["PATH", "HOME", "LANG", "DOCKER_CONFIG", "XDG_RUNTIME_DIR"];
   return Object.fromEntries(names.filter(name => env[name] !== undefined).map(name => [name, env[name]]));
+}
+function dockerCli(env) {
+  return (args, options = {}) => execFileSync("docker", args, { env: hostEnvironment(env), encoding: "utf8",
+    timeout: 30000, maxBuffer: 1024 * 1024, ...options });
+}
+
+async function cleanupLocal(owner, env = process.env) {
+  const { runId, sourceSha } = trustedBinding(env);
+  assert.equal(owner.runId, runId);
+  assert.equal(owner.sourceSha, sourceSha);
+  assert.equal(owner.project, "tt-wildcard-ux-qual-azure-" + runId);
+  const project = owner.project;
+  const root = path.join(fs.realpathSync(env.RUNNER_TEMP), project);
+  const receipt = path.join(root, "owned.json");
+  if (!fs.existsSync(receipt)) return;
+  assert.equal(fs.realpathSync(root), root);
+  const stat = fs.lstatSync(receipt);
+  assert.ok(stat.isFile() && stat.uid === 0 && (stat.mode & 0o777) === 0o600 && stat.size < 8192);
+  assert.deepEqual(JSON.parse(fs.readFileSync(receipt, "utf8")), owner);
+  await cleanup({ project, transport: createDockerTransport({ project, execute: dockerCli(env) }) });
+  const output = path.join(root, project);
+  runCommand(process.execPath, [path.join(lab, "operator-ca-setup.cjs"), "dispose",
+    output + "-operator-ca-private", path.join(output, "operator-ca")], hostEnvironment(env));
+  for (const role of ["issuer", "consumer"]) {
+    const directory = path.join(root, role);
+    fs.rmSync(path.join(directory, "token.json"), { force: true });
+    if (fs.existsSync(directory)) fs.rmdirSync(directory);
+  }
 }
 
 async function runProtected({ approved, packageDirectory, candidateRepo, images, evidenceDirectory, credentialRoot, authority, env = process.env }) {
@@ -67,11 +95,15 @@ async function runProtected({ approved, packageDirectory, candidateRepo, images,
   for (const root of [candidate, harness]) {
     assert.ok(!inside(root, runRoot) && !inside(root, certificateRoot), "protected inputs cannot live in a mounted checkout");
   }
-  assert.equal(runCommand("git", ["-C", candidate, "rev-parse", "HEAD"]).trim(), packageArtifact.candidateSha);
+  assert.ok(!inside(runRoot, certificateRoot) && !inside(certificateRoot, runRoot), "work and certificate roots overlap");
+  assert.equal(runCommand("git", ["-c", "safe.directory=" + candidate, "-C", candidate, "rev-parse", "HEAD"], hostEnvironment(env)).trim(),
+    packageArtifact.candidateSha);
   assert.ok(fs.statSync(path.join(candidate, "apps/dashboard/dist/index.html")).isFile(), "candidate dashboard must be built");
   const { apiImage, workerImage, roleImage } = images;
-  inspectCandidateImages({ candidateSha: packageArtifact.candidateSha, apiImage, workerImage, inspect: inspectDocker });
-  const [roleBuild] = inspectDocker(roleImage);
+  const docker = dockerCli(env);
+  const inspect = id => JSON.parse(docker(["image", "inspect", id]));
+  inspectCandidateImages({ candidateSha: packageArtifact.candidateSha, apiImage, workerImage, inspect });
+  const [roleBuild] = inspect(roleImage);
   assert.match(roleImage, /^sha256:[a-f0-9]{64}$/);
   assert.equal(roleBuild.Id, roleImage);
   assert.equal(roleBuild.Config.Labels["io.tokentimer.certops.source-sha"], packageArtifact.candidateSha);
@@ -93,13 +125,14 @@ async function runProtected({ approved, packageDirectory, candidateRepo, images,
   const compose = (...args) => runCommand("docker", ["compose", "--project-name", project,
     "-f", path.join(lab, "compose.yaml"), "-f", path.join(lab, "operator-ca.compose.yaml"),
     "-f", path.join(__dirname, "compose.azure.isolated.yaml"), "--profile", "worker", ...args], composeEnv);
-  const ca = (action) => runCommand(process.execPath, [path.join(lab, "operator-ca-setup.cjs"), action, caPrivate, caOutput]);
+  const ca = (action) => runCommand(process.execPath, [path.join(lab, "operator-ca-setup.cjs"), action, caPrivate, caOutput],
+    hostEnvironment(env));
   const roleMounts = { image: roleImage, issuerSink, consumerSink, certificateRoot, dnsCredential: path.join(caOutput, "dns.json") };
   let broker, prepared = false;
 
   return runOperatorQualification({ profile: PROFILE, context, outputDirectory: evidenceDirectory,
     async observe() {
-      await requireFresh(project);
+      await requireFresh(project, createDockerTransport({ project, execute: docker }));
       fs.mkdirSync(runRoot, { mode: 0o700 });
       prepared = true;
       write(path.join(runRoot, "owned.json"), owner);
@@ -125,13 +158,13 @@ async function runProtected({ approved, packageDirectory, candidateRepo, images,
       await broker.start();
       ca("create");
       compose("up", "-d", "operator-ca", "operator-dns");
-      const [network] = JSON.parse(runCommand("docker", ["network", "inspect", project + "_operator-ca"]));
+      const [network] = JSON.parse(docker(["network", "inspect", project + "_operator-ca"]));
       assert.equal(network.Internal, true);
       assert.equal(network.Labels["com.docker.compose.project"], project);
       for (const service of ["operator-ca", "operator-dns"]) {
         const id = compose("ps", "-q", service).trim();
         assert.match(id, /^[a-f0-9]{64}$/);
-        const [container] = JSON.parse(runCommand("docker", ["inspect", id]));
+        const [container] = JSON.parse(docker(["inspect", id]));
         assert.ok(!Object.values(container.NetworkSettings.Ports || {}).some(Boolean), "private CA endpoint published");
       }
       compose("run", "--rm", "--no-deps", "operator-ca-init");
@@ -139,11 +172,11 @@ async function runProtected({ approved, packageDirectory, candidateRepo, images,
       const roleIds = Object.fromEntries(["issuer", "consumer"].map(role => {
         const id = compose("ps", "-q", role).trim();
         assert.match(id, /^[a-f0-9]{64}$/);
-        const [record] = JSON.parse(runCommand("docker", ["inspect", id]));
+        const [record] = JSON.parse(docker(["inspect", id]));
         assertRoleMounts({ ...roleMounts, record, project, role });
         return [role, id];
       }));
-      const results = await withControl({ project, issuerContainerId: roleIds.issuer, consumerContainerId: roleIds.consumer, roleMounts },
+      const results = await withControl({ project, issuerContainerId: roleIds.issuer, consumerContainerId: roleIds.consumer, roleMounts, execute: docker },
         async ({ port, token }) => {
           const config = Object.fromEntries(Object.entries(composeEnv).filter(([name]) => name.startsWith("TT_UX_")));
           Object.assign(config, { TT_WILDCARD_UX_OUTPUT: output, TT_UX_CONTROL_PORT: port, TT_UX_CONTROL_TOKEN: token });
@@ -168,15 +201,10 @@ async function runProtected({ approved, packageDirectory, candidateRepo, images,
     },
     async teardown() {
       const stopped = await Promise.allSettled([broker?.stop()]);
-      const results = await Promise.allSettled([Promise.resolve().then(() => authority.removeAndVerify(owner)), (async () => {
-        if (!prepared) return;
-        await cleanup({ project, transport: createDockerTransport({ project }) });
-        ca("dispose");
-        for (const directory of [issuerSink, consumerSink]) {
-          fs.rmSync(path.join(directory, "token.json"), { force: true });
-          if (fs.existsSync(directory)) fs.rmdirSync(directory);
-        }
-      })()]);
+      const results = await Promise.allSettled([
+        Promise.resolve().then(() => authority.removeAndVerify(owner)),
+        prepared ? cleanupLocal(owner, env) : Promise.resolve(),
+      ]);
       assert.ok([...stopped, ...results].every(result => result.status === "fulfilled"), "operator teardown failed");
       const removed = results[0].value;
       assert.ok(removed.vaultAbsent && removed.roleAssignmentsAbsent && removed.appsAndCredentialsAbsent,
@@ -189,4 +217,4 @@ async function runProtected({ approved, packageDirectory, candidateRepo, images,
   });
 }
 
-module.exports = { runProtected };
+module.exports = { runProtected, cleanupLocal };
