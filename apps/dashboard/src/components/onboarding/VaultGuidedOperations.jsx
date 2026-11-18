@@ -1004,9 +1004,9 @@ export function VaultRolloutGuide({
                       <Text fontSize='sm'>
                         Merge this configuration into this consumer&apos;s
                         existing agent file. Keep its enrolled identity and
-                        credential settings. Use its own Vault Agent role and
-                        prepare the destination paths in the preceding step,
-                        then restart the agent.
+                        credential settings. Use its own read-only store
+                        credentials and prepare the destination paths in the
+                        preceding step, then restart the agent.
                         {filesOnly
                           ? ' No web server, reload command or TLS probe is required.'
                           : ' Configure the selected service to use these paths.'}
@@ -1202,7 +1202,7 @@ export function VaultRolloutGuide({
             >
               {published.map(v => (
                 <option key={v.id} value={v.id}>
-                  Vault version {v.provider_version} · expires{' '}
+                  Provider version {v.provider_version} · expires{' '}
                   {new Date(v.valid_to).toISOString().slice(0, 10)}
                 </option>
               ))}

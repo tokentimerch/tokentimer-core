@@ -219,11 +219,9 @@ export function requiredCapabilities(objective, infrastructure) {
     return ['windows-cert-store-v1', 'iis-binding-v1', 'adcs-enroll-v1'];
   }
   if (objective === 'vault') {
-    return [
-      'material-store-vault-kv2-v1',
-      'certificate-publication-v1',
-      'deploy-from-store-v1',
-    ];
+    // This is the issuer step, before the operator selects a material provider.
+    // The store and consumer steps check the selected provider and each role.
+    return ['certificate-publication-v1'];
   }
   return [];
 }

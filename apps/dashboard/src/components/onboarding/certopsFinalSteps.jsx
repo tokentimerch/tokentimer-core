@@ -22,11 +22,9 @@ import { CopyBlock, ErrorText } from './blocks.jsx';
 import {
   agentOnPlatform,
   candidateAgents,
-  capabilityGap,
   effectiveInfrastructure,
   pickGoalAgent,
   reportedCertificates,
-  requiredCapabilities,
 } from './certopsMatrix.js';
 import {
   buildVaultConfigs,
@@ -200,13 +198,20 @@ function DiscoveredCertificateStep({ ctx }) {
   );
 }
 
+function vaultRolloutCapabilityGap(declared) {
+  return [
+    'material-store-vault-kv2-v1',
+    'certificate-publication-v1',
+    'deploy-from-store-v1',
+  ].filter(capability => !declared.includes(capability));
+}
+
 /**
  * Generated configuration never proves delivery. Completion requires a
  * rollout recorded as installed; live verification is a separate assurance.
  */
 export function vaultOutcome({ declaredByAgents, distribution }) {
-  const required = requiredCapabilities('vault', 'linux');
-  const missing = required.filter(c => !declaredByAgents.includes(c));
+  const missing = vaultRolloutCapabilityGap(declaredByAgents);
   if (distribution?.verified) return { level: 'verified', missing: [] };
   if (distribution?.completed) return { level: 'installed', missing: [] };
   if (missing.length === 0 && distribution?.groups > 0) {
@@ -373,7 +378,7 @@ export function VaultStep({ ctx }) {
     declaredByAgents: declared,
     distribution,
   });
-  const gap = capabilityGap('vault', 'linux', declared);
+  const gap = vaultRolloutCapabilityGap(declared);
   const backlogMessage = outboxBacklogMessage(ctx.summary?.certops);
   const [pub, setPub] = useState({ job: null, busy: false, error: '' });
   const [issuerStopped, setIssuerStopped] = useState(false);

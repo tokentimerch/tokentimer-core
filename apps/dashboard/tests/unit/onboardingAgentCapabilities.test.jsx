@@ -76,15 +76,11 @@ const PICKS = [
     required: ['windows-cert-store-v1', 'iis-binding-v1', 'adcs-enroll-v1'],
   },
   {
-    name: 'Vault on Linux',
+    name: 'Shared distribution issuer on Linux',
     goal: 'certops_vault',
     certops: { objective: 'vault', infrastructure: 'linux' },
     agent: realAgent('linux', { commandProfiles: ['certbot'] }),
-    required: [
-      'material-store-vault-kv2-v1',
-      'certificate-publication-v1',
-      'deploy-from-store-v1',
-    ],
+    required: ['certificate-publication-v1'],
   },
 ];
 
@@ -194,7 +190,7 @@ describe('a truly missing capability keeps the step open and says how to fix it'
   it.each([
     ['AD CS', PICKS[4], 'adcs-enroll-v1'],
     ['automate on Windows', PICKS[3], 'iis-binding-v1'],
-    ['Vault', PICKS[5], 'deploy-from-store-v1'],
+    ['shared distribution issuer', PICKS[5], 'certificate-publication-v1'],
   ])('%s without %s', (_n, pick, missing) => {
     const agent = strip(pick.agent, missing);
     expect(agentStepStatus(pick, agent)).toBe('current');

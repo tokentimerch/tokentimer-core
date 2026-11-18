@@ -115,12 +115,11 @@ actually ran, and the disagreement is undetectable until the renewal fails.
    instead of failing reconciliation on a duplicate name. The upsert refreshes
    `renewalProfile` but preserves an existing `renew_before_days`, so an operator
    edit to the renewal lead time survives re-derivation.
-10. **Renewal timing stays a two-level model.** The global default is
-    `CERTOPS_RENEWAL_THRESHOLD_DAYS` (30). A profile's `renew_before_days`
-    overrides it for its own certificates via
-    `COALESCE(cp.renew_before_days, <global>)` in the due-certificate query.
-    Editing a derived profile is therefore the supported way to give one
-    certificate a longer runway than the fleet.
+10. **Renewal timing uses a profile override and a fleet policy.** A profile's
+    `renew_before_days` takes priority. Without an override, the scheduler uses
+    a configured `CERTOPS_RENEWAL_THRESHOLD_DAYS` or adapts the lead time to known
+    short lifetimes, with a 30-day fallback. See the
+    [CertOps configuration reference](../CONFIGURATION.md#certops-certificate-operations).
 11. **Every scheduler outcome is a metric series.**
     `certops_renewal_scheduler_certificates` is labelled by `outcome`:
     `scanned`, `created`, `replayed`, `skipped_paused`, `skipped_ca_cap`,

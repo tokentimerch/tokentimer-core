@@ -117,7 +117,7 @@ const failureReasons = {
 const storeProviders = {
   'vault-kv2': 'HashiCorp Vault KV v2',
   'openbao-kv2': 'OpenBao KV v2',
-  'azure-key-vault': 'Azure Key Vault',
+  'azure-key-vault': 'Azure Key Vault Secrets',
 };
 const EMPTY_ROWS = [];
 function SectionBody({ children }) {
