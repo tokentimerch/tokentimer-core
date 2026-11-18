@@ -178,7 +178,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
     assert.ok(claimed.jobs.some((row) => String(row.id ?? row.jobId) === String(job.id)));
   });
 
-  function enrollmentInput(overrides = {}) {
+  function enrollmentInput(overrides = {}, bindingPort = 443) {
     return {
       client: pool,
       workspaceId,
@@ -189,7 +189,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
         type: "windows-iis",
         reference: "iis-01/webhosting",
         store: "WebHosting",
-        binding: { site: "Shop", port: 443, sniHost: "app.example.com" },
+        binding: { site: "Shop", port: bindingPort, sniHost: "app.example.com" },
       },
       authorizedDnsNames: ["app.example.com"],
       keyAlgorithm: "rsa",
@@ -309,7 +309,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
         createJob: async () => {
           throw new Error("job insert failed");
         },
-      }));
+      }, 14431));
       throw new Error("expected job creation to fail");
     } catch (error) {
       expect(error.message).to.match(/job insert failed/);
@@ -459,7 +459,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
 
     const certificateId = crypto.randomUUID();
     try {
-      await createEnrollment(enrollmentInput({ certificateId, keySize: 1024 }));
+      await createEnrollment(enrollmentInput({ certificateId, keySize: 1024 }, 14432));
       throw new Error("expected a malformed snapshot to be refused");
     } catch (error) {
       expect(error.code).to.equal("CERTOPS_SNAPSHOT_INVALID");
@@ -475,7 +475,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
       [issuerId],
     );
     try {
-      await createEnrollment(enrollmentInput());
+      await createEnrollment(enrollmentInput({}, 14432));
       throw new Error("expected revalidation to block enrollment");
     } catch (error) {
       expect(error.code).to.equal("CERTOPS_ISSUER_REVALIDATION_REQUIRED");
