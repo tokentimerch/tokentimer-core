@@ -62,6 +62,8 @@ function createDataPlane({ vaultHost, issuerSink, consumerSink, deadlineMs, asse
     async grantConsumer(name) {
       assert.ok(name === selected && VERSION.test(committed || ""));
       await assertLease();
+      const ungranted = await send("consumer", name, "/" + committed);
+      assert.equal(ungranted.status, 403, "consumer already has access outside this run's exact grant");
       await journal({ action: "consumer-grant-intent", name });
       await grantExactRead(name);
     },
