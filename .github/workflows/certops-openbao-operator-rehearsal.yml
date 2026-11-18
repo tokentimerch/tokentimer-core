@@ -54,7 +54,8 @@ jobs:
           git diff --quiet "$candidate_sha" "$GITHUB_SHA" -- tests/wildcard-vault/ux-lab \
             scripts/certops-agent-package.js scripts/certops-azure-keyvault-package.cjs \
             scripts/certops-linux-systemd-ownership.js tests/e2e/linux-systemd-real-journey.js \
-            ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/run.ps1'
+            ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/run.ps1' \
+            ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/native-openbao-journey.cjs'
           git worktree add --detach "$area/candidate" "$candidate_sha"
           test "$(git -C "$area/candidate" rev-parse HEAD)" = "$candidate_sha"
       - name: Build immutable lab images from the selected producer checkout
@@ -85,10 +86,10 @@ jobs:
           export TT_UX_CANDIDATE_REPO="$area/candidate"
           cd "$TT_UX_CANDIDATE_REPO"
           harness=tests/wildcard-vault/ux-lab/azure-operator-review
-          # Update only the reviewed runner after building the producer's images.
+          # Update only the reviewed runner files after building the producer's images.
           candidate_sha="$(node -p 'require(process.argv[1]).candidateSha' "$area/identity.json")"
-          expected_harness="$(git diff --name-only "$candidate_sha" "$GITHUB_SHA" -- "$harness/run.ps1")"
-          install -m 0644 "$GITHUB_WORKSPACE/$harness/run.ps1" "$harness/run.ps1"
+          expected_harness="$(git diff --name-only "$candidate_sha" "$GITHUB_SHA" -- "$harness/run.ps1" "$harness/native-openbao-journey.cjs")"
+          install -m 0644 "$GITHUB_WORKSPACE/$harness/run.ps1" "$GITHUB_WORKSPACE/$harness/native-openbao-journey.cjs" "$harness/"
           test "$(git diff --name-only HEAD)" = "$expected_harness"
           node "$harness/project-freshness.cjs" "$LAB_PROJECT"
           node - "$area/identity.json" "$area/owned.json" "$LAB_PROJECT" <<'NODE'
@@ -128,6 +129,9 @@ jobs:
             CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST="$CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST" TT_UX_CANDIDATE_REPO="$candidate" \
             "$(command -v pwsh)" -NoProfile -File tests/wildcard-vault/ux-lab/azure-operator-review/run.ps1 \
             -Action Test -Phase all -Project "$LAB_PROJECT" > "$area/journey.log" 2>&1; then
+            if grep -E '^(RUN (setup|publish|bindings|validation|scanner|rejection|authorization|recovery|deployment-recovery|qualification|security|runtime-controls|browser|privacy|transfer)|OPENBAO_JOURNEY_FAILED (assertion|error)( (native-openbao-journey|journey|qualification|native-openbao-bootstrap|native-service-observation)\.cjs:[0-9]{1,5})?)$' "$area/journey.log"; then
+              echo '::notice::OpenBao journey stopped in the stage identified above'
+            fi
             echo '::error::OpenBao installed journey failed; cleanup will run'
             exit 1
           fi
