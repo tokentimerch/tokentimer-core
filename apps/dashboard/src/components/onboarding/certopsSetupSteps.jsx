@@ -554,30 +554,8 @@ export function ConfigStep({ ctx }) {
               stores CA credentials: the agent authenticates as the computer
               account.
             </Text>
-            <HStack align='start' spacing={3} flexWrap='wrap'>
-              <FormControl flex='1 1 200px'>
-                <FormLabel fontSize='sm'>HTTPS binding (IIS site)</FormLabel>
-                <Input
-                  size='sm'
-                  value={form.iisSite}
-                  onChange={set('iisSite')}
-                />
-                <Text fontSize='xs' mt={1} data-testid='iis-site-helper'>
-                  {IIS_SITE_HELPER}
-                </Text>
-              </FormControl>
-              <FormControl flex='0 1 110px'>
-                <FormLabel fontSize='sm'>Port</FormLabel>
-                <Input
-                  size='sm'
-                  type='number'
-                  value={form.iisPort}
-                  onChange={set('iisPort')}
-                />
-              </FormControl>
-            </HStack>
-            <Text fontSize='xs' data-testid='binding-note'>
-              {BINDING_NOTE}
+            <Text fontSize='xs'>
+              Choose the IIS binding when creating the renewal profile.
             </Text>
           </>
         ) : (

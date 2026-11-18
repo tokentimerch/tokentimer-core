@@ -118,13 +118,16 @@ describe('Windows configuration copy', () => {
     expect(note).toMatch(/does not create sites/);
   });
 
-  it('labels the AD CS binding and warns that it is replaced', () => {
+  it('collects the AD CS IIS binding only in the renewal profile wizard', () => {
     mount(ConfigStep, makeCtx('certops_adcs', windows({ objective: 'adcs' })));
-    expect(screen.getByText('HTTPS binding (IIS site)')).toBeInTheDocument();
-    expect(screen.queryByText('IIS site')).toBeNull();
-    expect(screen.getByTestId('binding-note').textContent).toMatch(
-      /replaces the certificate currently bound/
-    );
+    expect(
+      screen.queryByText('HTTPS binding (IIS site)')
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Choose the IIS binding when creating the renewal profile.'
+      )
+    ).toBeInTheDocument();
   });
 
   it('does not show the binding fields on Linux', () => {

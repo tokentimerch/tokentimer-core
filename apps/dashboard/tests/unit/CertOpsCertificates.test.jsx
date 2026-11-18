@@ -1696,3 +1696,63 @@ it('opens the same certificate identity from its deployment summary and fetches 
     )
   );
 });
+
+it('distinguishes same-name certificates by fingerprint and current observed use', () => {
+  useCertOpsCertificatesMock.mockReturnValue(
+    certState({
+      certificates: [
+        certificate({
+          id: 'first',
+          fingerprintSha256: '1'.repeat(64),
+          locations: [
+            {
+              locationKind: 'iis_binding',
+              deploymentReference: 'iis://Default Web Site:443',
+              presenceState: 'confirmed_present',
+            },
+            {
+              locationKind: 'windows_store',
+              deploymentReference: 'winstore://LocalMachine/My/ABC',
+              presenceState: 'confirmed_present',
+            },
+            {
+              locationKind: 'iis_binding',
+              deploymentReference: 'iis://Default Web Site:444',
+              presenceState: 'confirmed_absent',
+            },
+          ],
+        }),
+        certificate({
+          id: 'second',
+          identityId: '22222222-2222-4222-8222-222222222222',
+          fingerprintSha256: '2'.repeat(64),
+          locations: [
+            {
+              locationKind: 'iis_binding',
+              deploymentReference: 'iis://Default Web Site:444',
+              presenceState: 'confirmed_present',
+            },
+          ],
+        }),
+      ],
+    })
+  );
+  renderPage();
+  const rows = screen
+    .getAllByText('example.test')
+    .map(name => name.closest('tr'));
+  expect(within(rows[0]).getByText('111111111111…')).toBeInTheDocument();
+  expect(
+    within(rows[0]).getByText('Observed: IIS · Default Web Site:443')
+  ).toBeInTheDocument();
+  expect(
+    within(rows[0]).getByText('Observed: Windows certificate store')
+  ).toBeInTheDocument();
+  expect(
+    within(rows[0]).queryByText('Observed: IIS · Default Web Site:444')
+  ).not.toBeInTheDocument();
+  expect(within(rows[1]).getByText('222222222222…')).toBeInTheDocument();
+  expect(
+    within(rows[1]).getByText('Observed: IIS · Default Web Site:444')
+  ).toBeInTheDocument();
+});
