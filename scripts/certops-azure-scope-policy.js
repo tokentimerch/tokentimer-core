@@ -162,7 +162,7 @@ function operatorPolicy(workflow, errors) {
   const report = "qualification-results/" + name + ".json";
   const copyCommand = [
     "set -euo pipefail", "umask 077", "mkdir qualification-results",
-    'report="$RUNNER_TEMP/tt-kvqual-$GITHUB_RUN_ID-1/operator/evidence/' + name + '.json"',
+    'report="$RUNNER_TEMP/tt-kvqual-$GITHUB_RUN_ID-1-operator/evidence/' + name + '.json"',
     'size="$(sudo --non-interactive stat -c %s -- "$report")"',
     "(( size > 0 && size < 131072 ))",
     'sudo --non-interactive cat -- "$report" > ' + report,
