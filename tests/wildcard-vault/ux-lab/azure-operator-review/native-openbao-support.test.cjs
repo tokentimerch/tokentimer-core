@@ -1,10 +1,45 @@
 "use strict";
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
 const { retain } = require("./native-openbao-support.cjs");
 const { CAPABILITIES } = require("../../../../scripts/certops-azure-keyvault-package.cjs");
 const { candidate, report } = require("../../../../scripts/test-support/final-package-evidence.cjs");
+
+test("OpenBao CA preparation resolves one Node executable when PATH contains multiple applications", t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tt-openbao-launch-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const windows = process.platform === "win32";
+  const locations = ["node first", "node second"].map(name => {
+    const folder = path.join(directory, name);
+    fs.mkdirSync(folder);
+    fs.writeFileSync(path.join(folder, windows ? "node.cmd" : "node"), windows ? "@exit /b 0\r\n" : "#!/bin/sh\nexit 0\n",
+      { mode: 0o700 });
+    return folder;
+  });
+  const env = { ...process.env };
+  const pathKey = Object.keys(env).find(key => key.toUpperCase() === "PATH") || "PATH";
+  env[pathKey] = [...locations, env[pathKey]].join(path.delimiter);
+  const result = spawnSync("pwsh", ["-NoProfile", "-Command", [
+    "$ErrorActionPreference = 'Stop'",
+    "$commands = @(Get-Command node -CommandType Application)",
+    "if ($commands.Count -lt 2) { throw 'Expected multiple Node applications' }",
+    "$runner = [System.Management.Automation.Language.Parser]::ParseFile($env:TT_TEST_OPENBAO_RUNNER, [ref]$null, [ref]$null)",
+    "$assignment = $runner.Find({ param($ast) $ast -is [System.Management.Automation.Language.AssignmentStatementAst] -and $ast.Left.VariablePath.UserPath -eq 'nodeExecutable' }, $true)",
+    ". ([scriptblock]::Create($assignment.Extent.Text))",
+    "if ($nodeExecutable -isnot [string] -or $nodeExecutable -cne $commands[0].Source -or $nodeExecutable -cne $env:TT_TEST_NODE_FIRST) { throw 'OpenBao requires one executable from the first PATH location' }",
+  ].join("\n")], {
+    env: {
+      ...env,
+      TT_TEST_OPENBAO_RUNNER: path.join(__dirname, "run.ps1"),
+      TT_TEST_NODE_FIRST: path.join(locations[0], windows ? "node.cmd" : "node"),
+    },
+    encoding: "utf8", timeout: 10000,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+});
 
 function fixture(t) {
   const outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "tt-openbao-close-"));

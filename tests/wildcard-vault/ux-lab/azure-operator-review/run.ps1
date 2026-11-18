@@ -204,7 +204,7 @@ try {
         $caOutput = Join-Path $output 'operator-ca'
         Write-SetupStatus 'ca-preparation'
         if ($NativeOpenBao -and $IsLinux) {
-          $nodeExecutable = (Get-Command node -CommandType Application).Source
+          $nodeExecutable = (Get-Command node -CommandType Application -TotalCount 1).Source
           & sudo --non-interactive -- $nodeExecutable $caSetup create-owned $env:TT_UX_OPERATOR_CA_PRIVATE $caOutput
         } else {
           & node $caSetup create $env:TT_UX_OPERATOR_CA_PRIVATE $caOutput
