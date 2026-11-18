@@ -342,6 +342,8 @@ async function control(body) {
     require("./role-dispatch.cjs").authorizeRole(body, process.env.TT_UX_ISOLATED_ROLE);
   }
 
+  const { action, name = "issuer" } = body;
+  assert.ok(["issuer", "nginx", "haproxy", "cancel-issuer"].includes(name));
   if (action === "azure-provider-observe") {
     assert.ok(azurePackage, "exact Azure package acceptance required");
     const c = config(name);
@@ -380,8 +382,6 @@ async function control(body) {
     assert.equal(proof?.agent, name, "verified signed dispatch for requested agent absent");
     return { signerKeyIdSha256: proof.signerKeyIdSha256 };
   }
-  const { action, name = "issuer" } = body;
-  assert.ok(["issuer", "nginx", "haproxy", "cancel-issuer"].includes(name));
   if (action === "package-proof") {
     if (azurePackage) {
       const names=process.env.TT_UX_ISOLATED_ROLE === "issuer" ? ["issuer"] : ["nginx","haproxy"];
