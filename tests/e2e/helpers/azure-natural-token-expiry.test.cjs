@@ -31,8 +31,23 @@ test("offline orchestration observes expiry and renewed access without returning
 
 test("refuses a lifetime outside the bounded run before accessing the vault", async () => {
   const f = fixture(); f.state.expiryOffset = 4 * 60 * 60;
+  f.options.prepare = async () => { assert.fail("must not publish with an out-of-budget token"); };
   await assert.rejects(() => _offline.observe(f.options), { code: "AZURE_EXPIRY_OUTSIDE_BUDGET" });
   assert.equal(f.counts().reads, 0);
+});
+
+test("checks the observed token before publishing and uses it for the first read", async () => {
+  const f = fixture(), acquire = f.options.acquire, read = f.options.read;
+  let first;
+  f.options.acquire = async () => { const token = await acquire(); first ||= token.token; return token; };
+  let prepared = false, checked = false;
+  f.options.prepare = async () => { assert.ok(first); prepared = true; };
+  f.options.read = async token => {
+    if (!checked) { assert.ok(prepared); assert.equal(token, first); checked = true; }
+    return read(token);
+  };
+  assert.equal((await _offline.observe(f.options)).azureStatusExpired, 401);
+  assert.ok(checked);
 });
 
 test("refuses a real expiry beyond the externally reserved cleanup window before waiting", async () => {
