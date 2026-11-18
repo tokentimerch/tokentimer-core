@@ -8,6 +8,8 @@ const CLEANUP_ENV = "certops-azure-keyvault-cleanup";
 const IMDS_ENV = "certops-azure-imds-lab";
 const IMDS_WORKFLOW = ".github/workflows/certops-azure-imds-qualification.yml";
 const WORKFLOW = ".github/workflows/certops-azure-keyvault-qualification.yml";
+const OPERATOR_WORKFLOW = ".github/workflows/certops-azure-operator-qualification.yml";
+const OPERATOR_SCHEMA = "kvqual-operator-v1";
 const GUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const GROUP = /^tt-kvqual-([1-9][0-9]{0,19})-([1-9][0-9]{0,4})$/;
 const READ = [
@@ -59,7 +61,9 @@ function allowsLabSelfApproval(env, environment) {
   if (env.RUNNER_ENVIRONMENT !== "github-hosted" ||
       (environment === LAB_ENV && env.TT_AZURE_FINAL_PACKAGE === "0")) return false;
   const decimalId = /^[1-9][0-9]{0,15}$/;
-  const [producerRunId, artifactId, packageSha256] = environment === IMDS_ENV
+  const [producerRunId, artifactId, packageSha256] = environment === LAB_ENV && operatorWorkflow(env)
+    ? [env.TT_AZURE_OPERATOR_PACKAGE_RUN_ID, env.TT_AZURE_OPERATOR_PACKAGE_ARTIFACT_ID, env.TT_AZURE_OPERATOR_PACKAGE_SHA256]
+    : environment === IMDS_ENV
     ? [env.TT_IMDS_PACKAGE_RUN_ID, env.TT_IMDS_PACKAGE_ARTIFACT_ID, env.TT_IMDS_PACKAGE_SHA256]
     : [
         env.TT_AZURE_FINAL_PACKAGE === "1" ? env.GITHUB_RUN_ID : env.TT_AZURE_EXPIRY_PACKAGE_RUN_ID,
@@ -87,6 +91,10 @@ function allowsLabSelfApproval(env, environment) {
     Number.isSafeInteger(scope.expiresAt) && scope.expiresAt > now && scope.expiresAt <= now + 7200000;
 }
 
+function operatorWorkflow(env) {
+  return env.GITHUB_WORKFLOW_REF === REPOSITORY + "/" + OPERATOR_WORKFLOW + "@refs/heads/main";
+}
+
 // Approval history is run-scoped and does not identify a rerun attempt.
 function requireLabApproval(run, approvals, env, environment = LAB_ENV) {
   if (![LAB_ENV, IMDS_ENV].includes(environment))
@@ -107,7 +115,7 @@ function requireLabApproval(run, approvals, env, environment = LAB_ENV) {
     run.event !== "workflow_dispatch" ||
     run.head_branch !== "main" ||
     run.head_sha !== env.GITHUB_SHA ||
-    run.path !== (environment === IMDS_ENV ? IMDS_WORKFLOW : WORKFLOW) ||
+    run.path !== (environment === IMDS_ENV ? IMDS_WORKFLOW : operatorWorkflow(env) ? OPERATOR_WORKFLOW : WORKFLOW) ||
     String(run.actor?.id || "") !== actorId ||
     String(run.triggering_actor?.id || "") !== actorId
   )
@@ -137,6 +145,7 @@ function plan(
   nonce = crypto.randomBytes(16).toString("hex"),
 ) {
   requireTrusted(env);
+  const operator = operatorWorkflow(env);
   if (
     !/^[1-9][0-9]{0,19}$/.test(env.GITHUB_RUN_ID || "") ||
     !/^[1-9][0-9]{0,4}$/.test(env.GITHUB_RUN_ATTEMPT || "")
@@ -147,7 +156,7 @@ function plan(
     "AZURE_TENANT_ID",
     "AZURE_CLIENT_ID",
     "AZURE_KV_ISSUER_ROLE_ID",
-    "AZURE_KV_ATTRIBUTES_ROLE_ID",
+    ...(operator ? [] : ["AZURE_KV_ATTRIBUTES_ROLE_ID"]),
   ])
     if (!GUID.test(env[key] || ""))
       fail(`AZURE_KV_CONFIGURATION_REQUIRED_${key}`);
@@ -167,7 +176,7 @@ function plan(
   const tags = {
     purpose: PURPOSE,
     repository: REPOSITORY,
-    schema: "kvqual-v1",
+    schema: operator ? OPERATOR_SCHEMA : "kvqual-v1",
     runId,
     attempt,
     sourceSha: env.GITHUB_SHA,
@@ -186,10 +195,10 @@ function plan(
     roles: {
       issuer: env.AZURE_KV_ISSUER_ROLE_ID,
       consumer: CONSUMER_ROLE,
-      attributes: env.AZURE_KV_ATTRIBUTES_ROLE_ID,
+      ...(operator ? {} : { attributes: env.AZURE_KV_ATTRIBUTES_ROLE_ID }),
     },
     identities: Object.fromEntries(
-      ["issuer", "consumer", "attributes", "unauthorized"].map((kind) => [
+      (operator ? [] : ["issuer", "consumer", "attributes", "unauthorized"]).map((kind) => [
         kind,
         { name: `ttkv-${suffix}-${kind}` },
       ]),
@@ -208,7 +217,8 @@ function ownedGroup(
     !t ||
     t.purpose !== PURPOSE ||
     t.repository !== REPOSITORY ||
-    t.schema !== "kvqual-v1" ||
+    !["kvqual-v1", OPERATOR_SCHEMA].includes(t.schema) ||
+    (t.schema === OPERATOR_SCHEMA && t.attempt !== "1") ||
     t.runId !== match[1] ||
     t.attempt !== match[2] ||
     !/^ttkv[a-f0-9]{20}$/.test(t.vaultName || "") ||
@@ -232,12 +242,13 @@ function ownedGroup(
 }
 function ownedResources(resources, p) {
   if (!Array.isArray(resources)) fail("AZURE_KV_RESOURCE_INVENTORY_INVALID");
+  const operator = p.tags?.schema === OPERATOR_SCHEMA;
   if (
     p.vault !== p.tags?.vaultName ||
     !/^ttkv[a-f0-9]{20}$/.test(p.vault || "") ||
     Object.keys(p.identities || {})
       .sort()
-      .join() !== "attributes,consumer,issuer,unauthorized" ||
+      .join() !== (operator ? "" : "attributes,consumer,issuer,unauthorized") ||
     Object.entries(p.identities).some(
       ([kind, row]) => row.name !== `ttkv-${p.vault.slice(4)}-${kind}`,
     )
@@ -320,7 +331,7 @@ function verifyRun(run, tags) {
     run.head_sha !== tags.sourceSha ||
     run.event !== "workflow_dispatch" ||
     run.head_branch !== "main" ||
-    run.path !== WORKFLOW ||
+    run.path !== (tags.schema === OPERATOR_SCHEMA ? OPERATOR_WORKFLOW : WORKFLOW) ||
     Number(run.run_attempt) < Number(tags.attempt) ||
     !Number.isFinite(Date.parse(run.created_at)) ||
     Date.parse(run.created_at) > Date.parse(tags.createdAt) + 60000
@@ -333,6 +344,9 @@ module.exports = {
   LAB_ENV,
   CLEANUP_ENV,
   WORKFLOW,
+  OPERATOR_WORKFLOW,
+  OPERATOR_SCHEMA,
+  operatorWorkflow,
   GUID,
   GROUP,
   ROLE_ACTIONS,

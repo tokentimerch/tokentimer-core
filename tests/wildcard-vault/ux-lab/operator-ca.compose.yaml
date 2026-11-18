@@ -1,0 +1,38 @@
+services:
+  challtestsrv:
+    profiles: [pebble-fixture]
+  pebble:
+    profiles: [pebble-fixture]
+  customers:
+    depends_on: !override
+      api: { condition: service_started }
+      vault: { condition: service_healthy }
+    environment:
+      TT_UX_OPERATOR_CA: openbao-pki
+    networks: [default, operator-ca]
+  operator-ca:
+    image: openbao/openbao@sha256:597f62847dd382382056a1d6704d50465908c2040038c4611832a23269a67112
+    entrypoint: [/bin/bao]
+    user: "100:1000"
+    command: [server, -config=/inputs/bao.hcl]
+    volumes: ["${TT_UX_OPERATOR_CA_PRIVATE:?}/bao:/inputs:ro"]
+    networks:
+      operator-ca:
+        aliases: [ca.wildcard.test]
+  operator-dns:
+    build:
+      context: .
+      dockerfile: operator-ca.Dockerfile
+    command: [sh, -ceu, 'cp /inputs/wildcard.test /tmp/zone/wildcard.test && exec named -c /inputs/named.conf -g -u root']
+    volumes: ["${TT_UX_OPERATOR_CA_PRIVATE:?}/dns:/inputs:ro"]
+    tmpfs: [/tmp/zone]
+    networks: [operator-ca]
+  operator-ca-init:
+    profiles: [operator-ca-init]
+    image: ${TT_UX_CUSTOMER_IMAGE:?}
+    command: [node, /repo/tests/wildcard-vault/ux-lab/operator-ca-setup.cjs, initialize, /lab-input/operator-ca]
+    volumes: ["./operator-ca-setup.cjs:/repo/tests/wildcard-vault/ux-lab/operator-ca-setup.cjs:ro", "${TT_WILDCARD_UX_OUTPUT:?}/operator-ca:/lab-input/operator-ca"]
+    networks: [operator-ca]
+networks:
+  operator-ca:
+    internal: true

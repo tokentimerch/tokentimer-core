@@ -1,11 +1,15 @@
 "use strict";
 /** Paid qualification infrastructure is an explicit repository opt-in. Scheduled jobs
  * may only finish/clean an already owned manual campaign, never create a lab. */
+const { createHash } = require("node:crypto");
+const { isDeepStrictEqual: same } = require("node:util");
 const KV = "certops-azure-keyvault-qualification.yml";
 const KV_CLEANUP = "certops-azure-keyvault-janitor.yml";
+const OPERATOR = "certops-azure-operator-qualification.yml";
 const IMDS = "certops-azure-imds-qualification.yml";
 const PROVISION = Object.freeze([
   KV,
+  OPERATOR,
   IMDS,
   "certops-native-issuer-reassignment.yml",
   "certops-enterprise-adcs-qualification.yml",
@@ -34,6 +38,7 @@ const KEYVAULT_IF =
 const EXPIRY_IF = KEYVAULT_IF + " && inputs.natural_expiry";
 const PROVIDER_IF = KEYVAULT_IF + " && !inputs.natural_expiry";
 const EXPIRY_UPLOAD_IF = "success() && steps.expiry-observation.outcome == 'success' && steps.expiry-cleanup.outcome == 'success' && (inputs.expiry_app_client_id == '' || steps.expiry-app-retirement.outcome == 'success')";
+const OPERATOR_UPLOAD_IF = "success() && steps.operator-journey.outcome == 'success' && steps.operator-cleanup.outcome == 'success'";
 const IMDS_IF = MAIN + " && vars.CERTOPS_AZURE_IMDS_LAB_ENABLED == 'true'";
 const IMDS_UPLOAD_IF = "success() && steps.collect.outcome == 'success' && steps.scrub.outcome == 'success'";
 const LIFECYCLE_IF = MAIN;
@@ -42,10 +47,133 @@ const SELF_APPROVAL_REFERENCE = "${{ secrets.CERTOPS_AZURE_LAB_SELF_APPROVAL }}"
 const hasScopedApproval = step => step?.env?.[SELF_APPROVAL] === SELF_APPROVAL_REFERENCE;
 function allowedCondition(name, value) {
   if (name === KV) return [PROVIDER_IF, EXPIRY_IF, KEYVAULT_IF + " && inputs.final_package"].includes(value);
+  if (name === OPERATOR) return value === KEYVAULT_IF;
   if (name === IMDS) return value === IMDS_IF;
   return PROVISION.includes(name)
     ? value === PROVISION_IF
     : LIFECYCLE.includes(name) && value === LIFECYCLE_IF;
+}
+
+function operatorPolicy(workflow, errors) {
+  const job = workflow.jobs?.["azure-operator"];
+  const keys = (record, expected) =>
+    record && same(Object.keys(record).sort(), [...expected].sort());
+  if (!keys(workflow, ["name", "on", "permissions", "concurrency", "jobs"]) ||
+      !same(workflow.permissions, { contents: "read" }) ||
+      !same(workflow.concurrency, { group: "certops-azure-keyvault-provisioning", "cancel-in-progress": false }) ||
+      !keys(workflow.jobs, ["azure-operator"]) ||
+      !keys(job, ["if", "environment", "runs-on", "timeout-minutes", "permissions", "env", "steps"]) ||
+      job.if !== KEYVAULT_IF || job.environment !== "certops-azure-keyvault-lab" ||
+      job["runs-on"] !== "ubuntu-24.04" || job["timeout-minutes"] !== 90 ||
+      !same(job.permissions, { contents: "read", actions: "read", "id-token": "write" })) {
+    errors.push("Azure operator qualification needs one bounded, protected main job and read-only workflow permissions");
+    return;
+  }
+
+  const dispatch = workflow.on?.workflow_dispatch;
+  const inputs = dispatch?.inputs;
+  const packageInputs = ["package_run_id", "package_artifact_id", "package_sha256"];
+  const regions = ["swedencentral", "westeurope", "northeurope"];
+  if (!keys(dispatch, ["inputs"]) || !keys(inputs, [...packageInputs, "location"]) ||
+      packageInputs.some(key => !keys(inputs[key], ["description", "required", "type"]) ||
+        inputs[key].required !== true || inputs[key].type !== "string") ||
+      !keys(inputs.location, ["description", "type", "options", "default"]) ||
+      inputs.location.type !== "choice" || !same(inputs.location.options, regions) ||
+      inputs.location.default !== "swedencentral") {
+    errors.push("Azure operator dispatch requires the immutable producer run, artifact and checksum with the reviewed regions");
+  }
+
+  const optIn = "CERTOPS_AZURE_KEYVAULT_LAB_ENABLED";
+  const azureVariables = ["AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "AZURE_KV_ISSUER_ROLE_ID"];
+  const packageVariables = packageInputs.map(name => "TT_AZURE_OPERATOR_" + name.toUpperCase());
+  const roleSecrets = ["APP_ROLES", "ISSUER_CERT_PEM", "ISSUER_KEY_PEM", "CONSUMER_CERT_PEM", "CONSUMER_KEY_PEM"];
+  const runBinding = [
+    "GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_REPOSITORY_ID", "GITHUB_REPOSITORY_OWNER_ID",
+    "GITHUB_REF", "GITHUB_WORKFLOW_REF", "GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT",
+    "GITHUB_ACTOR_ID", "GITHUB_EVENT_NAME", "RUNNER_ENVIRONMENT", "RUNNER_TEMP", optIn, ...packageVariables, "GH_TOKEN",
+  ];
+  const azureBinding = ["AZURE_CONFIG_DIR", ...azureVariables, "LAB_LOCATION", "AZURE_CORE_COLLECT_TELEMETRY"];
+  const approvalEnv = { [SELF_APPROVAL]: SELF_APPROVAL_REFERENCE };
+  const journeyEnv = {
+    ...approvalEnv,
+    ...Object.fromEntries(roleSecrets.map(name =>
+      ["TT_AZURE_OPERATOR_" + name, "${{ secrets.CERTOPS_AZURE_OPERATOR_" + name + " }}"])),
+  };
+  if (!same(job.env, {
+    ...Object.fromEntries([optIn, ...azureVariables].map(name => [name, "${{ vars." + name + " }}"])),
+    LAB_LOCATION: "${{ inputs.location }}",
+    AZURE_CORE_COLLECT_TELEMETRY: "no",
+    GH_TOKEN: "${{ github.token }}",
+    ...Object.fromEntries(packageVariables.map((name, i) => [name, "${{ inputs." + packageInputs[i] + " }}"])),
+    RUN_BINDING: runBinding.join(","),
+    AZURE_BINDING: azureBinding.join(","),
+  })) {
+    errors.push("Azure operator job environment must contain only the reviewed run and ARM bindings");
+  }
+
+  if (!Array.isArray(job.steps) || job.steps.length !== 11 || job.steps.some(step => !step || typeof step !== "object")) {
+    errors.push("Azure operator step inventory must be reviewed explicitly");
+    return;
+  }
+  const [checkout, pnpm, node, approval, build, login, journey, reauth, cleanup, copy, upload] = job.steps;
+  const pinned = (step, action) => new RegExp("^" + action + "@[a-f0-9]{40}$").test(step.uses || "");
+  const loginCommand = "./infra/certops-azure-keyvault/login-oidc.ps1";
+  if (!keys(checkout, ["uses", "with"]) || !pinned(checkout, "actions/checkout") ||
+      !same(checkout.with, { "fetch-depth": 0, "persist-credentials": false }) ||
+      !keys(pnpm, ["uses", "with"]) || !pinned(pnpm, "pnpm/action-setup") ||
+      !same(pnpm.with, { version: require("../package.json").packageManager.split("@").at(-1) }) ||
+      !keys(node, ["uses", "with"]) || !pinned(node, "actions/setup-node") ||
+      !same(node.with, { "node-version": "24.22.3" }) ||
+      !keys(approval, ["name", "id", "env", "run"]) ||
+      approval.id !== "approval" || !same(approval.env, approvalEnv) ||
+      approval.run !== "node infra/certops-azure-keyvault/lab.js github-approval" ||
+      !keys(build, ["name", "run"]) || typeof build.run !== "string" ||
+      // This pre-credential step sets the immutable producer image IDs on GITHUB_ENV.
+      createHash("sha256").update(build.run).digest("hex") !== "8436ac28744bc5e2d6591ede1c203f6bca5dae7d375ea1359cf8fbce095c8279" ||
+      !keys(login, ["name", "id", "shell", "run"]) ||
+      login.id !== "azure-login" || login.shell !== "pwsh" || login.run !== loginCommand) {
+    errors.push("Azure operator must verify approval and the trusted immutable producer build before ARM login");
+  }
+
+  const privileged = (action, variables) => [
+    "set -euo pipefail",
+    'sudo --non-interactive --preserve-env="' + variables.join(",") + '" \\',
+    '  "$(command -v node)" tests/e2e/azure-keyvault-operator.cjs ' + action,
+    "",
+  ].join("\n");
+  const bindings = ["$RUN_BINDING", "$AZURE_BINDING"];
+  const producerBindings = ["CANDIDATE_DIR", "API_IMAGE", "WORKER_IMAGE", "ROLE_IMAGE"]
+    .map(name => "TT_AZURE_OPERATOR_" + name);
+  const journeyBindings = [...bindings, SELF_APPROVAL, ...producerBindings,
+    ...roleSecrets.map(name => "TT_AZURE_OPERATOR_" + name)];
+  if (!keys(journey, ["name", "id", "env", "run"]) ||
+      journey.id !== "operator-journey" || !same(journey.env, journeyEnv) ||
+      journey.run !== privileged("run", journeyBindings) ||
+      !keys(reauth, ["name", "id", "if", "shell", "run"]) ||
+      reauth.id !== "cleanup-login" || reauth.shell !== "pwsh" || reauth.run !== loginCommand ||
+      reauth.if !== "always() && steps.approval.outcome == 'success' && steps.azure-login.outcome == 'success'" ||
+      !keys(cleanup, ["name", "id", "if", "run"]) || cleanup.id !== "operator-cleanup" ||
+      cleanup.if !== "always() && steps.cleanup-login.outcome == 'success'" ||
+      cleanup.run !== privileged("cleanup", bindings)) {
+    errors.push("Azure operator secrets belong to the protected journey and independent cleanup requires fresh ARM authentication");
+  }
+
+  const name = "azure-operator-final-package";
+  const report = "qualification-results/" + name + ".json";
+  const copyCommand = [
+    "set -euo pipefail", "umask 077", "mkdir qualification-results",
+    'report="$RUNNER_TEMP/tt-kvqual-$GITHUB_RUN_ID-1/operator/evidence/' + name + '.json"',
+    'size="$(sudo --non-interactive stat -c %s -- "$report")"',
+    "(( size > 0 && size < 131072 ))",
+    'sudo --non-interactive cat -- "$report" > ' + report,
+    "",
+  ].join("\n");
+  if (!keys(copy, ["name", "if", "run"]) || copy.if !== OPERATOR_UPLOAD_IF ||
+      copy.run !== copyCommand || !keys(upload, ["uses", "if", "with"]) ||
+      !pinned(upload, "actions/upload-artifact") || upload.if !== OPERATOR_UPLOAD_IF ||
+      !same(upload.with, { name, path: report, "if-no-files-found": "error" })) {
+    errors.push("Azure operator uploads only the bounded final report after the journey and independent cleanup pass");
+  }
 }
 
 function imdsPolicy(workflow, errors) {
@@ -530,7 +658,7 @@ function validate(name, workflow) {
       ),
     ) ||
     runs.some((run) =>
-      /infra\/certops-(?:adcs\/(?:login-oidc|provision-lab)|azure-keyvault\/)|azure-keyvault-real\.cjs|certops-(?:retention24h|retention-cadence|adcs-ttl24h)-azure\.js/.test(
+      /infra\/certops-(?:adcs\/(?:login-oidc|provision-lab)|azure-keyvault\/)|azure-keyvault-(?:real|operator)\.cjs|certops-(?:retention24h|retention-cadence|adcs-ttl24h)-azure\.js/.test(
         run,
       ),
     );
@@ -552,7 +680,7 @@ function validate(name, workflow) {
   if (
     LIFECYCLE.includes(name) &&
     runs.some((run) =>
-      /provision-lab|lab\.js\s+provision|\baz\s+(?:keyvault\s+create|identity\s+create|role\s+assignment\s+create|group\s+create|vm\s+create|deployment\s+(?:(?:group|sub)\s+)?create)\b/.test(
+      /provision-lab|lab\.js\s+provision|azure-keyvault-operator\.cjs\s+run|\baz\s+(?:keyvault\s+create|identity\s+create|role\s+assignment\s+create|group\s+create|vm\s+create|deployment\s+(?:(?:group|sub)\s+)?create)\b/.test(
         run,
       ),
     )
@@ -560,6 +688,10 @@ function validate(name, workflow) {
     errors.push("Scheduled Azure lifecycle cannot provision resources");
   if ([KV, KV_CLEANUP].includes(name)) {
     keyvaultPolicy(name, workflow, errors);
+    return errors;
+  }
+  if (name === OPERATOR) {
+    operatorPolicy(workflow, errors);
     return errors;
   }
   if (name === IMDS) {
@@ -583,6 +715,8 @@ module.exports = {
   LIFECYCLE,
   PROVISION_IF,
   KEYVAULT_IF,
+  OPERATOR,
+  OPERATOR_UPLOAD_IF,
   EXPIRY_UPLOAD_IF,
   IMDS_UPLOAD_IF,
   LIFECYCLE_IF,
