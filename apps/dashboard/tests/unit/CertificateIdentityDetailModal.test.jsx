@@ -856,13 +856,15 @@ const twoRegistrations = sources => ({
   locations: [],
 });
 
-it('preselects the only current registration and lets the operator pick an ended one', async () => {
+it('preselects the only current registration and distinguishes stopped and ended registrations', async () => {
   const identity = twoRegistrations([
     ['reg-ended', true],
+    ['reg-stopped', true],
     ['reg-current', false],
   ]);
-  identity.sources[0].source = 'agent_windows';
-  identity.sources[0].sourceRef =
+  identity.sources[0].endedReason = 'endpoint_monitor_deleted';
+  identity.sources[1].source = 'agent_windows';
+  identity.sources[1].sourceRef =
     'agent-7/server.example.test/windows_store/LocalMachine/My';
   getIdentityMock.mockResolvedValue(identity);
   getCertificateMock.mockImplementation((_workspace, id) =>
@@ -889,8 +891,15 @@ it('preselects the only current registration and lets the operator pick an ended
       name: 'Select a management registration',
     })
   ).not.toBeInTheDocument();
-  expect(within(select).getByRole('option', { name: /Current/ })).toBeVisible();
-  expect(within(select).getByRole('option', { name: /Ended/ })).toBeVisible();
+  expect(within(select).getByRole('option', { name: /Current/ })).toHaveValue(
+    'reg-current'
+  );
+  expect(within(select).getByRole('option', { name: /Ended/ })).toHaveValue(
+    'reg-ended'
+  );
+  expect(within(select).getByRole('option', { name: /Stopped/ })).toHaveValue(
+    'reg-stopped'
+  );
   expect(
     screen.queryByText(/Select a registration to see its jobs/)
   ).not.toBeInTheDocument();
@@ -912,10 +921,10 @@ it('preselects the only current registration and lets the operator pick an ended
   expect(within(management).getByText(registration)).toBeVisible();
   expect(within(management).getByText('Source reference')).toBeInTheDocument();
 
-  fireEvent.change(select, { target: { value: 'reg-ended' } });
+  fireEvent.change(select, { target: { value: 'reg-stopped' } });
   await waitFor(() =>
     expect(detailsModalMock.mock.lastCall[0].managedCertificateId).toBe(
-      'reg-ended'
+      'reg-stopped'
     )
   );
 });
