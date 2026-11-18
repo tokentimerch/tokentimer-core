@@ -75,12 +75,17 @@ async function assertion(root, env = process.env) {
 }
 
 class FaultBoundary {
-  constructor(host) {
+  constructor(host, { objectPath, observe } = {}) {
     check(
       /^ttkv[a-f0-9]{20}\.vault\.azure\.net$/.test(host),
       "AZURE_KV_FAULT_SCOPE_DENIED",
     );
     this.host = host;
+    check(objectPath === undefined || (
+      /^\/secrets\/tt-[a-f0-9]{64}$/.test(objectPath) && typeof observe === "function"
+    ), "AZURE_KV_FAULT_SCOPE_DENIED");
+    this.objectPath = objectPath;
+    this.observe = observe;
     this.original = https.request;
     this.events = [];
     this.puts = new Map();
@@ -89,10 +94,24 @@ class FaultBoundary {
   install() {
     const self = this;
     https.request = function (url, options, callback) {
-      const target = new URL(url),
-        owned = target.hostname === self.host;
-      const method = options.method || "GET",
-        pathname = target.pathname;
+      if (self.objectPath && typeof url !== "string" && !(url instanceof URL))
+        return self.original.apply(this, arguments);
+      const target = new URL(url);
+      const pathname = target.pathname;
+      const part = self.objectPath && pathname.startsWith(self.objectPath)
+        ? pathname.slice(self.objectPath.length)
+        : null;
+      const selected = part === "" ? "object" : part === "/versions" ? "versions"
+        : /^\/[a-f0-9]{32}$/.test(part || "") ? "version" : null;
+      const owned = target.hostname === self.host && (!self.objectPath || selected !== null);
+      if (self.objectPath && !owned) return self.original.apply(this, arguments);
+      const method = options.method || "GET";
+      const observe = (event, status) => {
+        if (self.objectPath) self.observe({ event, method, selected,
+          ...(selected === "version" ? { version: part.slice(1) } : {}),
+          ...(status === undefined ? {} : { status }),
+        });
+      };
       if (owned) {
         check(
           target.protocol === "https:" &&
@@ -102,6 +121,7 @@ class FaultBoundary {
         );
         if (method === "PUT")
           self.puts.set(pathname, (self.puts.get(pathname) || 0) + 1);
+        observe("request");
       }
       const fault = owned && self.fault?.path === pathname ? self.fault : null;
       let corrupt = false;
@@ -118,6 +138,10 @@ class FaultBoundary {
       }
       let req;
       req = self.original.call(https, url, options, (response) => {
+        if (owned && self.objectPath) {
+          check(response.socket?.authorized === true, "AZURE_KV_TLS_REQUIRED");
+          observe("response", response.statusCode);
+        }
         if (owned || target.hostname === "login.microsoftonline.com") {
           self.events.push({
             kind: owned ? "vault" : "entra",
@@ -141,7 +165,10 @@ class FaultBoundary {
           response.on("error", () => {});
           response.resume();
           response.on("end", () => {
-            if (losePut) fault.committed = true;
+            if (losePut) {
+              fault.committed = true;
+              observe("commit-lost", response.statusCode);
+            }
             const disconnect = () => {
               const error = Object.assign(
                 new Error("qualification transport interruption"),
@@ -172,6 +199,7 @@ class FaultBoundary {
         self.fault.blockReads
       ) {
         // Recovery is temporarily disconnected too: success must remain unknown.
+        observe("read-blocked");
         process.nextTick(() =>
           req.destroy(
             Object.assign(new Error("qualification recovery disconnected"), {
@@ -189,6 +217,9 @@ class FaultBoundary {
     this.fault = null;
   }
   set(kind, pathname, extra = {}) {
+    if (this.objectPath)
+      check(kind === "ambiguous-put" && pathname === this.objectPath && extra.blockReads === true,
+        "AZURE_KV_FAULT_SCOPE_DENIED");
     this.fault = { kind, path: pathname, used: false, ...extra };
     return this.fault;
   }

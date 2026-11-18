@@ -11,6 +11,7 @@ const root = path.resolve(
 );
 fs.mkdirSync(root, { recursive: true });
 const qualification = require("./qualification.cjs");
+const ca = require("./operator-ca.cjs");
 const gate = process.env.CERTOPS_DISTRIBUTION_QUALIFICATION === "1"
   ? qualification.createGate({root,candidateSha:process.env.TT_UX_CORE_COMMIT,mode:process.env.TT_UX_CERTIFICATE_MODE || "san"}) : null;
 const file = root + "/journey-state.json",
@@ -24,6 +25,8 @@ const base = "http://127.0.0.1:" + (process.env.TT_UX_WEB_PORT || "58801"),
 state.certificateMode ||= process.env.TT_UX_CERTIFICATE_MODE || "san";
 state.coreCommit ||= process.env.TT_UX_CORE_COMMIT || null;
 state.materialProvider ||= process.env.TT_UX_MATERIAL_PROVIDER || "vault-kv2";
+assert.equal(state.caMode ?? ca.mode, ca.mode, "Lab CA changed since the journey began");
+state.caMode = ca.mode;
 const certificateSans = state.certificateMode === "wildcard"
   ? ["*.wildcard.test", "wildcard.test"]
   : state.certificateMode === "ordinary" ? ["nginx.wildcard.test"]
@@ -382,9 +385,9 @@ async function preparePublication() {
     const j = await createJob("issue", "issue", {
       target: { type: "domain", reference: certificateSans[0] },
       sans: certificateSans,
-      caEndpoint: "https://pebble:14000/dir",
+      caEndpoint: ca.caEndpoint,
       commandRef: "certbot",
-      dnsProvider: "pebble-challtestsrv",
+      dnsProvider: ca.dnsProvider,
       dnsZone: "wildcard.test",
       keyAlgorithm: "ecdsa",
       keySize: 256,
@@ -466,7 +469,7 @@ async function publish() {
     "SAN-only publication configures renewal; owner and manager repair preserve the profile, viewers are denied and input stays constrained",
   );
 }
-async function bindings() {
+async function bindings({ beforeStart } = {}) {
   state.bindings ||= ["nginx", "haproxy"].map((name, wave) => ({
     name,
     id: state.consumerBindingIds[name],
@@ -494,6 +497,7 @@ async function bindings() {
       groupId: state.groupId,
       bindingId: b.id,
     });
+    await beforeStart?.(b.name);
     await customer("start", b.name);
   }
   const r = await rollout("initial");
@@ -815,9 +819,9 @@ async function rejection() {
     const pending = await createJob("reject-issue", "issue", {
       target: { type: "domain", reference: certificateSans[0] },
       sans: certificateSans,
-      caEndpoint: "https://pebble:14000/dir",
+      caEndpoint: ca.caEndpoint,
       commandRef: "certbot",
-      dnsProvider: "pebble-challtestsrv",
+      dnsProvider: ca.dnsProvider,
       dnsZone: "wildcard.test",
       keyAlgorithm: "ecdsa",
       keySize: 256,
@@ -1007,17 +1011,7 @@ async function observeNativeOpenBaoConsumer({ packageArtifact, customerImage, ap
   }
 }
 
-async function main({ nativeOpenBao } = {}) {
-  if (nativeOpenBao) {
-    assert.ok(gate && process.env.TT_UX_PACKAGE_ACCEPTANCE === "1");
-    assert.equal(state.materialProvider, "openbao-kv2");
-    assert.equal(state.certificateMode, "ordinary");
-  }
-  let nativeService = null;
-  if (gate) {
-    assert.equal(process.argv[2] || "all", "all", "Strict qualification cannot resume or run a partial phase");
-    await gate.preflight();
-  }
+async function openSession() {
   await wait(
     "API startup",
     async () => {
@@ -1045,6 +1039,19 @@ async function main({ nativeOpenBao } = {}) {
   await owner.login("owner@wildcard.test", "LabOwner-2026!Only");
   if (state.approverRegistered)
     await approver.login(state.approverEmail, "LabApprover-2026!Only");
+}
+async function main({ nativeOpenBao } = {}) {
+  if (nativeOpenBao) {
+    assert.ok(gate && process.env.TT_UX_PACKAGE_ACCEPTANCE === "1");
+    assert.equal(state.materialProvider, "openbao-kv2");
+    assert.equal(state.certificateMode, "ordinary");
+  }
+  let nativeService = null;
+  if (gate) {
+    assert.equal(process.argv[2] || "all", "all", "Strict qualification cannot resume or run a partial phase");
+    await gate.preflight();
+  }
+  await openSession();
   const phase = process.argv[2] || "all";
   if (phase === "observations") {
     const material = (await versions()).find(v => v.id === (state.renewedVersionId || state.versionId));
@@ -1240,7 +1247,11 @@ async function main({ nativeOpenBao } = {}) {
   }
   return { nativeService: nativeService?.nativeService ?? null, nativeOpenBaoFacts: nativeService ?? null };
 }
-module.exports = { main, context: {state,owner,approver,api,group,versions,matrix,rollout,approve,terminal,job,customer,wait,converge,check,save,root} };
+module.exports = { main, context: {
+  state, owner, approver, api, group, versions, matrix, rollout, approve, terminal, job, customer, wait, converge,
+  check, save, root, base, controlBase, mailBase, certificateSans, openSession, setup, preparePublication, bindings,
+  observeNativeOpenBaoConsumer,
+} };
 if (require.main === module) main().catch(async (e) => {
   if (gate) { gate.report.status="failed"; try {await gate.finish({requiredScenarios:qualification.PHASES.map(p=>"distribution-"+p)});} catch {} }
   state.passed = false;

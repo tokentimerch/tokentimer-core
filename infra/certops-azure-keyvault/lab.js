@@ -192,13 +192,14 @@ function assertPlan(p) {
   if (
     Object.keys(p.identities || {})
       .sort()
-      .join() !== "attributes,consumer,issuer,unauthorized"
+      .join() !== (p.tags.schema === policy.OPERATOR_SCHEMA ? "" : "attributes,consumer,issuer,unauthorized")
   )
     policy.fail("AZURE_KV_PLAN_INVALID");
-  for (const kind of ["issuer", "consumer", "attributes", "unauthorized"])
+  for (const kind of Object.keys(p.identities))
     if (p.identities?.[kind]?.name !== `${stem}-${kind}`)
       policy.fail("AZURE_KV_PLAN_INVALID");
-  for (const kind of ["issuer", "consumer", "attributes"])
+  const roles = p.tags.schema === policy.OPERATOR_SCHEMA ? ["issuer", "consumer"] : ["issuer", "consumer", "attributes"];
+  for (const kind of roles)
     if (!policy.GUID.test(p.roles?.[kind] || ""))
       policy.fail("AZURE_KV_PLAN_INVALID");
   if (p.roles.consumer !== policy.CONSUMER_ROLE)
@@ -253,13 +254,13 @@ function roleAssignment(p, kind, scope = vaultId(p)) {
     },
   };
 }
-async function provision(env = process.env) {
+async function provisionVault(p, env) {
+  const operator = p.tags.schema === policy.OPERATOR_SCHEMA;
   policy.requireTrusted(env);
-  const root = privateRoot(env),
-    file = path.join(root, "state.json"),
-    p = policy.plan(env);
-  if (fs.existsSync(file)) policy.fail("AZURE_KV_STATE_REUSE_DENIED");
-  save(file, p); // Ownership survives interruption before any ARM mutation.
+  if (operator !== policy.operatorWorkflow(env) || p.tags.runId !== env.GITHUB_RUN_ID ||
+      p.tags.attempt !== env.GITHUB_RUN_ATTEMPT || p.tags.sourceSha !== env.GITHUB_SHA)
+    policy.fail("AZURE_KV_PROVISIONING_RUN_DENIED");
+  assertPlan(p);
   const account = cp.spawnSync(
     "az",
     ["account", "show", "--query", "id", "-o", "tsv"],
@@ -278,16 +279,17 @@ async function provision(env = process.env) {
     "Microsoft.Resources/subscriptions/resourceGroups/write",
     "Microsoft.Resources/subscriptions/resourceGroups/delete",
     "Microsoft.KeyVault/vaults/write",
-    "Microsoft.ManagedIdentity/userAssignedIdentities/write",
-    "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+    ...(operator ? [] : ["Microsoft.ManagedIdentity/userAssignedIdentities/write",
+      "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write"]),
     "Microsoft.Authorization/roleAssignments/write",
     "Microsoft.Authorization/roleAssignments/delete",
+    ...(operator ? ["Microsoft.Authorization/roleAssignments/read"] : []),
   ])
     if (!policy.allowedPermission(permissions || [], action))
       policy.fail(
         `AZURE_KV_PERMISSION_REQUIRED_${action.replace(/[^a-z0-9]/gi, "_")}_AT_LAB_SUBSCRIPTION`,
       );
-  for (const provider of ["Microsoft.KeyVault", "Microsoft.ManagedIdentity"])
+  for (const provider of operator ? ["Microsoft.KeyVault"] : ["Microsoft.KeyVault", "Microsoft.ManagedIdentity"])
     if (
       arm(
         "GET",
@@ -297,7 +299,7 @@ async function provision(env = process.env) {
       policy.fail(
         `AZURE_KV_PROVIDER_REGISTRATION_REQUIRED_${provider.replaceAll(".", "_")}`,
       );
-  for (const kind of ["issuer", "consumer", "attributes"])
+  for (const kind of operator ? ["issuer", "consumer"] : ["issuer", "consumer", "attributes"])
     policy.roleDefinition(
       arm(
         "GET",
@@ -363,6 +365,17 @@ async function provision(env = process.env) {
     vault.properties.vaultUri !== `https://${p.vault}.vault.azure.net/`
   )
     policy.fail("AZURE_KV_VAULT_CONFIGURATION_UNVERIFIED");
+}
+
+async function provision(env = process.env) {
+  policy.requireTrusted(env);
+  if (policy.operatorWorkflow(env)) policy.fail("AZURE_KV_PROVISIONING_RUN_DENIED");
+  const root = privateRoot(env),
+    file = path.join(root, "state.json"),
+    p = policy.plan(env);
+  if (fs.existsSync(file)) policy.fail("AZURE_KV_STATE_REUSE_DENIED");
+  save(file, p); // Ownership survives interruption before any ARM mutation.
+  await provisionVault(p, env);
   for (const [kind, identity] of Object.entries(p.identities)) {
     const id = `${groupId(p)}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${identity.name}`;
     const created = arm(
@@ -454,7 +467,7 @@ function fromOwnedGroup(group, subscriptionId) {
     vault,
     tags: group.tags,
     identities: Object.fromEntries(
-      ["issuer", "consumer", "attributes", "unauthorized"].map((k) => [
+      (group.tags.schema === policy.OPERATOR_SCHEMA ? [] : ["issuer", "consumer", "attributes", "unauthorized"]).map((k) => [
         k,
         { name: `${stem}-${k}` },
       ]),
@@ -596,6 +609,7 @@ module.exports = {
   assertPlan,
   verifyOwned,
   roleAssignment,
+  provisionVault,
   provision,
   consumerAccess,
   remove,

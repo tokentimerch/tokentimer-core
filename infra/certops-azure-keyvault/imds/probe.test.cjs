@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const test = require("node:test");
-const { observe, sha256 } = require("./probe.cjs");
+const { observe, sha256, probeFailureCode } = require("./probe.cjs");
 const { assembleReport } = require("./report.cjs");
 
 const core = process.env.TT_IMDS_TEST_CORE ?? path.resolve(__dirname, "../../..");
@@ -30,8 +30,7 @@ function fixture(role, overrides = {}) {
   };
   const own = plan.hosts[role];
   const opposite = plan.hosts[role === "issuer" ? "consumer" : "issuer"];
-  const claims = { appid: own.clientId, oid: own.principalId, aud: "https://vault.azure.net", tid: plan.tenantId };
-  const token = "header." + Buffer.from(JSON.stringify(claims)).toString("base64url") + ".signature";
+  const token = "opaque-fixture-access-token-" + role;
   const groupId = "/subscriptions/" + plan.subscriptionId + "/resourceGroups/" + plan.group;
   const resourceId = groupId + "/providers/Microsoft.Compute/virtualMachines/tt-imds-" + role;
   const events = [];
@@ -43,7 +42,8 @@ function fixture(role, overrides = {}) {
     }
     if (url.pathname === "/metadata/identity/oauth2/token") {
       assert.equal(url.searchParams.get("client_id"), own.clientId);
-      return { status: 200, json: { access_token: token, expires_in: 3600 } };
+      return { status: 200, json: { access_token: token, expires_in: 3600,
+        token_type: "Bearer", resource: overrides.tokenResource ?? "https://vault.azure.net" } };
     }
     assert.equal(url.href, "https://" + plan.vault + ".vault.azure.net/secrets/" + plan.secret +
       "/" + plan.pinnedVersion + "?api-version=7.4");
@@ -87,6 +87,12 @@ test("uses the product's IMDS credential for both clients and reads only the pin
   }
 });
 
+test("refuses token response metadata for a different Azure resource", async () => {
+  const { plan, events, dependencies } = fixture("issuer", { tokenResource: "https://storage.azure.com/" });
+  await assert.rejects(() => observe(plan, dependencies), /IMDS_OWN_IDENTITY_INVALID/);
+  assert.deepEqual(events, ["/metadata/instance/compute", "/metadata/identity/oauth2/token"]);
+});
+
 test("refuses a shared VM before making contact", async () => {
   const { plan, events, dependencies } = fixture("issuer");
   plan.hosts.consumer.vmId = plan.hosts.issuer.vmId;
@@ -97,6 +103,27 @@ test("refuses a shared VM before making contact", async () => {
 test("rejects a 400 caused by an invalid IMDS request instead of identity denial", async () => {
   const { plan, dependencies } = fixture("issuer", { malformedRequest: true });
   await assert.rejects(() => observe(plan, dependencies), /IMDS_OPPOSITE_IDENTITY_DENIAL_MISSING/);
+});
+
+test("reports fixed failure stages without exposing provider errors", async () => {
+  const { plan, dependencies } = fixture("issuer");
+  await assert.rejects(() => observe(plan, {
+    ...dependencies, requestJson: async () => { throw new Error("private metadata response"); },
+  }), error => probeFailureCode(error) === "IMDS_HOST_METADATA_UNAVAILABLE");
+
+  await assert.rejects(() => observe(plan, {
+    ...dependencies, requestJson: async (url, options) => url.pathname === "/metadata/identity/oauth2/token"
+      ? { status: 400, json: null }
+      : dependencies.requestJson(url, options),
+  }), error => probeFailureCode(error) === "IMDS_OWN_TOKEN_UNAVAILABLE");
+
+  await assert.rejects(() => observe(plan, {
+    ...dependencies, requestJson: async (url, options) => url.protocol === "https:"
+      ? { status: 403, json: { privateValue: "private vault response" } }
+      : dependencies.requestJson(url, options),
+  }), error => probeFailureCode(error) === "IMDS_PINNED_VERSION_FORBIDDEN");
+
+  assert.equal(probeFailureCode(new Error("IMDS_PINNED_VERSION_FORBIDDEN")), "CERTOPS_IMDS_PROBE_FAILED");
 });
 
 test("rejects a response for the newer Key Vault version", async () => {
