@@ -352,6 +352,28 @@ function broker({ binding, projectionRoot, certificateRoot, deadlineMs, issuer, 
     finish("stopped");
     await Promise.allSettled([admission, ...ROLES.map(role => state[role].inFlight)]);
   }
+  async function readToken(role) {
+    const index = ROLES.indexOf(role);
+    requireCondition(index !== -1, "AZURE_BROKER_ROLE_REFUSED");
+    requireCondition(phase === "running", "AZURE_BROKER_NOT_READY");
+    const row = state[role];
+    if (row.inFlight) await row.inFlight;
+    live();
+
+    // The privileged host can read the isolated role's projection, but the
+    // agent reader inside the role continues to enforce its own file owner.
+    const refused = "AZURE_BROKER_SINK_TOKEN_REFUSED";
+    try {
+      checkDirs[index]();
+      const file = path.join(roleConfig[role].directory, "token.json");
+      const { accessToken, expiresOn } = JSON.parse(readProjection(file, UID[role], io));
+      requireCondition(typeof accessToken === "string" && expiresOn === row.last.expiresOn &&
+        expiresOn > now() + MIN_REMAINING_MS && digest(accessToken) === row.last.tokenSha, refused);
+      return accessToken;
+    } catch {
+      throw new Error(refused);
+    }
+  }
   function observations() {
     live();
     requireCondition(phase === "running" && ROLES.every(role => state[role].last.expiresOn > now()),
@@ -362,7 +384,7 @@ function broker({ binding, projectionRoot, certificateRoot, deadlineMs, issuer, 
   return { start, refresh(role) {
     requireCondition(phase === "running", "AZURE_BROKER_NOT_READY");
     return refresh(role);
-  }, stop, observations, signal: controller.signal };
+  }, stop, readToken, observations, signal: controller.signal };
 }
 
 module.exports = { createBroker, createRetirementProbe,
