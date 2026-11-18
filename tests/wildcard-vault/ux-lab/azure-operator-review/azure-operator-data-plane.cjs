@@ -1,21 +1,17 @@
 "use strict";
 const assert = require("node:assert/strict");
-const path = require("node:path");
-const { credential, VERSION, MAX_SECRET_BYTES, CONTENT_TYPE } = require("../../../../packages/agent/src/material-store/azure.js");
+const { VERSION, MAX_SECRET_BYTES, CONTENT_TYPE } = require("../../../../packages/agent/src/material-store/azure.js");
 const { requestJson } = require("../../../../packages/agent/src/material-store/transport.js");
 
 const VAULT_HOST = /^ttkv[a-f0-9]{20}\.vault\.azure\.net$/;
 const OBJECT = /^tt-[a-f0-9]{64}$/;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-function createDataPlane({ vaultHost, issuerSink, consumerSink, deadlineMs, assertLease, journal, grantExactRead }) {
+function createDataPlane({ vaultHost, readToken, deadlineMs, assertLease, journal, grantExactRead }) {
   assert.match(vaultHost || "", VAULT_HOST);
-  assert.ok(path.isAbsolute(issuerSink) && path.isAbsolute(consumerSink) && issuerSink !== consumerSink);
   assert.ok(Number.isSafeInteger(deadlineMs) && deadlineMs > Date.now());
-  for (const check of [assertLease, journal, grantExactRead]) assert.equal(typeof check, "function");
+  for (const check of [readToken, assertLease, journal, grantExactRead]) assert.equal(typeof check, "function");
   const origin = "https://" + vaultHost;
-  const tokens = Object.fromEntries(Object.entries({ issuer: issuerSink, consumer: consumerSink }).map(([role, sink]) =>
-    [role, credential({ auth: { type: "token-file", tokenFile: path.join(sink, "token.json") } }, 10000)]));
   let selected, committed;
   const live = () => assert.ok(Date.now() + 10000 < deadlineMs, "owned vault lease is ending");
 
@@ -25,7 +21,7 @@ function createDataPlane({ vaultHost, issuerSink, consumerSink, deadlineMs, asse
     const url = new URL("/secrets/" + name + suffix, origin);
     url.searchParams.set("api-version", "7.4");
     return requestJson(url, { method, body, timeoutMs: 10000, maxBytes: 128 * 1024,
-      headers: { Authorization: "Bearer " + await tokens[role](), "Content-Type": "application/json" } });
+      headers: { Authorization: "Bearer " + await readToken(role), "Content-Type": "application/json" } });
   }
   async function untilAuthorized(request, expected) {
     for (;;) {

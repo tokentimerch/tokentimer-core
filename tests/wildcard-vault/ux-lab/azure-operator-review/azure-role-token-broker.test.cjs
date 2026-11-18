@@ -46,7 +46,7 @@ function fixture(certificates) {
   const io = {
     lstatSync: key => files.get(key), statSync: key => files.get(key), realpathSync: key => key,
     openSync(file) { const raw = Buffer.from(values.get(file)); const fd = ++id;
-      descriptors.set(fd, { ...fileStat(0, raw.length), raw }); return fd; },
+      descriptors.set(fd, { ...fileStat(0, raw.length), ...files.get(file), size: raw.length, raw }); return fd; },
     closeSync: fd => descriptors.delete(fd),
     fstatSync: fd => descriptors.get(fd),
     readSync(fd, target) { return descriptors.get(fd).raw.copy(target); },
@@ -65,7 +65,7 @@ function fixture(certificates) {
       const { accessToken, expiresOn } = await acquire();
       const fd = ++id; descriptors.set(fd, fileStat(0, 0)); prepareOwner(fd);
       files.set(directory + "/token.json", descriptors.get(fd)); descriptors.delete(fd);
-      values.set(directory + "/token.json", accessToken);
+      values.set(directory + "/token.json", JSON.stringify({ accessToken, expiresOn }));
       return { expiresOn };
     } }; },
     async request(url, request) {
@@ -98,6 +98,7 @@ function fixture(certificates) {
     },
   });
   return { subject, values, files, timers, exchanges, project,
+    token(role) { return JSON.parse(values.get(`/${role}/token.json`)).accessToken; },
     async advance(ms) {
       time += ms;
       for (const [id, timer] of timers) if (timer.at <= time) { timers.delete(id); timer.fn(); }
@@ -181,20 +182,20 @@ test("binds the projected subject to a distinct environment, exact workflow, com
 });
 
 test("observes both cross-role denials before setup and renews each sink off a fresh projection", async () => {
-  const { subject, values, project, advance, exchanges, timers } = fixture();
+  const { subject, token, project, advance, exchanges, timers } = fixture();
   const starting = subject.start();
   assert.throws(() => subject.refresh("issuer"), /NOT_READY/);
   await starting;
   assert.equal(exchanges.filter(row => !row.own).length, 2);
   assert.equal(exchanges.slice(0, 4).filter(row => !row.own).length, 2);
-  assert.equal(values.get("/issuer/token.json"), "synthetic_test_issuer-1_token");
-  assert.equal(values.get("/consumer/token.json"), "synthetic_test_consumer-1_token");
+  assert.equal(token("issuer"), "synthetic_test_issuer-1_token");
+  assert.equal(token("consumer"), "synthetic_test_consumer-1_token");
   assert.deepEqual(subject.observations().map(row => row.tokenRenewals), [0, 0]);
   await advance(360_000);
   project("issuer", "issuer-2"); project("consumer", "consumer-2");
   await advance(120_000);
-  assert.equal(values.get("/issuer/token.json"), "synthetic_test_issuer-2_token");
-  assert.equal(values.get("/consumer/token.json"), "synthetic_test_consumer-2_token");
+  assert.equal(token("issuer"), "synthetic_test_issuer-2_token");
+  assert.equal(token("consumer"), "synthetic_test_consumer-2_token");
   const facts = subject.observations();
   assert.deepEqual(facts.map(row => row.tokenRenewals), [1, 1]);
   assert.notEqual(facts[0].subjectSha256, facts[1].subjectSha256);
@@ -202,6 +203,35 @@ test("observes both cross-role denials before setup and renews each sink off a f
   await subject.stop();
   assert.equal(timers.size, 0);
   assert.equal(subject.signal.aborted, true);
+});
+
+test("the privileged operator reads only the current token owned by the requested role", async t => {
+  const { subject, values, files, token, advance, project } = fixture();
+  t.after(() => subject.stop());
+  await subject.start();
+  assert.equal(await subject.readToken("issuer"), token("issuer"));
+  assert.equal(await subject.readToken("consumer"), token("consumer"));
+  await assert.rejects(subject.readToken("/issuer"), /AZURE_BROKER_ROLE_REFUSED/);
+
+  const file = "/issuer/token.json";
+  const original = values.get(file);
+  const metadata = files.get(file);
+  files.set(file, { ...metadata, uid: 10002 });
+  await assert.rejects(subject.readToken("issuer"), /AZURE_BROKER_SINK_TOKEN_REFUSED/);
+  files.set(file, metadata);
+  values.set(file, values.get("/consumer/token.json"));
+  await assert.rejects(subject.readToken("issuer"), /AZURE_BROKER_SINK_TOKEN_REFUSED/);
+
+  values.set(file, original);
+  await advance(120_000);
+  project("issuer", "issuer-2");
+  const renewal = subject.refresh("issuer");
+  assert.equal(await subject.readToken("issuer"), "synthetic_test_issuer-2_token");
+  await renewal;
+  values.set(file, original);
+  await assert.rejects(subject.readToken("issuer"), /AZURE_BROKER_SINK_TOKEN_REFUSED/);
+  await subject.stop();
+  await assert.rejects(subject.readToken("consumer"), /AZURE_BROKER_NOT_READY/);
 });
 
 test("wrong Entra denial and shared assertion fail closed before writing either sink", async () => {
@@ -218,14 +248,14 @@ test("wrong Entra denial and shared assertion fail closed before writing either 
 });
 
 test("a replaced sink directory aborts broker refresh without exposing credentials", async () => {
-  const { subject, files, values, advance, project } = fixture();
+  const { subject, files, token, advance, project } = fixture();
   await subject.start();
   await advance(120_000);
   project("issuer", "issuer-2");
   files.set("/issuer", { ...files.get("/issuer"), ino: 99 });
   await assert.rejects(subject.refresh("issuer"), { message: "AZURE_BROKER_REFRESH_FAILED" });
   assert.equal(subject.signal.aborted, true);
-  assert.equal(values.get("/issuer/token.json"), "synthetic_test_issuer-1_token");
+  assert.equal(token("issuer"), "synthetic_test_issuer-1_token");
 });
 
 test("Entra transport keeps only the reviewed error shape and refuses oversized or foreign responses", async () => {
