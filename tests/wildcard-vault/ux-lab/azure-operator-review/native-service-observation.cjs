@@ -13,6 +13,7 @@ const USER = "tokentimer-agent";
 const ROOT = "/opt/tokentimer-agent";
 const ENTRY = "bin/tokentimer-agent.js";
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+const WIRE_AGENT_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 function systemdProperties() {
   const args = ["show", UNIT, "--property=MainPID,ActiveState,SubState,User"];
@@ -47,7 +48,7 @@ function readInstalledAgent(files, nodeExecutable) {
   let agentId;
   try { agentId = JSON.parse(fs.readFileSync(processRoot + "/state/config.json", "utf8")).agentId; }
   catch { throw new Error("installed enrollment configuration is not readable"); }
-  assert.ok(UUID.test(agentId || ""), "installed agent ID missing");
+  assert.ok(typeof agentId === "string" && WIRE_AGENT_ID.test(agentId), "installed agent ID is invalid");
   assert.deepEqual(systemdProperties(), service, "unit changed during observation");
   assert.equal(processBirth(pid), birth, "agent process changed during observation");
   return { agentId, observation: { unit: UNIT, activeState: service.ActiveState, subState: service.SubState,
@@ -69,8 +70,10 @@ async function beginNativeServiceObservation({ files, readEnrolledAgent, nodeExe
     const after = await sample();
     assert.ok(before.agentId === after.agentId && before.enrollmentRowId === after.enrollmentRowId && before.seenAt < after.seenAt,
       "restart must preserve enrollment and advance the public heartbeat");
-    const result = { kind: "installed-linux-systemd", installedFileHashes: files, agentId: before.agentId,
-      enrolledAgentId: after.agentId, before: before.observation, after: after.observation };
+    // Both samples match the installed wire identity to the same fleet row.
+    // The receipt identifies that public enrollment by its row UUID.
+    const result = { kind: "installed-linux-systemd", installedFileHashes: files, agentId: before.enrollmentRowId,
+      enrolledAgentId: after.enrollmentRowId, before: before.observation, after: after.observation };
     verifyNative(result, files);
     return result;
   };
