@@ -135,6 +135,7 @@ jobs:
             "$(command -v pwsh)" -NoProfile -File tests/wildcard-vault/ux-lab/azure-operator-review/run.ps1 \
             -Action Test -Phase all -Project "$LAB_PROJECT" > "$area/journey.log" 2>&1; then
             grep -Eo '^RUN (setup|publish|bindings|validation|scanner|rejection|authorization|recovery|deployment-recovery|qualification|security|runtime-controls|browser|privacy|transfer)$|OPENBAO_JOURNEY_FAILED (assertion|error)( (native-openbao-journey|journey|qualification|native-openbao-bootstrap|native-service-observation|adversarial)\.cjs:[0-9]{1,5})?' "$area/journey.log" || true
+            grep -Eom 1 'OPENBAO_PUBLISH_TERMINAL journey\.cjs:[0-9]{1,5} (succeeded|failed|blocked|rejected|cancelled|orphaned_unknown_effect) (other|none|material_(auth_denied|auth_unavailable|store_config_invalid|provider_mismatch|scope_denied|destination_denied|platform_unqualified|execution_failed|store_unavailable|response_invalid|version_unavailable|intent_invalid|publication_uncertain|lease_unavailable|issuance_uncertain|cas_conflict))' "$area/journey.log" || true
             report="$candidate/.scratch/$LAB_PROJECT/qualification.json"
             sudo --non-interactive head -c 262144 -- "$report" 2>/dev/null | node -e '
               try {
