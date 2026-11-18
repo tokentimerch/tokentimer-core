@@ -57,8 +57,8 @@ Total skips found: 157
 | `packages/agent/src/keys/keys.test.js` | 209 | refuses to write through a symlink at the key path | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/keys/keys.test.js` | 499 | verifies the CSR with openssl when available | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/material-preflight.test.js` | 10 | a local material policy refusal has no uncertain side effect | test(..., { skip }) option-object | `platform` |
-| `packages/agent/src/material-store/material-store.test.js` | 105 | real isolated Vault KV v2: pinned publication and idempotent CAS | test(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/material-store/material-store.test.js` | 148 | real Vault ACL separates issuer, consumer, scanner and customer prefixes | test(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/material-store/material-store.test.js` | 102 | real isolated Vault KV v2: pinned publication and idempotent CAS | test(..., { skip }) option-object | `prerequisite` |
+| `packages/agent/src/material-store/material-store.test.js` | 187 | real Vault ACL separates issuer, consumer, scanner and customer prefixes | test(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/platform/platform.test.js` | 454 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/platform/platform.test.js` | 468 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/replay/replay.test.js` | 144 | writes the store file with 0600 permissions on non-win32 | it(..., { skip }) option-object | `platform` |
