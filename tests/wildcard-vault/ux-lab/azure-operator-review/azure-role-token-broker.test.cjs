@@ -1,6 +1,11 @@
 "use strict";
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
+const { constants, createHash, verify, X509Certificate } = require("node:crypto");
+const { existsSync, mkdtempSync, readFileSync, rmSync, rmdirSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const { join, resolve } = require("node:path");
 const { _offline: { broker, validateAssertion, requestEntra, roleTrust } } = require("./azure-role-token-broker.cjs");
 
 const binding = {
@@ -21,7 +26,7 @@ const jwt = (role, jti, now = epoch, changes = {}, run = binding) => {
   return "c3ludGhldGlj." + Buffer.from(JSON.stringify(claims)).toString("base64url") + ".Zml4dHVyZQ";
 };
 
-function fixture() {
+function fixture(certificates) {
   const directories = ["/projection", "/issuer", "/consumer"];
   const files = new Map(directories.map((name, index) => [name, {
     uid: index ? 10000 + index : 0, dev: 1, ino: index + 1, mode: 0o700,
@@ -29,10 +34,15 @@ function fixture() {
   }]));
   files.set("/", { ...files.get("/projection"), ino: 0, mode: 0o755 });
   const values = new Map(), descriptors = new Map(), timers = new Map(), exchanges = [];
-  let time = epoch, id = 0, deniedCode = 700213;
+  const start = certificates ? Date.now() : epoch;
+  let time = start, id = 0, deniedCode = certificates ? 700027 : 700213;
   const project = (role, jti) => values.set(`/projection/${role}.jwt`, jwt(role, jti, time));
   const fileStat = (uid, size) => ({ uid, size, nlink: 1, mode: 0o600, isFile: () => true, isSymbolicLink: () => false });
   for (const role of ["issuer", "consumer"]) project(role, role + "-1");
+  for (const [role, value] of Object.entries(certificates || {})) {
+    values.set("/projection/" + role + ".cert.pem", value.certificatePem);
+    values.set("/projection/" + role + ".key.pem", value.privateKeyPem);
+  }
   const io = {
     lstatSync: key => files.get(key), statSync: key => files.get(key), realpathSync: key => key,
     openSync(file) { const raw = Buffer.from(values.get(file)); const fd = ++id;
@@ -43,9 +53,11 @@ function fixture() {
     fchownSync(fd, uid) { descriptors.get(fd).uid = uid; },
     fchmodSync(fd, mode) { descriptors.get(fd).mode = mode; },
   };
-  const subject = broker({ binding, projectionRoot: "/projection", deadlineMs: epoch + 3_600_000,
-    issuer: { directory: "/issuer", tenantId: tenant, clientId: clients.issuer },
-    consumer: { directory: "/consumer", tenantId: tenant, clientId: clients.consumer } }, {
+  const transport = certificates ? { certificateRoot: "/projection" } : { projectionRoot: "/projection" };
+  const identity = role => ({ directory: "/" + role, tenantId: tenant, clientId: clients[role],
+    certificateSha256: certificates?.[role].certificateSha256 });
+  const subject = broker({ binding, ...transport, deadlineMs: start + 3_600_000,
+    issuer: identity("issuer"), consumer: identity("consumer") }, {
     io, owner: 0, platform: "linux", now: () => time,
     setTimeout(fn, delay) { const timer = ++id; timers.set(timer, { fn, at: time + delay }); return timer; },
     clearTimeout: timer => timers.delete(timer),
@@ -56,15 +68,33 @@ function fixture() {
       values.set(directory + "/token.json", accessToken);
       return { expiresOn };
     } }; },
-    async request(_url, request) {
+    async request(url, request) {
       const params = new URLSearchParams(request.body);
-      const payload = params.get("client_assertion").split(".")[1];
-      const { jti, environment } = JSON.parse(Buffer.from(payload, "base64url"));
-      const role = environment.endsWith("-issuer") ? "issuer" : "consumer";
+      const [encodedHeader, payload, signature] = params.get("client_assertion").split(".");
+      const { jti, environment, aud, iss, sub, iat, nbf, exp } = JSON.parse(Buffer.from(payload, "base64url"));
+      let role;
+      if (certificates) {
+        const header = JSON.parse(Buffer.from(encodedHeader, "base64url"));
+        role = Object.keys(certificates).find(name =>
+          Buffer.from(certificates[name].certificateSha256, "hex").toString("base64url") === header["x5t#S256"]);
+        assert.ok(role);
+        assert.equal(header.alg, "PS256");
+        assert.equal(aud, url.href);
+        assert.equal(iss, params.get("client_id"));
+        assert.equal(sub, iss);
+        assert.equal(iat, nbf);
+        assert.equal(exp - iat, 300);
+        assert.equal(verify("sha256", Buffer.from(encodedHeader + "." + payload), {
+          key: new X509Certificate(certificates[role].certificatePem).publicKey,
+          padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: constants.RSA_PSS_SALTLEN_DIGEST,
+        }, Buffer.from(signature, "base64url")), true);
+      } else {
+        role = environment.endsWith("-issuer") ? "issuer" : "consumer";
+      }
       const own = params.get("client_id") === clients[role];
       exchanges.push({ role, own, jti });
       return own ? { status: 200, json: { access_token: "synthetic_test_" + jti + "_token", expires_in: 600 } }
-        : { status: 400, json: { error: "invalid_client", error_codes: [deniedCode] } };
+        : { status: certificates ? 401 : 400, json: { error: "invalid_client", error_codes: [deniedCode] } };
     },
   });
   return { subject, values, files, timers, exchanges, project,
@@ -76,6 +106,68 @@ function fixture() {
     setBadCode() { deniedCode = 700016; },
   };
 }
+
+function makeCertificates(t) {
+  let openssl = "openssl";
+  if (process.platform === "win32") {
+    const gitRoot = execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim();
+    const bundled = resolve(gitRoot, "../../../usr/bin/openssl.exe");
+    if (existsSync(bundled)) openssl = bundled;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "tt-azure-broker-cert-"));
+  const files = [];
+  t.after(() => {
+    for (const file of files) rmSync(file, { force: true });
+    rmdirSync(dir);
+  });
+  function certificate(role, reuseKey = false) {
+    const certificatePath = join(dir, role + ".cert.pem");
+    const keyPath = join(dir, (reuseKey ? "issuer" : role) + ".key.pem");
+    files.push(certificatePath);
+    if (!reuseKey) files.push(keyPath);
+    const keyArgs = reuseKey ? ["-key", keyPath] : ["-newkey", "rsa:2048", "-nodes", "-keyout", keyPath];
+    execFileSync(openssl, ["req", "-x509", "-days", "1", "-subj", "/CN=" + role, "-out", certificatePath,
+      ...keyArgs], { stdio: "ignore" });
+    const certificatePem = readFileSync(certificatePath, "utf8");
+    const privateKeyPem = readFileSync(keyPath, "utf8");
+    const certificateSha256 = createHash("sha256").update(new X509Certificate(certificatePem).raw).digest("hex");
+    return { certificatePem, privateKeyPem, certificateSha256 };
+  }
+  return { issuer: certificate("issuer"), consumer: certificate("consumer"),
+    sharedKey: () => certificate("second-issuer", true) };
+}
+
+test("uses separate certificate claims and proves reciprocal denial before renewing each sink", async t => {
+  const { issuer, consumer } = makeCertificates(t);
+  const { subject, values, advance, exchanges, timers } = fixture({ issuer, consumer });
+  t.after(() => subject.stop());
+  await subject.start();
+  assert.deepEqual(exchanges.slice(0, 4).map(({ role, own }) => [role, own]),
+    [["issuer", true], ["consumer", true], ["issuer", false], ["consumer", false]]);
+  assert.equal(new Set(exchanges.map(row => row.jti)).size, 6);
+  const first = values.get("/issuer/token.json");
+  await advance(480_000);
+  assert.notEqual(values.get("/issuer/token.json"), first);
+  const rows = subject.observations();
+  assert.deepEqual(rows.map(row => row.tokenRenewals), [1, 1]);
+  assert.notEqual(rows[0].subjectSha256, rows[1].subjectSha256);
+  assert.doesNotMatch(JSON.stringify(rows), /synthetic_test|BEGIN|privateKey|certificatePem/);
+  await subject.stop();
+  assert.equal(timers.size, 0);
+});
+
+test("rejects certificate pin mismatch, a shared key under two certificates, and a wrong Entra rejection", async t => {
+  const { issuer, consumer, sharedKey } = makeCertificates(t);
+  assert.throws(() => fixture({ issuer, consumer: { ...consumer, certificateSha256: issuer.certificateSha256 } }),
+    /CERTIFICATE_CREDENTIAL_REFUSED/);
+  assert.throws(() => fixture({ issuer, consumer: sharedKey() }), /SHARED_CERTIFICATE_KEY_REFUSED/);
+  const wrong = fixture({ issuer, consumer });
+  wrong.setBadCode();
+  t.after(() => wrong.subject.stop());
+  await assert.rejects(wrong.subject.start(), /ADMISSION_FAILED/);
+  assert.equal(wrong.values.has("/issuer/token.json"), false);
+  assert.equal(wrong.values.has("/consumer/token.json"), false);
+});
 
 test("binds the projected subject to a distinct environment, exact workflow, commit, run and attempt", () => {
   assert.equal(validateAssertion(jwt("issuer", "one"), binding, "issuer", epoch), "one");
@@ -145,6 +237,9 @@ test("Entra transport keeps only the reviewed error shape and refuses oversized 
       error_description: "synthetic diagnostic", access_token: "synthetic secret" }, { status: 400 });
   });
   assert.deepEqual(result, { status: 400, json: { error: "invalid_client", error_codes: [700213] } });
+  const mismatch = await requestEntra(url, input, async () =>
+    Response.json({ error: "invalid_client", error_codes: [700027, 700016] }, { status: 401 }));
+  assert.deepEqual(mismatch, { status: 401, json: { error: "invalid_client", error_codes: [700027] } });
   await assert.rejects(requestEntra(new URL("https://example.test/"), input, () => { throw new Error("unexpected call"); }),
     { message: "AZURE_BROKER_ENTRA_REFUSED" });
   await assert.rejects(requestEntra(url, input, async () => new Response("x".repeat(32769), { status: 400 })),
