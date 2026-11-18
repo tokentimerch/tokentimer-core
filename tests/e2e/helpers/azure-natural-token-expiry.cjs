@@ -38,17 +38,26 @@ function validateScope(config, store, version) {
   return new URL(`/secrets/${store.objectRef}/${version}?api-version=7.4`, address);
 }
 
-// Injected clocks and requests are for offline orchestration tests only.
-async function observe({ acquire, read, fetchVersion, renewAssertion, verifyOwned, now, pause, budget }) {
-  const started = now(), deadline = workDeadline(budget, started);
-  await verifyOwned();
-  const first = await acquire();
+function assertTokenFits(first, started, now, budget) {
+  const deadline = workDeadline(budget, now);
   if (!Number.isSafeInteger(first.issuedAt) || !Number.isSafeInteger(first.expiresAt) ||
       first.issuedAt < Math.floor(started / 1000) - 30 || first.expiresAt <= first.issuedAt ||
-      first.expiresAt * 1000 <= now() + 30000)
+      first.expiresAt * 1000 <= now + 30000)
     fail("AZURE_EXPIRY_TOKEN_TIMES_INVALID");
   if (first.expiresAt * 1000 + EXPIRY_GRACE_MS > deadline)
     fail("AZURE_EXPIRY_OUTSIDE_BUDGET");
+  return deadline;
+}
+
+// Injected clocks and requests are for offline orchestration tests only.
+async function observe({ acquire, prepare = async () => {}, read, fetchVersion, renewAssertion, verifyOwned, now, pause, budget }) {
+  const started = now();
+  workDeadline(budget, started);
+  await verifyOwned();
+  const first = await acquire();
+  const deadline = assertTokenFits(first, started, now(), budget);
+  await prepare();
+  assertTokenFits(first, started, now(), budget);
   let before;
   try { before = await read(first.token); } catch { fail("AZURE_EXPIRY_NETWORK_BEFORE"); }
   if (before !== 200) fail("AZURE_EXPIRY_INITIAL_ACCESS_DENIED");
@@ -82,17 +91,15 @@ async function observe({ acquire, read, fetchVersion, renewAssertion, verifyOwne
     azureStatusBefore: 200, azureStatusExpired: 401, azureStatusAfter: 200 };
 }
 
-async function runNaturalExpiry({ candidateRoot, config, store, providerVersion, renewAssertion, verifyOwned, budget }) {
+function packageToken(candidateRoot, config, inspectResponse = () => {}) {
   assert.ok(path.isAbsolute(candidateRoot));
-  workDeadline(budget || {}, Date.now());
-  assert.equal(typeof renewAssertion, "function");
-  assert.equal(typeof verifyOwned, "function");
-  const url = validateScope(config, store, providerVersion);
+  assert.equal(config.auth?.type, "workload-identity");
   const { credential } = require(path.join(candidateRoot, "src/material-store/azure"));
   const { requestJson } = require(path.join(candidateRoot, "src/material-store/transport"));
   let expiry;
   const getToken = credential(config, 15000, async (target, options) => {
     const response = await requestJson(target, options);
+    inspectResponse(response.status, Array.isArray(response.json?.error_codes) ? response.json.error_codes : []);
     if (response.status === 200) {
       expiry = Number(response.json?.expires_on || NaN);
       if (!Number.isSafeInteger(expiry)) {
@@ -105,11 +112,26 @@ async function runNaturalExpiry({ candidateRoot, config, store, providerVersion,
     }
     return response;
   });
+  return async () => {
+    expiry = undefined;
+    const token = await getToken(true);
+    return { token, issuedAt: Math.floor(Date.now() / 1000), expiresAt: expiry };
+  };
+}
+
+async function runNaturalExpiry({ candidateRoot, config, store, prepareVersion, renewAssertion, verifyOwned, budget }) {
+  assert.ok(path.isAbsolute(candidateRoot));
+  workDeadline(budget || {}, Date.now());
+  assert.equal(typeof prepareVersion, "function");
+  assert.equal(typeof renewAssertion, "function");
+  assert.equal(typeof verifyOwned, "function");
+  const { requestJson } = require(path.join(candidateRoot, "src/material-store/transport"));
+  let providerVersion, url;
   const facts = await observe({
-    acquire: async () => {
-      expiry = undefined;
-      const token = await getToken(true);
-      return { token, issuedAt: Math.floor(Date.now() / 1000), expiresAt: expiry };
+    acquire: packageToken(candidateRoot, config),
+    prepare: async () => {
+      providerVersion = await prepareVersion();
+      url = validateScope(config, store, providerVersion);
     },
     read: async token => (await requestJson(url, { timeoutMs: 15000, maxBytes: 100000,
       headers: { Authorization: `Bearer ${token}` } })).status,
@@ -119,4 +141,4 @@ async function runNaturalExpiry({ candidateRoot, config, store, providerVersion,
   return { ...facts, forced401: false, clockOverridden: false, pinnedVersion: providerVersion };
 }
 
-module.exports = { runNaturalExpiry, workDeadline, MAX_DURATION_MS, MAX_JOB_DURATION_MS, WINDOW_ERROR_CODES, _offline: { observe, validateScope } };
+module.exports = { runNaturalExpiry, packageToken, assertTokenFits, workDeadline, MAX_DURATION_MS, MAX_JOB_DURATION_MS, WINDOW_ERROR_CODES, _offline: { observe, validateScope } };
