@@ -150,7 +150,7 @@ async function runProtected({ approved, packageDirectory, candidateRepo, images,
     broker = createBroker({ binding, certificateRoot, deadlineMs,
       issuer: { ...issuer, directory: issuerSink }, consumer: { ...consumer, directory: consumerSink },
     });
-    const provider = createDataPlane({ vaultHost, issuerSink, consumerSink, deadlineMs,
+    const provider = createDataPlane({ vaultHost, readToken: broker.readToken, deadlineMs,
       assertLease: () => authority.assertLease(owner),
       journal: row => authority.journal(owner, row),
       grantExactRead: objectName => authority.grantExactRead(owner, objectName, consumer),
