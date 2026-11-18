@@ -54,6 +54,7 @@ jobs:
           git diff --quiet "$candidate_sha" "$GITHUB_SHA" -- tests/wildcard-vault/ux-lab \
             scripts/certops-agent-package.js scripts/certops-azure-keyvault-package.cjs \
             scripts/certops-linux-systemd-ownership.js tests/e2e/linux-systemd-real-journey.js \
+            ':(exclude)tests/wildcard-vault/ux-lab/adversarial.cjs' \
             ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/run.ps1' \
             ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/native-openbao-journey.cjs'
           git worktree add --detach "$area/candidate" "$candidate_sha"
@@ -85,11 +86,15 @@ jobs:
           area="$RUNNER_TEMP/openbao-owned"
           export TT_UX_CANDIDATE_REPO="$area/candidate"
           cd "$TT_UX_CANDIDATE_REPO"
-          harness=tests/wildcard-vault/ux-lab/azure-operator-review
+          lab=tests/wildcard-vault/ux-lab
+          harness="$lab/azure-operator-review"
           # Update only the reviewed runner files after building the producer's images.
           candidate_sha="$(node -p 'require(process.argv[1]).candidateSha' "$area/identity.json")"
-          expected_harness="$(git diff --name-only "$candidate_sha" "$GITHUB_SHA" -- "$harness/run.ps1" "$harness/native-openbao-journey.cjs")"
-          install -m 0644 "$GITHUB_WORKSPACE/$harness/run.ps1" "$GITHUB_WORKSPACE/$harness/native-openbao-journey.cjs" "$harness/"
+          runner_files=("$lab/adversarial.cjs" "$harness/run.ps1" "$harness/native-openbao-journey.cjs")
+          expected_harness="$(git diff --name-only "$candidate_sha" "$GITHUB_SHA" -- "${runner_files[@]}")"
+          for file in "${runner_files[@]}"; do
+            install -m 0644 "$GITHUB_WORKSPACE/$file" "$file"
+          done
           test "$(git diff --name-only HEAD)" = "$expected_harness"
           node "$harness/project-freshness.cjs" "$LAB_PROJECT"
           node - "$area/identity.json" "$area/owned.json" "$LAB_PROJECT" <<'NODE'
@@ -129,9 +134,19 @@ jobs:
             CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST="$CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST" TT_UX_CANDIDATE_REPO="$candidate" \
             "$(command -v pwsh)" -NoProfile -File tests/wildcard-vault/ux-lab/azure-operator-review/run.ps1 \
             -Action Test -Phase all -Project "$LAB_PROJECT" > "$area/journey.log" 2>&1; then
-            if grep -E '^(RUN (setup|publish|bindings|validation|scanner|rejection|authorization|recovery|deployment-recovery|qualification|security|runtime-controls|browser|privacy|transfer)|OPENBAO_JOURNEY_FAILED (assertion|error)( (native-openbao-journey|journey|qualification|native-openbao-bootstrap|native-service-observation)\.cjs:[0-9]{1,5})?)$' "$area/journey.log"; then
-              echo '::notice::OpenBao journey stopped in the stage identified above'
-            fi
+            grep -Eo '^RUN (setup|publish|bindings|validation|scanner|rejection|authorization|recovery|deployment-recovery|qualification|security|runtime-controls|browser|privacy|transfer)$|OPENBAO_JOURNEY_FAILED (assertion|error)( (native-openbao-journey|journey|qualification|native-openbao-bootstrap|native-service-observation|adversarial)\.cjs:[0-9]{1,5})?' "$area/journey.log" || true
+            report="$candidate/.scratch/$LAB_PROJECT/qualification.json"
+            sudo --non-interactive head -c 262144 -- "$report" 2>/dev/null | node -e '
+              try {
+                const phase = JSON.parse(require("node:fs").readFileSync(0, "utf8")).scenarios?.at(-1);
+                const id = /^distribution-(setup|publish|bindings|validation|scanner|rejection|authorization|recovery|deployment-recovery|qualification|security|runtime-controls|browser|privacy|transfer)$/;
+                if (!id.test(phase?.id) || !["failed", "running"].includes(phase.status)) process.exit(0);
+                const frame = /^(journey|qualification|adversarial)\.cjs:[0-9]{1,5}$/;
+                const location = frame.test(phase.failure?.sourceFrame) ? " " + phase.failure.sourceFrame : "";
+                const result = phase.status === "running" ? "interrupted" : "failed";
+                console.log("OpenBao " + phase.id + " " + result + location);
+              } catch {}
+            ' || true
             echo '::error::OpenBao installed journey failed; cleanup will run'
             exit 1
           fi
