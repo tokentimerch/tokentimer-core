@@ -20,6 +20,9 @@ on:
         options: [swedencentral, westeurope, northeurope]
         default: swedencentral
 
+permissions:
+  contents: read
+
 concurrency:
   group: certops-azure-keyvault-provisioning
   cancel-in-progress: false
@@ -121,21 +124,24 @@ jobs:
         shell: pwsh
         run: ./infra/certops-azure-keyvault/login-oidc.ps1
       - name: Verify cleanup from the owned lease even after a failed journey
+        id: operator-cleanup
         if: always() && steps.cleanup-login.outcome == 'success'
         run: |
           set -euo pipefail
           sudo --non-interactive --preserve-env="$RUN_BINDING,$AZURE_BINDING" \
             "$(command -v node)" tests/e2e/azure-keyvault-operator.cjs cleanup
       - name: Copy only the validated report to the artifact directory
-        if: success() && steps.operator-journey.outcome == 'success'
+        if: success() && steps.operator-journey.outcome == 'success' && steps.operator-cleanup.outcome == 'success'
         run: |
           set -euo pipefail
           umask 077
           mkdir qualification-results
           report="$RUNNER_TEMP/tt-kvqual-$GITHUB_RUN_ID-1/operator/evidence/azure-operator-final-package.json"
+          size="$(sudo --non-interactive stat -c %s -- "$report")"
+          (( size > 0 && size < 131072 ))
           sudo --non-interactive cat -- "$report" > qualification-results/azure-operator-final-package.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: success() && steps.operator-journey.outcome == 'success'
+        if: success() && steps.operator-journey.outcome == 'success' && steps.operator-cleanup.outcome == 'success'
         with:
           name: azure-operator-final-package
           path: qualification-results/azure-operator-final-package.json

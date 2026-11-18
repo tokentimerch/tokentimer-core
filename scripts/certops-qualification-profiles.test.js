@@ -148,8 +148,9 @@ function workflows() {
 }
 test("all reviewed Azure workflows opt in and only manual workflows can provision", () => {
   const files = workflows();
-  assert.equal(azure.PROVISION.length + azure.LIFECYCLE.length, 19);
+  assert.equal(azure.PROVISION.length + azure.LIFECYCLE.length, 20);
   assert.ok(azure.PROVISION.includes("certops-azure-imds-qualification.yml"));
+  assert.ok(azure.PROVISION.includes(azure.OPERATOR));
   assert.ok(azure.PROVISION.includes("certops-native-issuer-reassignment.yml"));
   for (const [name, workflow] of Object.entries(files))
     assert.deepEqual(azure.validate(name, workflow), [], name);
@@ -208,6 +209,59 @@ test("all reviewed Azure workflows opt in and only manual workflows can provisio
       jobs: {},
     }).length,
   );
+});
+
+test("the Azure operator workflow rejects any change to its protected run, credential, cleanup and evidence boundaries", () => {
+  const name = azure.OPERATOR;
+  const original = workflows()[name];
+  const { validateWorkflow } = require("./certops-workflow-security");
+  assert.deepEqual(azure.validate(name, original), []);
+  assert.deepEqual(validateWorkflow(original, name), []);
+  assert.ok(azure.validate("certops-foreign-operator.yml", original).length);
+  const job = workflow => workflow.jobs["azure-operator"];
+  const changeStep = (predicate, update) => workflow => update(job(workflow).steps.find(predicate));
+  const step = (id, update) => changeStep(item => item.id === id, update);
+  const upload = update => changeStep(item => item.uses?.startsWith("actions/upload-artifact@"), update);
+  const env = "TT_AZURE_OPERATOR_ISSUER_KEY_PEM";
+  const changes = [
+    ["workflow token", w => { w.permissions.actions = "write"; }],
+    ["live opt-in", w => { job(w).if = "github.ref == 'refs/heads/main'"; }],
+    ["exact trusted main", w => { job(w).if += " || true"; }],
+    ["protected environment", w => { job(w).environment = "certops-azure-keyvault-cleanup"; }],
+    ["job token", w => { job(w).permissions.contents = "write"; }],
+    ["bounded runtime", w => { job(w)["timeout-minutes"] = 120; }],
+    ["non-cancelling queue", w => { w.concurrency["cancel-in-progress"] = true; }],
+    ["manual dispatch only", w => { w.on.schedule = [{ cron: "1 * * * *" }]; }],
+    ["exact archive inputs", w => { w.on.workflow_dispatch.inputs.package_sha256.required = false; }],
+    ["approved region", w => { w.on.workflow_dispatch.inputs.location.options.push("other"); }],
+    ["immutable checkout", w => { job(w).steps[0].with.ref = "feature"; }],
+    ["approval before credentials", w => { job(w).steps.splice(3, 1); }],
+    ["producer shell", changeStep(item => item.run?.includes("azure-keyvault-operator.cjs stage"),
+      item => { item.run += "echo unreviewed\n"; })],
+    ["job credential scope", w => { job(w).env[env] = job(w).steps[6].env[env]; }],
+    ["step credential scope", step("azure-login", item => { item.env = { [env]: "${{ secrets.CERTOPS_AZURE_OPERATOR_ISSUER_KEY_PEM }}" }; })],
+    ["separate credentials", step("operator-journey", item => { item.env[env] = item.env.TT_AZURE_OPERATOR_CONSUMER_KEY_PEM; })],
+    ["exact privileged command", step("operator-journey", item => { item.run += "env\n"; })],
+    ["fresh cleanup authentication", step("cleanup-login", item => { item.run = "echo skipped"; })],
+    ["cleanup also after failure", step("operator-cleanup", item => { item.if = "success()"; })],
+    ["cleanup failure cannot be hidden", step("operator-cleanup", item => { item["continue-on-error"] = true; })],
+    ["cleanup cannot be removed", w => { job(w).steps.splice(8, 1); }],
+    ["bounded report copy", changeStep(item => item.run?.includes("131072"), item => {
+      item.run = item.run.replace("131072", "1048576");
+    })],
+    ["successful independent cleanup before upload", upload(item => {
+      item.if = "success() && steps.operator-journey.outcome == 'success'";
+    })],
+    ["single closed report path", upload(item => { item.with.path = "${{ runner.temp }}/**"; })],
+    ["immutable upload action", upload(item => { item.uses = "actions/upload-artifact@v4"; })],
+    ["mandatory report", upload(item => { item.with["if-no-files-found"] = "warn"; })],
+  ];
+  for (const [description, mutate] of changes) {
+    const changed = structuredClone(original);
+    mutate(changed);
+    assert.ok(azure.validate(name, changed).length, description);
+    assert.ok(validateWorkflow(changed, name).length, description);
+  }
 });
 
 test("actual scoped CLI rejects unknown profile and absent evidence", () => {
