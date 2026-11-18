@@ -6,6 +6,7 @@ const lab = require("../../infra/certops-azure-keyvault/lab");
 const operator = require("../../infra/certops-azure-keyvault/operator-lab.cjs");
 const producer = require("../../scripts/certops-final-package-source.cjs");
 const launcher = require("../wildcard-vault/ux-lab/azure-operator-review/azure-operator-protected-launch.cjs");
+const { diagnostics, requireCleanup } = require("../wildcard-vault/ux-lab/azure-operator-review/azure-operator-diagnostics.cjs");
 
 const roles = ["issuer", "consumer"];
 function paths() {
@@ -75,7 +76,7 @@ async function cleanup() {
   const results = await Promise.allSettled([
     authority.removeAndVerify(owner), launcher.cleanupLocal(owner),
   ]);
-  assert.ok(results.every(result => result.status === "fulfilled"), "independent operator cleanup did not complete");
+  requireCleanup([["provider-cleanup", results[0]], ["local-cleanup", results[1]]]);
 }
 
 if (require.main === module) {
@@ -84,10 +85,7 @@ if (require.main === module) {
     assert.ok(Object.hasOwn(actions, process.argv[2]));
     return actions[process.argv[2]]();
   }).catch(error => {
-    const code = /^AZURE_[A-Z0-9_]{1,140}$/.test(error?.code || "") ? error.code : "AZURE_OPERATOR_FAILED";
-    const match = /(?:operator-lab|azure-keyvault-operator|azure-operator-(?:protected-launch|public-journey|data-plane|tls-proof))\.cjs:\d+:\d+/;
-    const frame = match.exec(typeof error?.stack === "string" ? error.stack : "");
-    console.error(code + (frame ? " " + frame[0] : ""));
+    for (const message of diagnostics(error)) console.error(message);
     process.exitCode = 1;
   });
 }

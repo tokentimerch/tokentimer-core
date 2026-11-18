@@ -14,6 +14,7 @@ const { stage } = require("./stage-supplied-package.cjs");
 const { createDockerTransport } = require("./docker-transport.cjs");
 const { cleanup } = require("./owned-teardown.cjs");
 const { runOperatorQualification } = require("./final-evidence-bridge.cjs");
+const { OperatorStageError, requireCleanup } = require("./azure-operator-diagnostics.cjs");
 const { PROFILES } = require("../../../../scripts/certops-final-package-evidence.cjs");
 
 const PROFILE = "azure-operator-http-real-ca";
@@ -128,88 +129,96 @@ async function runProtected({ approved, packageDirectory, candidateRepo, images,
   const ca = (action) => runCommand(process.execPath, [path.join(lab, "operator-ca-setup.cjs"), action, caPrivate, caOutput],
     hostEnvironment(env));
   const roleMounts = { image: roleImage, issuerSink, consumerSink, certificateRoot, dnsCredential: path.join(caOutput, "dns.json") };
-  let broker, prepared = false;
-
-  return runOperatorQualification({ profile: PROFILE, context, outputDirectory: evidenceDirectory,
-    async observe() {
-      await requireFresh(project, createDockerTransport({ project, execute: docker }));
-      fs.mkdirSync(runRoot, { mode: 0o700 });
-      prepared = true;
-      write(path.join(runRoot, "owned.json"), owner);
-      fs.mkdirSync(output, { mode: 0o700 });
-      const staged = stage({
-        directory: packageDirectory, archiveSha256: packageArtifact.packageSha256, candidateSha: packageArtifact.candidateSha,
-        destination: packageInput, producerRunId: packageArtifact.runId, artifactId: packageArtifact.artifactId,
-      });
-      assert.deepEqual(staged.packageArtifact, packageArtifact);
-      for (const [role, directory, uid] of [["issuer", issuerSink, 10001], ["consumer", consumerSink, 10002]]) {
-        fs.mkdirSync(directory, { mode: 0o700 });
-        fs.chownSync(directory, uid, uid);
-        write(composeEnv["TT_UX_" + role.toUpperCase() + "_DESCRIPTOR"], roleDescriptor[role]);
-      }
-      broker = createBroker({ binding, certificateRoot, deadlineMs,
-        issuer: { ...issuer, directory: issuerSink }, consumer: { ...consumer, directory: consumerSink },
-      });
-      const provider = createDataPlane({ vaultHost, issuerSink, consumerSink, deadlineMs,
-        assertLease: () => authority.assertLease(owner),
-        journal: row => authority.journal(owner, row),
-        grantExactRead: objectName => authority.grantExactRead(owner, objectName, consumer),
-      });
-      await broker.start();
-      ca("create");
-      compose("up", "-d", "operator-ca", "operator-dns");
-      const [network] = JSON.parse(docker(["network", "inspect", project + "_operator-ca"]));
-      assert.equal(network.Internal, true);
-      assert.equal(network.Labels["com.docker.compose.project"], project);
-      for (const service of ["operator-ca", "operator-dns"]) {
-        const id = compose("ps", "-q", service).trim();
-        assert.match(id, /^[a-f0-9]{64}$/);
-        const [container] = JSON.parse(docker(["inspect", id]));
-        assert.ok(!Object.values(container.NetworkSettings.Ports || {}).some(Boolean), "private CA endpoint published");
-      }
-      compose("run", "--rm", "--no-deps", "operator-ca-init");
-      compose("up", "-d", "api", "worker", "issuer", "consumer");
-      const roleIds = Object.fromEntries(["issuer", "consumer"].map(role => {
-        const id = compose("ps", "-q", role).trim();
-        assert.match(id, /^[a-f0-9]{64}$/);
-        const [record] = JSON.parse(docker(["inspect", id]));
-        assertRoleMounts({ ...roleMounts, record, project, role });
-        return [role, id];
-      }));
-      const results = await withControl({ project, issuerContainerId: roleIds.issuer, consumerContainerId: roleIds.consumer, roleMounts, execute: docker },
-        async ({ port, token }) => {
-          const config = Object.fromEntries(Object.entries(composeEnv).filter(([name]) => name.startsWith("TT_UX_")));
-          Object.assign(config, { TT_WILDCARD_UX_OUTPUT: output, TT_UX_CONTROL_PORT: port, TT_UX_CONTROL_TOKEN: token });
-          const previous = Object.fromEntries(Object.keys(config).map(name => [name, process.env[name]]));
-          try {
-            Object.assign(process.env, config);
-            const { context } = require("../journey.cjs");
-            return await exercise({ context, provider, broker, ports: [60843, 60943] });
-          } finally {
-            for (const [name, value] of Object.entries(previous)) {
-              if (value === undefined) delete process.env[name];
-              else process.env[name] = value;
-            }
+  let broker, prepared = false, observationStage = "lab-staging";
+  const observe = async () => {
+    await requireFresh(project, createDockerTransport({ project, execute: docker }));
+    fs.mkdirSync(runRoot, { mode: 0o700 });
+    prepared = true;
+    write(path.join(runRoot, "owned.json"), owner);
+    fs.mkdirSync(output, { mode: 0o700 });
+    const staged = stage({
+      directory: packageDirectory, archiveSha256: packageArtifact.packageSha256, candidateSha: packageArtifact.candidateSha,
+      destination: packageInput, producerRunId: packageArtifact.runId, artifactId: packageArtifact.artifactId,
+    });
+    assert.deepEqual(staged.packageArtifact, packageArtifact);
+    for (const [role, directory, uid] of [["issuer", issuerSink, 10001], ["consumer", consumerSink, 10002]]) {
+      fs.mkdirSync(directory, { mode: 0o700 });
+      fs.chownSync(directory, uid, uid);
+      write(composeEnv["TT_UX_" + role.toUpperCase() + "_DESCRIPTOR"], roleDescriptor[role]);
+    }
+    observationStage = "broker-admission";
+    broker = createBroker({ binding, certificateRoot, deadlineMs,
+      issuer: { ...issuer, directory: issuerSink }, consumer: { ...consumer, directory: consumerSink },
+    });
+    const provider = createDataPlane({ vaultHost, issuerSink, consumerSink, deadlineMs,
+      assertLease: () => authority.assertLease(owner),
+      journal: row => authority.journal(owner, row),
+      grantExactRead: objectName => authority.grantExactRead(owner, objectName, consumer),
+    });
+    await broker.start();
+    observationStage = "ca-preparation";
+    ca("create");
+    observationStage = "ca-bootstrap";
+    compose("up", "-d", "operator-ca", "operator-dns");
+    const [network] = JSON.parse(docker(["network", "inspect", project + "_operator-ca"]));
+    assert.equal(network.Internal, true);
+    assert.equal(network.Labels["com.docker.compose.project"], project);
+    for (const service of ["operator-ca", "operator-dns"]) {
+      const id = compose("ps", "-q", service).trim();
+      assert.match(id, /^[a-f0-9]{64}$/);
+      const [container] = JSON.parse(docker(["inspect", id]));
+      assert.ok(!Object.values(container.NetworkSettings.Ports || {}).some(Boolean), "private CA endpoint published");
+    }
+    compose("run", "--rm", "--no-deps", "operator-ca-init");
+    observationStage = "role-containers";
+    compose("up", "-d", "api", "worker", "issuer", "consumer");
+    const roleIds = Object.fromEntries(["issuer", "consumer"].map(role => {
+      const id = compose("ps", "-q", role).trim();
+      assert.match(id, /^[a-f0-9]{64}$/);
+      const [record] = JSON.parse(docker(["inspect", id]));
+      assertRoleMounts({ ...roleMounts, record, project, role });
+      return [role, id];
+    }));
+    observationStage = "public-journey";
+    const results = await withControl({ project, issuerContainerId: roleIds.issuer, consumerContainerId: roleIds.consumer, roleMounts, execute: docker },
+      async ({ port, token }) => {
+        const config = Object.fromEntries(Object.entries(composeEnv).filter(([name]) => name.startsWith("TT_UX_")));
+        Object.assign(config, { TT_WILDCARD_UX_OUTPUT: output, TT_UX_CONTROL_PORT: port, TT_UX_CONTROL_TOKEN: token });
+        const previous = Object.fromEntries(Object.keys(config).map(name => [name, process.env[name]]));
+        try {
+          Object.assign(process.env, config);
+          const { context } = require("../journey.cjs");
+          return await exercise({ context, provider, broker, ports: [60843, 60943] });
+        } finally {
+          for (const [name, value] of Object.entries(previous)) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
           }
-        });
-      assert.equal(results.packageProof.packageSha256, packageArtifact.packageSha256);
-      assert.equal(results.packageProof.candidateSha, packageArtifact.candidateSha);
-      assert.equal(results.packageProof.packageFilesUnmodified, true);
-      return { packageArtifact, nativeService: null, facts: results.facts,
-        scenarios: PROFILES[PROFILE].scenarios.slice(0, -1).map(id => ({ id, status: "passed" })),
-      };
-    },
+        }
+      });
+    observationStage = "package-proof";
+    assert.equal(results.packageProof.packageSha256, packageArtifact.packageSha256);
+    assert.equal(results.packageProof.candidateSha, packageArtifact.candidateSha);
+    assert.equal(results.packageProof.packageFilesUnmodified, true);
+    return { packageArtifact, nativeService: null, facts: results.facts,
+      scenarios: PROFILES[PROFILE].scenarios.slice(0, -1).map(id => ({ id, status: "passed" })),
+    };
+  };
+  return runOperatorQualification({ profile: PROFILE, context, outputDirectory: evidenceDirectory,
+    observe: () => observe().catch(cause => { throw new OperatorStageError(observationStage, cause); }),
     async teardown() {
       const stopped = await Promise.allSettled([broker?.stop()]);
       const results = await Promise.allSettled([
         Promise.resolve().then(() => authority.removeAndVerify(owner)),
         prepared ? cleanupLocal(owner, env) : Promise.resolve(),
       ]);
-      assert.ok([...stopped, ...results].every(result => result.status === "fulfilled"), "operator teardown failed");
-      const removed = results[0].value;
-      assert.ok(removed.vaultAbsent && removed.roleAssignmentsAbsent && removed.appsAndCredentialsAbsent,
-        "independent provider cleanup verification incomplete");
-      assert.equal(fs.existsSync(certificateRoot), false, "operator app certificate material remains on the host");
+      requireCleanup([["broker-stop", stopped[0]], ["provider-cleanup", results[0]], ["local-cleanup", results[1]]]);
+      try {
+        const removed = results[0].value;
+        assert.ok(removed.vaultAbsent && removed.roleAssignmentsAbsent && removed.appsAndCredentialsAbsent,
+          "independent provider cleanup verification incomplete");
+        assert.equal(fs.existsSync(certificateRoot), false, "operator app certificate material remains on the host");
+      } catch (cause) { throw new OperatorStageError("teardown-proof", cause); }
       return { ...context, packageArtifact,
         cleanup: { database: "completed", provider: "completed", agent: "completed", credentials: "completed", resources: "completed" },
       };

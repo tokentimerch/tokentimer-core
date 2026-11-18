@@ -6,7 +6,7 @@ const { constants, createHash, verify, X509Certificate } = require("node:crypto"
 const { existsSync, mkdtempSync, readFileSync, rmSync, rmdirSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
-const { _offline: { broker, validateAssertion, requestEntra, roleTrust } } = require("./azure-role-token-broker.cjs");
+const { _offline: { broker, validateAssertion, requestEntra, roleTrust, applicationNotFound } } = require("./azure-role-token-broker.cjs");
 
 const binding = {
   repositoryId: "456", ownerId: "123", runId: "789", sourceSha: "a".repeat(40), subjectFormat: "legacy",
@@ -247,4 +247,27 @@ test("Entra transport keeps only the reviewed error shape and refuses oversized 
     { message: "AZURE_BROKER_ENTRA_REFUSED" });
   await assert.rejects(requestEntra(url, input, async () => new Response("x".repeat(32769), { status: 400 })),
     { message: "AZURE_BROKER_ENTRA_REFUSED" });
+});
+
+test("certificate retirement requires the exact Entra application-not-found code on HTTP 400 or 401", async () => {
+  const url = new URL("https://login.microsoftonline.com/" + tenant + "/oauth2/v2.0/token");
+  const options = { method: "POST", headers: {}, body: "", timeoutMs: 10000, maxBytes: 32768 };
+  const cases = [
+    [400, { error: "unauthorized_client", error_codes: [700016] }, true],
+    [401, { error_codes: [700016] }, true],
+    [400, { error: "invalid_client", error_codes: [700027] }, false],
+    [400, { error: "unauthorized_client", error_codes: [700011] }, false],
+    [400, { error: "unauthorized_client", error_codes: ["700016"] }, false],
+    [400, { error: "unauthorized_client", error_codes: [700016, "invalid"] }, false],
+    [403, { error: "unauthorized_client", error_codes: [700016] }, false],
+    [200, { error_codes: [700016] }, false],
+  ];
+  for (const [status, json, expected] of cases) {
+    const observed = await requestEntra(url, options, async () =>
+      Response.json({ ...json, error_description: "private diagnostic fixture" }, { status }), true);
+    assert.equal(applicationNotFound(observed), expected, JSON.stringify({ status, json }));
+    assert.doesNotMatch(JSON.stringify(observed), /private diagnostic/);
+  }
+  await assert.rejects(requestEntra(url, options, async () => Response.json([700016], { status: 400 }), true),
+    /AZURE_BROKER_ENTRA_REFUSED/);
 });
