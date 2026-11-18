@@ -134,6 +134,27 @@ test("a longer job still reserves cleanup against the earlier absolute deadline 
     assert.throws(() => expiry.workDeadline({ ...budget, ...invalid }, now), { code: "AZURE_EXPIRY_BUDGET_INVALID" });
 });
 
+test("the owned reader waits for its grant and keeps the read pinned to one version", async () => {
+  const now = Date.now(), minute = 60000, version = "a".repeat(32);
+  const budget = { jobDeadlineMs: now + 125 * minute, resourceDeadlineMs: now + 120 * minute,
+    cleanupReserveMs: 15 * minute };
+  const reads = [];
+  const store = { async fetch(pinnedVersion) {
+    reads.push(pinnedVersion);
+    if (reads.length === 1) throw Object.assign(new Error("role propagation"), { code: "material_auth_denied" });
+  } };
+  await launcher.waitForPinnedReader(store, version, budget, async (check, code, timeoutMs) => {
+    assert.equal(code, "AZURE_EXPIRY_EXTERNAL_READER_GRANT_NOT_READY");
+    assert.equal(timeoutMs, 180000);
+    assert.equal(await check(), false);
+    assert.equal(await check(), true);
+  });
+  assert.deepEqual(reads, [version, version]);
+  const invalidBundle = Object.assign(new Error("malformed fixture"), { code: "material_bundle_invalid" });
+  await assert.rejects(launcher.waitForPinnedReader({ async fetch() { throw invalidBundle; } },
+    version, budget, check => check()), invalidBundle);
+});
+
 test("bounds the expiry job and preserves package, approval and proof ordering", () => {
   const { createRequire } = require("node:module");
   const yaml = createRequire(require.resolve("mocha/package.json"))("js-yaml");
