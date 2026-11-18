@@ -662,7 +662,7 @@
     {
       "id": "0b022e58e2d61f2eee08",
       "file": "packages/agent/src/material-store/material-store.test.js",
-      "line": 105,
+      "line": 102,
       "name": "real isolated Vault KV v2: pinned publication and idempotent CAS",
       "kind": "test(..., { skip }) option-object",
       "environment": "distribution-vault-adapter",
@@ -672,7 +672,7 @@
     {
       "id": "501fb9619042e3d53d38",
       "file": "packages/agent/src/material-store/material-store.test.js",
-      "line": 148,
+      "line": 187,
       "name": "real Vault ACL separates issuer, consumer, scanner and customer prefixes",
       "kind": "test(..., { skip }) option-object",
       "environment": "distribution-vault-adapter",

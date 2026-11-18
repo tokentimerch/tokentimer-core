@@ -43,8 +43,7 @@ function fixture(t, address) {
   return { intent, bundle, scope, stores, directory };
 }
 
-for (const droppedResponse of [true, false]) {
-test(`CAS=0 publication reconciles ${droppedResponse ? "lost" : "empty"} response and pins version 1`, async (t) => {
+async function verifyPublicationResponse(t, droppedResponse) {
   let stored;
   let posts = 0;
   let gets = 0;
@@ -81,8 +80,9 @@ test(`CAS=0 publication reconciles ${droppedResponse ? "lost" : "empty"} respons
   await assert.rejects(client.fetch(undefined), { code: "material_provider_version_invalid" });
   assert.equal(posts, 1);
   assert.equal(gets, 5);
-});
 }
+test("CAS=0 publication reconciles lost response and pins version 1", t => verifyPublicationResponse(t, true));
+test("CAS=0 publication reconciles empty response and pins version 1", t => verifyPublicationResponse(t, false));
 
 test("local authority rejects cross-customer, arbitrary aliases and HTTP", (t) => {
   const f = fixture(t, "http://127.0.0.1:58200");
@@ -249,8 +249,7 @@ test("local binding lock excludes concurrent deployment and releases after failu
   assert.equal(await withMaterialLock(locks,"binding",async()=>"released"),"released");
 });
 
-for (const provider of ["vault-kv2", "openbao-kv2"]) {
-test(`${provider} recovers exact committed material once and preserves custom issuer custody`, async (t) => {
+async function verifyIssuerRecovery(t, provider) {
   let stored, loseReadback = true, missingVersion = false, posts = 0;
   const server=http.createServer((req,res)=>{
     if(req.method==="POST") {
@@ -331,8 +330,9 @@ test(`${provider} recovers exact committed material once and preserves custom is
   fs.unlinkSync(checkpoint);
   assert.equal((await session().recover(async () => {})).status, "succeeded");
   assert.equal(posts, 1, "a recovered remote bundle cannot initiate another write");
-});
 }
+test("vault-kv2 recovers exact committed material once and preserves custom issuer custody", t => verifyIssuerRecovery(t, "vault-kv2"));
+test("openbao-kv2 recovers exact committed material once and preserves custom issuer custody", t => verifyIssuerRecovery(t, "openbao-kv2"));
 
 test("bounded transport times out a stalled Vault body without exposing contents", async (t) => {
   const server=http.createServer((req,res)=>{res.writeHead(200);res.write('{"sensitive":"canary"');});
