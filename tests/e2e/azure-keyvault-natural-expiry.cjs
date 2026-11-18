@@ -8,7 +8,8 @@ const { spawnSync } = require("node:child_process");
 const lab = require("../../infra/certops-azure-keyvault/lab");
 const policy = require("../../infra/certops-azure-keyvault/policy");
 const io = require("./helpers/azure-keyvault-live-io.cjs");
-const { runNaturalExpiry, packageToken, applicationRetirementProbe, assertTokenFits, workDeadline, MAX_JOB_DURATION_MS, WINDOW_ERROR_CODES } = require("./helpers/azure-natural-token-expiry.cjs");
+const { runNaturalExpiry, packageToken, applicationRetirementProbe, assertTokenFits, workDeadline,
+  MAX_JOB_DURATION_MS, READER_GRANT_NOT_READY, WORKER_ERROR_CODES } = require("./helpers/azure-natural-token-expiry.cjs");
 const { runBoundedWorker } = require("./helpers/azure-natural-token-supervisor.cjs");
 
 const ID = /^[1-9][0-9]{0,15}$/;
@@ -138,6 +139,20 @@ function workerBudget(env) {
   return budget;
 }
 
+function waitForPinnedReader(store, providerVersion, budget, eventually = io.eventually) {
+  return eventually(async () => {
+    workDeadline(budget, Date.now());
+    try {
+      await store.fetch(providerVersion);
+      return true;
+    } catch (error) {
+      // A new Key Vault assignment can take time to reach the data plane.
+      if (error.code !== "material_auth_denied") throw error;
+      return false;
+    }
+  }, READER_GRANT_NOT_READY, 180000);
+}
+
 // This worker uses the verified package with no fault injector. All subprocesses
 // (the existing ARM CLI and OpenSSL helpers) inherit its supervised process group.
 async function observe() {
@@ -204,11 +219,7 @@ async function observe() {
         state.approvedSecrets = [store.objectRef];
         lab.save(path.join(root, "state.json"), state);
         await lab.consumerAccess(state, state.approvedSecrets, true, env, application.principalId);
-        await io.eventually(async () => {
-          workDeadline(budget, Date.now());
-          await store.fetch(receipt.providerVersion);
-          return true;
-        }, "AZURE_EXPIRY_EXTERNAL_READER_GRANT_NOT_READY", 180000);
+        await waitForPinnedReader(store, receipt.providerVersion, budget);
       }
       return receipt.providerVersion;
     },
@@ -314,12 +325,12 @@ function finalize() {
   }
 }
 
-module.exports = { jobStart, workerBudget, requireDrain, expiryApplication, JOB_TIMEOUT_MS, CLEANUP_RESERVE_MS };
+module.exports = { jobStart, workerBudget, requireDrain, expiryApplication, waitForPinnedReader, JOB_TIMEOUT_MS, CLEANUP_RESERVE_MS };
 if (require.main === module) {
   if (process.send) {
     observe().then(
       facts => process.send(facts, () => process.exit(0)),
-      error => process.send({ failure: WINDOW_ERROR_CODES.includes(error.code) ?
+      error => process.send({ failure: WORKER_ERROR_CODES.includes(error.code) ?
         error.code : "AZURE_EXPIRY_WORKER_FAILED" }, () => process.exit(1)),
     );
   } else {

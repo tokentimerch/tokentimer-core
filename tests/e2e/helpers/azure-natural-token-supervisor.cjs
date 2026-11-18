@@ -5,7 +5,7 @@
 const { fork } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
-const { workDeadline, WINDOW_ERROR_CODES } = require("./azure-natural-token-expiry.cjs");
+const { workDeadline, WORKER_ERROR_CODES } = require("./azure-natural-token-expiry.cjs");
 const DRAIN_TIMEOUT_MS = 2000;
 
 function hasLiveGroup(group) {
@@ -88,7 +88,7 @@ function runBoundedWorker({ workerPath, budget, signal, onDrained = () => {} }) 
         try { onDrained(); } catch { return reject(new Error("AZURE_EXPIRY_DRAIN_RECEIPT_FAILED")); }
       }
       if (stopReason) return reject(new Error(stopReason));
-      if (code === 1 && !childSignal && WINDOW_ERROR_CODES.includes(result?.failure) &&
+      if (code === 1 && !childSignal && WORKER_ERROR_CODES.includes(result?.failure) &&
           Object.keys(result).length === 1)
         return reject(new Error(result.failure));
       if (!started || code !== 0 || childSignal || !safeFacts(result))
