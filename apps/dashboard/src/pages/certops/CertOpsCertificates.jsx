@@ -971,7 +971,14 @@ export default function CertOpsCertificates() {
                           </Tooltip>
                         ) : null}
                         {observedUsage(certificate).map(usage => (
-                          <Text key={usage} fontSize='xs' color={muted} mt={1}>
+                          <Text
+                            key={usage}
+                            fontSize='xs'
+                            color={muted}
+                            mt={1}
+                            whiteSpace='normal'
+                            overflowWrap='anywhere'
+                          >
                             Observed: {usage}
                           </Text>
                         ))}

@@ -10,7 +10,12 @@ const MAX_JOB_DURATION_MS = 125 * 60 * 1000;
 const MIN_CLEANUP_RESERVE_MS = 10 * 60 * 1000;
 const EXPIRY_GRACE_MS = 10 * 60 * 1000;
 const POLL_MS = 15000;
-const WINDOW_ERROR_CODES = Object.freeze(["AZURE_EXPIRY_TOKEN_TIMES_INVALID", "AZURE_EXPIRY_OUTSIDE_BUDGET"]);
+const READER_GRANT_NOT_READY = "AZURE_EXPIRY_EXTERNAL_READER_GRANT_NOT_READY";
+const WORKER_ERROR_CODES = Object.freeze([
+  "AZURE_EXPIRY_TOKEN_TIMES_INVALID",
+  "AZURE_EXPIRY_OUTSIDE_BUDGET",
+  READER_GRANT_NOT_READY,
+]);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function fail(code) {
@@ -185,4 +190,6 @@ async function runNaturalExpiry({ candidateRoot, config, store, prepareVersion, 
   return { ...facts, forced401: false, clockOverridden: false, pinnedVersion: providerVersion };
 }
 
-module.exports = { runNaturalExpiry, packageToken, applicationRetirementProbe, assertTokenFits, workDeadline, MAX_DURATION_MS, MAX_JOB_DURATION_MS, WINDOW_ERROR_CODES, _offline: { observe, validateScope } };
+module.exports = { runNaturalExpiry, packageToken, applicationRetirementProbe, assertTokenFits,
+  workDeadline, MAX_DURATION_MS, MAX_JOB_DURATION_MS, READER_GRANT_NOT_READY, WORKER_ERROR_CODES,
+  _offline: { observe, validateScope } };
