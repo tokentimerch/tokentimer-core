@@ -179,12 +179,23 @@ try {
       & pnpm --filter '@tokentimer/dashboard' build *> (Join-Path $output 'dashboard-build.log')
       if ($LASTEXITCODE -ne 0) { throw "Dashboard build failed. See $output/dashboard-build.log" }
       if ($OpenBaoPki) {
-        & node (Join-Path $uxLab 'operator-ca-setup.cjs') create $env:TT_UX_OPERATOR_CA_PRIVATE (Join-Path $output 'operator-ca')
+        $caSetup = Join-Path $uxLab 'operator-ca-setup.cjs'
+        $caOutput = Join-Path $output 'operator-ca'
+        Write-Host 'OPENBAO_SETUP_STAGE ca-preparation'
+        if ($NativeOpenBao -and $IsLinux) {
+          $nodeExecutable = (Get-Command node -CommandType Application).Source
+          & sudo --non-interactive -- $nodeExecutable $caSetup create-owned $env:TT_UX_OPERATOR_CA_PRIVATE $caOutput
+        } else {
+          & node $caSetup create $env:TT_UX_OPERATOR_CA_PRIVATE $caOutput
+        }
         if ($LASTEXITCODE -ne 0) { throw 'Owned operator CA preparation failed.' }
+        Write-Host 'OPENBAO_SETUP_STAGE ca-services'
         Dc up -d --build operator-ca operator-dns
         $privateNetwork = & docker network inspect "$($Project)_operator-ca" --format '{{.Internal}} {{index .Labels "com.docker.compose.project"}}'
         if ($LASTEXITCODE -ne 0 -or $privateNetwork -cne "true $Project") { throw 'Owned operator CA network is not internal.' }
+        Write-Host 'OPENBAO_SETUP_STAGE ca-initialization'
         Dc run --rm --no-deps operator-ca-init
+        Write-Host 'OPENBAO_SETUP_STAGE customers'
       }
       Dc up -d
       if (!$OpenBaoPki) {
