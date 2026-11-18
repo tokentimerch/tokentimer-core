@@ -2106,14 +2106,17 @@
       "suite": "distribution-vault-adapter",
       "source": "packages/agent/src/material-store/material-store.test.js",
       "requiredTests": [
-        "publication uses CAS=0, reconciles lost response, and fetch pins version",
+        "CAS=0 publication reconciles lost response and pins version 1",
+        "CAS=0 publication reconciles empty response and pins version 1",
         "local authority rejects cross-customer, arbitrary aliases and HTTP",
         "real isolated Vault KV v2: pinned publication and idempotent CAS",
         "CAS conflict never adopts unrelated existing bytes or returns Vault errors",
+        "a definitive KV v2 write denial clears the attempt before a permitted retry",
         "real Vault ACL separates issuer, consumer, scanner and customer prefixes",
         "checkpoint without validated material exposes uncertainty and never permits a new order",
         "local binding lock excludes concurrent deployment and releases after failure",
-        "custom issuer custody survives lost responses and recovery; next CSR reuses the promoted key",
+        "vault-kv2 recovers exact committed material once and preserves custom issuer custody",
+        "openbao-kv2 recovers exact committed material once and preserves custom issuer custody",
         "bounded transport times out a stalled Vault body without exposing contents"
       ],
       "environmentGroup": "job-decisions-api-environment"
