@@ -55,10 +55,10 @@ afterEach(() => {
 });
 
 describe('before you start', () => {
-  it('accepts OpenBao and keeps web servers optional for file delivery', () => {
+  it('shows provider-neutral prerequisites and keeps web servers optional for file delivery', () => {
     mount(<ObjectiveStep ctx={makeCtx('certops_vault')} />);
     expect(screen.getByTestId('before-you-start').textContent).toMatch(
-      /HTTPS Vault or OpenBao.*KV v2/
+      /material store reachable over HTTPS.*two Linux hosts/
     );
     expect(
       screen.getByText(/web server only for service activation/)

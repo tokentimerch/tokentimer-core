@@ -150,7 +150,7 @@ describe('material onboarding evidence and planner', () => {
     );
   });
   it('does not treat an advertised capability as production qualification or accept stale declarations', () => {
-    const ctx = materialContext('azure-key-vault');
+    const ctx = materialContext('azure-key-vault', { azureQualified: false });
     expect(
       featureReady(ctx.capabilities, 'certops.material_store_azure_key_vault')
     ).toBe(false);
@@ -216,10 +216,11 @@ describe('customer-local material configuration', () => {
       expect(config.issuer.execution.dryRun).toBe(true);
     }
   );
-  it('shows Azure identity configuration without Vault fields or embedded credentials', () => {
+  it('shows Azure identity configuration without validating a hidden KV mount', () => {
     const config = materialConfigs({
       ...input('azure-key-vault'),
       address: 'https://customer.vault.azure.net',
+      mount: 'old/kv/path',
     });
     expect(config.issuer.materialStores.customer.auth).toEqual({
       type: 'managed-identity',
@@ -228,6 +229,9 @@ describe('customer-local material configuration', () => {
       'tokenFile'
     );
     expect(config.issuer.materialStores.customer).not.toHaveProperty('mount');
+    expect(
+      materialConfigs({ ...input('openbao-kv2'), mount: 'old/kv/path' }).ok
+    ).toBe(false);
   });
   it.each([
     'http://store.example.test',

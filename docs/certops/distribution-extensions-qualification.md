@@ -1,6 +1,6 @@
 # Distribution extension qualification
 
-OpenBao KV v2 publication and Linux deployment are supported. Azure Key Vault material storage, shared Windows/IIS material deployment, independent Linux staging and exact-version Vault/OpenBao cleanup require separate capability qualification. Configuration alone cannot enable a capability absent from the compiled agent manifest.
+OpenBao KV v2 and Azure Key Vault Secrets publication and Linux deployment are supported. Shared Windows/IIS material deployment, independent Linux staging and exact-version Vault/OpenBao cleanup require separate capability qualification. Configuration alone cannot enable a capability absent from the compiled agent manifest.
 
 Use the [certificate lifecycle qualification guide](../../.github/maintainers/certops/e2e-qualification.md) for trusted-main workflows, exact-artifact evidence and independent acceptance. Run all tests only on disposable, explicitly owned resources; remove only those resources and verify teardown.
 

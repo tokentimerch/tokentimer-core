@@ -671,6 +671,7 @@ last-success timestamps; no Pushgateway is required. See
 | `TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED`            | Content template SID for expired alerts            | `unset`       | WhatsApp            |
 | `TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN`      | Content template SID for endpoint down alerts      | `unset`       | WhatsApp            |
 | `TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED` | Content template SID for endpoint recovered alerts | `unset`       | WhatsApp            |
+| `TWILIO_WHATSAPP_ALERT_CONTENT_SID_DISTRIBUTION`       | Content template SID for certificate distribution alerts | `unset` | WhatsApp            |
 | `TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID`            | Content template SID for weekly digest             | `unset`       | WhatsApp            |
 | `TWILIO_WHATSAPP_TEST_CONTENT_SID`                     | Content template SID for test messages             | `unset`       | WhatsApp            |
 | `TWILIO_WEBHOOK_RATE_LIMIT_WINDOW_MS`                  | Inbound Twilio StatusCallback limiter window. Product send does not set StatusCallback. | `60000`       | API                 |

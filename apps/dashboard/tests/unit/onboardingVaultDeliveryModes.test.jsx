@@ -378,7 +378,9 @@ describe('Vault consumer delivery choices', () => {
     });
     const view = show(<DoneCard ctx={ctx} />);
     expect(screen.getByText('You are set up')).toBeVisible();
-    expect(document.body.textContent).toContain('does not reload a service');
+    expect(document.body.textContent).toContain(
+      'File-only delivery confirms installation. Use a service rollout to verify live TLS.'
+    );
     view.unmount();
     ctx.summary.certops.distribution.items[0].id = 'unrelated';
     show(<DoneCard ctx={ctx} />);

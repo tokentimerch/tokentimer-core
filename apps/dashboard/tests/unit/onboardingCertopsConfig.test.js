@@ -78,9 +78,14 @@ describe('support matrix', () => {
     expect(capabilityGap('automate', 'windows', ['iis-binding-v1'])).toEqual([
       'windows-cert-store-v1',
     ]);
-    expect(requiredCapabilities('vault', 'linux')).toHaveLength(3);
+    expect(requiredCapabilities('vault', 'linux')).toEqual([
+      'certificate-publication-v1',
+    ]);
     expect(
-      capabilityGap('vault', 'linux', requiredCapabilities('vault', 'linux'))
+      capabilityGap('vault', 'linux', [
+        'certificate-publication-v1',
+        'material-store-azure-key-vault-v1',
+      ])
     ).toEqual([]);
   });
 });

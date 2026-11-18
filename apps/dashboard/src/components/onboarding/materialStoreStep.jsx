@@ -267,7 +267,12 @@ function MaterialStoreForm({ ctx }) {
       description='Choose where the issuing agent publishes shared certificate material. Credentials and private keys stay on customer hosts.'
       docs={[
         ...ctx.docs('certops.vault', 'Material distribution runbook'),
-        ...ctx.docs('certops.vaultAuth', 'Vault/OpenBao Agent authentication'),
+        ...(provider
+          ? ctx.docs(
+              provider.configurationDoc,
+              `${provider.label} configuration`
+            )
+          : []),
       ]}
     >
       <VStack align='stretch' spacing={4}>
@@ -561,12 +566,11 @@ function MaterialStoreForm({ ctx }) {
             </VStack>
             {setup.provider === 'azure-key-vault' ? (
               <StatusPanel status='info' title='Azure access'>
-                The example uses VM managed identity (IMDS). Workload identity
-                and renewable token-file authentication are also implemented;
-                configure those locally using the distribution runbook. Issuers
-                need get/list/set; consumers get only. No delete or purge
-                rights. Secrets bundles only, public Azure cloud, maximum 25
-                KiB. Production use stays gated.
+                The example uses VM managed identity (IMDS). Follow the Azure
+                Key Vault Secrets configuration guide for workload identity or
+                renewable token files. Grant issuers get, list and set access
+                and consumers get access only. Use Secrets bundles up to 25 KiB
+                in Azure's public cloud.
               </StatusPanel>
             ) : (
               <VStack align='stretch' spacing={1} fontSize='sm'>

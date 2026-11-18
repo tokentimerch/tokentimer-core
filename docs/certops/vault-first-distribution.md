@@ -1,10 +1,10 @@
-# First Vault publication and distribution
+# First shared certificate distribution
 
 Publish one certificate version and install it on Linux consumers. Choose file delivery alone, or also reload and verify a service. The issuer owns issuance/renewal; consumers retrieve that exact version instead of issuing independently. TokenTimer stores public evidence, not the bundle's private key.
 
 ## Prepare
 
-Use an HTTPS Vault or OpenBao KV v2 mount, reachable CA/DNS and a registered issuing agent. Consumers can be registered later in **Connect and validate consumers**; their absence does not block publication. A web service is needed only for the service-reload choice. Job approval is off by default, so one authorized operator can complete this workflow. If your workspace requires approval, arrange another authorized manager. Keep one workspace throughout.
+Prepare a Vault or OpenBao KV v2 mount or an Azure Key Vault Secrets vault reachable over HTTPS. The issuing agent also needs CA and DNS access. Register consumers in **Connect and validate consumers**. Only service-reload delivery requires a web service. If Job approval is enabled, arrange another workspace manager. Keep one workspace throughout.
 
 **Operator action:** file-only delivery requires the matching API/worker migration 78 and updated consumer agents. Older agents reject the new `installed` policy before changing files; do not work around that by approving an empty reload command.
 
@@ -14,19 +14,19 @@ Complete **Turn on execution safely → Send a test job** for the issuing agent 
 
 ## Allocate the group and configure hosts
 
-The first publication job allocates the real `job.payload.publication.groupId`. Use that UUID in [local material-store/binding configuration](wildcard-vault-operations.md#host-configuration) and [separate Vault Agent roles](vault-agent-authentication.md).
+The first publication job allocates `job.payload.publication.groupId`. Use that UUID in the local configuration for the issuer and each authorized consumer. Follow your provider's guide for [Vault host configuration](wildcard-vault-operations.md#host-configuration) and [authentication](vault-agent-authentication.md), [OpenBao KV v2](distribution-extensions.md#openbao), or [Azure Key Vault Secrets](distribution-extensions.md#azure-key-vault).
 
-- If ordinary job approval is required, keep the publication unapproved while preparing policy and token sinks.
+- If ordinary job approval is required, keep the publication unapproved while preparing store access and agent configuration.
 - If approval is off, set issuer `execution.enabled: false` and restart **before** allocation. Keep polling disabled until the returned group is configured and readiness checks pass. Submission alone does not hold work.
 
-Keep Vault credentials, private bundles and filesystem destinations on the hosts. Each consumer needs its own identity, read-only bundle access, deployment profile and authorization revision. In **Connect and validate consumers**, choose a **Verification policy** before assigning:
+Keep store credentials, private bundles and filesystem destinations on the hosts. Each consumer needs its own identity, read-only bundle access, deployment profile and authorization revision. In **Connect and validate consumers**, choose a **Verification policy** before assigning:
 
 - **Installed files only:** configure a destination directory. The agent installs and reads back the certificate/key pair; no web server, placeholder certificate, reload permission or TLS probe is required. The guide completes from fresh installation evidence.
 - **Served** or **Trust:** choose NGINX, Apache or HAProxy and configure its paths. This adds service setup, allowlisted validate/reload commands and a live TLS probe. All required reload and listener checks must pass.
 
 Choose before assigning consumers. Existing assignments retain their policy; changing that policy requires a new reviewed assignment and matching local configuration. The provider step proves publication; the consumer step proves installation or listener verification. Service-specific instructions appear only when needed.
 
-In the Vault GUI, inspect the KV v2 engine, group-scoped policies and published version metadata/history. Issuers need the intended create/read access; consumers need read access. Use metadata for status checks; bundle Data/raw JSON contains private keys.
+Use version metadata for status checks. Vault and OpenBao expose numeric KV v2 revisions. Azure Key Vault Secrets uses an opaque secret version. The raw certificate bundle contains private key material.
 
 ## Publish, assign and roll out
 

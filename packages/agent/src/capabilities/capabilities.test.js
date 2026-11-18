@@ -43,7 +43,7 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
   });
 
   it("advertises AD CS and distribution capabilities once the manifest qualifies them", () => {
-    const candidates = ["adcs-enroll-v1", "material-store-vault-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1"];
+    const candidates = ["adcs-enroll-v1", "material-store-vault-kv2-v1", "material-store-openbao-kv2-v1", "material-store-azure-key-vault-v1", "certificate-publication-v1", "deploy-from-store-v1"];
     assert.deepEqual([...filterQualifiedCapabilities(candidates)].sort(), [...candidates].sort());
   });
 
@@ -53,7 +53,7 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
     // were qualified by the 0.18.0 release campaigns.
     const manifest = loadQualifiedCapabilitiesManifest();
     assert.deepEqual([...manifest.qualified].sort(), [...require("./qualified-capabilities.json").qualified].sort());
-    assert.equal(manifest.qualified.includes("material-store-azure-key-vault-v1"),false);
+    assert.equal(manifest.qualified.includes("material-store-azure-key-vault-v1"),true);
     assert.equal(manifest.qualified.includes("windows-material-iis-v1"),false);
     assert.equal(manifest.qualified.includes("material-cleanup-vault-kv2-v1"),false);
     assert.equal(manifest.qualified.includes("material-cleanup-openbao-kv2-v1"),false);

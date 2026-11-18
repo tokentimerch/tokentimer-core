@@ -117,7 +117,7 @@ const KNOWN = [
     starts: 'Run a verified rollout',
     title: 'Run a verified rollout',
     icon: FiServer,
-    action: { doc: 'certops.vault', label: 'Vault distribution' },
+    action: { doc: 'certops.vault', label: 'Certificate distribution guide' },
   },
   {
     starts: 'Email delivery is not confirmed',
