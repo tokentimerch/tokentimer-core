@@ -879,6 +879,7 @@ export default function CertOpsAdcs({
   onRequestHandled,
   focusIssuerId = null,
   onFocusHandled,
+  onIssuersChanged,
 } = {}) {
   const {
     status: roleStatus,
@@ -1193,6 +1194,7 @@ export default function CertOpsAdcs({
         template: preflight?.template,
       });
       showSuccess('CA key confirmed on a new issuer version.');
+      onIssuersChanged?.();
       await reload();
     } catch (err) {
       showError(errorText(err, 'Could not confirm the CA key.'));
@@ -1320,7 +1322,10 @@ export default function CertOpsAdcs({
           initialAgentId={issuerPrefill?.agentId}
           initialCaConfig={issuerPrefill?.caConfig}
           initialTemplate={issuerPrefill?.template}
-          onChanged={reload}
+          onChanged={async () => {
+            onIssuersChanged?.();
+            await reload();
+          }}
         />
         {(() => {
           const rejectedIssuers = issuers.filter(isUnsafeRejectedIssuer);
