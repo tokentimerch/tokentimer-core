@@ -1,8 +1,13 @@
 "use strict";
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const policy = require("./policy");
 const lab = require("./lab");
+const operator = require("./operator-lab.cjs");
 
 const ID = "123456";
 const guid = (prefix) => prefix.repeat(8) + "-0000-4000-8000-000000000000";
@@ -16,6 +21,38 @@ const runEnv = {
   TT_AZURE_OPERATOR_PACKAGE_SHA256: digest, LAB_LOCATION: "swedencentral",
   AZURE_CLIENT_ID: guid("1"), AZURE_TENANT_ID: guid("2"), AZURE_SUBSCRIPTION_ID: guid("3"), AZURE_KV_ISSUER_ROLE_ID: guid("4"),
 };
+
+test("privileged staging leaves OIDC cache initialization to the unprivileged Linux runner", {
+  skip: process.platform !== "linux" || process.geteuid?.() !== 0,
+}, t => {
+  const runnerUid = 1000;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "tt-operator-custody-"));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  fs.chownSync(temp, runnerUid, runnerUid);
+  const env = { ...runEnv, RUNNER_TEMP: temp };
+  const staged = operator.context(env);
+  const cacheRoot = path.join(temp, "tt-kvqual-" + ID + "-1");
+  assert.equal(staged.root, cacheRoot + "-operator");
+  assert.equal(fs.existsSync(cacheRoot), false);
+  const state = path.join(staged.root, "fixture-state");
+  fs.writeFileSync(state, "local fixture", { mode: 0o600, flag: "wx" });
+  const result = spawnSync(process.execPath, ["-e", [
+    'const assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path");',
+    'const root = require(process.argv[1]).privateRoot();',
+    'assert.equal(fs.statSync(root).uid, process.geteuid());',
+    'fs.mkdirSync(path.join(root, "azure-cli"), { mode: 0o700 });',
+    'assert.throws(() => fs.readFileSync(process.argv[2]), { code: "EACCES" });',
+    'process.stdout.write(root);',
+  ].join("\n"), require.resolve("./lab"), state], { env, uid: runnerUid, gid: runnerUid, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, cacheRoot);
+  assert.equal(fs.statSync(cacheRoot).uid, runnerUid);
+  assert.equal(fs.statSync(path.join(cacheRoot, "azure-cli")).uid, runnerUid);
+  assert.equal(fs.statSync(staged.root).uid, 0);
+  assert.equal(fs.statSync(staged.root).mode & 0o777, 0o700);
+  assert.equal(operator.context(env).root, staged.root);
+  assert.equal(fs.statSync(cacheRoot).uid, runnerUid);
+});
 
 test("the operator lease owns only the tagged vault and requires its exact workflow path", () => {
   const now = Date.now();

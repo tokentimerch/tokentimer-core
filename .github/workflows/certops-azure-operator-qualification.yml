@@ -136,7 +136,7 @@ jobs:
           set -euo pipefail
           umask 077
           mkdir qualification-results
-          report="$RUNNER_TEMP/tt-kvqual-$GITHUB_RUN_ID-1/operator/evidence/azure-operator-final-package.json"
+          report="$RUNNER_TEMP/tt-kvqual-$GITHUB_RUN_ID-1-operator/evidence/azure-operator-final-package.json"
           size="$(sudo --non-interactive stat -c %s -- "$report")"
           (( size > 0 && size < 131072 ))
           sudo --non-interactive cat -- "$report" > qualification-results/azure-operator-final-package.json

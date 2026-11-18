@@ -24,7 +24,9 @@ function context(env) {
   assert.equal(env.GITHUB_RUN_ATTEMPT, "1");
   assert.equal(env.RUNNER_ENVIRONMENT, "github-hosted");
   assert.match(env.GITHUB_RUN_ID, ID);
-  const root = path.join(lab.privateRoot(env), "operator");
+  assert.ok(path.isAbsolute(env.RUNNER_TEMP || ""));
+  // Staging runs as root before the runner account initializes its OIDC cache.
+  const root = path.join(fs.realpathSync(env.RUNNER_TEMP), "tt-kvqual-" + env.GITHUB_RUN_ID + "-1-operator");
   if (!fs.existsSync(root)) fs.mkdirSync(root, { mode: 0o700 });
   const stat = fs.lstatSync(root);
   assert.ok(stat.isDirectory() && stat.uid === 0 && (stat.mode & 0o777) === 0o700);
