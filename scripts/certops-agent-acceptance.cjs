@@ -32,9 +32,10 @@ function verify(receipt, expectedSha256) {
   assert.match(receipt.packageSourceSha, /^[a-f0-9]{40}$/);
   assert.deepEqual(receipt.capabilities, CAPABILITIES);
   assert.deepEqual(receipt.toolchain, TOOLCHAIN);
-  keys(receipt.review, ["pullRequest", "reviewer"]);
+  const approver = Object.hasOwn(receipt.review, "maintainer") ? "maintainer" : "reviewer";
+  keys(receipt.review, ["pullRequest", approver]);
   assert.ok(Number.isSafeInteger(receipt.review.pullRequest) && receipt.review.pullRequest > 0);
-  assert.match(receipt.review.reviewer, /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/);
+  assert.match(receipt.review[approver], /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/);
   assert.ok(["azure-operator-http-real-ca", "openbao-operator-http-real-ca"].includes(receipt.nativeAgentEvidence));
   keys(receipt.evidence, REQUIRED);
   for (const proof of [receipt.packageArtifact, ...Object.values(receipt.evidence)]) {
@@ -52,20 +53,36 @@ async function verifyMetadata(receipt, { read, isAncestor }) {
   assert.equal(pr.merged, true);
   assert.equal(pr.base.ref, "main");
   assert.equal(pr.head.repo.full_name, REPOSITORY);
-  assert.notEqual(pr.user.login.toLowerCase(), receipt.review.reviewer.toLowerCase());
   assert.match(pr.merge_commit_sha, /^[a-f0-9]{40}$/);
   assert.ok(isAncestor(pr.merge_commit_sha) && isAncestor(receipt.packageSourceSha));
-  const reviews = await read(`${prefix}/pulls/${receipt.review.pullRequest}/reviews?per_page=100`);
-  assert.ok(Array.isArray(reviews) && reviews.length < 100);
-  const lastReview = reviews.filter(row => row.user.login.toLowerCase() === receipt.review.reviewer.toLowerCase())
-    .filter(row => ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(row.state)).at(-1);
-  assert.equal(lastReview?.state, "APPROVED");
-  assert.equal(lastReview.commit_id, pr.head.sha);
-  const decision = await read(`${prefix}/commits/${pr.merge_commit_sha}`);
-  assert.equal(decision.commit.verification.verified, true);
-  const file = await read(`${prefix}/contents/${RECEIPT}?ref=${pr.merge_commit_sha}`);
-  assert.equal(file.encoding, "base64");
-  assert.deepEqual(JSON.parse(Buffer.from(file.content, "base64").toString("utf8")), receipt);
+
+  async function verifySignedReceipt(sha) {
+    assert.match(sha, /^[a-f0-9]{40}$/);
+    const decision = await read(`${prefix}/commits/${sha}`);
+    assert.equal(decision.commit.verification.verified, true);
+    const file = await read(`${prefix}/contents/${RECEIPT}?ref=${sha}`);
+    assert.equal(file.encoding, "base64");
+    assert.deepEqual(JSON.parse(Buffer.from(file.content, "base64").toString("utf8")), receipt);
+    return decision;
+  }
+
+  if (Object.hasOwn(receipt.review, "maintainer")) {
+    const maintainer = receipt.review.maintainer.toLowerCase();
+    assert.equal(pr.user.login.toLowerCase(), maintainer);
+    assert.equal(pr.merged_by?.login.toLowerCase(), maintainer);
+    const decision = await verifySignedReceipt(pr.head.sha);
+    assert.equal(decision.author?.login.toLowerCase(), maintainer);
+  } else {
+    const reviewer = receipt.review.reviewer.toLowerCase();
+    assert.notEqual(pr.user.login.toLowerCase(), reviewer);
+    const reviews = await read(`${prefix}/pulls/${receipt.review.pullRequest}/reviews?per_page=100`);
+    assert.ok(Array.isArray(reviews) && reviews.length < 100);
+    const lastReview = reviews.filter(row => row.user.login.toLowerCase() === reviewer)
+      .filter(row => ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(row.state)).at(-1);
+    assert.equal(lastReview?.state, "APPROVED");
+    assert.equal(lastReview.commit_id, pr.head.sha);
+  }
+  await verifySignedReceipt(pr.merge_commit_sha);
   return Promise.all([receipt.packageArtifact, ...Object.values(receipt.evidence)].map(async proof => {
     assert.ok(isAncestor(proof.sourceSha));
     const [run, artifact] = await Promise.all([

@@ -78,6 +78,36 @@ test("receipt cannot borrow self-review, stale approval, an unsigned decision or
   }
 });
 
+test("a sole maintainer must sign the exact receipt head and merge it through the same account", async () => {
+  const prefix = "repos/tokentimerch/tokentimer-core";
+  const value = receipt();
+  value.review = { pullRequest: 123, maintainer: "fixture-author" };
+  subject.verify(value, digest);
+  function soleMaintainerApi() {
+    const metadata = api(value);
+    metadata.responses.get(`${prefix}/pulls/123`).merged_by = { login: "fixture-author" };
+    metadata.responses.delete(`${prefix}/pulls/123/reviews?per_page=100`);
+    metadata.responses.set(`${prefix}/commits/${head}`,
+      { author: { login: "fixture-author" }, commit: { verification: { verified: true } } });
+    metadata.responses.set(`${prefix}/contents/${subject.RECEIPT}?ref=${head}`,
+      { encoding: "base64", content: Buffer.from(JSON.stringify(value)).toString("base64") });
+    return metadata;
+  }
+  await subject.verifyMetadata(value, soleMaintainerApi());
+  for (const [endpoint, patch] of [
+    ["pulls/123", { merged_by: { login: "someone-else" } }],
+    [`commits/${head}`, { author: { login: "someone-else" } }],
+    [`commits/${head}`, { commit: { verification: { verified: false } } }],
+    [`contents/${subject.RECEIPT}?ref=${head}`, { content: Buffer.from("{}").toString("base64") }],
+  ]) {
+    const metadata = soleMaintainerApi();
+    Object.assign(metadata.responses.get(`${prefix}/${endpoint}`), patch);
+    await assert.rejects(subject.verifyMetadata(value, metadata), endpoint);
+  }
+  assert.throws(() => subject.verify({ ...value,
+    review: { ...value.review, reviewer: "independent-reviewer" } }, digest));
+});
+
 test("accepted decision cannot borrow a PR run, failed or rerun campaign, foreign source, expired or different artifact", async () => {
   for (const [kind, patch] of [
     ["run", { event: "pull_request" }], ["run", { conclusion: "failure" }], ["run", { run_attempt: 2 }],
