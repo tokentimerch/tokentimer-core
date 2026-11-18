@@ -1,6 +1,6 @@
 # Azure Key Vault qualification
 
-Use this runbook for the protected real-Azure qualification campaign. Before enabling the Azure material-store capability, obtain independent acceptance of its exact native artifact and complete operator journey. A provider test or source-mounted fixture is supporting evidence only.
+Use this runbook for the protected real-Azure qualification campaign. The Azure material-store capability remains disabled until its exact native artifact and complete operator journey are accepted. A provider test or source-mounted fixture is supporting evidence only.
 
 ## Existing infrastructure and prerequisites
 
@@ -146,7 +146,9 @@ node scripts/certops-azure-keyvault-report.js azure-evidence/azure-keyvault-evid
 
 ## Evidence and scope
 
-For the exact-package campaign, dispatch on trusted `main` with `final_package=true` and `package_sha256` set to the expected archive SHA-256. Before Azure authentication, preflight retains the public archive, checksum and receipt as one artifact. The lab and collector use its artifact ID and verify its digest. The scoped verdict requires all 18 scenarios and verified database and Azure resource cleanup from the same run. Complete the separate operator journey and obtain independent acceptance before any gate change. Beta and final publication reuse the retained archive and checksum after verifying the [acceptance receipt](../../scripts/certops-agent-acceptance.cjs) and the tagged agent source.
+For the exact-package campaign, dispatch on trusted `main` with `final_package=true` and `package_sha256` set to the expected archive SHA-256. Before Azure authentication, preflight retains the public archive, checksum and receipt as one artifact. The lab and collector use its artifact ID and verify its digest. The scoped verdict requires all 18 scenarios and verified database and Azure resource cleanup from the same run. Complete the separate operator journey and record release acceptance before any gate change. Beta and final publication reuse the retained archive and checksum after verifying the [acceptance receipt](../../scripts/certops-agent-acceptance.cjs) and the tagged agent source.
+
+Use the same retained archive for the [protected Azure Key Vault operator qualification](../../.github/workflows/certops-azure-operator-qualification.yml) and the [OpenBao real-CA operator qualification](../../.github/workflows/certops-openbao-operator-rehearsal.yml).
 
 The protected campaign uses a qualification package, a real owned Azure vault, scoped independent identities and PostgreSQL. It validates provider operations, authorization failures, version pinning, token renewal, interruption and recovery. Its signed-agent service integration is not a complete HTTP/operator and native release qualification. Genuine managed identity, natural access-token expiry and the full installed release journey need their own applicable evidence.
 
@@ -154,6 +156,8 @@ For natural expiry, dispatch on trusted `main` with `natural_expiry=true` and th
 
 When using a disposable Entra application, pass its `expiry_app_client_id` and `expiry_app_principal_id` together. Use the protected environment's existing GitHub federation subject. The job checks the actual Key Vault token lifetime before creating the vault and grants the application read access to one test secret. Remove the owned service principal and app registration when **Verify disposable Entra application retirement** starts. Evidence is uploaded only after the vault teardown and Azure's confirmation that the application is absent. Do not change tenant token policies.
 
-The IMDS workflow uses the same provider run and archive. Before approving its protected job, stage the approved run plan and the verified archive on two private Linux VMs with distinct managed identities. Arrange independent teardown first. The collector requires both observed identity probes and verified removal of the owned lab.
+The [real Azure IMDS qualification](../../.github/workflows/certops-azure-imds-qualification.yml) uses the dedicated `certops-azure-imds-lab` environment and the same retained archive. Before approving the job, arrange independent teardown and stage the run plan and verified archive on two private Linux VMs with distinct managed identities. The collector requires both real identity probes and verified removal of the owned lab.
 
-Upload only sanitized, schema-validated evidence and cleanup reports. Never upload tokens, keys, bundles or raw provider responses. Passing tests do not replace verified teardown or independent release acceptance.
+For the 0.20.0 receipt, either use an independent GitHub review or have one maintainer sign the exact receipt commit, open its PR and merge it. The release verifies the signatures, receipt and all five evidence profiles in either case.
+
+Upload only sanitized, schema-validated evidence and cleanup reports. Never upload tokens, keys, bundles or raw provider responses. Passing tests do not replace verified teardown or release acceptance.
