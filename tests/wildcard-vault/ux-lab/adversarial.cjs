@@ -53,13 +53,19 @@ async function security(c) {
   assert.equal(recovered.needsOperatorReconciliation, false, "only a validated current receipt resolves the server fence");
   check("revoked consumer Vault token blocks real retrieval without mutation; rotated credential recovers the original pinned job");
 
-  const history = (await matrix()).filter(row => state.bindings.some(binding => binding.id === row.binding_id));
-  // A newer, unstarted rollout can be the latest row for a converged binding.
-  // Only scheduled deployments have jobs whose outcome can be checked.
-  const jobIds = history.map(row => row.latest_deployment?.jobId).filter(Boolean);
-  assert.ok(jobIds.length > 0, "security checks need a completed deployment job");
-  const successful = await Promise.all(jobIds.map(id => job(id)));
-  assert.ok(successful.every(value => value.status === "succeeded" && value.completedAt));
+  const rolloutId = recovered.payload.materialDeployment.rolloutId;
+  // A consumer can still be converged on the same version while its later
+  // verification wave is queued. Snapshot both jobs from the recovered rollout.
+  const jobIds = await wait("recovered verification jobs for both consumers", async () => {
+    const rows = await matrix();
+    const deployments = state.bindings.map(binding =>
+      rows.find(row => row.binding_id === binding.id)?.latest_deployment);
+    return deployments.every(deployment => deployment?.rolloutId === rolloutId && deployment.jobId)
+      ? deployments.map(deployment => deployment.jobId)
+      : false;
+  });
+  const successful = await Promise.all(jobIds.map(id => terminal(id)));
+  assert.ok(successful.every(value => value.completedAt));
   for (const mode of ["signature", "payload", "foreign-agent", "replay"]) {
     const prior = await customer("facts", "nginx");
     const metric = mode === "foreign-agent" ? "foreignAgentRejected" : mode === "replay" ? "replayRejected" : "signatureRejected";
