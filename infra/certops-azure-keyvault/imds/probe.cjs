@@ -16,8 +16,14 @@ const SHA = /^[a-f0-9]{64}$/;
 const VERSION = /^[a-f0-9]{32}$/;
 const ROLE_NAMES = ["issuer", "consumer"];
 
+class ProbeError extends Error {}
+
 function check(ok, code) {
-  if (!ok) throw new Error(code);
+  if (!ok) throw new ProbeError(code);
+}
+
+function probeFailureCode(error) {
+  return error instanceof ProbeError ? error.message : "CERTOPS_IMDS_PROBE_FAILED";
 }
 
 function sha256(value) {
@@ -116,7 +122,7 @@ async function observe(plan, { credential, requestJson, deny = requestDenial }) 
   const opposite = hosts[role === "issuer" ? "consumer" : "issuer"];
   const metadata = await requestJson(new URL("/metadata/instance/compute?api-version=2021-02-01", IMDS), {
     timeoutMs: TIMEOUT_MS, maxBytes: 65536, headers: { Metadata: "true" },
-  });
+  }).catch(() => { throw new ProbeError("IMDS_HOST_METADATA_UNAVAILABLE"); });
   const resourceId = "/subscriptions/" + plan.subscriptionId + "/resourceGroups/" + plan.group +
     "/providers/Microsoft.Compute/virtualMachines/tt-imds-" + role;
   check(metadata.status === 200 && typeof metadata.json?.resourceId === "string" &&
@@ -139,7 +145,7 @@ async function observe(plan, { credential, requestJson, deny = requestDenial }) 
     const response = await requestJson(url, options);
     ownTokenStatus = response.status;
     return response;
-  });
+  }).catch(() => { throw new ProbeError("IMDS_OWN_TOKEN_UNAVAILABLE"); });
   check(ownTokenStatus === 200 && tokenMatches(token, plan.tenantId, own), "IMDS_OWN_IDENTITY_INVALID");
 
   const oppositeDenied = await access(opposite.clientId, async (url, options) => {
@@ -155,7 +161,9 @@ async function observe(plan, { credential, requestJson, deny = requestDenial }) 
   const pinned = new URL(secretUrl.pathname + "/" + plan.pinnedVersion, secretUrl);
   const exactId = pinned.href;
   pinned.searchParams.set("api-version", "7.4");
-  const read = await requestJson(pinned, { timeoutMs: TIMEOUT_MS, headers });
+  const read = await requestJson(pinned, { timeoutMs: TIMEOUT_MS, headers })
+    .catch(() => { throw new ProbeError("IMDS_PINNED_VERSION_UNAVAILABLE"); });
+  check(read.status !== 403, "IMDS_PINNED_VERSION_FORBIDDEN");
   check(read.status === 200 && read.json?.id === exactId &&
     typeof read.json.value === "string" && sha256(read.json.value) === plan.valueSha256,
   "IMDS_EXACT_VERSION_READ_FAILED");
@@ -216,11 +224,11 @@ async function runHost(planFile, expectedPlanSha256, deadlineAt) {
   }
 }
 
-module.exports = { observe, runHost, sha256 };
+module.exports = { observe, runHost, sha256, probeFailureCode };
 if (require.main === module) runHost(...process.argv.slice(2)).then(
   report => process.stdout.write(JSON.stringify(report) + "\n"),
-  () => {
-    process.stderr.write("CERTOPS_IMDS_PROBE_FAILED\n");
+  error => {
+    process.stderr.write(probeFailureCode(error) + "\n");
     process.exitCode = 1;
   },
 );
