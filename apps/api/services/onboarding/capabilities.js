@@ -19,8 +19,7 @@ const FACTS = Object.freeze([
 // Features that stay candidates until their real-host release evidence
 // exists. Flip a value only in the release that qualifies it.
 const QUALIFIED_FEATURES = Object.freeze({
-  // Qualified in 0.18.0 (agent qualified-capabilities manifest). Add an id here
-  // with false for a feature that ships ahead of its real-host qualification.
+  // Keep these values aligned with the agent capability manifest for the release.
   "certops.material_store_azure_key_vault": true,
   "certops.windows_material_iis": false,
 });
