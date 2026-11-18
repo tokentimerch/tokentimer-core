@@ -1,5 +1,6 @@
 import { ChakraProvider } from '@chakra-ui/react';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -75,6 +76,71 @@ beforeEach(() => {
   listProfilesMock.mockResolvedValue([]);
   getAlertSettingsMock.mockResolvedValue({ contact_groups: [] });
   getContactsMock.mockResolvedValue({ data: { items: [] } });
+});
+
+it('ignores a management refresh that completes after changing the open certificate', async () => {
+  const first = {
+    id: 'identity-a',
+    identityId: 'identity-a',
+    commonName: 'first.example.test',
+    lifecycleStatus: 'active',
+    sources: [
+      {
+        periodId: 'period-a',
+        managedCertificateId: 'cert-a',
+        source: 'api',
+        startedAt: '2026-11-01T00:00:00Z',
+        currentIdentityId: 'identity-a',
+      },
+    ],
+  };
+  const next = {
+    id: 'identity-b',
+    identityId: 'identity-b',
+    commonName: 'second.example.test',
+    lifecycleStatus: 'active',
+    sources: [],
+  };
+  let finishRefresh;
+  getIdentityMock
+    .mockResolvedValueOnce(first)
+    .mockReturnValueOnce(
+      new Promise(resolve => {
+        finishRefresh = resolve;
+      })
+    )
+    .mockResolvedValue(next);
+  stopMock.mockResolvedValue({ runningJobs: 0 });
+  const onChanged = vi.fn();
+  const renderModal = (workspaceId, certificate) => (
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId={workspaceId}
+        certificate={certificate}
+        isOpen
+        canManage
+        onClose={vi.fn()}
+        onChanged={onChanged}
+      />
+    </ChakraProvider>
+  );
+  const { rerender } = render(renderModal('workspace-a', first));
+  fireEvent.click(await screen.findByRole('button', { name: 'Stop managing' }));
+  await waitFor(() =>
+    expect(getIdentityMock).toHaveBeenNthCalledWith(
+      2,
+      'workspace-a',
+      'identity-a'
+    )
+  );
+
+  rerender(renderModal('workspace-b', next));
+  await screen.findByText('second.example.test');
+  await act(async () => finishRefresh(first));
+
+  expect(onChanged).not.toHaveBeenCalled();
+  expect(screen.getByText('second.example.test')).toBeInTheDocument();
+  expect(screen.queryByText('first.example.test')).not.toBeInTheDocument();
 });
 
 it('shows one linked token together with all certificate sources and locations', async () => {

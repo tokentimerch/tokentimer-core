@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -202,13 +202,11 @@ function targetsForName(certificates, dnsName) {
   return targets;
 }
 
-export default function AdcsProfileWizard({
-  isOpen,
-  onClose,
-  workspaceId,
-  issuers,
-  onCreated,
-}) {
+export default function AdcsProfileWizard(props) {
+  return <ProfileWizard key={props.workspaceId} {...props} />;
+}
+
+function ProfileWizard({ isOpen, onClose, workspaceId, issuers, onCreated }) {
   const modal = useDashboardModalProps();
   const readyIssuers = useMemo(() => confirmedIssuers(issuers), [issuers]);
   const [step, setStep] = useState(0);
@@ -233,6 +231,13 @@ export default function AdcsProfileWizard({
   const [lookupFailed, setLookupFailed] = useState(false);
   const [attached, setAttached] = useState(null);
   const [openConflict, setOpenConflict] = useState(null);
+  const requestGeneration = useRef(0);
+
+  useLayoutEffect(() => {
+    return () => {
+      requestGeneration.current += 1;
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -321,6 +326,7 @@ export default function AdcsProfileWizard({
   const dnsName = reference.trim();
 
   async function handleCreate() {
+    const generation = requestGeneration.current;
     setBusy(true);
     setLocalError('');
     const dnsNames = extraDnsNames(extraNames, reference.trim());
@@ -343,20 +349,24 @@ export default function AdcsProfileWizard({
         keySize: Number(keySize),
         renewBeforeDays: leadTime.trim() ? Number(leadTime) : null,
       });
+      if (requestGeneration.current !== generation) return;
       setCreated(profile);
       showSuccess('Renewal profile created.');
       if (onCreated) await onCreated();
+      if (requestGeneration.current !== generation) return;
       setMatchesLoading(true);
       setStep(3);
     } catch (err) {
-      setLocalError(errorText(err, 'Could not create the renewal profile.'));
+      if (requestGeneration.current === generation)
+        setLocalError(errorText(err, 'Could not create the renewal profile.'));
     } finally {
-      setBusy(false);
+      if (requestGeneration.current === generation) setBusy(false);
     }
   }
 
   async function handleAttach(openPeriodId = null) {
     if (!selected || !created?.id) return;
+    const generation = requestGeneration.current;
     setBusy(true);
     setLocalError('');
     setOpenConflict(null);
@@ -368,9 +378,11 @@ export default function AdcsProfileWizard({
         renewalProfileId: created.id,
         automationEnabled: true,
       });
+      if (requestGeneration.current !== generation) return;
       setAttached(selected);
       showSuccess('Automatic renewal is on for this certificate.');
     } catch (err) {
+      if (requestGeneration.current !== generation) return;
       const data = err?.response?.data;
       const current = data?.currentPeriod?.periodId;
       if (
@@ -396,7 +408,7 @@ export default function AdcsProfileWizard({
         );
       }
     } finally {
-      setBusy(false);
+      if (requestGeneration.current === generation) setBusy(false);
     }
   }
 

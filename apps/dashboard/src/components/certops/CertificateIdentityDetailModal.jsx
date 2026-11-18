@@ -1,5 +1,5 @@
 import CertOpsBadge, { CertificateLifecycleBadge } from './CertOpsBadge.jsx';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Button,
@@ -82,7 +82,17 @@ function LocationStatus({ location }) {
 }
 
 /** One certificate detail view: token fields, every source, and every location. */
-export default function CertificateIdentityDetailModal({
+export default function CertificateIdentityDetailModal(props) {
+  const { workspaceId, certificate, canManage } = props;
+  const scope = JSON.stringify([
+    workspaceId,
+    certificate?.identityId || certificate?.id,
+    canManage,
+  ]);
+  return <IdentityDetailSession key={scope} {...props} />;
+}
+
+function IdentityDetailSession({
   workspaceId,
   certificate,
   isOpen,
@@ -104,6 +114,15 @@ export default function CertificateIdentityDetailModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [selectedSourceId, setSelectedSourceId] = useState('');
+  const requestGeneration = useRef(0);
+
+  useLayoutEffect(() => {
+    setBusy(false);
+    return () => {
+      requestGeneration.current += 1;
+    };
+  }, [isOpen]);
+
   const latestSourceById = new Map();
   for (const source of detail?.sources || []) {
     const previous = latestSourceById.get(source.managedCertificateId);
@@ -342,37 +361,45 @@ export default function CertificateIdentityDetailModal({
     sourceOptions.length,
   ]);
 
-  const refresh = async () => {
+  const refresh = async generation => {
+    if (requestGeneration.current !== generation) return;
     if (!certificate.identityId) {
       onChanged?.();
       onClose?.();
       return;
     }
-    setDetail(
-      await getCertificateIdentity(workspaceId, certificate.identityId)
+    const refreshed = await getCertificateIdentity(
+      workspaceId,
+      certificate.identityId
     );
+    if (requestGeneration.current !== generation) return;
+    setDetail(refreshed);
     onChanged?.();
   };
 
   const stop = async periodId => {
+    const generation = requestGeneration.current;
     setBusy(true);
     setError('');
     try {
       const result = await stopManagingSource(workspaceId, periodId);
+      if (requestGeneration.current !== generation) return;
       if (result.runningJobs) {
         setError(
           `${result.runningJobs} operation(s) are already running and may still complete.`
         );
       }
-      await refresh();
+      await refresh(generation);
     } catch (err) {
-      setError(err?.response?.data?.error || err.message);
+      if (requestGeneration.current === generation)
+        setError(err?.response?.data?.error || err.message);
     } finally {
-      setBusy(false);
+      if (requestGeneration.current === generation) setBusy(false);
     }
   };
 
   const readd = async managedCertificateId => {
+    const generation = requestGeneration.current;
     setBusy(true);
     setError('');
     try {
@@ -381,11 +408,12 @@ export default function CertificateIdentityDetailModal({
         renewalProfileId: profileId || null,
         automationEnabled: Boolean(profileId),
       });
-      await refresh();
+      await refresh(generation);
     } catch (err) {
-      setError(err?.response?.data?.error || err.message);
+      if (requestGeneration.current === generation)
+        setError(err?.response?.data?.error || err.message);
     } finally {
-      setBusy(false);
+      if (requestGeneration.current === generation) setBusy(false);
     }
   };
 
