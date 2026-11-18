@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const test = require("node:test");
-const { observe, sha256 } = require("./probe.cjs");
+const { observe, sha256, probeFailureCode } = require("./probe.cjs");
 const { assembleReport } = require("./report.cjs");
 
 const core = process.env.TT_IMDS_TEST_CORE ?? path.resolve(__dirname, "../../..");
@@ -97,6 +97,27 @@ test("refuses a shared VM before making contact", async () => {
 test("rejects a 400 caused by an invalid IMDS request instead of identity denial", async () => {
   const { plan, dependencies } = fixture("issuer", { malformedRequest: true });
   await assert.rejects(() => observe(plan, dependencies), /IMDS_OPPOSITE_IDENTITY_DENIAL_MISSING/);
+});
+
+test("reports fixed failure stages without exposing provider errors", async () => {
+  const { plan, dependencies } = fixture("issuer");
+  await assert.rejects(() => observe(plan, {
+    ...dependencies, requestJson: async () => { throw new Error("private metadata response"); },
+  }), error => probeFailureCode(error) === "IMDS_HOST_METADATA_UNAVAILABLE");
+
+  await assert.rejects(() => observe(plan, {
+    ...dependencies, requestJson: async (url, options) => url.pathname === "/metadata/identity/oauth2/token"
+      ? { status: 400, json: null }
+      : dependencies.requestJson(url, options),
+  }), error => probeFailureCode(error) === "IMDS_OWN_TOKEN_UNAVAILABLE");
+
+  await assert.rejects(() => observe(plan, {
+    ...dependencies, requestJson: async (url, options) => url.protocol === "https:"
+      ? { status: 403, json: { privateValue: "private vault response" } }
+      : dependencies.requestJson(url, options),
+  }), error => probeFailureCode(error) === "IMDS_PINNED_VERSION_FORBIDDEN");
+
+  assert.equal(probeFailureCode(new Error("IMDS_PINNED_VERSION_FORBIDDEN")), "CERTOPS_IMDS_PROBE_FAILED");
 });
 
 test("rejects a response for the newer Key Vault version", async () => {
