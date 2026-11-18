@@ -30,8 +30,7 @@ function fixture(role, overrides = {}) {
   };
   const own = plan.hosts[role];
   const opposite = plan.hosts[role === "issuer" ? "consumer" : "issuer"];
-  const claims = { appid: own.clientId, oid: own.principalId, aud: "https://vault.azure.net", tid: plan.tenantId };
-  const token = "header." + Buffer.from(JSON.stringify(claims)).toString("base64url") + ".signature";
+  const token = "opaque-fixture-access-token-" + role;
   const groupId = "/subscriptions/" + plan.subscriptionId + "/resourceGroups/" + plan.group;
   const resourceId = groupId + "/providers/Microsoft.Compute/virtualMachines/tt-imds-" + role;
   const events = [];
@@ -43,7 +42,8 @@ function fixture(role, overrides = {}) {
     }
     if (url.pathname === "/metadata/identity/oauth2/token") {
       assert.equal(url.searchParams.get("client_id"), own.clientId);
-      return { status: 200, json: { access_token: token, expires_in: 3600 } };
+      return { status: 200, json: { access_token: token, expires_in: 3600,
+        token_type: "Bearer", resource: overrides.tokenResource ?? "https://vault.azure.net" } };
     }
     assert.equal(url.href, "https://" + plan.vault + ".vault.azure.net/secrets/" + plan.secret +
       "/" + plan.pinnedVersion + "?api-version=7.4");
@@ -85,6 +85,12 @@ test("uses the product's IMDS credential for both clients and reads only the pin
     for (const privateValue of [token, plan.hosts.issuer.principalId, plan.hosts.consumer.principalId,
       "old-fixture-marker", plan.secret, plan.vault]) assert.ok(!output.includes(privateValue));
   }
+});
+
+test("refuses token response metadata for a different Azure resource", async () => {
+  const { plan, events, dependencies } = fixture("issuer", { tokenResource: "https://storage.azure.com/" });
+  await assert.rejects(() => observe(plan, dependencies), /IMDS_OWN_IDENTITY_INVALID/);
+  assert.deepEqual(events, ["/metadata/instance/compute", "/metadata/identity/oauth2/token"]);
 });
 
 test("refuses a shared VM before making contact", async () => {
