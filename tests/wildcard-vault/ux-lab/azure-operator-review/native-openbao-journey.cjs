@@ -26,5 +26,19 @@ run().catch(error => {
   const location = /[\\/](native-openbao-journey\.cjs|journey\.cjs|qualification\.cjs|native-openbao-bootstrap\.cjs|native-service-observation\.cjs):(\d{1,5}):\d{1,4}\)?$/;
   const frame = frames.map(line => location.exec(line.trim())).find(Boolean);
   process.stderr.write(`OPENBAO_JOURNEY_FAILED ${kind}${frame ? ` ${frame[1]}:${frame[2]}` : ""}\n`);
+  const publish = frames.find(line => /^\s*at (?:async )?publish \(/.test(line));
+  const call = publish && location.exec(publish.trim());
+  if (kind === "assertion" && call?.[1] === "journey.cjs" &&
+      typeof error.message === "string" && error.message.length <= 262144) {
+    try {
+      const job = JSON.parse(error.message);
+      const statuses = /^(succeeded|failed|blocked|rejected|cancelled|orphaned_unknown_effect)$/;
+      const reasons = /^material_(auth_denied|auth_unavailable|store_config_invalid|provider_mismatch|scope_denied|destination_denied|platform_unqualified|execution_failed|store_unavailable|response_invalid|version_unavailable|intent_invalid|publication_uncertain|lease_unavailable|issuance_uncertain|cas_conflict)$/;
+      if (job?.operation === "issue" && statuses.test(job.status)) {
+        const reason = reasons.test(job.errorMessage) ? job.errorMessage : job.errorCode == null ? "none" : "other";
+        process.stderr.write(`OPENBAO_PUBLISH_TERMINAL journey.cjs:${call[2]} ${job.status} ${reason}\n`);
+      }
+    } catch {}
+  }
   process.exitCode = 1;
 });
