@@ -406,8 +406,16 @@ async function provision(env = process.env) {
   save(file, p);
   return p;
 }
-async function consumerAccess(p, names, grant, env = process.env) {
-  await verifyOwned(p, env);
+async function consumerAccess(p, names, grant, env = process.env, expiryPrincipalId) {
+  const owned = await verifyOwned(p, env);
+  if (expiryPrincipalId !== undefined) {
+    policy.requireTrusted(env);
+    if (!owned || env.GITHUB_JOB !== "natural-expiry" || p.tags.runId !== env.GITHUB_RUN_ID ||
+      !policy.GUID.test(expiryPrincipalId || "") || expiryPrincipalId !== env.TT_AZURE_EXPIRY_APP_PRINCIPAL_ID ||
+      expiryPrincipalId === p.identities.issuer.principalId || names?.length !== 1)
+      policy.fail("AZURE_EXPIRY_EXTERNAL_READER_DENIED");
+    p = { ...p, identities: { ...p.identities, consumer: { principalId: expiryPrincipalId } } };
+  }
   if (
     !Array.isArray(names) ||
     !names.length ||

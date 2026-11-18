@@ -84,6 +84,24 @@ test("the cleanup barrier permits no-worker and drained-worker states only", () 
     assert.throws(() => launcher.requireDrain(marker), { message: "AZURE_EXPIRY_DRAIN_UNVERIFIED" });
 });
 
+test("the disposable reader needs both IDs and cannot be the provisioning client", () => {
+  const clientId = "11111111-1111-4111-8111-111111111111";
+  const principalId = "22222222-2222-4222-8222-222222222222";
+  const config = { TT_AZURE_EXPIRY_APP_CLIENT_ID: clientId, TT_AZURE_EXPIRY_APP_PRINCIPAL_ID: principalId };
+  assert.equal(launcher.expiryApplication({}), null);
+  assert.deepEqual(launcher.expiryApplication(config), { clientId, principalId });
+  assert.throws(() => launcher.expiryApplication({ ...config, TT_AZURE_EXPIRY_APP_PRINCIPAL_ID: "" }));
+  assert.throws(() => launcher.expiryApplication({ ...config, AZURE_CLIENT_ID: clientId }));
+  assert.throws(() => launcher.expiryApplication({ ...config, TT_AZURE_EXPIRY_APP_PRINCIPAL_ID: clientId }));
+});
+
+test("only an explicit Entra application-not-found response proves retirement", () => {
+  assert.equal(launcher.isRetiredApplication(400, [700016]), true);
+  assert.equal(launcher.isRetiredApplication(401, [700016]), true);
+  for (const [status, codes] of [[200, [700016]], [503, [700016]], [400, []], [401, [7000215]], [400, [700213]]])
+    assert.equal(launcher.isRetiredApplication(status, codes), false);
+});
+
 test("a longer job still reserves cleanup against the earlier absolute deadline and caps Azure at two hours", () => {
   const minute = 60000;
   const budget = { jobDeadlineMs: now + 125 * minute, resourceDeadlineMs: now + 118 * minute, cleanupReserveMs: 10 * minute };
@@ -104,11 +122,13 @@ test("bounds the expiry job and preserves package, approval and proof ordering",
   assert.equal(workflow.jobs["natural-expiry"]["timeout-minutes"] * 60000, launcher.JOB_TIMEOUT_MS);
   for (const mutate of [
     job => { [job.steps[3], job.steps[4]] = [job.steps[4], job.steps[3]]; },
-    job => { job.steps[5].run = "az group create"; },
-    job => { job.steps[8].if = "success()"; },
-    job => { job.steps[10].if = "always()"; },
-    job => { job.steps[10].with.path = "qualification-results/**"; },
+    job => { job.steps[4].run = "az group create"; },
+    job => { job.steps.find(step => step.id === "expiry-cleanup").if = "success()"; },
+    job => { job.steps.find(step => step.id === "expiry-app-retirement").if = "always()"; },
+    job => { job.steps.at(-1).if = "success()"; },
+    job => { job.steps.at(-1).with.path = "qualification-results/**"; },
     job => { job.env.TT_AZURE_EXPIRY_PACKAGE_ARTIFACT_ID = "3"; },
+    job => { job.env.TT_AZURE_EXPIRY_APP_PRINCIPAL_ID = "3"; },
   ]) {
     const changed = structuredClone(workflow);
     mutate(changed.jobs["natural-expiry"]);
