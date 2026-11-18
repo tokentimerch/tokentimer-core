@@ -4,7 +4,7 @@ Use Distribution to publish a certificate to a customer-controlled store, deploy
 
 ## Before you start
 
-Use matching API, worker and agent versions. Follow [Set up certificate distribution](vault-first-distribution.md) to register agents, configure local store and deployment profiles, and explicitly choose shared-key mode. Vault and OpenBao KV v2 support Linux distribution. Azure Key Vault material storage, shared Windows/IIS material deployment, independent Linux staging and exact-version Vault/OpenBao cleanup require separately qualified capabilities and remain disabled. Existing Windows certificate automation is unaffected.
+Use matching API, worker and agent versions. Follow [Set up certificate distribution](vault-first-distribution.md) to register agents, configure local store and deployment profiles, and explicitly choose shared-key mode. Vault and OpenBao KV v2 and Azure Key Vault Secrets support Linux distribution. Shared Windows/IIS material deployment, independent Linux staging and exact-version Vault/OpenBao cleanup remain disabled. Existing Windows certificate automation is unaffected.
 
 ## Configure consumers and rollout
 

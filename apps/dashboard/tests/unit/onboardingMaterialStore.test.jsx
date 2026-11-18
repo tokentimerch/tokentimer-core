@@ -87,7 +87,7 @@ describe('Configure material store', () => {
   ])(
     'does not retry for role %s, provider %s and attempt %s',
     async (role, provider, attemptCount) => {
-      const ctx = materialContext(provider);
+      const ctx = materialContext(provider, { azureQualified: false });
       ctx.capabilities.viewer.workspaceRole = role;
       ctx.session.progress.certops.vaultPublishJobId = 'publication-a';
       getJob.mockResolvedValue({
@@ -247,7 +247,7 @@ describe('Configure material store', () => {
       screen.getByRole('button', { name: 'Request real publication' })
     ).toBeDisabled();
   });
-  it.each(['vault-kv2', 'openbao-kv2'])(
+  it.each(['vault-kv2', 'openbao-kv2', 'azure-key-vault'])(
     'uses persisted exact-version evidence for %s without claiming a continuous network check',
     provider => {
       show(materialContext(provider));
@@ -271,8 +271,42 @@ describe('Configure material store', () => {
       screen.queryByText('Agent publication verified')
     ).not.toBeInTheDocument();
   });
-  it('keeps Azure gated even when an agent advertises Azure capability', () => {
-    show(materialContext('azure-key-vault'));
+  it('offers real Azure publication when qualification and issuer checks pass', async () => {
+    const ctx = materialContext('azure-key-vault');
+    ctx.docs = vi.fn(() => []);
+    show(ctx);
+    await screen.findByText(/This agent has passed its signed check/);
+    fireEvent.click(
+      screen.getByLabelText(
+        'The issuing agent is stopped while I prepare its group-specific configuration'
+      )
+    );
+    expect(
+      screen.getByText('Production-qualified provider path')
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Production use stays gated/)
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Request real publication' })
+    ).toBeEnabled();
+    expect(ctx.docs).toHaveBeenCalledWith(
+      'certops.azureDistribution',
+      'Azure Key Vault Secrets configuration'
+    );
+    expect(ctx.docs).not.toHaveBeenCalledWith(
+      'certops.vaultAuth',
+      expect.any(String)
+    );
+  });
+  it('keeps Azure gated even when an agent advertises Azure capability', async () => {
+    show(materialContext('azure-key-vault', { azureQualified: false }));
+    await screen.findByText(/This agent has passed its signed check/);
+    fireEvent.click(
+      screen.getByLabelText(
+        'The issuing agent is stopped while I prepare its group-specific configuration'
+      )
+    );
     expect(
       screen.getByText('Implemented, production capability unavailable')
     ).toBeInTheDocument();

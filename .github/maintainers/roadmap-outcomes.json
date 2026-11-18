@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "reviewedAt": "2026-11-06",
+  "reviewedAt": "2026-11-17",
   "repository": "tokentimerch/tokentimer-core",
   "outcomes": [
     {
       "id": "destinations",
-      "title": "Shared certificate destinations",
+      "title": "Certificate distribution destination extensions",
       "issue": 248,
       "edition": "core",
       "horizon": "pre-v1",
@@ -14,7 +14,7 @@
         {
           "slug": "certops-features",
           "status": "In Progress",
-          "scope": "Active distribution increments; issuer/service extensions remain separately scoped",
+          "scope": "Production qualification for Azure material storage, shared IIS deployment, independent Linux staging and exact-version cleanup",
           "implementationPrs": [
             498,
             460
@@ -160,7 +160,8 @@
       "inRoadmap": true,
       "implementationPrs": [
         498,
-        460
+        460,
+        714
       ],
       "relatedIssues": [
         369,

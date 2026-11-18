@@ -4,14 +4,17 @@ export const MATERIAL_PROVIDERS = {
   'vault-kv2': {
     label: 'HashiCorp Vault KV v2',
     capability: 'certops.material_store_vault_kv2',
+    configurationDoc: 'certops.vaultAuth',
   },
   'openbao-kv2': {
     label: 'OpenBao KV v2',
     capability: 'certops.material_store_openbao_kv2',
+    configurationDoc: 'certops.openbaoDistribution',
   },
   'azure-key-vault': {
     label: 'Azure Key Vault Secrets',
     capability: 'certops.material_store_azure_key_vault',
+    configurationDoc: 'certops.azureDistribution',
   },
 };
 export const materialAgents = ctx => ctx.summary?.certops?.agents?.items || [];
@@ -203,6 +206,7 @@ export function materialConfigs({
 }) {
   if (!materialProvider(setup.provider) || setupErrors(setup).length)
     return { ok: false, problems: setupErrors(setup) };
+  const azure = setup.provider === 'azure-key-vault';
   let endpoint;
   try {
     endpoint = new URL(address);
@@ -227,7 +231,7 @@ export function materialConfigs({
       ],
     };
   if (
-    setup.provider === 'azure-key-vault' &&
+    azure &&
     (Boolean(endpoint.port) ||
       !/^[a-z0-9-]+\.vault\.azure\.net$/.test(endpoint.hostname))
   )
@@ -237,7 +241,7 @@ export function materialConfigs({
         'Use a public-cloud <name>.vault.azure.net Key Vault Secrets endpoint.',
       ],
     };
-  if (!/^[A-Za-z0-9_-]+$/.test(mount))
+  if (!azure && !/^[A-Za-z0-9_-]+$/.test(mount))
     return {
       ok: false,
       problems: ['Use the KV v2 mount name, without a path.'],
@@ -251,7 +255,7 @@ export function materialConfigs({
     issuanceProfileRef: setup.issuanceProfileRef,
     issuerProfileRevision: setup.profileRevision,
   });
-  if (configs.ok && setup.provider === 'azure-key-vault') {
+  if (configs.ok && azure) {
     for (const role of ['issuer', 'consumer']) {
       const store = configs[role].materialStores[setup.materialStoreRef];
       delete store.mount;
