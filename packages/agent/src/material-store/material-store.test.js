@@ -43,7 +43,8 @@ function fixture(t, address) {
   return { intent, bundle, scope, stores, directory };
 }
 
-test("publication uses CAS=0, reconciles lost response, and fetch pins version", async (t) => {
+for (const droppedResponse of [true, false]) {
+test(`CAS=0 publication reconciles ${droppedResponse ? "lost" : "empty"} response and pins version 1`, async (t) => {
   let stored;
   let posts = 0;
   let gets = 0;
@@ -55,20 +56,15 @@ test("publication uses CAS=0, reconciles lost response, and fetch pins version",
         posts++;
         const parsed = JSON.parse(body);
         assert.equal(parsed.options.cas, 0);
-        if (stored) {
-          // A reverse proxy can lose the KV v2 response body after commit.
-          // Keep the CAS-conflict case, then exercise empty-response recovery.
-          if (posts === 3) res.writeHead(204).end();
-          else res.writeHead(400).end("secret response must never escape");
-          return;
-        }
+        assert.equal(stored, undefined, "reconciliation must not repeat the write");
         stored = parsed.data;
-        // Simulate successful Vault commit followed by a lost response.
-        req.socket.destroy();
+        if (droppedResponse) req.socket.destroy();
+        else res.writeHead(204).end();
       });
     } else {
       gets++;
       assert.equal(new URL(req.url, "http://fixture").searchParams.get("version"), "1");
+      if (!stored) { res.writeHead(404).end(); return; }
       res.end(JSON.stringify({ data: { data: stored, metadata: { version: 1, deletion_time: "", destroyed: false } } }));
     }
   });
@@ -80,12 +76,13 @@ test("publication uses CAS=0, reconciles lost response, and fetch pins version",
   assert.equal(receipt.providerVersion, 1);
   assert.equal(JSON.stringify(receipt).includes("PRIVATE KEY"), false);
   assert.deepEqual(await client.publish(f.bundle), receipt);
-  assert.deepEqual(await client.publish(f.bundle), receipt, "empty publication responses recover the exact committed bundle");
-  assert.equal((await client.fetch(1)).fingerprintSha256, f.bundle.fingerprintSha256);
+  assert.deepEqual(await client.publish(f.bundle), receipt);
+  assert.deepEqual(await client.fetch(1), f.bundle);
   await assert.rejects(client.fetch(undefined), { code: "material_provider_version_invalid" });
-  assert.equal(posts, 3);
-  assert.equal(gets, 4);
+  assert.equal(posts, 1);
+  assert.equal(gets, 5);
 });
+}
 
 test("local authority rejects cross-customer, arbitrary aliases and HTTP", (t) => {
   const f = fixture(t, "http://127.0.0.1:58200");
@@ -142,6 +139,48 @@ test("CAS conflict never adopts unrelated existing bytes or returns Vault errors
   await new Promise(r=>server.listen(0,"127.0.0.1",r));t.after(()=>new Promise(r=>server.close(r)));
   const f=fixture(t,`http://127.0.0.1:${server.address().port}`);
   await assert.rejects(createVaultStore(f.stores,f.intent,{fixtureLoopbackHttp:true}).publish(f.bundle),e=>e.code==="material_cas_conflict"&&!e.message.includes("canary"));
+});
+
+test("a definitive KV v2 write denial clears the attempt before a permitted retry", async t => {
+  let rejectWrite = true;
+  let stored;
+  let posts = 0;
+  const server = http.createServer((req, res) => {
+    if (req.method === "GET") {
+      assert.equal(new URL(req.url, "http://fixture").search, "?version=1");
+      if (!stored) return res.writeHead(404).end();
+      return res.end(JSON.stringify({ data: { data: stored, metadata: { version: 1 } } }));
+    }
+    assert.equal(req.method, "POST");
+    let body = "";
+    req.on("data", chunk => { body += chunk; });
+    req.on("end", () => {
+      posts++;
+      const publication = JSON.parse(body);
+      assert.equal(publication.options.cas, 0);
+      if (rejectWrite) return res.writeHead(403).end();
+      stored = publication.data;
+      res.end(JSON.stringify({ data: { version: 1 } }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const f = fixture(t, `http://127.0.0.1:${server.address().port}`);
+  const client = createVaultStore(f.stores, f.intent, { fixtureLoopbackHttp: true });
+  let writeAttempted = false;
+  const options = () => ({
+    writeAttempted,
+    beforeWrite: () => { writeAttempted = true; },
+    writeRejected: () => { writeAttempted = false; },
+  });
+  await assert.rejects(client.publish(f.bundle, options()), { code: "material_auth_denied" });
+  assert.equal(writeAttempted, false);
+  assert.equal(posts, 1);
+  rejectWrite = false;
+  assert.equal((await client.publish(f.bundle, options())).providerVersion, 1);
+  assert.equal(writeAttempted, true);
+  assert.equal(posts, 2);
+  assert.deepEqual(await client.fetch(1), f.bundle);
 });
 
 // skip-reason: prerequisite — requires the isolated real Vault fixture and its synthetic root token.
@@ -210,23 +249,32 @@ test("local binding lock excludes concurrent deployment and releases after failu
   assert.equal(await withMaterialLock(locks,"binding",async()=>"released"),"released");
 });
 
-test("custom issuer custody survives lost responses and recovery; next CSR reuses the promoted key", async (t) => {
-  let stored, loseReadback = true, posts = 0;
+for (const provider of ["vault-kv2", "openbao-kv2"]) {
+test(`${provider} recovers exact committed material once and preserves custom issuer custody`, async (t) => {
+  let stored, loseReadback = true, missingVersion = false, posts = 0;
   const server=http.createServer((req,res)=>{
     if(req.method==="POST") {
       let body="";req.on("data",chunk=>{body+=chunk;});req.on("end",()=>{
         posts++;
         if(stored) {res.writeHead(400).end();return;}
-        stored=JSON.parse(body).data;req.socket.destroy();
+        const publication = JSON.parse(body);
+        assert.equal(publication.options.cas, 0);
+        stored = publication.data;
+        req.socket.destroy();
       });
-    } else if(loseReadback) {req.socket.destroy();}
-    else res.end(JSON.stringify({data:{data:stored,metadata:{version:1,deletion_time:"",destroyed:false}}}));
+    } else {
+      assert.equal(new URL(req.url, "http://fixture").search, "?version=1");
+      if (!stored || missingVersion) res.writeHead(404).end();
+      else if (loseReadback) req.socket.destroy();
+      else res.end(JSON.stringify({data:{data:stored,metadata:{version:1,deletion_time:"",destroyed:false}}}));
+    }
   });
   await new Promise(r=>server.listen(0,"127.0.0.1",r));t.after(()=>new Promise(r=>server.close(r)));
   const f=fixture(t,`http://127.0.0.1:${server.address().port}`);
+  f.stores.customer.provider = provider;
   Object.assign(f.scope,{issuerAgentId:"issuer",issuanceProfileRef:"profile",profileRevision:1,caEndpoint:"https://ca.test/dir",dnsProvider:"test",dnsZone:"example.com"});
   const job={workspaceId:f.intent.workspaceId,agentId:"issuer",jobId:crypto.randomUUID(),certificateId:crypto.randomUUID(),
-    publication:{...f.intent,type:"vault-kv2",issuanceProfileRef:"profile",profileRevision:1},sans:f.bundle.sans,
+    publication:{...f.intent,type:provider,issuanceProfileRef:"profile",profileRevision:1},sans:f.bundle.sans,
     keyAlgorithm:f.scope.keyAlgorithm,caEndpoint:f.scope.caEndpoint,dnsProvider:f.scope.dnsProvider,dnsZone:f.scope.dnsZone};
   const keysDir=path.join(f.directory,"issuer-custody-custom");
   const canonical=path.join(keysDir,`${job.certificateId}.key.pem`);
@@ -239,10 +287,17 @@ test("custom issuer custody survives lost responses and recovery; next CSR reuse
   const session=()=>publicationSession({job,stores:f.stores,stateDir:f.directory,keysDir,fixtureLoopbackHttp:true});
   session().stage(f.bundle.certificatePem,f.bundle.privateKeyPem,f.bundle.fingerprintSha256,true);
   await assert.rejects(session().recover(async()=>{}),{code:"material_publication_uncertain"});
+  assert.equal(posts, 1);
   assert.equal(readProtectedFile(canonical),oldKey);
+  missingVersion = true;
+  await assert.rejects(session().recover(async()=>{}), { code: "material_publication_uncertain" });
+  assert.equal(posts, 1, "a missing exact version must not repeat an ambiguous provider write");
+  missingVersion = false;
   loseReadback=false;
   const recovered=await session().recover(async()=>{});
-  assert.equal(recovered.keyRotated,true);assert.equal(posts,2);
+  assert.equal(recovered.keyRotated, true);
+  assert.equal(posts, 1);
+  assert.deepEqual(await session().store.fetch(1), f.bundle);
   assert.equal(readProtectedFile(canonical),f.bundle.privateKeyPem);
   assert.equal(fs.existsSync(path.join(f.directory,"keys")),false);
   assert.equal(fs.existsSync(job.keysDir),false);
@@ -257,7 +312,27 @@ test("custom issuer custody survives lost responses and recovery; next CSR reuse
   let leaseChecks=0;
   await assert.rejects(session().recover(async()=>{if(++leaseChecks===2)throw Object.assign(new Error("lease"),{code:"material_lease_unavailable"});}),{code:"material_lease_unavailable"});
   assert.equal(readProtectedFile(canonical),oldKey,"lease loss after Vault reconciliation prevents promotion");
+
+  const checkpoint = path.join(session().directory, "checkpoint.json");
+  const bundleFile = path.join(session().directory, "bundle.json");
+  const legacy = JSON.parse(readProtectedFile(checkpoint));
+  delete legacy.writeAttemptTracked;
+  legacy.writeAttempted = false;
+  legacy.phase = "validated_staging";
+  writeProtectedJson(checkpoint, legacy);
+  assert.equal((await session().recover(async () => {})).status, "succeeded");
+  assert.equal(posts, 1, "a legacy checkpoint with exact matching bytes requires no write");
+  writeProtectedJson(checkpoint, legacy);
+  missingVersion = true;
+  await assert.rejects(session().recover(async () => {}), { code: "material_publication_uncertain" });
+  assert.equal(posts, 1, "an unreadable legacy checkpoint remains fenced");
+  missingVersion = false;
+  fs.unlinkSync(bundleFile);
+  fs.unlinkSync(checkpoint);
+  assert.equal((await session().recover(async () => {})).status, "succeeded");
+  assert.equal(posts, 1, "a recovered remote bundle cannot initiate another write");
 });
+}
 
 test("bounded transport times out a stalled Vault body without exposing contents", async (t) => {
   const server=http.createServer((req,res)=>{res.writeHead(200);res.write('{"sensitive":"canary"');});
