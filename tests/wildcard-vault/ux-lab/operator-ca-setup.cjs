@@ -202,3 +202,5 @@ if (require.main === module) main(process.argv.slice(2)).catch(error => {
   process.stderr.write(`Operator CA setup failed (${error.code || error.name})\n`);
   process.exitCode = 1;
 });
+
+module.exports = { dispose };

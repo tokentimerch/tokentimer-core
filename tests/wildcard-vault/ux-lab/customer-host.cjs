@@ -13,6 +13,9 @@ const assert = require("node:assert/strict");
 const ca = require("./operator-ca.cjs");
 const root = "/lab";
 let build = "/lab/experimental-agent", acceptance;
+const operatorObserver = ca.operatorCa
+  ? require("./azure-operator-review/openbao-operator-observer.cjs").observe({ root, packageRoot: () => build })
+  : null;
 const packageMode = process.env.TT_UX_PACKAGE_ACCEPTANCE === "1";
 assert.ok(!ca.operatorCa || packageMode, "Owned operator CA requires an exact package run");
 const source = "/repo/packages/agent";
@@ -60,6 +63,7 @@ function reply(res, value, status = 200) {
 }
 function forward(req, res, host, port, { vault = false } = {}) {
   const claim = host === "api" && req.url === "/api/v1/certops/agent/jobs/claim";
+  if (vault) operatorObserver?.beforeProvider(req);
   if (
     vault &&
     fault.blockedReads &&
@@ -90,6 +94,7 @@ function forward(req, res, host, port, { vault = false } = {}) {
       headers: { ...req.headers, host, ...(claim ? { "accept-encoding": "identity" } : {}) },
     },
     (r) => {
+      if (vault) operatorObserver?.afterProvider(req, r.statusCode);
       if (claim && r.statusCode === 200) {
         const chunks = [];
         let size = 0;
@@ -100,6 +105,7 @@ function forward(req, res, host, port, { vault = false } = {}) {
             for (const envelope of result.jobs || []) {
               const signed = envelope.envelopeVersion === 2
                 ? JSON.parse(Buffer.from(envelope.payloadB64, "base64")) : envelope;
+              operatorObserver?.claim(envelope, signed);
               if (!signed.materialDeployment) continue;
               for (const name of ["nginx", "haproxy"]) {
                 if (config(name).agentId === signed.agentId) {
@@ -293,6 +299,25 @@ async function rotateMaterialToken(name, workspaceId, groupId) {
 async function control(body) {
   const { action, name = "issuer" } = body;
   assert.ok(["issuer", "nginx", "haproxy", "cancel-issuer"].includes(name));
+  if (action === "operator-observation-arm") {
+    assert.ok(operatorObserver);
+    operatorObserver.arm(body);
+    return { armed: true };
+  }
+  if (action === "operator-observation-proof") {
+    assert.ok(operatorObserver);
+    const provider = operatorObserver.proof(body.jobIds);
+    const orders = fs.readFileSync("/lab/acme-issued.jsonl", "utf8").trim().split("\n").map(JSON.parse);
+    return { provider, orders };
+  }
+  if (action === "operator-observation-counters") {
+    assert.ok(operatorObserver);
+    return operatorObserver.counts();
+  }
+  if (action === "operator-role-observation") {
+    assert.ok(operatorObserver && acceptance && process.env.TT_UX_MATERIAL_PROVIDER === "openbao-kv2");
+    return acceptance.observeOpenBaoRoles(body);
+  }
   if (action === "native-openbao-prepare") {
     assert.ok(nativeOpenBao && acceptance && name === "issuer", "native OpenBao setup not selected");
     const plan = { workspaceId: body.workspaceId, groupId: body.groupId, materialVersionId: body.materialVersionId, providerVersion: body.providerVersion };

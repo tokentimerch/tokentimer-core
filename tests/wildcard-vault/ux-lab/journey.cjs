@@ -1011,17 +1011,7 @@ async function observeNativeOpenBaoConsumer({ packageArtifact, customerImage, ap
   }
 }
 
-async function main({ nativeOpenBao } = {}) {
-  if (nativeOpenBao) {
-    assert.ok(gate && process.env.TT_UX_PACKAGE_ACCEPTANCE === "1");
-    assert.equal(state.materialProvider, "openbao-kv2");
-    assert.equal(state.certificateMode, "ordinary");
-  }
-  let nativeService = null;
-  if (gate) {
-    assert.equal(process.argv[2] || "all", "all", "Strict qualification cannot resume or run a partial phase");
-    await gate.preflight();
-  }
+async function openSession() {
   await wait(
     "API startup",
     async () => {
@@ -1049,6 +1039,19 @@ async function main({ nativeOpenBao } = {}) {
   await owner.login("owner@wildcard.test", "LabOwner-2026!Only");
   if (state.approverRegistered)
     await approver.login(state.approverEmail, "LabApprover-2026!Only");
+}
+async function main({ nativeOpenBao } = {}) {
+  if (nativeOpenBao) {
+    assert.ok(gate && process.env.TT_UX_PACKAGE_ACCEPTANCE === "1");
+    assert.equal(state.materialProvider, "openbao-kv2");
+    assert.equal(state.certificateMode, "ordinary");
+  }
+  let nativeService = null;
+  if (gate) {
+    assert.equal(process.argv[2] || "all", "all", "Strict qualification cannot resume or run a partial phase");
+    await gate.preflight();
+  }
+  await openSession();
   const phase = process.argv[2] || "all";
   if (phase === "observations") {
     const material = (await versions()).find(v => v.id === (state.renewedVersionId || state.versionId));
@@ -1246,7 +1249,8 @@ async function main({ nativeOpenBao } = {}) {
 }
 module.exports = { main, context: {
   state, owner, approver, api, group, versions, matrix, rollout, approve, terminal, job, customer, wait, converge,
-  check, save, root, base, controlBase, mailBase, certificateSans, setup, preparePublication, bindings,
+  check, save, root, base, controlBase, mailBase, certificateSans, openSession, setup, preparePublication, bindings,
+  observeNativeOpenBaoConsumer,
 } };
 if (require.main === module) main().catch(async (e) => {
   if (gate) { gate.report.status="failed"; try {await gate.finish({requiredScenarios:qualification.PHASES.map(p=>"distribution-"+p)});} catch {} }

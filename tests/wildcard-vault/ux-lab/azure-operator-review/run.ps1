@@ -199,14 +199,16 @@ try {
           throw 'Staged package identity differs from the owned lab input.'
         }
       }
-      if ($NativeOpenBao) {
+      if ($NativeOpenBao -and $OpenBaoPki) {
+        & node (Join-Path $PSScriptRoot 'openbao-operator-strict-journey.cjs') 2>&1 | Tee-Object -FilePath (Join-Path $output "journey-$Phase.log")
+      } elseif ($NativeOpenBao) {
         & node (Join-Path $PSScriptRoot 'native-openbao-journey.cjs') 2>&1 | Tee-Object -FilePath (Join-Path $output "journey-$Phase.log")
       } else {
         & node (Join-Path $uxLab 'journey.cjs') $Phase 2>&1 | Tee-Object -FilePath (Join-Path $output "journey-$Phase.log")
       }
       $result = $LASTEXITCODE
       if ($result -ne 0) { throw "Journey failed; evidence retained in $output. The lab remains running." }
-      if($PackageAcceptance -and $Phase -eq 'all'){
+      if($PackageAcceptance -and $Phase -eq 'all' -and !($NativeOpenBao -and $OpenBaoPki)){
         $proof=(Get-Content (Join-Path $output 'qualification.json') -Raw | ConvertFrom-Json).packageAcceptance
         $receipt=Get-Content (Join-Path $output 'agent-package/artifact.json') -Raw | ConvertFrom-Json
         if($proof.packageSha256 -ne $receipt.sha256 -or $proof.candidateSha -ne $env:TT_UX_CORE_COMMIT){throw 'Acceptance used a different package or candidate'}
@@ -226,13 +228,15 @@ try {
       if (-not $OwnedTeardownReceipt) { throw 'Owned teardown receipt is required.' }
       $owned = Get-Content -LiteralPath $OwnedTeardownReceipt -Raw | ConvertFrom-Json
       if ($owned.project -cne $Project) { throw 'Owned teardown receipt project mismatch.' }
-      if ($NativeOpenBao) {
+      if ($NativeOpenBao -and $OpenBaoPki) {
+        & node (Join-Path $PSScriptRoot 'openbao-operator-evidence.cjs') $OwnedTeardownReceipt
+      } elseif ($NativeOpenBao) {
         & node (Join-Path $PSScriptRoot 'native-openbao-support.cjs') $OwnedTeardownReceipt
       } else {
         & node (Join-Path $PSScriptRoot 'owned-teardown-run.cjs') --execute $OwnedTeardownReceipt
       }
       if ($LASTEXITCODE -ne 0) { throw 'Owned teardown refused or incomplete.' }
-      if ($OpenBaoPki) {
+      if ($OpenBaoPki -and !$NativeOpenBao) {
         & node (Join-Path $uxLab 'operator-ca-setup.cjs') dispose $env:TT_UX_OPERATOR_CA_PRIVATE (Join-Path $output 'operator-ca')
         if ($LASTEXITCODE -ne 0) { throw 'Owned operator CA credential cleanup failed.' }
       }
