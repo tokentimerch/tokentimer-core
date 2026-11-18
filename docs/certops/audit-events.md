@@ -4,6 +4,9 @@ Audit action names use uppercase words separated by underscores. UUID subjects
 are stored in metadata because the audit `target_id` column is an integer.
 Human actions identify their actor; agent log rejection has a machine actor.
 These metadata fields are available in the Audit feed and CSV/JSON export.
+Filter for `CERTOPS_MANAGEMENT_STARTED` or `CERTOPS_MANAGEMENT_STOPPED` to see
+the certificate and management period IDs for a registration that was resumed
+or stopped.
 
 - `CERTOPS_ISSUER_CREATED`: `{ issuerId, kind }` records issuer creation.
 - `CERTOPS_ISSUER_PREFLIGHT_DISPATCHED`: `{ issuerId, jobId, agentId }` records a CA preflight request.

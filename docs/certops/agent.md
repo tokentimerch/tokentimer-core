@@ -6,7 +6,9 @@ The agent runs on the host that holds certificate keys. TokenTimer plans and aud
 
 1. Enable CLM on the control plane and prepare a workspace bootstrap token.
 2. Open the [setup guide](setup-guide.md) and select the result you need. Prepare [local policy](agent/configuration.md) before allowing certificate work.
-3. Follow [Linux](agent/install-linux.md) or [Windows](agent/install-windows.md) installation when the guide requests it, verify signed dispatch with a no-op, then opt into the selected operation.
+3. Follow [Linux](agent/install-linux.md) or [Windows](agent/install-windows.md) installation when the guide requests it, verify signed dispatch with a no-op, then opt into the selected operation. From the job
+   form, choose the no-op operation and **Simulation (dry run)**. A successful
+   simulation reports **Dry-run complete**.
 
 An agent with `execution.enabled: false` registers, heartbeats, and can report configured certificate discovery; it does not poll for or claim jobs. To test signed jobs, set `execution.enabled: true` and keep `execution.dryRun: true`, then restart and request a job with `mode: "dry_run"`. Real mutating jobs are refused while that safety switch is on. AD CS preflight is a separate real read-only check and can run with local dry-run protection enabled; signed preflight `mode: "dry_run"` is blocked. A no-op proves dispatch/reporting, not the permissions or success of later issuance. Enabling execution does not bypass local policy.
 

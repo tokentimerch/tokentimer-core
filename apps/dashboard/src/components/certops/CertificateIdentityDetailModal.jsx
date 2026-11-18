@@ -1,5 +1,5 @@
 import CertOpsBadge, { CertificateLifecycleBadge } from './CertOpsBadge.jsx';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Button,
@@ -38,6 +38,22 @@ import {
   locationKindLabel,
   sourceLabel,
 } from './certopsFormat.js';
+
+const WINDOWS_REGISTRATION_LABELS = {
+  windows_store: 'Windows certificate store',
+  iis_binding: 'IIS binding',
+  http_sys: 'HTTP.sys binding',
+};
+
+function registrationLabel(source) {
+  if (source.source !== 'agent_windows') return sourceLabel(source.source);
+  const match = source.sourceRef?.match(
+    /^[^/]+\/([^/]+)\/(windows_store|iis_binding|http_sys)\/(.+)$/
+  );
+  if (!match) return sourceLabel(source.source);
+  const [, host, kind, slot] = match;
+  return `${WINDOWS_REGISTRATION_LABELS[kind]} · ${host} · ${slot}`;
+}
 
 function SectionContent({ children }) {
   return (
@@ -82,7 +98,17 @@ function LocationStatus({ location }) {
 }
 
 /** One certificate detail view: token fields, every source, and every location. */
-export default function CertificateIdentityDetailModal({
+export default function CertificateIdentityDetailModal(props) {
+  const { workspaceId, certificate, canManage } = props;
+  const scope = JSON.stringify([
+    workspaceId,
+    certificate?.identityId || certificate?.id,
+    canManage,
+  ]);
+  return <IdentityDetailSession key={scope} {...props} />;
+}
+
+function IdentityDetailSession({
   workspaceId,
   certificate,
   isOpen,
@@ -100,10 +126,20 @@ export default function CertificateIdentityDetailModal({
   const [profiles, setProfiles] = useState([]);
   const [profileIds, setProfileIds] = useState({});
   const [showHistory, setShowHistory] = useState(false);
+  const [showStopped, setShowStopped] = useState(false);
   const [showLocationHistory, setShowLocationHistory] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [selectedSourceId, setSelectedSourceId] = useState('');
+  const requestGeneration = useRef(0);
+
+  useLayoutEffect(() => {
+    setBusy(false);
+    return () => {
+      requestGeneration.current += 1;
+    };
+  }, [isOpen]);
+
   const latestSourceById = new Map();
   for (const source of detail?.sources || []) {
     const previous = latestSourceById.get(source.managedCertificateId);
@@ -141,6 +177,7 @@ export default function CertificateIdentityDetailModal({
     setCertificateFields(null);
     setError('');
     setShowHistory(false);
+    setShowStopped(false);
     setShowLocationHistory(false);
     setProfileIds({});
     if (certificate.identityId) {
@@ -342,37 +379,45 @@ export default function CertificateIdentityDetailModal({
     sourceOptions.length,
   ]);
 
-  const refresh = async () => {
+  const refresh = async generation => {
+    if (requestGeneration.current !== generation) return;
     if (!certificate.identityId) {
       onChanged?.();
       onClose?.();
       return;
     }
-    setDetail(
-      await getCertificateIdentity(workspaceId, certificate.identityId)
+    const refreshed = await getCertificateIdentity(
+      workspaceId,
+      certificate.identityId
     );
+    if (requestGeneration.current !== generation) return;
+    setDetail(refreshed);
     onChanged?.();
   };
 
   const stop = async periodId => {
+    const generation = requestGeneration.current;
     setBusy(true);
     setError('');
     try {
       const result = await stopManagingSource(workspaceId, periodId);
+      if (requestGeneration.current !== generation) return;
       if (result.runningJobs) {
         setError(
           `${result.runningJobs} operation(s) are already running and may still complete.`
         );
       }
-      await refresh();
+      await refresh(generation);
     } catch (err) {
-      setError(err?.response?.data?.error || err.message);
+      if (requestGeneration.current === generation)
+        setError(err?.response?.data?.error || err.message);
     } finally {
-      setBusy(false);
+      if (requestGeneration.current === generation) setBusy(false);
     }
   };
 
   const readd = async managedCertificateId => {
+    const generation = requestGeneration.current;
     setBusy(true);
     setError('');
     try {
@@ -381,11 +426,12 @@ export default function CertificateIdentityDetailModal({
         renewalProfileId: profileId || null,
         automationEnabled: Boolean(profileId),
       });
-      await refresh();
+      await refresh(generation);
     } catch (err) {
-      setError(err?.response?.data?.error || err.message);
+      if (requestGeneration.current === generation)
+        setError(err?.response?.data?.error || err.message);
     } finally {
-      setBusy(false);
+      if (requestGeneration.current === generation) setBusy(false);
     }
   };
 
@@ -432,20 +478,27 @@ export default function CertificateIdentityDetailModal({
         (!detail.identityId ||
           source.currentIdentityId === detail.identityId) &&
         !openSourceIds.has(source.managedCertificateId)));
-  const periodSources = showHistory
-    ? detail.sources || []
-    : (detail.sources || []).filter(
-        source => activeSources.includes(source) || canRestart(source)
-      );
+  const allSources = detail.sources || [];
+  const restartableSources = detail.restartableSources || [];
+  const includeStopped = showStopped || activeSources.length === 0;
+  const hasStopped =
+    restartableSources.length > 0 || allSources.some(canRestart);
+  const periodSources = allSources.filter(source => {
+    if (activeSources.includes(source)) return true;
+    return canRestart(source) ? includeStopped : showHistory;
+  });
   const visibleSources = [
     ...periodSources,
-    ...(detail.restartableSources || []).map(source => ({
+    ...(includeStopped ? restartableSources : []).map(source => ({
       ...source,
       restartCandidate: true,
     })),
   ];
-  const hiddenPeriodCount =
-    (detail.sources || []).length - periodSources.length;
+  const hiddenPeriodCount = showHistory
+    ? 0
+    : allSources.filter(
+        source => !activeSources.includes(source) && !canRestart(source)
+      ).length;
   // Job history and deployment details follow an explicitly selected registration.
   // An immutable identity ID is never a managed certificate ID.
   const managedCertificateId = selectedManagedId;
@@ -682,9 +735,11 @@ export default function CertificateIdentityDetailModal({
                     key={source.managedCertificateId}
                     value={source.managedCertificateId}
                   >
-                    {sourceLabel(source.source)} ·{' '}
-                    {source.sourceRef || `Registration ${index + 1}`} ·{' '}
+                    {registrationLabel(source)} ·{' '}
                     {isEndedSource(source) ? 'Ended' : 'Current'}
+                    {registrationLabel(source) === sourceLabel(source.source)
+                      ? ` · Registration ${index + 1}`
+                      : ''}
                   </option>
                 ))}
               </Select>
@@ -698,6 +753,23 @@ export default function CertificateIdentityDetailModal({
                   profile.
                 </Text>
               ) : null}
+            </FormControl>
+          ) : null}
+          {hasStopped && activeSources.length ? (
+            <FormControl display='flex' alignItems='center' mb={3}>
+              <Switch
+                id='certificate-management-stopped'
+                isChecked={showStopped}
+                onChange={event => setShowStopped(event.target.checked)}
+                mr={2}
+              />
+              <FormLabel
+                htmlFor='certificate-management-stopped'
+                mb={0}
+                fontSize='sm'
+              >
+                Show stopped registrations
+              </FormLabel>
             </FormControl>
           ) : null}
           <FormControl display='flex' alignItems='center' mb={3}>
@@ -751,10 +823,11 @@ export default function CertificateIdentityDetailModal({
                       >
                         <Td>
                           <Text fontSize='sm' fontWeight='semibold'>
-                            {sourceLabel(source.source)}
+                            {registrationLabel(source)}
                           </Text>
                           {source.sourceRef ? (
                             <Box
+                              as='details'
                               maxW='100%'
                               overflowWrap='anywhere'
                               sx={{
@@ -764,6 +837,9 @@ export default function CertificateIdentityDetailModal({
                                 },
                               }}
                             >
+                              <Box as='summary' cursor='pointer' fontSize='xs'>
+                                Source reference
+                              </Box>
                               <CopyableId id={source.sourceRef} size='xs' />
                             </Box>
                           ) : null}

@@ -76,9 +76,10 @@ describe('ambiguous certificate inventory actions', () => {
     expect(handlers.onOpenTokenModal).toHaveBeenCalledWith(token);
   });
 
-  it('shows aggregate retirement rather than expiry health when every linked identity is retired', () => {
+  it('shows expiry and aggregate retirement separately on desktop and mobile', () => {
     show({ ...token, __managedCertificatesRetired: true });
-    expect(screen.getAllByText('Retired').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Retired')).toHaveLength(2);
+    expect(screen.getAllByText('Within validity')).toHaveLength(2);
     expect(screen.queryAllByText('Healthy')).toHaveLength(0);
   });
 

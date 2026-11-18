@@ -779,6 +779,25 @@ describe('CreateManualJobModal operation and subject pairing', () => {
     ).toBeInTheDocument();
   });
 
+  it.each(['real', 'dry_run'])(
+    'uses the selected %s mode for a no-op job',
+    async mode => {
+      createJobMock.mockResolvedValue({ job: { id: 'job-1' } });
+      renderModal();
+      selectOperation('noop');
+      fireEvent.change(screen.getByLabelText('Execution mode'), {
+        target: { value: mode },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Create job' }));
+      await waitFor(() => {
+        expect(createJobMock).toHaveBeenCalledWith('ws-1', {
+          operation: 'noop',
+          ...(mode === 'dry_run' ? { mode } : {}),
+        });
+      });
+    }
+  );
+
   it('refuses renew when the certificate uses an AD CS profile', async () => {
     getCertificateMock.mockResolvedValue({
       certificate: { profileId: 'profile-1' },
@@ -825,27 +844,37 @@ describe('CreateManualJobModal operation and subject pairing', () => {
     fireEvent.change(screen.getByLabelText(/^Subject ID/), {
       target: { value: firstId },
     });
-    await waitFor(() => expect(getCertificateMock).toHaveBeenCalledWith(
-      'ws-1',
-      firstId,
-      expect.any(Object)
-    ));
+    await waitFor(() =>
+      expect(getCertificateMock).toHaveBeenCalledWith(
+        'ws-1',
+        firstId,
+        expect.any(Object)
+      )
+    );
     fireEvent.change(screen.getByLabelText(/^Subject ID/), {
       target: { value: secondId },
     });
-    await waitFor(() => expect(getCertificateMock).toHaveBeenCalledWith(
-      'ws-1',
-      secondId,
-      expect.any(Object)
-    ));
+    await waitFor(() =>
+      expect(getCertificateMock).toHaveBeenCalledWith(
+        'ws-1',
+        secondId,
+        expect.any(Object)
+      )
+    );
     resolveFirstCertificate({ certificate: { profileId: 'profile-stale' } });
-    await waitFor(() => expect(resolveFirstProfile).toEqual(expect.any(Function)));
+    await waitFor(() =>
+      expect(resolveFirstProfile).toEqual(expect.any(Function))
+    );
     resolveFirstProfile({ issuerId: 'issuer-stale' });
     await waitFor(() => {
       expect(screen.queryByText(/Open Renewals/)).not.toBeInTheDocument();
-      expect(screen.queryByText(/could not confirm the renewal profile/)).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/could not confirm the renewal profile/)
+      ).not.toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: 'Create job' })).not.toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Create job' })
+    ).not.toBeDisabled();
   });
 
   it('does not keep a stale profile lookup error on the replacement certificate', async () => {
@@ -875,8 +904,12 @@ describe('CreateManualJobModal operation and subject pairing', () => {
     await screen.findByRole('button', { name: 'Create job' });
     rejectFirst(new Error('stale profile lookup'));
     await waitFor(() => {
-      expect(screen.queryByText(/could not confirm the renewal profile/)).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/could not confirm the renewal profile/)
+      ).not.toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: 'Create job' })).not.toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Create job' })
+    ).not.toBeDisabled();
   });
 });

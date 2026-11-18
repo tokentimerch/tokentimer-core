@@ -99,6 +99,10 @@ const failureReasons = {
     'The customer-local material store configuration is unsupported.',
   material_windows_activation_failed:
     'IIS activation failed. Review and reconcile the exact listener before retry.',
+  material_windows_wildcard_conflict:
+    'A specific HTTP.sys binding serves a different certificate. Review the IIS bindings and reconcile the listener before retrying.',
+  material_windows_binding_inventory_unavailable:
+    'Windows could not read all HTTP.sys bindings. Check the agent permissions and reconcile the listener before retrying.',
   material_windows_algorithm_unsupported:
     'This Windows IIS connector supports RSA and EC P-256/P-384 certificates. The requested key was rejected before import.',
   material_windows_import_failed:

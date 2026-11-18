@@ -307,7 +307,11 @@ describe('AD CS field helpers', () => {
     expect(screen.getByTestId('template-helper').textContent).toMatch(
       /common name from the CA console/
     );
-    expect(screen.getByTestId('iis-site-helper')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Choose the IIS binding when creating the renewal profile.'
+      )
+    ).toBeInTheDocument();
   });
 });
 
