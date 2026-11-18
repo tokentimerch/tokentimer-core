@@ -8,13 +8,16 @@ const { spawnSync } = require("node:child_process");
 const lab = require("../../infra/certops-azure-keyvault/lab");
 const policy = require("../../infra/certops-azure-keyvault/policy");
 const io = require("./helpers/azure-keyvault-live-io.cjs");
-const { runNaturalExpiry, workDeadline, MAX_JOB_DURATION_MS, WINDOW_ERROR_CODES } = require("./helpers/azure-natural-token-expiry.cjs");
+const { runNaturalExpiry, packageToken, assertTokenFits, workDeadline, MAX_JOB_DURATION_MS, WINDOW_ERROR_CODES } = require("./helpers/azure-natural-token-expiry.cjs");
 const { runBoundedWorker } = require("./helpers/azure-natural-token-supervisor.cjs");
 
 const ID = /^[1-9][0-9]{0,15}$/;
 const JOB = "natural-expiry";
 const JOB_TIMEOUT_MS = MAX_JOB_DURATION_MS;
 const CLEANUP_RESERVE_MS = 10 * 60000;
+const APP_CLEANUP_RESERVE_MS = 15 * 60000;
+const APPLICATION_CHECK = "expiry-app-ready.json";
+const APPLICATION_RETIRED = "expiry-app-retired.json";
 const STATE = "expiry-worker.json";
 const PROFILE = "azure-natural-access-token-expiration";
 const API = `/repos/${policy.REPOSITORY}/actions`;
@@ -30,6 +33,26 @@ function expiryContext(env = process.env) {
   assert.match(env.GITHUB_RUN_ID, ID);
   assert.match(env.GITHUB_REPOSITORY_ID, ID);
   return env;
+}
+
+function expiryApplication(env) {
+  const clientId = env.TT_AZURE_EXPIRY_APP_CLIENT_ID;
+  const principalId = env.TT_AZURE_EXPIRY_APP_PRINCIPAL_ID;
+  if (!clientId && !principalId) return null;
+  assert.ok(policy.GUID.test(clientId || "") && policy.GUID.test(principalId || "") &&
+    clientId.toLowerCase() !== env.AZURE_CLIENT_ID?.toLowerCase() &&
+    clientId.toLowerCase() !== principalId.toLowerCase(), "AZURE_EXPIRY_EXTERNAL_READER_DENIED");
+  return { clientId, principalId };
+}
+
+function workloadAuth(root, tenantId, clientId) {
+  return { type: "workload-identity", tenantId, clientId, assertionFile: path.join(root, "assertion.jwt") };
+}
+
+function verifiedCandidate(root) {
+  const candidateRoot = path.join(root, "expiry-extracted", "package");
+  assert.deepEqual(packager.inventory(candidateRoot), lab.load(path.join(root, "expiry-package.json")).inventory);
+  return candidateRoot;
 }
 
 function jobStart(run, page, { runId, repoId, sourceSha, now }) {
@@ -60,7 +83,8 @@ async function budgetFor(state, env, run) {
   assert.ok(group, "AZURE_EXPIRY_OWNED_GROUP_MISSING");
   const now = Date.now();
   const start = jobStart(run, page, { runId: env.GITHUB_RUN_ID, repoId: env.GITHUB_REPOSITORY_ID, sourceSha: env.GITHUB_SHA, now });
-  return { jobDeadlineMs: start + JOB_TIMEOUT_MS, resourceDeadlineMs: Date.parse(group.tags.expiresAt), cleanupReserveMs: CLEANUP_RESERVE_MS };
+  return { jobDeadlineMs: start + JOB_TIMEOUT_MS, resourceDeadlineMs: Date.parse(group.tags.expiresAt),
+    cleanupReserveMs: expiryApplication(env) ? APP_CLEANUP_RESERVE_MS : CLEANUP_RESERVE_MS };
 }
 
 async function stagePackage() {
@@ -71,6 +95,31 @@ async function stagePackage() {
   const extracted = packager.extractVerified({ tarball: path.join(files, "tokentimer-agent-0.20.0.tgz"),
     expectedSha256: identity.packageSha256, destination: path.join(root, "expiry-extracted") });
   lab.save(path.join(root, "expiry-package.json"), { identity, inventory: extracted.files });
+}
+
+async function checkApplication() {
+  const env = expiryContext(), application = expiryApplication(env);
+  if (!application) return;
+  const root = lab.privateRoot(env);
+  const candidateRoot = verifiedCandidate(root);
+  const [run, page] = await Promise.all([activeRun(env), lab.github(`${API}/runs/${env.GITHUB_RUN_ID}/attempts/1/jobs?per_page=100`, env)]);
+  const now = Date.now(), plan = policy.plan(env, now);
+  const start = jobStart(run, page, { runId: env.GITHUB_RUN_ID, repoId: env.GITHUB_REPOSITORY_ID, sourceSha: env.GITHUB_SHA, now });
+  const budget = { jobDeadlineMs: start + JOB_TIMEOUT_MS, resourceDeadlineMs: Date.parse(plan.tags.expiresAt),
+    cleanupReserveMs: APP_CLEANUP_RESERVE_MS };
+  workDeadline(budget, now);
+  await io.assertion(root);
+  const acquire = packageToken(candidateRoot, { auth: workloadAuth(root, plan.tenantId, application.clientId) });
+  let token;
+  await io.eventually(async () => {
+    token = await acquire();
+    return true;
+  }, "AZURE_EXPIRY_EXTERNAL_READER_NOT_READY", 90000);
+  // Leave a measured setup allowance before permitting allocation. The worker
+  // independently checks the token it will actually observe before any write.
+  assertTokenFits(token, now, Date.now(), { ...budget, cleanupReserveMs: budget.cleanupReserveMs + 5 * 60000 });
+  lab.save(path.join(root, APPLICATION_CHECK), application);
+  console.log("AZURE_EXPIRY_APPLICATION_FITS_LAB_WINDOW");
 }
 
 function ownedState(root, env) {
@@ -113,8 +162,9 @@ async function observe() {
   }
   await verifyOwned();
   assert.match(state.identities.issuer.clientId, policy.GUID);
-  const candidateRoot = path.join(root, "expiry-extracted", "package");
-  assert.deepEqual(packager.inventory(candidateRoot), lab.load(path.join(root, "expiry-package.json")).inventory);
+  const application = expiryApplication(env);
+  if (application) assert.deepEqual(lab.load(path.join(root, APPLICATION_CHECK)), application);
+  const candidateRoot = verifiedCandidate(root);
   const { createMaterialStore } = require(path.join(candidateRoot, "src/material-store"));
   const { credential } = require(path.join(candidateRoot, "src/material-store/azure"));
   const { requestJson } = require(path.join(candidateRoot, "src/material-store/transport"));
@@ -122,8 +172,7 @@ async function observe() {
     materialVersionId: crypto.randomUUID(), materialStoreRef: "qualification", provider: "azure-key-vault" };
   const sans = ["valid.example.com", "www.valid.example.com"];
   const config = { provider: intent.provider, address: `https://${state.vault}.vault.azure.net`,
-    timeoutMs: 15000, auth: { type: "workload-identity", tenantId: state.tenantId,
-      clientId: state.identities.issuer.clientId, assertionFile: path.join(root, "assertion.jwt") },
+    timeoutMs: 15000, auth: workloadAuth(root, state.tenantId, state.identities.issuer.clientId),
     groups: { [intent.groupId]: { workspaceId: intent.workspaceId, prefix: `qualification/${intent.workspaceId}/${intent.groupId}`,
       keyAlgorithm: "rsa", sans } } };
   let issued = await io.assertion(root);
@@ -139,14 +188,30 @@ async function observe() {
       return false;
     }
   }, "AZURE_KV_ISSUER_RBAC_OR_FEDERATION_NOT_READY_AT_RUN_VAULT");
-  const store = createMaterialStore({ qualification: config }, intent);
-  const [material] = io.makeMaterial(root);
-  const { workspaceId, groupId, materialVersionId } = intent;
-  await verifyOwned();
-  const receipt = await store.publish({ ...material, workspaceId, groupId, materialVersionId, schemaVersion: 1,
-    sans, fingerprintSha256: io.verifyMaterial(material) });
+  const issuerStore = createMaterialStore({ qualification: config }, intent);
+  const readConfig = application ? { ...config, auth: workloadAuth(root, state.tenantId, application.clientId) } : config;
+  const store = application ? createMaterialStore({ qualification: readConfig }, intent) : issuerStore;
   await io.assertion(root);
-  return runNaturalExpiry({ candidateRoot, config, store, providerVersion: receipt.providerVersion, budget,
+  return runNaturalExpiry({ candidateRoot, config: readConfig, store, budget,
+    async prepareVersion() {
+      const [material] = io.makeMaterial(root);
+      const { workspaceId, groupId, materialVersionId } = intent;
+      await verifyOwned();
+      const receipt = await issuerStore.publish({ ...material, workspaceId, groupId, materialVersionId, schemaVersion: 1,
+        sans, fingerprintSha256: io.verifyMaterial(material) });
+      if (application) {
+        assert.equal(store.objectRef, issuerStore.objectRef);
+        state.approvedSecrets = [store.objectRef];
+        lab.save(path.join(root, "state.json"), state);
+        await lab.consumerAccess(state, state.approvedSecrets, true, env, application.principalId);
+        await io.eventually(async () => {
+          workDeadline(budget, Date.now());
+          await store.fetch(receipt.providerVersion);
+          return true;
+        }, "AZURE_EXPIRY_EXTERNAL_READER_GRANT_NOT_READY", 180000);
+      }
+      return receipt.providerVersion;
+    },
     renewAssertion: () => io.assertion(root), verifyOwned });
 }
 
@@ -187,6 +252,39 @@ async function cleanup() {
   lab.save(path.join(root, "expiry-cleanup-confirmed.json"), { confirmed: true });
 }
 
+function isRetiredApplication(status, codes) {
+  return [400, 401].includes(status) && codes.includes(700016);
+}
+
+async function confirmApplicationRetired() {
+  const env = expiryContext(), application = expiryApplication(env);
+  assert.ok(application, "AZURE_EXPIRY_EXTERNAL_READER_DENIED");
+  const root = lab.privateRoot(env);
+  assert.deepEqual(lab.load(path.join(root, APPLICATION_CHECK)), application);
+  assert.equal(lab.load(path.join(root, "expiry-cleanup-confirmed.json")).confirmed, true);
+  const { budget } = lab.load(path.join(root, "expiry-observation.json"));
+  const deadline = Math.min(Date.now() + 4 * 60000, budget.jobDeadlineMs, budget.resourceDeadlineMs);
+  const config = { auth: workloadAuth(root, env.AZURE_TENANT_ID, application.clientId) };
+  const candidateRoot = verifiedCandidate(root);
+  let retired = false;
+  const acquire = packageToken(candidateRoot, config, (status, codes) => {
+    retired = isRetiredApplication(status, codes);
+  });
+  await io.assertion(root);
+  while (Date.now() + 15000 < deadline) {
+    retired = false;
+    // Only an explicit application-not-found response counts. Timeouts and
+    // other authentication errors do not establish retirement.
+    await acquire().catch(() => {});
+    if (retired) {
+      lab.save(path.join(root, APPLICATION_RETIRED), application);
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 5000));
+  }
+  throw new Error("AZURE_EXPIRY_APPLICATION_RETIREMENT_UNVERIFIED");
+}
+
 function finalize() {
   const env = expiryContext(), root = lab.privateRoot(env), observationFile = path.join(root, "expiry-observation.json");
   const marker = path.join(root, STATE);
@@ -199,6 +297,8 @@ function finalize() {
       const cleanup = JSON.parse(fs.readFileSync(CLEANUP_FILE, "utf8"));
       require("../../scripts/certops-azure-keyvault-report").verifyCleanup(cleanup, env.GITHUB_SHA);
       assert.equal(cleanup.cleanup, "completed");
+      const application = expiryApplication(env);
+      if (application) assert.deepEqual(lab.load(path.join(root, APPLICATION_RETIRED)), application);
       const { budget, facts } = lab.load(observationFile);
       const { PROFILES } = require("../../scripts/certops-final-package-evidence.cjs");
       const packageArtifact = require("../../scripts/certops-azure-keyvault-package.cjs")
@@ -224,7 +324,7 @@ function finalize() {
   }
 }
 
-module.exports = { jobStart, workerBudget, requireDrain, JOB_TIMEOUT_MS, CLEANUP_RESERVE_MS };
+module.exports = { jobStart, workerBudget, requireDrain, expiryApplication, isRetiredApplication, JOB_TIMEOUT_MS, CLEANUP_RESERVE_MS };
 if (require.main === module) {
   if (process.send) {
     observe().then(
@@ -233,7 +333,8 @@ if (require.main === module) {
         error.code : "AZURE_EXPIRY_WORKER_FAILED" }, () => process.exit(1)),
     );
   } else {
-    const actions = { "stage-package": stagePackage, launch, cleanup, finalize };
+    const actions = { "stage-package": stagePackage, "check-application": checkApplication,
+      launch, cleanup, "confirm-application-retired": confirmApplicationRetired, finalize };
     Promise.resolve().then(() => {
       assert.ok(Object.hasOwn(actions, process.argv[2]));
       return actions[process.argv[2]]();

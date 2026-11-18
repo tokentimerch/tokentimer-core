@@ -27,6 +27,14 @@ on:
         description: Immutable universal candidate artifact ID from that run (natural_expiry only)
         type: string
         default: ''
+      expiry_app_client_id:
+        description: Run-owned Entra workload application client ID (natural_expiry only)
+        type: string
+        default: ''
+      expiry_app_principal_id:
+        description: Object ID of that application's service principal (natural_expiry only)
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -50,6 +58,8 @@ jobs:
           PACKAGE_SHA256: ${{ inputs.package_sha256 }}
           PACKAGE_RUN_ID: ${{ inputs.package_run_id }}
           PACKAGE_ARTIFACT_ID: ${{ inputs.package_artifact_id }}
+          EXPIRY_APP_CLIENT_ID: ${{ inputs.expiry_app_client_id }}
+          EXPIRY_APP_PRINCIPAL_ID: ${{ inputs.expiry_app_principal_id }}
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main || { echo 'Trusted main required'; exit 1; }
@@ -59,8 +69,13 @@ jobs:
           if [ "$NATURAL_EXPIRY" = true ]; then
             test "$FINAL_PACKAGE" = false
             [[ "$PACKAGE_RUN_ID" =~ ^[1-9][0-9]{0,15}$ && "$PACKAGE_ARTIFACT_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+            if [[ -n "$EXPIRY_APP_CLIENT_ID" || -n "$EXPIRY_APP_PRINCIPAL_ID" ]]; then
+              guid='^[[:xdigit:]]{8}(-[[:xdigit:]]{4}){3}-[[:xdigit:]]{12}$'
+              [[ "$EXPIRY_APP_CLIENT_ID" =~ $guid && "$EXPIRY_APP_PRINCIPAL_ID" =~ $guid ]]
+            fi
           else
             test -z "$PACKAGE_RUN_ID" && test -z "$PACKAGE_ARTIFACT_ID"
+            test -z "$EXPIRY_APP_CLIENT_ID" && test -z "$EXPIRY_APP_PRINCIPAL_ID"
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -244,6 +259,8 @@ jobs:
       AZURE_CORE_COLLECT_TELEMETRY: 'no'
       TT_AZURE_EXPIRY_PACKAGE_RUN_ID: ${{ inputs.package_run_id }}
       TT_AZURE_EXPIRY_PACKAGE_ARTIFACT_ID: ${{ inputs.package_artifact_id }}
+      TT_AZURE_EXPIRY_APP_CLIENT_ID: ${{ inputs.expiry_app_client_id }}
+      TT_AZURE_EXPIRY_APP_PRINCIPAL_ID: ${{ inputs.expiry_app_principal_id }}
       TT_AZURE_PACKAGE_SHA256: ${{ inputs.package_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -259,6 +276,8 @@ jobs:
         run: node infra/certops-azure-keyvault/lab.js github-approval
       - name: Verify and extract the retained universal package before Azure authentication
         run: node tests/e2e/azure-keyvault-natural-expiry.cjs stage-package
+      - name: Check disposable application lifetime before vault allocation
+        run: node tests/e2e/azure-keyvault-natural-expiry.cjs check-application
       - name: Authenticate isolated provisioning identity using OIDC
         shell: pwsh
         run: ./infra/certops-azure-keyvault/login-oidc.ps1
@@ -276,11 +295,15 @@ jobs:
         id: expiry-cleanup
         if: always() && steps.expiry-cleanup-auth.outcome == 'success'
         run: node tests/e2e/azure-keyvault-natural-expiry.cjs cleanup
+      - name: Verify disposable Entra application retirement
+        id: expiry-app-retirement
+        if: success() && inputs.expiry_app_client_id != ''
+        run: node tests/e2e/azure-keyvault-natural-expiry.cjs confirm-application-retired
       - name: Scrub private state and write evidence only after observed teardown
         if: always()
         run: node tests/e2e/azure-keyvault-natural-expiry.cjs finalize
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: success() && steps.expiry-observation.outcome == 'success' && steps.expiry-cleanup.outcome == 'success'
+        if: success() && steps.expiry-observation.outcome == 'success' && steps.expiry-cleanup.outcome == 'success' && (inputs.expiry_app_client_id == '' || steps.expiry-app-retirement.outcome == 'success')
         with:
           name: azure-natural-expiration-final-package
           path: qualification-results/azure-natural-expiration-final-package.json

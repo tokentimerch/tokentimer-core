@@ -152,6 +152,8 @@ The protected campaign uses a qualification package, a real owned Azure vault, s
 
 For natural expiry, dispatch on trusted `main` with `natural_expiry=true` and the successful provider run's `package_run_id`, `package_artifact_id` and `package_sha256`. The job reuses that archive and stops if the issued token cannot expire with time reserved for teardown.
 
+When using a disposable Entra application, pass its `expiry_app_client_id` and `expiry_app_principal_id` together. Use the protected environment's existing GitHub federation subject. The job checks the actual Key Vault token lifetime before creating the vault and grants the application read access to one test secret. Remove the owned service principal and app registration when **Verify disposable Entra application retirement** starts. Evidence is uploaded only after the vault teardown and Azure's confirmation that the application is absent. Do not change tenant token policies.
+
 The IMDS workflow uses the same provider run and archive. Before approving its protected job, stage the approved run plan and the verified archive on two private Linux VMs with distinct managed identities. Arrange independent teardown first. The collector requires both observed identity probes and verified removal of the owned lab.
 
 Upload only sanitized, schema-validated evidence and cleanup reports. Never upload tokens, keys, bundles or raw provider responses. Passing tests do not replace verified teardown or independent release acceptance.
