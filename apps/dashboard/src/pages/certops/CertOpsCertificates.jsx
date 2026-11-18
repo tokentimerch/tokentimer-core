@@ -965,7 +965,18 @@ export default function CertOpsCertificates() {
                         />
                         {certificate.fingerprintSha256 ? (
                           <Tooltip label={certificate.fingerprintSha256}>
-                            <Text fontSize='xs' color={muted} mt={1}>
+                            <Text
+                              fontSize='xs'
+                              color={muted}
+                              mt={1}
+                              w='fit-content'
+                              tabIndex={0}
+                              _focusVisible={{
+                                outline: '2px solid',
+                                outlineColor: 'blue.400',
+                                outlineOffset: '2px',
+                              }}
+                            >
                               {certificate.fingerprintSha256.slice(0, 12)}…
                             </Text>
                           </Tooltip>
