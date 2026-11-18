@@ -10,10 +10,15 @@ const crypto = require("node:crypto");
 const dns = require("node:dns/promises");
 const { spawn, spawnSync } = require("node:child_process");
 const assert = require("node:assert/strict");
-const { configForLabAgent, capabilityForProvider } = require("./azure-ux-adapter.cjs");
+const { capabilityForProvider } = require("./azure-ux-adapter.cjs");
+const { tokenFileConfig } = require("./azure-isolated-role.cjs");
+const { observationPath, readEvents } = require("./azure-operator-vault-observation.cjs");
+const privateCa = process.env.TT_UX_OPERATOR_CA === "openbao-pki" ? require("../operator-ca.cjs") : null;
 const root = "/lab";
 let build = "/lab/experimental-agent", acceptance, azurePackage;
 const roleBuilds = new Map();
+const azureObservations = new Map();
+const signedJobs = new Map();
 const packageMode = process.env.TT_UX_PACKAGE_ACCEPTANCE === "1";
 const source = "/repo/packages/agent";
 const agents = new Map();
@@ -51,6 +56,19 @@ function run(command, args) {
 function reply(res, value, status = 200) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(value));
+}
+function observeSignedDispatch(envelope, name, expectedId) {
+  const build = roleBuilds.get(name);
+  const { readSigningKeyPin } = require(path.join(build, "src/config"));
+  const { verifyJobEnvelope } = require(path.join(build, "src/signing"));
+  const pin = readSigningKeyPin(path.join(root, name));
+  if (!pin) return;
+  const verdict = verifyJobEnvelope({ claimed: envelope, publicKeyPem: pin.publicKeyPem,
+    pinnedSigningKeyId: pin.signingKeyId });
+  const jobId = verdict.job?.jobId;
+  if (!verdict.allowed || verdict.job.agentId !== expectedId || !/^[a-f0-9-]{36}$/.test(jobId || "")) return;
+  assert.ok(signedJobs.size < 128 || signedJobs.has(jobId), "Azure signed dispatch limit exceeded");
+  signedJobs.set(jobId, { agent: name, signerKeyIdSha256: crypto.createHash("sha256").update(pin.signingKeyId).digest("hex") });
 }
 function forward(req, res, host, port, { vault = false } = {}) {
   const claim = host === "api" && req.url === "/api/v1/certops/agent/jobs/claim";
@@ -94,9 +112,12 @@ function forward(req, res, host, port, { vault = false } = {}) {
             for (const envelope of result.jobs || []) {
               const signed = envelope.envelopeVersion === 2
                 ? JSON.parse(Buffer.from(envelope.payloadB64, "base64")) : envelope;
-              if (!signed.materialDeployment) continue;
-              for (const name of ["nginx", "haproxy"]) {
-                if (config(name).agentId === signed.agentId) {
+              const names = azurePackage ? roleBuilds.keys() : ["nginx", "haproxy"];
+              for (const name of names) {
+                const file = path.join(root, name, "config.json");
+                if (fs.existsSync(file) && JSON.parse(fs.readFileSync(file, "utf8")).agentId === signed.agentId) {
+                  if (azurePackage) observeSignedDispatch(envelope, name, signed.agentId);
+                  if (!signed.materialDeployment) continue;
                   dispatches.set(name, structuredClone(envelope));
                   credentials.set(name, req.headers.authorization);
                 }
@@ -172,11 +193,17 @@ async function startAgent(name, token) {
     ...process.env,
     TOKENTIMER_AGENT_CONFIG_DIR: dir,
     NODE_EXTRA_CA_CERTS: "/lab/transport.crt",
-    REQUESTS_CA_BUNDLE: "/lab-input/pebble-ca.pem",
+    REQUESTS_CA_BUNDLE: privateCa?.transportCa || "/lab-input/pebble-ca.pem",
     ...(packageMode ? { HOME: dir } : {}),
   };
   if (token) env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN = token;
-  const child = spawn(process.execPath, [agentBuild + "/bin/tokentimer-agent.js"], {
+  delete env.TT_UX_AZURE_PROVIDER_OBSERVATION;
+  const args = [agentBuild + "/bin/tokentimer-agent.js"];
+  if (azureObservations.has(name)) {
+    env.TT_UX_AZURE_PROVIDER_OBSERVATION = JSON.stringify(azureObservations.get(name));
+    args.unshift("--require", path.join(__dirname, "azure-operator-vault-observation.cjs"));
+  }
+  const child = spawn(process.execPath, args, {
     env,
     stdio: ["ignore", out, out],
     ...processAccount,
@@ -204,9 +231,9 @@ function config(name, extra = {}) {
     policy: {
       allowedTargetSelectors: ["*"],
       allowedPaths: [dir],
-      allowedCaEndpoints: ["https://pebble:14000/dir"],
+      allowedCaEndpoints: [privateCa?.caEndpoint || "https://pebble:14000/dir"],
       allowedDnsZones: ["wildcard.test"],
-      allowedDnsProviders: ["pebble-challtestsrv"],
+      allowedDnsProviders: [privateCa?.dnsProvider || "pebble-challtestsrv"],
       allowedCommands: {
         certbot: {
           argv: [
@@ -224,21 +251,21 @@ function config(name, extra = {}) {
       dryRun: packageMode,
       keysDir: dir + "/custom-issuer-custody",
     },
-    dnsProviders: {
-      "pebble-challtestsrv": { credentialsFile: dir + "/dns.json" },
-      zoneProviderMap: { "wildcard.test": "pebble-challtestsrv" },
-    },
-    dnsPropagation: {
-      checkAuthoritative: false,
-      resolvers: [process.env.LAB_DNS_IP + ":8053"],
-      timeoutMs: 20000,
-      intervalMs: 200,
-    },
+    ...(!privateCa || name === "issuer" ? {
+      dnsProviders: {
+        [privateCa?.dnsProvider || "pebble-challtestsrv"]: { credentialsFile: dir + "/dns.json" },
+        zoneProviderMap: { "wildcard.test": privateCa?.dnsProvider || "pebble-challtestsrv" },
+      },
+      dnsPropagation: {
+        checkAuthoritative: false,
+        resolvers: [privateCa ? privateCa.dnsResolver(process.env.LAB_DNS_IP) : process.env.LAB_DNS_IP + ":8053"],
+        timeoutMs: 20000, intervalMs: 200,
+      },
+    } : {}),
   };
   json(file, { ...base, ...old, ...extra });
-  json(dir + "/dns.json", {
-    baseUrl: "http://127.0.0.1:18055",
-    allowInsecureLocalHttp: true,
+  if (!privateCa || name === "issuer") json(dir + "/dns.json", privateCa?.dnsCredentials() || {
+    baseUrl: "http://127.0.0.1:18055", allowInsecureLocalHttp: true,
   });
   return JSON.parse(fs.readFileSync(file));
 }
@@ -246,12 +273,12 @@ function store(workspaceId, groupId, wireId, issuer, name) {
   if (process.env.TT_UX_MATERIAL_PROVIDER === "azure-key-vault") {
     // Configuration descriptors contain identity IDs and protected file paths,
     // never credentials. Actual role grants must be proven by the campaign.
-    const identities = JSON.parse(fs.readFileSync("/lab-azure-input/azure-identities.json", "utf8"));
+    const descriptor = JSON.parse(fs.readFileSync("/lab-azure-input/role.json", "utf8"));
     const scope = { prefix: (packageMode ? "tokentimer/" : "") + workspaceId + "/" + groupId,
       sans: certificateSans, keyAlgorithm: "ec", ...(issuer ? { issuerAgentId: wireId,
-        issuanceProfileRef: "wildcard", profileRevision: 1, caEndpoint: "https://pebble:14000/dir",
-        dnsProvider: "pebble-challtestsrv", dnsZone: "wildcard.test" } : {}) };
-    return configForLabAgent({ identities, name, issuer, groupId, workspaceId, scope });
+        issuanceProfileRef: "wildcard", profileRevision: 1, caEndpoint: privateCa?.caEndpoint || "https://pebble:14000/dir",
+        dnsProvider: privateCa?.dnsProvider || "pebble-challtestsrv", dnsZone: "wildcard.test" } : {}) };
+    return tokenFileConfig({ descriptor, role: process.env.TT_UX_ISOLATED_ROLE, name, groupId, workspaceId, scope });
   }
   return {
     customer: {
@@ -313,6 +340,45 @@ async function control(body) {
   if (process.env.TT_UX_MATERIAL_PROVIDER === "azure-key-vault") {
     assert.ok(["issuer", "consumer"].includes(process.env.TT_UX_ISOLATED_ROLE), "isolated role required");
     require("./role-dispatch.cjs").authorizeRole(body, process.env.TT_UX_ISOLATED_ROLE);
+  }
+
+  if (action === "azure-provider-observe") {
+    assert.ok(azurePackage, "exact Azure package acceptance required");
+    const c = config(name);
+    const { groupId, materialVersionId, phase, workspaceId } = body;
+    const build = roleBuilds.get(name);
+    const { createMaterialStore } = require(path.join(build, "src/material-store"));
+    const provider = "azure-key-vault";
+    const store = createMaterialStore(c.materialStores, { provider, groupId, materialVersionId,
+      materialStoreRef: "customer", workspaceId });
+    const selected = { name, objectName: store.objectRef, phase,
+      vaultHost: new URL(c.materialStores.customer.address).hostname };
+    assert.equal(fs.existsSync(observationPath(selected)), false, "Azure observation already exists");
+    const existing = azureObservations.get(name);
+    if (phase === "resume") {
+      assert.equal(existing?.phase, "interrupt");
+      assert.equal(existing?.objectName, selected.objectName);
+      const first = readEvents(existing);
+      assert.equal(first.filter(row => row.event === "commit-lost").length, 1);
+      assert.ok(first.some(row => row.event === "read-blocked"));
+    } else {
+      assert.equal(existing, undefined, "a role may observe only one owned Azure provider object");
+    }
+    await stopAgent(name);
+    azureObservations.set(name, selected);
+    return { selected: true, objectName: selected.objectName };
+  }
+  if (action === "azure-provider-events") {
+    assert.ok(azurePackage && azureObservations.has(name));
+    const selected = azureObservations.get(name);
+    const candidates = selected.phase === "resume" ? ["interrupt", "resume"] : [selected.phase];
+    return Object.fromEntries(candidates.map(phase => [phase, readEvents({ ...selected, phase })]));
+  }
+  if (action === "signed-job-proof") {
+    assert.ok(azurePackage && /^[a-f0-9-]{36}$/.test(body.jobId || ""));
+    const proof = signedJobs.get(body.jobId);
+    assert.equal(proof?.agent, name, "verified signed dispatch for requested agent absent");
+    return { signerKeyIdSha256: proof.signerKeyIdSha256 };
   }
   const { action, name = "issuer" } = body;
   assert.ok(["issuer", "nginx", "haproxy", "cancel-issuer"].includes(name));
@@ -395,7 +461,8 @@ async function control(body) {
     assert.ok(["nginx", "haproxy"].includes(name));
     return new Promise((resolve, reject) => {
       const socket = tls.connect({ host: "127.0.0.1", port: name === "nginx" ? 8443 : 9443,
-        servername: name + ".wildcard.test", ca: fs.readFileSync("/lab/issuer-root.pem"), rejectUnauthorized: true });
+        servername: process.env.TT_UX_CERTIFICATE_MODE === "ordinary" ? "nginx.wildcard.test" : name + ".wildcard.test",
+        ca: fs.readFileSync("/lab/issuer-root.pem"), rejectUnauthorized: true });
       socket.setTimeout(5000, () => socket.destroy(new Error("TLS proof timed out")));
       socket.once("error", reject);
       socket.once("secureConnect", () => {
@@ -618,11 +685,12 @@ async function main() {
     }
     // Administrative host preparation precedes all unprivileged processes.
     // The ACME subprocess intentionally does not inherit arbitrary CA env vars.
-    for (let attempt = 0; !fs.existsSync("/lab-input/pebble-ca.pem"); attempt++) {
+    const transportCa = privateCa?.transportCa || "/lab-input/pebble-ca.pem";
+    for (let attempt = 0; !fs.existsSync(transportCa); attempt++) {
       assert.ok(attempt < 60, "Owned ACME transport CA was not delivered");
       await sleep(1000);
     }
-    fs.copyFileSync("/lab-input/pebble-ca.pem", "/usr/local/share/ca-certificates/tt-owned-pebble.crt");
+    fs.copyFileSync(transportCa, "/usr/local/share/ca-certificates/tt-owned-acme.crt");
     run("update-ca-certificates", []);
     if (acceptance) run("setcap", ["cap_ipc_lock=+ep", "/usr/local/bin/vault"]);
   } else {
@@ -666,7 +734,8 @@ async function main() {
   fs.writeFileSync(root + "/vault-token", "ux-lab-only-vault-token", {
     mode: 0o600,
   });
-  process.env.LAB_DNS_IP = (await dns.lookup("challtestsrv")).address;
+  if (!privateCa || process.env.TT_UX_ISOLATED_ROLE === "issuer")
+    process.env.LAB_DNS_IP = (await dns.lookup(privateCa?.dnsService || "challtestsrv")).address;
   const tls = {
     key: fs.readFileSync(root + "/transport.key"),
     cert: fs.readFileSync(root + "/transport.crt"),
@@ -679,7 +748,7 @@ async function main() {
       forward(req, res, "vault", 8200, { vault: true }),
     )
     .listen(18200, "127.0.0.1");
-  http
+  if (!privateCa) http
     .createServer((req, res) => forward(req, res, "challtestsrv", 8055))
     .listen(18055, "127.0.0.1");
   // Observe only request methods/paths from the product scanner. No bodies,
@@ -690,7 +759,8 @@ async function main() {
     forward(req, res, "vault", 8200);
   }).listen(18020, "0.0.0.0");
   // Public throwaway CA root only, retrieved on this isolated bridge.
-  for (let attempt = 0; attempt < 60; attempt++) {
+  if (privateCa) fs.writeFileSync("/lab/issuer-root.pem", privateCa.loadOperatorRoot());
+  else for (let attempt = 0; attempt < 60; attempt++) {
     try {
       const pem = await new Promise((resolve, reject) =>
         https

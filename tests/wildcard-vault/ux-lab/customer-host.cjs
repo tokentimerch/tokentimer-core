@@ -10,9 +10,14 @@ const crypto = require("node:crypto");
 const dns = require("node:dns/promises");
 const { spawn, spawnSync } = require("node:child_process");
 const assert = require("node:assert/strict");
+const ca = require("./operator-ca.cjs");
 const root = "/lab";
 let build = "/lab/experimental-agent", acceptance;
+const operatorObserver = ca.operatorCa
+  ? require("./azure-operator-review/openbao-operator-observer.cjs").observe({ root, packageRoot: () => build })
+  : null;
 const packageMode = process.env.TT_UX_PACKAGE_ACCEPTANCE === "1";
+assert.ok(!ca.operatorCa || packageMode, "Owned operator CA requires an exact package run");
 const source = "/repo/packages/agent";
 const agents = new Map();
 const agentAccounts = new Set();
@@ -31,6 +36,8 @@ const certificateSans = process.env.TT_UX_CERTIFICATE_MODE === "wildcard"
   ? ["*.wildcard.test", "wildcard.test"]
   : process.env.TT_UX_CERTIFICATE_MODE === "ordinary" ? ["nginx.wildcard.test"]
   : ["nginx.wildcard.test", "haproxy.wildcard.test"];
+const certificateSni = name => process.env.TT_UX_CERTIFICATE_MODE === "ordinary"
+  ? certificateSans[0] : name + ".wildcard.test";
 const fault = {
   armed: false,
   path: null,
@@ -56,6 +63,7 @@ function reply(res, value, status = 200) {
 }
 function forward(req, res, host, port, { vault = false } = {}) {
   const claim = host === "api" && req.url === "/api/v1/certops/agent/jobs/claim";
+  if (vault) operatorObserver?.beforeProvider(req);
   if (
     vault &&
     fault.blockedReads &&
@@ -86,6 +94,7 @@ function forward(req, res, host, port, { vault = false } = {}) {
       headers: { ...req.headers, host, ...(claim ? { "accept-encoding": "identity" } : {}) },
     },
     (r) => {
+      if (vault) operatorObserver?.afterProvider(req, r.statusCode);
       if (claim && r.statusCode === 200) {
         const chunks = [];
         let size = 0;
@@ -96,6 +105,7 @@ function forward(req, res, host, port, { vault = false } = {}) {
             for (const envelope of result.jobs || []) {
               const signed = envelope.envelopeVersion === 2
                 ? JSON.parse(Buffer.from(envelope.payloadB64, "base64")) : envelope;
+              operatorObserver?.claim(envelope, signed);
               if (!signed.materialDeployment) continue;
               for (const name of ["nginx", "haproxy"]) {
                 if (config(name).agentId === signed.agentId) {
@@ -172,7 +182,7 @@ async function startAgent(name, token) {
     ...process.env,
     TOKENTIMER_AGENT_CONFIG_DIR: dir,
     NODE_EXTRA_CA_CERTS: "/lab/transport.crt",
-    REQUESTS_CA_BUNDLE: "/lab-input/pebble-ca.pem",
+    REQUESTS_CA_BUNDLE: ca.transportCa,
     ...(packageMode ? { HOME: dir } : {}),
   };
   if (token) env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN = token;
@@ -194,6 +204,7 @@ function config(name, extra = {}) {
   const dir = path.join(root, name),
     file = path.join(dir, "config.json");
   const old = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file)) : {};
+  const configureDns = !ca.operatorCa || name.includes("issuer");
   const base = {
     serverUrl: "https://customers:18443",
     caBundlePath: "/lab/transport.crt",
@@ -204,9 +215,9 @@ function config(name, extra = {}) {
     policy: {
       allowedTargetSelectors: ["*"],
       allowedPaths: [dir],
-      allowedCaEndpoints: ["https://pebble:14000/dir"],
+      allowedCaEndpoints: [ca.caEndpoint],
       allowedDnsZones: ["wildcard.test"],
-      allowedDnsProviders: ["pebble-challtestsrv"],
+      allowedDnsProviders: [ca.dnsProvider],
       allowedCommands: {
         certbot: {
           argv: [
@@ -224,22 +235,18 @@ function config(name, extra = {}) {
       dryRun: packageMode,
       keysDir: dir + "/custom-issuer-custody",
     },
-    dnsProviders: {
-      "pebble-challtestsrv": { credentialsFile: dir + "/dns.json" },
-      zoneProviderMap: { "wildcard.test": "pebble-challtestsrv" },
-    },
-    dnsPropagation: {
+    ...(configureDns ? { dnsProviders: {
+      [ca.dnsProvider]: { credentialsFile: dir + "/dns.json" },
+      zoneProviderMap: { "wildcard.test": ca.dnsProvider },
+    }, dnsPropagation: {
       checkAuthoritative: false,
-      resolvers: [process.env.LAB_DNS_IP + ":8053"],
+      resolvers: [ca.dnsResolver(process.env.LAB_DNS_IP)],
       timeoutMs: 20000,
       intervalMs: 200,
-    },
+    } } : {}),
   };
   json(file, { ...base, ...old, ...extra });
-  json(dir + "/dns.json", {
-    baseUrl: "http://127.0.0.1:18055",
-    allowInsecureLocalHttp: true,
-  });
+  if (configureDns) json(dir + "/dns.json", ca.dnsCredentials());
   return JSON.parse(fs.readFileSync(file));
 }
 function store(workspaceId, groupId, wireId, issuer, name) {
@@ -262,8 +269,8 @@ function store(workspaceId, groupId, wireId, issuer, name) {
                 issuerAgentId: wireId,
                 issuanceProfileRef: "wildcard",
                 profileRevision: 1,
-                caEndpoint: "https://pebble:14000/dir",
-                dnsProvider: "pebble-challtestsrv",
+                caEndpoint: ca.caEndpoint,
+                dnsProvider: ca.dnsProvider,
                 dnsZone: "wildcard.test",
               }
             : {}),
@@ -292,6 +299,25 @@ async function rotateMaterialToken(name, workspaceId, groupId) {
 async function control(body) {
   const { action, name = "issuer" } = body;
   assert.ok(["issuer", "nginx", "haproxy", "cancel-issuer"].includes(name));
+  if (action === "operator-observation-arm") {
+    assert.ok(operatorObserver);
+    operatorObserver.arm(body);
+    return { armed: true };
+  }
+  if (action === "operator-observation-proof") {
+    assert.ok(operatorObserver);
+    const provider = operatorObserver.proof(body.jobIds);
+    const orders = fs.readFileSync("/lab/acme-issued.jsonl", "utf8").trim().split("\n").map(JSON.parse);
+    return { provider, orders };
+  }
+  if (action === "operator-observation-counters") {
+    assert.ok(operatorObserver);
+    return operatorObserver.counts();
+  }
+  if (action === "operator-role-observation") {
+    assert.ok(operatorObserver && acceptance && process.env.TT_UX_MATERIAL_PROVIDER === "openbao-kv2");
+    return acceptance.observeOpenBaoRoles(body);
+  }
   if (action === "native-openbao-prepare") {
     assert.ok(nativeOpenBao && acceptance && name === "issuer", "native OpenBao setup not selected");
     const plan = { workspaceId: body.workspaceId, groupId: body.groupId, materialVersionId: body.materialVersionId, providerVersion: body.providerVersion };
@@ -371,7 +397,7 @@ async function control(body) {
     assert.ok(["nginx", "haproxy"].includes(name));
     return new Promise((resolve, reject) => {
       const socket = tls.connect({ host: "127.0.0.1", port: name === "nginx" ? 8443 : 9443,
-        servername: name + ".wildcard.test", ca: fs.readFileSync("/lab/issuer-root.pem"), rejectUnauthorized: true });
+        servername: certificateSni(name), ca: fs.readFileSync("/lab/issuer-root.pem"), rejectUnauthorized: true });
       socket.setTimeout(5000, () => socket.destroy(new Error("TLS proof timed out")));
       socket.once("error", reject);
       socket.once("secureConnect", () => {
@@ -468,7 +494,7 @@ async function control(body) {
             {
               dialAddress: "127.0.0.1",
               port: name === "nginx" ? 8443 : 9443,
-              sni: process.env.TT_UX_CERTIFICATE_MODE === "ordinary" ? "nginx.wildcard.test" : name + ".wildcard.test",
+              sni: certificateSni(name),
               trustCaFile: "/lab/issuer-root.pem",
             },
           ],
@@ -577,11 +603,11 @@ async function main() {
     build = acceptance.prepare();
     // Administrative host preparation precedes all unprivileged processes.
     // The ACME subprocess intentionally does not inherit arbitrary CA env vars.
-    for (let attempt = 0; !fs.existsSync("/lab-input/pebble-ca.pem"); attempt++) {
+    for (let attempt = 0; !fs.existsSync(ca.transportCa); attempt++) {
       assert.ok(attempt < 60, "Owned ACME transport CA was not delivered");
       await sleep(1000);
     }
-    fs.copyFileSync("/lab-input/pebble-ca.pem", "/usr/local/share/ca-certificates/tt-owned-pebble.crt");
+    fs.copyFileSync(ca.transportCa, "/usr/local/share/ca-certificates/tt-owned-acme.crt");
     run("update-ca-certificates", []);
     run("setcap", ["cap_ipc_lock=+ep", "/usr/local/bin/vault"]);
   } else {
@@ -625,7 +651,7 @@ async function main() {
   fs.writeFileSync(root + "/vault-token", "ux-lab-only-vault-token", {
     mode: 0o600,
   });
-  process.env.LAB_DNS_IP = (await dns.lookup("challtestsrv")).address;
+  process.env.LAB_DNS_IP = (await dns.lookup(ca.dnsService, { family: 4 })).address;
   const tls = {
     key: fs.readFileSync(root + "/transport.key"),
     cert: fs.readFileSync(root + "/transport.crt"),
@@ -639,9 +665,9 @@ async function main() {
     )
     .listen(18200, "127.0.0.1");
   if (nativeOpenBao) https.createServer(tls, nativeOpenBao.forward).listen(18201, "0.0.0.0");
-  http
-    .createServer((req, res) => forward(req, res, "challtestsrv", 8055))
-    .listen(18055, "127.0.0.1");
+  if (!ca.operatorCa)
+    http.createServer((req, res) => forward(req, res, "challtestsrv", 8055))
+      .listen(18055, "127.0.0.1");
   // Observe only request methods/paths from the product scanner. No bodies,
   // authentication headers or private material enter the lab evidence.
   http.createServer((req, res) => {
@@ -649,8 +675,9 @@ async function main() {
     if (scannerRequests.length > 500) scannerRequests.shift();
     forward(req, res, "vault", 8200);
   }).listen(18020, "0.0.0.0");
-  // Public throwaway CA root only, retrieved on this isolated bridge.
-  for (let attempt = 0; attempt < 60; attempt++) {
+  // The operator mode pins the independently delivered PKI root.
+  if (ca.operatorCa) fs.writeFileSync("/lab/issuer-root.pem", ca.loadOperatorRoot());
+  else for (let attempt = 0; attempt < 60; attempt++) {
     try {
       const pem = await new Promise((resolve, reject) =>
         https
