@@ -2,6 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path").posix;
 const { createHash } = require("node:crypto");
+const { loadCredential } = require("./azure-role-certificate-credentials.cjs");
 const { crossExchange, exchangeAssertion } = require("./cross-role-probes.cjs");
 const { createTokenSink } = require("./token-sink-writer.cjs");
 const { check: checkSinks } = require("./sink-isolation.cjs");
@@ -12,6 +13,8 @@ const AUDIENCE = "api://AzureADTokenExchange";
 const ROLES = ["issuer", "consumer"];
 const UID = { issuer: 10001, consumer: 10002 };
 const MISMATCH_CODES = [70021, 700213];
+const CERTIFICATE_MISMATCH_CODE = 700027;
+const APPLICATION_NOT_FOUND = 700016;
 const GUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const ID = /^[1-9][0-9]{0,15}$/;
 const SHA = /^[a-f0-9]{40}$/;
@@ -58,7 +61,7 @@ function validateAssertion(value, binding, role, now) {
 // Core's provider transport intentionally discards every error body. This
 // exchange-only adapter recognizes a closed set of Entra rejection codes and
 // keeps bodies and OAuth diagnostics out of errors, logs and observations.
-async function requestEntra(url, { method, headers, body, timeoutMs, maxBytes }, fetchImpl = fetch) {
+async function requestEntra(url, { method, headers, body, timeoutMs, maxBytes }, fetchImpl = fetch, retirement = false) {
   const bad = "AZURE_BROKER_ENTRA_REFUSED";
   requireCondition(url.origin === "https://login.microsoftonline.com" &&
     GUID.test(url.pathname.split("/")[1]) && url.pathname.endsWith("/oauth2/v2.0/token") &&
@@ -67,7 +70,7 @@ async function requestEntra(url, { method, headers, body, timeoutMs, maxBytes },
     process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0", bad);
   try {
     const response = await fetchImpl(url, { method, headers, body, redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
-    if (![200, 400].includes(response.status)) {
+    if (![200, 400, 401].includes(response.status)) {
       await response.body?.cancel();
       return { status: response.status, json: null };
     }
@@ -83,8 +86,11 @@ async function requestEntra(url, { method, headers, body, timeoutMs, maxBytes },
       return { status: 200, json: { access_token: value.access_token, expires_in: value.expires_in,
         expires_on: value.expires_on } };
     }
-    return { status: 400, json: { error: value.error === "invalid_client" ? "invalid_client" : null,
-      error_codes: Array.isArray(value.error_codes) ? value.error_codes.filter(code => MISMATCH_CODES.includes(code)) : [] } };
+    return { status: response.status, json: { error: value.error === "invalid_client" ? "invalid_client" : null,
+      error_codes: Array.isArray(value.error_codes)
+        ? value.error_codes.filter(code =>
+          MISMATCH_CODES.includes(code) || code === CERTIFICATE_MISMATCH_CODE || retirement && code === APPLICATION_NOT_FOUND)
+        : [] } };
   } catch {
     throw new Error(bad);
   }
@@ -121,6 +127,57 @@ function readProjection(file, owner, io) {
   } finally { io.closeSync(fd); }
 }
 
+function certificateSource({ roleConfig, credentialRoot, read, now, deadlineMs }) {
+  const credentials = Object.fromEntries(ROLES.map(role => [role, loadCredential({
+    identity: roleConfig[role],
+    certificatePem: read(path.join(credentialRoot, role + ".cert.pem")),
+    privateKeyPem: read(path.join(credentialRoot, role + ".key.pem")),
+    now: now(),
+    deadlineMs,
+  })]));
+  requireCondition(credentials.issuer.keyFingerprint !== credentials.consumer.keyFingerprint,
+    "AZURE_BROKER_SHARED_CERTIFICATE_KEY_REFUSED");
+  return {
+    acquire: role => credentials[role].assertion(roleConfig[role], now()),
+    subjectSha256: role => credentials[role].subjectSha256,
+    async verifyRoleIsolation(send) {
+      for (const role of ROLES) {
+        const target = roleConfig[role];
+        const { assertion } = credentials[role].assertion(target, now());
+        const response = await exchangeAssertion(target, assertion, send);
+        requireCondition(response.status === 200 && typeof response.json?.access_token === "string" &&
+          response.json.access_token.length >= 20, "AZURE_BROKER_OWN_CERTIFICATE_EXCHANGE_REFUSED");
+      }
+      for (const [source, targetRole] of [["issuer", "consumer"], ["consumer", "issuer"]]) {
+        const target = roleConfig[targetRole];
+        const { assertion } = credentials[source].assertion(target, now());
+        const response = await exchangeAssertion(target, assertion, send);
+        requireCondition([400, 401].includes(response.status) && response.json?.error === "invalid_client" &&
+          response.json.error_codes?.includes(CERTIFICATE_MISMATCH_CODE), "AZURE_BROKER_CERTIFICATE_ISOLATION_REFUSED");
+      }
+    },
+  };
+}
+
+function projectionSource({ binding, roleConfig, credentialRoot, read, now }) {
+  for (const role of ROLES) roleConfig[role].assertionFile = path.join(credentialRoot, role + ".jwt");
+  function acquire(role) {
+    const assertion = read(roleConfig[role].assertionFile);
+    return { assertion, jti: validateAssertion(assertion, binding, role, now()) };
+  }
+  return {
+    acquire,
+    subjectSha256: role => digest(roleTrust(binding, role).subject),
+    async verifyRoleIsolation(send) {
+      const assertions = new Map(ROLES.map(role => [roleConfig[role].assertionFile, acquire(role)]));
+      const [left, right] = [...assertions.values()];
+      requireCondition(left.jti !== right.jti && left.assertion !== right.assertion, "AZURE_BROKER_SHARED_ASSERTION_REFUSED");
+      await crossExchange({ ...roleConfig, federationMismatchCodes: MISMATCH_CODES,
+        readAssertion: file => assertions.get(file).assertion, requestJson: send });
+    },
+  };
+}
+
 function createBroker(options) {
   return broker(options, {
     io: fs, platform: process.platform, owner: process.geteuid?.(), now: Date.now, setTimeout, clearTimeout,
@@ -128,9 +185,39 @@ function createBroker(options) {
   });
 }
 
-function broker({ binding, projectionRoot, deadlineMs, issuer, consumer }, deps) {
+function createRetirementProbe({ certificateRoot, issuer, consumer, deadlineMs }) {
+  const owner = process.geteuid?.();
+  requireCondition(process.platform === "linux" && owner === 0, "AZURE_BROKER_LINUX_REQUIRED");
+  for (const source of [issuer, consumer])
+    requireCondition(GUID.test(source?.tenantId) && GUID.test(source?.clientId), "AZURE_BROKER_IDENTITY_REFUSED");
+  requireCondition(issuer.tenantId === consumer.tenantId && issuer.clientId !== consumer.clientId,
+    "AZURE_BROKER_IDENTITIES_MUST_DIFFER");
+  const check = pinnedDirectory(certificateRoot, owner, owner, fs);
+  const roles = { issuer, consumer };
+  const source = certificateSource({ roleConfig: roles, credentialRoot: certificateRoot, now: Date.now, deadlineMs,
+    read(file) {
+      check();
+      return readProjection(file, owner, fs);
+    },
+  });
+  return async () => {
+    requireCondition(Date.now() + 10000 < deadlineMs, "AZURE_BROKER_DEADLINE_OR_STOP");
+    const observations = await Promise.all(ROLES.map(async role => {
+      const { assertion } = source.acquire(role);
+      const response = await exchangeAssertion(roles[role], assertion, (url, options) =>
+        requestEntra(url, options, fetch, true));
+      return [400, 401].includes(response.status) && response.json?.error === "invalid_client" &&
+        response.json.error_codes?.includes(APPLICATION_NOT_FOUND);
+    }));
+    return observations.every(Boolean);
+  };
+}
+
+function broker({ binding, projectionRoot, certificateRoot, deadlineMs, issuer, consumer }, deps) {
   const { io, platform, owner, now, request } = deps;
   requireCondition(platform === "linux" && Number.isSafeInteger(owner), "AZURE_BROKER_LINUX_REQUIRED");
+  requireCondition((projectionRoot === undefined) !== (certificateRoot === undefined),
+    "AZURE_BROKER_CREDENTIAL_SOURCE_REFUSED");
   requireCondition(binding && ID.test(binding.runId) && ID.test(binding.repositoryId) &&
     ID.test(binding.ownerId) && SHA.test(binding.sourceSha) &&
     ["legacy", "immutable"].includes(binding.subjectFormat) &&
@@ -144,19 +231,26 @@ function broker({ binding, projectionRoot, deadlineMs, issuer, consumer }, deps)
     requireCondition(GUID.test(source?.tenantId) && GUID.test(source?.clientId), "AZURE_BROKER_IDENTITY_REFUSED");
   requireCondition(issuer.tenantId === consumer.tenantId && issuer.clientId !== consumer.clientId,
     "AZURE_BROKER_IDENTITIES_MUST_DIFFER");
-  const dirs = [projectionRoot, issuer.directory, consumer.directory];
-  const [checkProjection, ...checkDirs] = dirs.map((dir, index) =>
+  const credentialRoot = certificateRoot ?? projectionRoot;
+  const dirs = [credentialRoot, issuer.directory, consumer.directory];
+  const [checkCredentialDir, ...checkDirs] = dirs.map((dir, index) =>
     pinnedDirectory(dir, index ? UID[ROLES[index - 1]] : owner, owner, io));
   for (const left of dirs) for (const right of dirs) {
     if (left !== right) requireCondition(!right.startsWith(left + "/"), "AZURE_BROKER_DIRECTORY_OVERLAP");
   }
   requireCondition(new Set(dirs).size === dirs.length, "AZURE_BROKER_DIRECTORY_OVERLAP");
 
+  const roleConfig = Object.fromEntries(ROLES.map(role => [role, { ...sources[role] }]));
+  const read = file => {
+    checkCredentialDir();
+    return readProjection(file, owner, io);
+  };
+  const sourceOptions = { binding, roleConfig, credentialRoot, read, now, deadlineMs };
+  const credential = certificateRoot === undefined ? projectionSource(sourceOptions) : certificateSource(sourceOptions);
+
   let phase = "idle", admission, expiryTimer;
   const controller = new AbortController();
   const state = Object.fromEntries(ROLES.map(role => [role, { renewals: 0 }]));
-  const roleConfig = Object.fromEntries(ROLES.map(role => [role, { ...sources[role],
-    assertionFile: path.join(projectionRoot, role + ".jwt") }]));
 
   function finish(next) {
     phase = next;
@@ -167,11 +261,6 @@ function broker({ binding, projectionRoot, deadlineMs, issuer, consumer }, deps)
   function live() {
     requireCondition(["starting", "running"].includes(phase) && now() + 10000 < deadlineMs,
       "AZURE_BROKER_DEADLINE_OR_STOP");
-  }
-  function projection(role) {
-    checkProjection();
-    const assertion = readProjection(roleConfig[role].assertionFile, owner, io);
-    return { assertion, jti: validateAssertion(assertion, binding, role, now()) };
   }
   const send = (url, options) => {
     live();
@@ -191,7 +280,7 @@ function broker({ binding, projectionRoot, deadlineMs, issuer, consumer }, deps)
       },
       async acquire() {
         live();
-        const { assertion, jti } = projection(role);
+        const { assertion, jti } = credential.acquire(role);
         const response = await exchangeAssertion(roleConfig[role], assertion, send);
         live();
         const { access_token: accessToken, expires_in: lifetime, expires_on: expiry } = response.json || {};
@@ -240,12 +329,7 @@ function broker({ binding, projectionRoot, deadlineMs, issuer, consumer }, deps)
     phase = "starting";
     expiryTimer = deps.setTimeout(() => finish("failed"), deadlineMs - now());
     admission = (async () => {
-      const assertions = new Map(ROLES.map(role => [roleConfig[role].assertionFile, projection(role)]));
-      const [left, right] = [...assertions.values()];
-      requireCondition(left.jti !== right.jti && left.assertion !== right.assertion, "AZURE_BROKER_SHARED_ASSERTION_REFUSED");
-      await crossExchange({ ...roleConfig, federationMismatchCodes: MISMATCH_CODES,
-        readAssertion: file => assertions.get(file).assertion, requestJson: send });
-      assertions.clear();
+      await credential.verifyRoleIsolation(send);
       await Promise.all(ROLES.map(refresh));
       live();
       checkSinks({ issuer, consumer }, io, platform);
@@ -266,7 +350,7 @@ function broker({ binding, projectionRoot, deadlineMs, issuer, consumer }, deps)
     live();
     requireCondition(phase === "running" && ROLES.every(role => state[role].last.expiresOn > now()),
       "AZURE_BROKER_NOT_READY");
-    return ROLES.map(role => ({ role, subjectSha256: digest(roleTrust(binding, role).subject),
+    return ROLES.map(role => ({ role, subjectSha256: credential.subjectSha256(role),
       tokenRenewals: state[role].renewals, crossRoleDenials: 1, crossRoleDeniedOperation: "opposite-identity-acquisition" }));
   }
   return { start, refresh(role) {
@@ -275,4 +359,4 @@ function broker({ binding, projectionRoot, deadlineMs, issuer, consumer }, deps)
   }, stop, observations, signal: controller.signal };
 }
 
-module.exports = { createBroker, _offline: { broker, validateAssertion, requestEntra, roleTrust } };
+module.exports = { createBroker, createRetirementProbe, _offline: { broker, validateAssertion, requestEntra, roleTrust, certificateSource } };

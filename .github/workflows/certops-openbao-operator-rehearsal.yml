@@ -14,6 +14,10 @@ on:
         description: Expected final agent archive SHA-256
         required: true
         type: string
+      real_ca:
+        description: Run the real PKI operator qualification
+        type: boolean
+        default: false
 permissions:
   contents: read
   actions: read
@@ -24,6 +28,8 @@ jobs:
     timeout-minutes: 45
     env:
       CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST: '1'
+      REAL_CA: ${{ inputs.real_ca }}
+      OPENBAO_EVIDENCE: ${{ inputs.real_ca && 'openbao-operator-final-package' || 'native-openbao-support' }}
       LAB_PROJECT: tt-wildcard-ux-qual-openbao-${{ github.run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -51,14 +57,9 @@ jobs:
           candidate_sha="$(node -p 'require(process.argv[1]).candidateSha' "$area/identity.json")"
           [[ "$candidate_sha" =~ ^[a-f0-9]{40}$ ]]
           git merge-base --is-ancestor "$candidate_sha" "$GITHUB_SHA"
-          git diff --quiet "$candidate_sha" "$GITHUB_SHA" -- tests/wildcard-vault/ux-lab \
+          git diff --quiet "$candidate_sha" "$GITHUB_SHA" -- \
             scripts/certops-agent-package.js scripts/certops-azure-keyvault-package.cjs \
-            scripts/certops-linux-systemd-ownership.js tests/e2e/linux-systemd-real-journey.js \
-            ':(exclude)tests/wildcard-vault/ux-lab/adversarial.cjs' \
-            ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/run.ps1' \
-            ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/native-service-observation.cjs' \
-            ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/native-service-observation.test.cjs' \
-            ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/native-openbao-journey.cjs'
+            scripts/certops-linux-systemd-ownership.js tests/e2e/linux-systemd-real-journey.js
           # The unprivileged customer agent reads public fixtures through a
           # read-only bind mount. Keep the parent and staged lab data private.
           (umask 022 && git worktree add --detach "$area/candidate" "$candidate_sha")
@@ -94,12 +95,29 @@ jobs:
           harness="$lab/azure-operator-review"
           # Update only the reviewed runner files after building the producer's images.
           candidate_sha="$(node -p 'require(process.argv[1]).candidateSha' "$area/identity.json")"
-          runner_files=("$lab/adversarial.cjs" "$harness/run.ps1" "$harness/native-openbao-journey.cjs" "$harness/native-service-observation.cjs")
-          expected_harness="$(git diff --name-only "$candidate_sha" "$GITHUB_SHA" -- "${runner_files[@]}")"
+          runner_files=(
+            "$lab/adversarial.cjs" "$lab/certbot-record.cjs" "$lab/customer-host.cjs"
+            "$lab/journey.cjs" "$lab/operator-ca.cjs" "$lab/package-acceptance.cjs"
+            "$harness/run.ps1" "$harness/native-openbao-journey.cjs"
+            "$harness/native-openbao-transport.cjs" "$harness/native-service-observation.cjs"
+          )
+          ca_args=()
+          if [[ "$REAL_CA" = true ]]; then
+            runner_files+=(
+              "$lab/operator-ca-setup.cjs" "$lab/operator-ca.Dockerfile" "$lab/operator-ca.compose.yaml"
+              "$harness/openbao-operator-evidence.cjs" "$harness/openbao-operator-observer.cjs"
+              "$harness/openbao-operator-strict-journey.cjs"
+            )
+            ca_args=(-OpenBaoPki)
+          fi
+          expected_harness="$(git diff --no-renames --name-only "$candidate_sha" "$GITHUB_SHA" -- "${runner_files[@]}" | sort -u)"
           for file in "${runner_files[@]}"; do
-            install -m 0644 "$GITHUB_WORKSPACE/$file" "$file"
+            git -C "$GITHUB_WORKSPACE" show "$GITHUB_SHA:$file" > "$area/runner-file"
+            install -D -m 0644 "$area/runner-file" "$file"
           done
-          test "$(git diff --name-only HEAD)" = "$expected_harness"
+          rm -f -- "$area/runner-file"
+          observed_harness="$( { git diff --name-only HEAD -- "$lab"; git ls-files --others --exclude-standard -- "$lab"; } | sort -u)"
+          test "$observed_harness" = "$expected_harness"
           node "$harness/project-freshness.cjs" "$LAB_PROJECT"
           node - "$area/identity.json" "$area/owned.json" "$LAB_PROJECT" <<'NODE'
           const fs = require("node:fs");
@@ -112,7 +130,7 @@ jobs:
           artifact="$(node -p 'require(process.argv[1]).artifactId' "$area/identity.json")"
           digest="$(node -p 'require(process.argv[1]).packageSha256' "$area/identity.json")"
           if ! pwsh -NoProfile -File "$harness/run.ps1" -Action Up -Project "$LAB_PROJECT" -BasePort 60800 \
-            -CertificateMode ordinary -MaterialProvider openbao-kv2 -PackageAcceptance -NativeOpenBao \
+            -CertificateMode ordinary -MaterialProvider openbao-kv2 -PackageAcceptance -NativeOpenBao "${ca_args[@]}" \
             -ApiImage "$(cat "$area/api.iid")" -WorkerImage "$(cat "$area/worker.iid")" \
             -CustomerImage "$(cat "$area/customers.iid")" -SuppliedPackageDirectory "$area/package" \
             -SuppliedProducerRunId "$run" -SuppliedArtifactId "$artifact" -SuppliedArchiveSha256 "$digest" \
@@ -165,26 +183,30 @@ jobs:
           cd "$candidate"
           harness=tests/wildcard-vault/ux-lab/azure-operator-review
           output="$candidate/.scratch/$LAB_PROJECT"
+          collector=native-openbao-support.cjs
+          if [[ "$REAL_CA" = true ]]; then collector=openbao-operator-evidence.cjs; fi
           sudo --non-interactive env PATH="$PATH" \
+            GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$candidate" \
+            TT_UX_CANDIDATE_REPO="$candidate" \
             GITHUB_ACTIONS="$GITHUB_ACTIONS" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" GITHUB_REF="$GITHUB_REF" \
             GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
             GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_TEMP="$RUNNER_TEMP" \
             CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST="$CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST" \
             TT_UX_PROJECT="$LAB_PROJECT" TT_WILDCARD_UX_OUTPUT="$output" \
-            "$(command -v node)" "$harness/native-openbao-support.cjs" "$area/owned.json"
+            "$(command -v node)" "$harness/$collector" "$area/owned.json"
           node "$harness/project-freshness.cjs" "$LAB_PROJECT"
-          if sudo --non-interactive test -f "$output/native-openbao-support.json"; then
+          if sudo --non-interactive test -f "$output/$OPENBAO_EVIDENCE.json"; then
             mkdir -p "$GITHUB_WORKSPACE/qualification-results"
             sudo --non-interactive install -m 0600 -o "$(id -u)" -g "$(id -g)" \
-              "$output/native-openbao-support.json" "$GITHUB_WORKSPACE/qualification-results/native-openbao-support.json"
+              "$output/$OPENBAO_EVIDENCE.json" "$GITHUB_WORKSPACE/qualification-results/$OPENBAO_EVIDENCE.json"
           fi
           rm -f -- "$area/up.log" "$area/journey.log"
       - name: Require post-teardown native observation
-        run: test -s qualification-results/native-openbao-support.json
-      - name: Retain bounded supporting evidence
+        run: test -s "qualification-results/$OPENBAO_EVIDENCE.json"
+      - name: Retain bounded qualification evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: native-openbao-support
-          path: qualification-results/native-openbao-support.json
+          name: ${{ env.OPENBAO_EVIDENCE }}
+          path: qualification-results/${{ env.OPENBAO_EVIDENCE }}.json
           if-no-files-found: warn

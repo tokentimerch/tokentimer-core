@@ -14,6 +14,7 @@ param(
   [switch]$BuildImages,
   [switch]$PackageAcceptance,
   [switch]$NativeOpenBao,
+  [switch]$OpenBaoPki,
   [string]$ApiImage,
   [string]$WorkerImage,
   [string]$CustomerImage
@@ -28,6 +29,7 @@ function Dc {
   $composeFiles = @('-f', $compose)
   if ($MaterialProvider -eq 'azure-key-vault') { $composeFiles += @('-f', (Join-Path $PSScriptRoot 'compose.azure.yaml')) }
   if ($NativeOpenBao) { $composeFiles += @('-f', (Join-Path $PSScriptRoot 'compose.openbao.native.yaml')) }
+  if ($OpenBaoPki) { $composeFiles += @('-f', (Join-Path $uxLab 'operator-ca.compose.yaml')) }
   & docker compose -p $Project @composeFiles --profile worker @args
   if ($LASTEXITCODE -ne 0) { throw "Docker Compose failed ($LASTEXITCODE)." }
 }
@@ -44,7 +46,8 @@ Push-Location $repo
 $environmentNames = @('TT_WILDCARD_UX_OUTPUT','TT_UX_API_IMAGE','TT_UX_WORKER_IMAGE','TT_UX_CUSTOMER_IMAGE',
   'TT_UX_API_PORT','TT_UX_WEB_PORT','TT_UX_MAIL_PORT','TT_UX_CONTROL_PORT','TT_UX_NGINX_PORT','TT_UX_HAPROXY_PORT',
   'TT_UX_CERTIFICATE_MODE','TT_UX_CORE_COMMIT','TT_UX_PROJECT','TT_UX_PACKAGE_ACCEPTANCE','CERTOPS_DISTRIBUTION_QUALIFICATION',
-  'TT_UX_MATERIAL_PROVIDER','TT_UX_KV_IMAGE','TT_UX_KV_BINARY','TT_UX_AZURE_INPUT_DIR','TT_UX_NATIVE_API_PORT','TT_UX_NATIVE_BAO_PORT')
+  'TT_UX_MATERIAL_PROVIDER','TT_UX_KV_IMAGE','TT_UX_KV_BINARY','TT_UX_AZURE_INPUT_DIR','TT_UX_NATIVE_API_PORT','TT_UX_NATIVE_BAO_PORT',
+  'TT_UX_OPERATOR_CA','TT_UX_OPERATOR_CA_PRIVATE')
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 try {
@@ -57,6 +60,7 @@ try {
     $CertificateMode = $options.certificateMode
     $PackageAcceptance = [bool]$options.packageAcceptance
     $NativeOpenBao = [bool]$options.nativeOpenBao
+    $OpenBaoPki = [bool]$options.openBaoPki
     if ($options.materialProvider) { $MaterialProvider = $options.materialProvider }
     if ($options.azureInputDirectory) { $AzureInputDirectory = $options.azureInputDirectory }
   }
@@ -80,6 +84,14 @@ try {
   }
   $env:TT_UX_CERTIFICATE_MODE = $CertificateMode
   $env:TT_UX_MATERIAL_PROVIDER = $MaterialProvider
+  if ($OpenBaoPki -and (!$PackageAcceptance -or $MaterialProvider -ne 'openbao-kv2')) {
+    throw 'This runner uses the owned operator CA with OpenBao exact-package acceptance.'
+  }
+  if ($OpenBaoPki -and $Project -notmatch '^tt-wildcard-ux-qual-[a-z0-9-]+$') {
+    throw 'The owned operator CA requires a fresh qualification project.'
+  }
+  $env:TT_UX_OPERATOR_CA = if ($OpenBaoPki) { 'openbao-pki' } else { 'pebble' }
+  $env:TT_UX_OPERATOR_CA_PRIVATE = "$output-operator-ca-private"
   if ($MaterialProvider -eq 'azure-key-vault') {
     if (-not $AzureInputDirectory) { throw 'Azure scratch input directory is required.' }
     $env:TT_UX_AZURE_INPUT_DIR = (Resolve-Path -LiteralPath $AzureInputDirectory).Path
@@ -130,7 +142,7 @@ try {
         $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
         try { $probe.Start() } catch { throw "Port $port is occupied. Choose a different BasePort." } finally { $probe.Stop() }
       }
-      @{basePort=$BasePort;certificateMode=$CertificateMode;materialProvider=$MaterialProvider;coreCommit=$env:TT_UX_CORE_COMMIT;packageAcceptance=[bool]$PackageAcceptance;nativeOpenBao=[bool]$NativeOpenBao;azureInputDirectory=$AzureInputDirectory} | ConvertTo-Json | Set-Content $optionsFile
+      @{basePort=$BasePort;certificateMode=$CertificateMode;materialProvider=$MaterialProvider;coreCommit=$env:TT_UX_CORE_COMMIT;packageAcceptance=[bool]$PackageAcceptance;nativeOpenBao=[bool]$NativeOpenBao;openBaoPki=[bool]$OpenBaoPki;azureInputDirectory=$AzureInputDirectory} | ConvertTo-Json | Set-Content $optionsFile
       if($PackageAcceptance){
         if ($MaterialProvider -in @('azure-key-vault','openbao-kv2')) {
           $stageResult = & node (Join-Path $PSScriptRoot 'stage-supplied-package.cjs') $SuppliedPackageDirectory $SuppliedArchiveSha256 $env:TT_UX_CORE_COMMIT (Join-Path $output 'agent-package') $SuppliedProducerRunId $SuppliedArtifactId
@@ -166,9 +178,18 @@ try {
       @{api=$env:TT_UX_API_IMAGE;worker=$env:TT_UX_WORKER_IMAGE;customers=$env:TT_UX_CUSTOMER_IMAGE} | ConvertTo-Json | Set-Content $imagesFile
       & pnpm --filter '@tokentimer/dashboard' build *> (Join-Path $output 'dashboard-build.log')
       if ($LASTEXITCODE -ne 0) { throw "Dashboard build failed. See $output/dashboard-build.log" }
+      if ($OpenBaoPki) {
+        & node (Join-Path $uxLab 'operator-ca-setup.cjs') create $env:TT_UX_OPERATOR_CA_PRIVATE (Join-Path $output 'operator-ca')
+        if ($LASTEXITCODE -ne 0) { throw 'Owned operator CA preparation failed.' }
+        Dc up -d --build operator-ca operator-dns
+        $privateNetwork = & docker network inspect "$($Project)_operator-ca" --format '{{.Internal}} {{index .Labels "com.docker.compose.project"}}'
+        if ($LASTEXITCODE -ne 0 -or $privateNetwork -cne "true $Project") { throw 'Owned operator CA network is not internal.' }
+        Dc run --rm --no-deps operator-ca-init
+      }
       Dc up -d
-      # Public Pebble transport CA only. Customer processes read this mount.
-      Dc cp 'pebble:/test/certs/pebble.minica.pem' (Join-Path $output 'pebble-ca.pem')
+      if (!$OpenBaoPki) {
+        Dc cp 'pebble:/test/certs/pebble.minica.pem' (Join-Path $output 'pebble-ca.pem')
+      }
       Write-Host "Lab started: dashboard http://127.0.0.1:$($BasePort+1), inbox http://127.0.0.1:$($BasePort+3). Run Test to execute the API journey."
     }
     'Test' {
@@ -178,32 +199,47 @@ try {
           throw 'Staged package identity differs from the owned lab input.'
         }
       }
-      if ($NativeOpenBao) {
+      if ($NativeOpenBao -and $OpenBaoPki) {
+        & node (Join-Path $PSScriptRoot 'openbao-operator-strict-journey.cjs') 2>&1 | Tee-Object -FilePath (Join-Path $output "journey-$Phase.log")
+      } elseif ($NativeOpenBao) {
         & node (Join-Path $PSScriptRoot 'native-openbao-journey.cjs') 2>&1 | Tee-Object -FilePath (Join-Path $output "journey-$Phase.log")
       } else {
         & node (Join-Path $uxLab 'journey.cjs') $Phase 2>&1 | Tee-Object -FilePath (Join-Path $output "journey-$Phase.log")
       }
       $result = $LASTEXITCODE
       if ($result -ne 0) { throw "Journey failed; evidence retained in $output. The lab remains running." }
-      if($PackageAcceptance -and $Phase -eq 'all'){
+      if($PackageAcceptance -and $Phase -eq 'all' -and !($NativeOpenBao -and $OpenBaoPki)){
         $proof=(Get-Content (Join-Path $output 'qualification.json') -Raw | ConvertFrom-Json).packageAcceptance
         $receipt=Get-Content (Join-Path $output 'agent-package/artifact.json') -Raw | ConvertFrom-Json
         if($proof.packageSha256 -ne $receipt.sha256 -or $proof.candidateSha -ne $env:TT_UX_CORE_COMMIT){throw 'Acceptance used a different package or candidate'}
       }
     }
     'Status' { Dc ps; if(Test-Path (Join-Path $output 'report.json')){Get-Content (Join-Path $output 'report.json')} }
-    'Stop' { Dc down; Write-Host 'Named UX lab stopped; volumes and evidence retained. Use a NEW project for replay (Vault is volatile).' }
+    'Stop' {
+      Dc down
+      if ($OpenBaoPki) {
+        & node (Join-Path $uxLab 'operator-ca-setup.cjs') dispose $env:TT_UX_OPERATOR_CA_PRIVATE (Join-Path $output 'operator-ca')
+        if ($LASTEXITCODE -ne 0) { throw 'Owned operator CA credential cleanup failed.' }
+      }
+      Write-Host 'Named UX lab stopped; volumes and evidence retained. Use a NEW project for replay (Vault is volatile).'
+    }
     'Cleanup' {
 
       if (-not $OwnedTeardownReceipt) { throw 'Owned teardown receipt is required.' }
       $owned = Get-Content -LiteralPath $OwnedTeardownReceipt -Raw | ConvertFrom-Json
       if ($owned.project -cne $Project) { throw 'Owned teardown receipt project mismatch.' }
-      if ($NativeOpenBao) {
+      if ($NativeOpenBao -and $OpenBaoPki) {
+        & node (Join-Path $PSScriptRoot 'openbao-operator-evidence.cjs') $OwnedTeardownReceipt
+      } elseif ($NativeOpenBao) {
         & node (Join-Path $PSScriptRoot 'native-openbao-support.cjs') $OwnedTeardownReceipt
       } else {
         & node (Join-Path $PSScriptRoot 'owned-teardown-run.cjs') --execute $OwnedTeardownReceipt
       }
       if ($LASTEXITCODE -ne 0) { throw 'Owned teardown refused or incomplete.' }
+      if ($OpenBaoPki -and !$NativeOpenBao) {
+        & node (Join-Path $uxLab 'operator-ca-setup.cjs') dispose $env:TT_UX_OPERATOR_CA_PRIVATE (Join-Path $output 'operator-ca')
+        if ($LASTEXITCODE -ne 0) { throw 'Owned operator CA credential cleanup failed.' }
+      }
     }
   }
 } finally {
