@@ -56,6 +56,8 @@ jobs:
             scripts/certops-linux-systemd-ownership.js tests/e2e/linux-systemd-real-journey.js \
             ':(exclude)tests/wildcard-vault/ux-lab/adversarial.cjs' \
             ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/run.ps1' \
+            ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/native-service-observation.cjs' \
+            ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/native-service-observation.test.cjs' \
             ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/native-openbao-journey.cjs'
           # The unprivileged customer agent reads public fixtures through a
           # read-only bind mount. Keep the parent and staged lab data private.
@@ -92,7 +94,7 @@ jobs:
           harness="$lab/azure-operator-review"
           # Update only the reviewed runner files after building the producer's images.
           candidate_sha="$(node -p 'require(process.argv[1]).candidateSha' "$area/identity.json")"
-          runner_files=("$lab/adversarial.cjs" "$harness/run.ps1" "$harness/native-openbao-journey.cjs")
+          runner_files=("$lab/adversarial.cjs" "$harness/run.ps1" "$harness/native-openbao-journey.cjs" "$harness/native-service-observation.cjs")
           expected_harness="$(git diff --name-only "$candidate_sha" "$GITHUB_SHA" -- "${runner_files[@]}")"
           for file in "${runner_files[@]}"; do
             install -m 0644 "$GITHUB_WORKSPACE/$file" "$file"
