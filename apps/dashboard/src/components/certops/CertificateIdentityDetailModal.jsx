@@ -736,7 +736,11 @@ function IdentityDetailSession({
                     value={source.managedCertificateId}
                   >
                     {registrationLabel(source)} ·{' '}
-                    {isEndedSource(source) ? 'Ended' : 'Current'}
+                    {canRestart(source)
+                      ? 'Stopped'
+                      : isEndedSource(source)
+                        ? 'Ended'
+                        : 'Current'}
                     {registrationLabel(source) === sourceLabel(source.source)
                       ? ` · Registration ${index + 1}`
                       : ''}
