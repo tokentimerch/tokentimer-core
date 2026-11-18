@@ -135,6 +135,7 @@ jobs:
             -CustomerImage "$(cat "$area/customers.iid")" -SuppliedPackageDirectory "$area/package" \
             -SuppliedProducerRunId "$run" -SuppliedArtifactId "$artifact" -SuppliedArchiveSha256 "$digest" \
             > "$area/up.log" 2>&1; then
+            grep -Eo '^OPENBAO_SETUP_STAGE (ca-preparation|ca-services|ca-initialization|customers)$|^OPENBAO_CA_SETUP_FAILED (create|create-owned|initialize) [A-Za-z0-9_]{1,32}$' "$area/up.log" | tail -n 3 || true
             if grep -Eom 1 'Candidate image preflight failed|Supplied package staging failed|Dashboard build failed|Docker Compose failed \([0-9]+\)|Port [0-9]+ is occupied|MethodNotFound' "$area/up.log"; then
               echo '::notice::An OpenBao setup stage reported an error'
             fi
@@ -185,6 +186,7 @@ jobs:
           output="$candidate/.scratch/$LAB_PROJECT"
           collector=native-openbao-support.cjs
           if [[ "$REAL_CA" = true ]]; then collector=openbao-operator-evidence.cjs; fi
+          collector_status=0
           sudo --non-interactive env PATH="$PATH" \
             GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$candidate" \
             TT_UX_CANDIDATE_REPO="$candidate" \
@@ -193,14 +195,15 @@ jobs:
             GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_TEMP="$RUNNER_TEMP" \
             CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST="$CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST" \
             TT_UX_PROJECT="$LAB_PROJECT" TT_WILDCARD_UX_OUTPUT="$output" \
-            "$(command -v node)" "$harness/$collector" "$area/owned.json"
+            "$(command -v node)" "$harness/$collector" "$area/owned.json" || collector_status=$?
           node "$harness/project-freshness.cjs" "$LAB_PROJECT"
+          rm -f -- "$area/up.log" "$area/journey.log"
+          if [[ "$collector_status" -ne 0 ]]; then exit "$collector_status"; fi
           if sudo --non-interactive test -f "$output/$OPENBAO_EVIDENCE.json"; then
             mkdir -p "$GITHUB_WORKSPACE/qualification-results"
             sudo --non-interactive install -m 0600 -o "$(id -u)" -g "$(id -g)" \
               "$output/$OPENBAO_EVIDENCE.json" "$GITHUB_WORKSPACE/qualification-results/$OPENBAO_EVIDENCE.json"
           fi
-          rm -f -- "$area/up.log" "$area/journey.log"
       - name: Require post-teardown native observation
         run: test -s "qualification-results/$OPENBAO_EVIDENCE.json"
       - name: Retain bounded qualification evidence
