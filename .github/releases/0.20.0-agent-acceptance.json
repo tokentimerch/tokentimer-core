@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "status": "accepted",
+  "packageVersion": "0.20.0",
+  "packageSha256": "4461647607f0862a486f1d7eaacfef47236a6e4cdaef69fbbf6eae3aa4b17351",
+  "packageSourceSha": "03010d85a8baa64ed138ccfb29cdc57575c39dff",
+  "capabilities": [
+    "windows-cert-store-v1",
+    "iis-binding-v1",
+    "trust-anchor-deploy-v1",
+    "adcs-enroll-v1",
+    "material-store-vault-kv2-v1",
+    "certificate-publication-v1",
+    "deploy-from-store-v1",
+    "material-store-openbao-kv2-v1",
+    "material-store-azure-key-vault-v1"
+  ],
+  "toolchain": {
+    "nodeVersion": "v24.22.3",
+    "npmVersion": "11.19.1",
+    "goVersion": "go1.26.10",
+    "goFlags": "-buildvcs=false"
+  },
+  "packageArtifact": {
+    "sourceSha": "03010d85a8baa64ed138ccfb29cdc57575c39dff",
+    "runId": "44338096592",
+    "artifactSha256": "544f5d0ea5202d471ffd2ecfe306c8da4ff12526ea5fdab9038b1c1a94ec7c7a",
+    "artifactId": "14443361634"
+  },
+  "review": {
+    "pullRequest": 774,
+    "maintainer": "tokentimerch"
+  },
+  "nativeAgentEvidence": "openbao-operator-http-real-ca",
+  "evidence": {
+    "azure-provider-and-cleanup": {
+      "sourceSha": "03010d85a8baa64ed138ccfb29cdc57575c39dff",
+      "runId": "44338096592",
+      "artifactSha256": "2fe540ad4f77fc0a79ea99d63be7a1fa6d20328246dec417cb9af62a099b408b",
+      "artifactId": "14444995548"
+    },
+    "azure-natural-access-token-expiration": {
+      "sourceSha": "afc2be5f7f57dab34698a5b8bba2e5b029ea30f7",
+      "runId": "44342938871",
+      "artifactSha256": "cf5c758681503943a43aba470f39e66c7ccad5d7f0e85b6238be119cf15c0a56",
+      "artifactId": "14453555884"
+    },
+    "openbao-operator-http-real-ca": {
+      "sourceSha": "d496705956be605483ab75f042d327b372071754",
+      "runId": "44366241782",
+      "artifactSha256": "2d893f9a2cccecebedb39221487802dea36b4b0d1c0d8379fdafbadf40608923",
+      "artifactId": "14457740573"
+    },
+    "azure-operator-http-real-ca": {
+      "sourceSha": "47edb7b4b0143a1df2d64beb937c057d4798b55d",
+      "runId": "44395203674",
+      "artifactSha256": "bc01a50a7ccf6c3a51fcf42e9fad70420a3b41127dbfb12b78ace0aa3529b842",
+      "artifactId": "14472300204"
+    },
+    "azure-imds-managed-identity": {
+      "runId": "44413703172",
+      "artifactId": "14480145844",
+      "artifactSha256": "2e3126ed83de0669595a934023f3e454eb1c2464886a70ac01e58a690f1bd0f4",
+      "sourceSha": "4084b07dbd9a342ad554a85ff61b4ccdd5ad62c7"
+    }
+  }
+}
