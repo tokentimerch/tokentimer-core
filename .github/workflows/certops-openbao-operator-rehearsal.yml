@@ -57,7 +57,9 @@ jobs:
             ':(exclude)tests/wildcard-vault/ux-lab/adversarial.cjs' \
             ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/run.ps1' \
             ':(exclude)tests/wildcard-vault/ux-lab/azure-operator-review/native-openbao-journey.cjs'
-          git worktree add --detach "$area/candidate" "$candidate_sha"
+          # The unprivileged customer agent reads public fixtures through a
+          # read-only bind mount. Keep the parent and staged lab data private.
+          (umask 022 && git worktree add --detach "$area/candidate" "$candidate_sha")
           test "$(git -C "$area/candidate" rev-parse HEAD)" = "$candidate_sha"
       - name: Build immutable lab images from the selected producer checkout
         run: |
