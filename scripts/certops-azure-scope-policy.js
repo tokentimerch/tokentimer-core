@@ -33,7 +33,7 @@ const KEYVAULT_IF =
   MAIN + " && vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED == 'true'";
 const EXPIRY_IF = KEYVAULT_IF + " && inputs.natural_expiry";
 const PROVIDER_IF = KEYVAULT_IF + " && !inputs.natural_expiry";
-const EXPIRY_UPLOAD_IF = "success() && steps.expiry-observation.outcome == 'success' && steps.expiry-cleanup.outcome == 'success'";
+const EXPIRY_UPLOAD_IF = "success() && steps.expiry-observation.outcome == 'success' && steps.expiry-cleanup.outcome == 'success' && (inputs.expiry_app_client_id == '' || steps.expiry-app-retirement.outcome == 'success')";
 const IMDS_IF = MAIN + " && vars.CERTOPS_AZURE_IMDS_LAB_ENABLED == 'true'";
 const IMDS_UPLOAD_IF = "success() && steps.collect.outcome == 'success' && steps.scrub.outcome == 'success'";
 const LIFECYCLE_IF = MAIN;
@@ -94,7 +94,7 @@ function imdsPolicy(workflow, errors) {
 
 function expiryPolicy(job, provider) {
   const steps = job.steps || [];
-  const [checkout, node, approval, stage, login, provision, observation, reauth, cleanup, finalize, upload] = steps;
+  const [checkout, node, approval, stage, appCheck, login, provision, observation, reauth, cleanup, retire, finalize, upload] = steps;
   const command = (step, action, condition) => step?.run === `node tests/e2e/azure-keyvault-natural-expiry.cjs ${action}` && step.if === condition;
   const loginCommand = "./infra/certops-azure-keyvault/login-oidc.ps1";
   const evidence = "azure-natural-expiration-final-package";
@@ -112,20 +112,23 @@ function expiryPolicy(job, provider) {
       AZURE_CORE_COLLECT_TELEMETRY: "no",
       TT_AZURE_EXPIRY_PACKAGE_RUN_ID: "${{ inputs.package_run_id }}",
       TT_AZURE_EXPIRY_PACKAGE_ARTIFACT_ID: "${{ inputs.package_artifact_id }}",
+      TT_AZURE_EXPIRY_APP_CLIENT_ID: "${{ inputs.expiry_app_client_id }}",
+      TT_AZURE_EXPIRY_APP_PRINCIPAL_ID: "${{ inputs.expiry_app_principal_id }}",
       TT_AZURE_PACKAGE_SHA256: "${{ inputs.package_sha256 }}",
     }) &&
     provider?.if === PROVIDER_IF &&
-    steps.length === 11 && steps.every(step => (step === approval ? Object.keys(step.env || {}).length === 1 && hasScopedApproval(step) : !step.env) && !step["continue-on-error"]) &&
+    steps.length === 13 && steps.every(step => (step === approval ? Object.keys(step.env || {}).length === 1 && hasScopedApproval(step) : !step.env) && !step["continue-on-error"]) &&
     checkout?.uses?.startsWith("actions/checkout@") && !checkout.if &&
     checkout.with?.["persist-credentials"] === false && !checkout.with.ref && !checkout.with.repository &&
     node?.uses?.startsWith("actions/setup-node@") && !node.if && node.with?.["node-version"] === "24.22.3" &&
     approval?.run === "node infra/certops-azure-keyvault/lab.js github-approval" && approval.id === "expiry-approval" && !approval.if &&
-    command(stage, "stage-package") && login?.run === loginCommand && login.shell === "pwsh" && !login.if &&
+    command(stage, "stage-package") && command(appCheck, "check-application") && login?.run === loginCommand && login.shell === "pwsh" && !login.if &&
     provision?.run === "node infra/certops-azure-keyvault/lab.js provision" && !provision.if &&
     observation?.id === "expiry-observation" && command(observation, "launch") &&
     reauth?.run === loginCommand && reauth.shell === "pwsh" && reauth.id === "expiry-cleanup-auth" &&
     reauth.if === "always() && steps.expiry-approval.outcome == 'success'" &&
     cleanup?.id === "expiry-cleanup" && command(cleanup, "cleanup", "always() && steps.expiry-cleanup-auth.outcome == 'success'") &&
+    retire?.id === "expiry-app-retirement" && command(retire, "confirm-application-retired", "success() && inputs.expiry_app_client_id != ''") &&
     command(finalize, "finalize", "always()") &&
     upload?.uses?.startsWith("actions/upload-artifact@") && upload.if === EXPIRY_UPLOAD_IF &&
     upload.with?.name === evidence && upload.with?.path === `qualification-results/${evidence}.json` &&
@@ -260,6 +263,9 @@ function keyvaultPolicy(name, workflow, errors) {
         first.env?.FINAL_PACKAGE !== "${{ inputs.final_package }}" || first.env?.PACKAGE_SHA256 !== "${{ inputs.package_sha256 }}" ||
         first.env?.NATURAL_EXPIRY !== "${{ inputs.natural_expiry }}" ||
         first.env?.PACKAGE_RUN_ID !== "${{ inputs.package_run_id }}" || first.env?.PACKAGE_ARTIFACT_ID !== "${{ inputs.package_artifact_id }}" ||
+        first.env?.EXPIRY_APP_CLIENT_ID !== "${{ inputs.expiry_app_client_id }}" || first.env?.EXPIRY_APP_PRINCIPAL_ID !== "${{ inputs.expiry_app_principal_id }}" ||
+        !first.run.includes('[[ "$EXPIRY_APP_CLIENT_ID" =~ $guid && "$EXPIRY_APP_PRINCIPAL_ID" =~ $guid ]]') ||
+        !first.run.includes('test -z "$EXPIRY_APP_CLIENT_ID" && test -z "$EXPIRY_APP_PRINCIPAL_ID"') ||
         !first.run.includes('test "$FINAL_PACKAGE" = false') ||
         !first.run.includes('[[ "$PACKAGE_RUN_ID" =~ ^[1-9][0-9]{0,15}$ && "$PACKAGE_ARTIFACT_ID" =~ ^[1-9][0-9]{0,15}$ ]]')
       )
@@ -492,11 +498,11 @@ function keyvaultPolicy(name, workflow, errors) {
     const inputs = workflow.on?.workflow_dispatch?.inputs;
     if (
       !inputs ||
-      Object.keys(inputs).join() !== "location,final_package,package_sha256,natural_expiry,package_run_id,package_artifact_id" ||
+      Object.keys(inputs).join() !== "location,final_package,package_sha256,natural_expiry,package_run_id,package_artifact_id,expiry_app_client_id,expiry_app_principal_id" ||
       inputs.final_package?.type !== "boolean" || inputs.final_package.default !== false ||
       inputs.package_sha256?.type !== "string" || inputs.package_sha256.default !== "" ||
       inputs.natural_expiry?.type !== "boolean" || inputs.natural_expiry.default !== false ||
-      ["package_run_id", "package_artifact_id"].some(key => inputs[key]?.type !== "string" || inputs[key].default !== "") ||
+      ["package_run_id", "package_artifact_id", "expiry_app_client_id", "expiry_app_principal_id"].some(key => inputs[key]?.type !== "string" || inputs[key].default !== "") ||
       inputs.location.type !== "choice" ||
       JSON.stringify(inputs.location.options) !==
         JSON.stringify(["swedencentral", "westeurope", "northeurope"])
