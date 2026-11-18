@@ -106,6 +106,12 @@ class FaultBoundary {
       const owned = target.hostname === self.host && (!self.objectPath || selected !== null);
       if (self.objectPath && !owned) return self.original.apply(this, arguments);
       const method = options.method || "GET";
+      const observe = (event, status) => {
+        if (self.objectPath) self.observe({ event, method, selected,
+          ...(selected === "version" ? { version: part.slice(1) } : {}),
+          ...(status === undefined ? {} : { status }),
+        });
+      };
       if (owned) {
         check(
           target.protocol === "https:" &&
@@ -115,7 +121,7 @@ class FaultBoundary {
         );
         if (method === "PUT")
           self.puts.set(pathname, (self.puts.get(pathname) || 0) + 1);
-        if (self.objectPath) self.observe({ event: "request", method, selected });
+        observe("request");
       }
       const fault = owned && self.fault?.path === pathname ? self.fault : null;
       let corrupt = false;
@@ -134,7 +140,7 @@ class FaultBoundary {
       req = self.original.call(https, url, options, (response) => {
         if (owned && self.objectPath) {
           check(response.socket?.authorized === true, "AZURE_KV_TLS_REQUIRED");
-          self.observe({ event: "response", method, selected, status: response.statusCode });
+          observe("response", response.statusCode);
         }
         if (owned || target.hostname === "login.microsoftonline.com") {
           self.events.push({
@@ -161,7 +167,7 @@ class FaultBoundary {
           response.on("end", () => {
             if (losePut) {
               fault.committed = true;
-              if (self.objectPath) self.observe({ event: "commit-lost", method, selected, status: response.statusCode });
+              observe("commit-lost", response.statusCode);
             }
             const disconnect = () => {
               const error = Object.assign(
@@ -193,7 +199,7 @@ class FaultBoundary {
         self.fault.blockReads
       ) {
         // Recovery is temporarily disconnected too: success must remain unknown.
-        if (self.objectPath) self.observe({ event: "read-blocked", method, selected });
+        observe("read-blocked");
         process.nextTick(() =>
           req.destroy(
             Object.assign(new Error("qualification recovery disconnected"), {

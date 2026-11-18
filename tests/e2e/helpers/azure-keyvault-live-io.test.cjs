@@ -56,6 +56,6 @@ test("the owned-object loss helper observes only direct TLS and never affects a 
     { event: "response", selected: "object", method: "PUT", status: 200 },
     { event: "commit-lost", selected: "object", method: "PUT", status: 200 },
     { event: "read-blocked", selected: "versions", method: "GET" },
-    { event: "response", selected: "version", method: "GET", status: 200 },
+    { event: "response", selected: "version", method: "GET", version: "e".repeat(32), status: 200 },
   ]);
 });
