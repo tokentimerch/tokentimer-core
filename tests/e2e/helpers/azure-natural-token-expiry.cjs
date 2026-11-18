@@ -91,7 +91,7 @@ async function observe({ acquire, prepare = async () => {}, read, fetchVersion, 
     azureStatusBefore: 200, azureStatusExpired: 401, azureStatusAfter: 200 };
 }
 
-function packageToken(candidateRoot, config, inspectResponse = () => {}) {
+function packageToken(candidateRoot, config) {
   assert.ok(path.isAbsolute(candidateRoot));
   assert.equal(config.auth?.type, "workload-identity");
   const { credential } = require(path.join(candidateRoot, "src/material-store/azure"));
@@ -99,7 +99,6 @@ function packageToken(candidateRoot, config, inspectResponse = () => {}) {
   let expiry;
   const getToken = credential(config, 15000, async (target, options) => {
     const response = await requestJson(target, options);
-    inspectResponse(response.status, Array.isArray(response.json?.error_codes) ? response.json.error_codes : []);
     if (response.status === 200) {
       expiry = Number(response.json?.expires_on || NaN);
       if (!Number.isSafeInteger(expiry)) {
@@ -116,6 +115,51 @@ function packageToken(candidateRoot, config, inspectResponse = () => {}) {
     expiry = undefined;
     const token = await getToken(true);
     return { token, issuedAt: Math.floor(Date.now() / 1000), expiresAt: expiry };
+  };
+}
+
+async function applicationNotFound(response, maxBytes) {
+  if (!response.body) return false;
+  if (response.status !== 400 && response.status !== 401) {
+    await response.body.cancel();
+    return false;
+  }
+  const reader = response.body.getReader(), chunks = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) return false;
+      chunks.push(value);
+    }
+    const codes = JSON.parse(Buffer.concat(chunks, bytes).toString("utf8"))?.error_codes;
+    return Array.isArray(codes) && codes.includes(700016);
+  } catch {
+    return false;
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
+
+function applicationRetirementProbe(candidateRoot, config, fetchResponse = fetch) {
+  assert.ok(path.isAbsolute(candidateRoot));
+  assert.equal(config.auth?.type, "workload-identity");
+  const { credential } = require(path.join(candidateRoot, "src/material-store/azure"));
+  return async () => {
+    let retired = false;
+    const acquire = credential(config, 15000, async (target, { method, headers, body, timeoutMs, maxBytes }) => {
+      assert.equal(target.href, `https://login.microsoftonline.com/${config.auth.tenantId}/oauth2/v2.0/token`);
+      // The production transport discards error bodies. This lab-only probe
+      // reduces a bounded error response to a boolean before it can leave the closure.
+      const response = await fetchResponse(target, { method, headers, body,
+        redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
+      retired = await applicationNotFound(response, maxBytes);
+      return { status: response.status, json: null };
+    });
+    await acquire(true).catch(() => {});
+    return retired;
   };
 }
 
@@ -141,4 +185,4 @@ async function runNaturalExpiry({ candidateRoot, config, store, prepareVersion, 
   return { ...facts, forced401: false, clockOverridden: false, pinnedVersion: providerVersion };
 }
 
-module.exports = { runNaturalExpiry, packageToken, assertTokenFits, workDeadline, MAX_DURATION_MS, MAX_JOB_DURATION_MS, WINDOW_ERROR_CODES, _offline: { observe, validateScope } };
+module.exports = { runNaturalExpiry, packageToken, applicationRetirementProbe, assertTokenFits, workDeadline, MAX_DURATION_MS, MAX_JOB_DURATION_MS, WINDOW_ERROR_CODES, _offline: { observe, validateScope } };

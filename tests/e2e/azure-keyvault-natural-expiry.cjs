@@ -8,7 +8,7 @@ const { spawnSync } = require("node:child_process");
 const lab = require("../../infra/certops-azure-keyvault/lab");
 const policy = require("../../infra/certops-azure-keyvault/policy");
 const io = require("./helpers/azure-keyvault-live-io.cjs");
-const { runNaturalExpiry, packageToken, assertTokenFits, workDeadline, MAX_JOB_DURATION_MS, WINDOW_ERROR_CODES } = require("./helpers/azure-natural-token-expiry.cjs");
+const { runNaturalExpiry, packageToken, applicationRetirementProbe, assertTokenFits, workDeadline, MAX_JOB_DURATION_MS, WINDOW_ERROR_CODES } = require("./helpers/azure-natural-token-expiry.cjs");
 const { runBoundedWorker } = require("./helpers/azure-natural-token-supervisor.cjs");
 
 const ID = /^[1-9][0-9]{0,15}$/;
@@ -252,10 +252,6 @@ async function cleanup() {
   lab.save(path.join(root, "expiry-cleanup-confirmed.json"), { confirmed: true });
 }
 
-function isRetiredApplication(status, codes) {
-  return [400, 401].includes(status) && codes.includes(700016);
-}
-
 async function confirmApplicationRetired() {
   const env = expiryContext(), application = expiryApplication(env);
   assert.ok(application, "AZURE_EXPIRY_EXTERNAL_READER_DENIED");
@@ -265,18 +261,12 @@ async function confirmApplicationRetired() {
   const { budget } = lab.load(path.join(root, "expiry-observation.json"));
   const deadline = Math.min(Date.now() + 4 * 60000, budget.jobDeadlineMs, budget.resourceDeadlineMs);
   const config = { auth: workloadAuth(root, env.AZURE_TENANT_ID, application.clientId) };
-  const candidateRoot = verifiedCandidate(root);
-  let retired = false;
-  const acquire = packageToken(candidateRoot, config, (status, codes) => {
-    retired = isRetiredApplication(status, codes);
-  });
+  const isRetired = applicationRetirementProbe(verifiedCandidate(root), config);
   await io.assertion(root);
   while (Date.now() + 15000 < deadline) {
-    retired = false;
     // Only an explicit application-not-found response counts. Timeouts and
     // other authentication errors do not establish retirement.
-    await acquire().catch(() => {});
-    if (retired) {
+    if (await isRetired()) {
       lab.save(path.join(root, APPLICATION_RETIRED), application);
       return;
     }
@@ -324,7 +314,7 @@ function finalize() {
   }
 }
 
-module.exports = { jobStart, workerBudget, requireDrain, expiryApplication, isRetiredApplication, JOB_TIMEOUT_MS, CLEANUP_RESERVE_MS };
+module.exports = { jobStart, workerBudget, requireDrain, expiryApplication, JOB_TIMEOUT_MS, CLEANUP_RESERVE_MS };
 if (require.main === module) {
   if (process.send) {
     observe().then(

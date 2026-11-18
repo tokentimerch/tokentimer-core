@@ -95,11 +95,34 @@ test("the disposable reader needs both IDs and cannot be the provisioning client
   assert.throws(() => launcher.expiryApplication({ ...config, TT_AZURE_EXPIRY_APP_PRINCIPAL_ID: clientId }));
 });
 
-test("only an explicit Entra application-not-found response proves retirement", () => {
-  assert.equal(launcher.isRetiredApplication(400, [700016]), true);
-  assert.equal(launcher.isRetiredApplication(401, [700016]), true);
-  for (const [status, codes] of [[200, [700016]], [503, [700016]], [400, []], [401, [7000215]], [400, [700213]]])
-    assert.equal(launcher.isRetiredApplication(status, codes), false);
+test("only an explicit Entra application-not-found response proves retirement", async t => {
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "tt-expiry-retirement-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const candidate = path.resolve(__dirname, "../packages/agent");
+  const tenantId = "11111111-1111-4111-8111-111111111111";
+  const clientId = "22222222-2222-4222-8222-222222222222";
+  const assertionFile = path.join(root, "assertion");
+  const auth = { type: "workload-identity", tenantId, clientId, assertionFile };
+  require("../packages/agent/src/material-store").writeProtectedFile(assertionFile, "offline.test.assertion");
+  for (const [status, body, expected] of [
+      [400, JSON.stringify({ error_codes: [700016], error_description: "private fixture" }), true],
+      [401, JSON.stringify({ error_codes: [700016] }), true],
+      [200, JSON.stringify({ error_codes: [700016] }), false],
+      [503, JSON.stringify({ error_codes: [700016] }), false],
+      [400, JSON.stringify({ error_codes: [700213] }), false],
+      [401, JSON.stringify({ error_codes: [7000215] }), false],
+      [400, JSON.stringify({ error_codes: [700016], error_description: "x".repeat(32768) }), false],
+      [400, "malformed JSON", false],
+  ]) {
+    let request;
+    const probe = expiry.applicationRetirementProbe(candidate, { auth }, async (target, { method, redirect }) => {
+      request = { href: target.href, method, redirect };
+      return new Response(body, { status });
+    });
+    assert.equal(await probe(), expected, `HTTP ${status}`);
+    assert.deepEqual(request, { href: `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+      method: "POST", redirect: "error" });
+  }
 });
 
 test("a longer job still reserves cleanup against the earlier absolute deadline and caps Azure at two hours", () => {
