@@ -170,8 +170,10 @@ function authority(env = process.env) {
         await lab.remove(plan, env);
       }
       assert.equal(await lab.verifyOwned(plan, env), null, "owned vault group remains");
+      const receiptFile = path.join(path.dirname(file), "operator-cleaned.json");
       if (!fs.existsSync(credentialRoot)) {
-        const receipt = lab.load(path.join(path.dirname(file), "operator-cleaned.json"));
+        if (!fs.existsSync(receiptFile)) policy.fail("AZURE_OPERATOR_RETIREMENT_RECEIPT_MISSING");
+        const receipt = lab.load(receiptFile);
         assert.deepEqual(receipt, expected);
         return { vaultAbsent: true, roleAssignmentsAbsent: true, appsAndCredentialsAbsent: true };
       }
@@ -184,12 +186,12 @@ function authority(env = process.env) {
         console.log("Owned Key Vault removed. Waiting for the operator to retire both disposable Entra apps.");
         while (Date.now() + 15000 < deadlineMs) {
           if (await retired()) {
-            lab.save(path.join(path.dirname(file), "operator-cleaned.json"), expected);
+            lab.save(receiptFile, expected);
             return { vaultAbsent: true, roleAssignmentsAbsent: true, appsAndCredentialsAbsent: true };
           }
           await lab.sleep(5000);
         }
-        throw new Error("Operator Entra retirement was not verified");
+        policy.fail("AZURE_OPERATOR_ENTRA_RETIREMENT_TIMEOUT");
       } finally {
         for (const role of ROLES) for (const extension of ["cert.pem", "key.pem"])
           fs.rmSync(path.join(credentialRoot, role + "." + extension), { force: true });

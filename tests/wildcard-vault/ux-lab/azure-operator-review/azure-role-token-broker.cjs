@@ -82,18 +82,25 @@ async function requestEntra(url, { method, headers, body, timeoutMs, maxBytes },
       chunks.push(chunk);
     }
     const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    requireCondition(value && typeof value === "object" && !Array.isArray(value), bad);
     if (response.status === 200) {
       return { status: 200, json: { access_token: value.access_token, expires_in: value.expires_in,
         expires_on: value.expires_on } };
     }
     return { status: response.status, json: { error: value.error === "invalid_client" ? "invalid_client" : null,
-      error_codes: Array.isArray(value.error_codes)
+      error_codes: Array.isArray(value.error_codes) && (!retirement || value.error_codes.every(Number.isSafeInteger))
         ? value.error_codes.filter(code =>
           MISMATCH_CODES.includes(code) || code === CERTIFICATE_MISMATCH_CODE || retirement && code === APPLICATION_NOT_FOUND)
         : [] } };
   } catch {
     throw new Error(bad);
   }
+}
+
+function applicationNotFound(response) {
+  // This is the same exact provider-code check as natural token expiry.
+  return [400, 401].includes(response.status) &&
+    Array.isArray(response.json?.error_codes) && response.json.error_codes.includes(APPLICATION_NOT_FOUND);
 }
 
 function pinnedDirectory(root, uid, owner, io) {
@@ -206,8 +213,7 @@ function createRetirementProbe({ certificateRoot, issuer, consumer, deadlineMs }
       const { assertion } = source.acquire(role);
       const response = await exchangeAssertion(roles[role], assertion, (url, options) =>
         requestEntra(url, options, fetch, true));
-      return [400, 401].includes(response.status) && response.json?.error === "invalid_client" &&
-        response.json.error_codes?.includes(APPLICATION_NOT_FOUND);
+      return applicationNotFound(response);
     }));
     return observations.every(Boolean);
   };
@@ -308,9 +314,9 @@ function broker({ binding, projectionRoot, certificateRoot, deadlineMs, issuer, 
       row.last = row.pending;
       if (phase === "running") schedule(role, expiresOn);
       return { role, expiresOn, tokenRenewals: row.renewals };
-    }).catch(() => {
+    }).catch((cause) => {
       if (phase !== "stopped") finish("failed");
-      throw new Error("AZURE_BROKER_REFRESH_FAILED");
+      throw new Error("AZURE_BROKER_REFRESH_FAILED", { cause });
     }).finally(() => {
       row.pending = undefined;
       row.inFlight = undefined;
@@ -335,10 +341,10 @@ function broker({ binding, projectionRoot, certificateRoot, deadlineMs, issuer, 
       checkSinks({ issuer, consumer }, io, platform);
       phase = "running";
       ROLES.forEach(role => schedule(role, state[role].last.expiresOn));
-    })().catch(async () => {
+    })().catch(async (cause) => {
       if (phase !== "stopped") finish("failed");
       await Promise.allSettled(ROLES.map(role => state[role].inFlight));
-      throw new Error("AZURE_BROKER_ADMISSION_FAILED");
+      throw new Error("AZURE_BROKER_ADMISSION_FAILED", { cause });
     });
     return admission;
   }
@@ -359,4 +365,5 @@ function broker({ binding, projectionRoot, certificateRoot, deadlineMs, issuer, 
   }, stop, observations, signal: controller.signal };
 }
 
-module.exports = { createBroker, createRetirementProbe, _offline: { broker, validateAssertion, requestEntra, roleTrust, certificateSource } };
+module.exports = { createBroker, createRetirementProbe,
+  _offline: { broker, validateAssertion, requestEntra, roleTrust, certificateSource, applicationNotFound } };
