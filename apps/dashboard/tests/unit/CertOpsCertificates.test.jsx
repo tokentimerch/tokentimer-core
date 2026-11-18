@@ -1697,6 +1697,22 @@ it('opens the same certificate identity from its deployment summary and fetches 
   );
 });
 
+it('exposes the full fingerprint tooltip on keyboard focus', async () => {
+  useCertOpsCertificatesMock.mockReturnValue(
+    certState({ certificates: [certificate()] })
+  );
+  renderPage();
+  const fingerprint = screen.getByText('aaaaaaaaaaaa…');
+  expect(fingerprint).toHaveAttribute('tabindex', '0');
+  fireEvent.focus(fingerprint);
+  expect(await screen.findByRole('tooltip')).toHaveTextContent(
+    certificate().fingerprintSha256
+  );
+  expect(fingerprint).toHaveAccessibleDescription(
+    certificate().fingerprintSha256
+  );
+});
+
 it('distinguishes same-name certificates by fingerprint and current observed use', () => {
   useCertOpsCertificatesMock.mockReturnValue(
     certState({
