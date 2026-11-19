@@ -7138,6 +7138,7 @@
         "job-decisions-claimed-success",
         "job-decisions-terminal-replay",
         "job-decisions-orphan-reconciliation",
+        "job-decisions-operator-cancellation",
         "job-decisions-two-agent-claim",
         "job-decisions-foreign-result-fence",
         "job-decisions-cleanup"

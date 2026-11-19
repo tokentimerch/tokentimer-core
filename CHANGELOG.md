@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Certificate job controls.** Set the event order in the job view. Workspace managers can cancel eligible agent jobs there. If a real job may already have changed the host, the timeline flags the uncertain outcome for verification before retrying. See the [job timeline guide](docs/certops/executor-api.md#8-timeline-in-the-dashboard).
+
 ## [0.20.0] - 2026-11-19
 
 ### Added

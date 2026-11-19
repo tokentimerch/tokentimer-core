@@ -243,6 +243,13 @@ const {
   requestApprovalReview,
   rejectJob,
 } = require("../services/certops/jobApprovals");
+const {
+  CERTOPS_JOB_CANCELLATION_FORBIDDEN,
+  CERTOPS_JOB_CANCELLATION_UNAVAILABLE,
+  CERTOPS_JOB_CANCELLATION_UNSUPPORTED,
+  canCancelCertOpsJob,
+  cancelCertificateJob,
+} = require("../services/certops/jobCancellation");
 const { writeAudit } = require("../services/audit");
 const { logger } = require("../utils/logger");
 const Token = require("../db/models/Token");
@@ -1108,7 +1115,7 @@ function createManualCertificateJobHandler({
       }
       return res
         .status(201)
-        .json({ job: redactClaimIdForNonAdmins(req, jobDetail(job)) });
+        .json({ job: redactClaimIdForNonAdmins(req, jobDetail(job, req.authz?.workspaceRole)) });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
@@ -1459,7 +1466,7 @@ function createControllerProvisionIntentHandler({
         actorUserId: req.user?.id || null,
       });
       return res.status(result.duplicate ? 200 : 201).json({
-        job: redactClaimIdForNonAdmins(req, jobDetail(result.job)),
+        job: redactClaimIdForNonAdmins(req, jobDetail(result.job, req.authz?.workspaceRole)),
         managedCertificateId: result.managedCertificateId,
         targetId: result.targetId,
         duplicate: Boolean(result.duplicate),
@@ -1533,9 +1540,12 @@ function jobSummary(job) {
   };
 }
 
-function jobDetail(job) {
+function jobDetail(job, workspaceRole) {
   return {
     ...jobSummary(job),
+    canCancel: canCancelCertOpsJob(job, {
+      canManageTrustAnchors: can(workspaceRole, "certops.trust_anchor.manage"),
+    }),
     payload: job.payload || {},
     resultMetadata: job.resultMetadata || {},
     errorCode: job.errorCode,
@@ -2856,6 +2866,40 @@ router.post(
   jobApprovalDecisionHandler("reject"),
 );
 
+router.post(
+  "/api/v1/workspaces/:id/certops/jobs/:jobId/cancel",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsSessionUser,
+  requireCertOpsWriteRole,
+  async (req, res) => {
+    const jobId = jobIdFromParams(req, res);
+    if (!jobId) return null;
+    try {
+      const result = await withCertOpsTransaction((client) => cancelCertificateJob({
+        client, workspaceId: req.workspace.id, jobId, actorUserId: req.user.id,
+        canManageTrustAnchors: can(req.authz?.workspaceRole, "certops.trust_anchor.manage"),
+      }));
+      return res.json(result);
+    } catch (error) {
+      if (error?.code === CERTOPS_JOB_CANCELLATION_FORBIDDEN) {
+        return res.status(403).json({ error: error.message, code: error.code });
+      }
+      if (error?.code === CERTOPS_JOB_CANCELLATION_UNAVAILABLE ||
+          error?.code === CERTOPS_JOB_CANCELLATION_UNSUPPORTED) {
+        return res.status(409).json({ error: error.message, code: error.code });
+      }
+      const handled = handleCertOpsError(res, error);
+      if (handled) return handled;
+      logger.error("CertOps job cancellation failed", {
+        code: error?.code || null, workspaceId: req.workspace.id, jobId,
+      });
+      return res.status(500).json({ error: "Failed to cancel CertOps job", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
 router.get(
   "/api/v1/workspaces/:id/certops/jobs/:jobId/log",
   getApiLimiter(),
@@ -3057,7 +3101,7 @@ router.get(
 
       return res.json({
         job: redactClaimIdForNonAdmins(req, {
-          ...jobDetail(job),
+          ...jobDetail(job, req.authz?.workspaceRole),
           claimedByAgentSigningKeyId,
         }),
       });
@@ -4177,7 +4221,7 @@ router.post(
       });
       return res
         .status(201)
-        .json({ job: redactClaimIdForNonAdmins(req, jobDetail(job)) });
+        .json({ job: redactClaimIdForNonAdmins(req, jobDetail(job, req.authz?.workspaceRole)) });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;

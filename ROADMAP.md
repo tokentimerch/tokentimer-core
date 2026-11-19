@@ -145,7 +145,10 @@ does not promise a version or add a v1.0.0 gate.
   [cancellation #344](https://github.com/tokentimerch/tokentimer-core/issues/344),
   [manual evidence #341](https://github.com/tokentimerch/tokentimer-core/issues/341)
   and [restore decommissioned identities #410](https://github.com/tokentimerch/tokentimer-core/issues/410).
-  Scope each against the released lifecycle before implementation.
+  Core cancellation covers eligible agent jobs and requires reconciliation
+  when real host effects are uncertain. Jobs with dedicated enrollment or
+  distribution lifecycle controls stay on those paths. Controller, external
+  executor and consuming-edition adoption remain follow-on work.
 - **Release provenance**
   ([#300](https://github.com/tokentimerch/tokentimer-core/issues/300)).
 

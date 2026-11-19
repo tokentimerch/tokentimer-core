@@ -9622,6 +9622,64 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/jobs/{jobId}/cancel:
+    post:
+      tags: [CertOps]
+      summary: Cancel a CertOps job
+      operationId: cancelCertOpsJob
+      description: >-
+        Fences further control-plane execution for this job. Available to
+        session-authenticated managers while the workspace is paused.
+        Supports agent jobs waiting for approval or assigned to or held by an
+        agent. Controller, bring-your-own executor, AD CS enrollment and
+        material distribution jobs use their own lifecycle controls.
+        Trust anchor jobs require a workspace administrator.
+        Returns orphaned_unknown_effect if a real mutation may already
+        have started. Cancellation cannot stop or roll back host changes.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The job has been fenced and its outcome recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobId, status, needsOperatorReconciliation]
+                properties:
+                  jobId: { type: string, format: uuid }
+                  status: { type: string, enum: [cancelled, orphaned_unknown_effect] }
+                  needsOperatorReconciliation: { type: boolean }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Caller lacks the required role or uses non-session credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Job not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Job is terminal, requires reconciliation, or has a separate lifecycle or execution path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/jobs/{jobId}/log:
     get:
       tags: [CertOps]
@@ -15739,6 +15797,9 @@ components:
         - createdAt
         - updatedAt
       properties:
+        canCancel:
+          type: boolean
+          description: The job has an active agent dispatch path eligible for operator cancellation.
         id:
           type: string
           format: uuid

@@ -144,15 +144,15 @@ function pendingReasonForJob(job, agent) {
 // Optional same-object mark from jobFromRow. Authoritative AD CS detection for
 // list/get is the workspace-scoped enrollment_id lookup in
 // loadAdcsEnrollmentJobIds (survives clones, no cross-request shared Set).
-// The Symbol is omitted by JSON.stringify and dropped by object spread on the
-// returned job, so API responses never gain issuerKind or enrollment id here.
+// The Symbol survives enrichment via object spread and is omitted by JSON
+// serialization. API responses do not expose the internal marker.
 const ADCS_JOB_MARK = Symbol("tokentimer.certops.adcsJob");
 
 function markAdcsJob(job) {
   if (!job || typeof job !== "object") return;
   Object.defineProperty(job, ADCS_JOB_MARK, {
     value: true,
-    enumerable: false,
+    enumerable: true,
     configurable: true,
     writable: false,
   });
@@ -218,20 +218,23 @@ async function attachJobPendingReasons({ db, workspaceId, jobs, env }) {
   return jobs.map((job) => {
     const agentId = job.assignedAgentId || job.claimedByAgentId || null;
     const agent = agentId ? agentsById.get(String(agentId)) || null : null;
-    // issuerKind stays on the temporary eligibility input only; the returned
-    // job must not gain a public issuerKind field (spread also drops the Symbol).
+    // Preserve the internal mark on each new object without exposing an
+    // enrollment identity or issuer kind in the API representation.
     const issuerKind =
       isMarkedAdcsJob(job) || adcsJobIds.has(String(job.id)) ? "adcs" : null;
-    return {
+    const enrichedJob = {
       ...job,
       pendingReason: pendingReasonForJob({ ...job, issuerKind }, agent),
     };
+    if (issuerKind === "adcs") markAdcsJob(enrichedJob);
+    return enrichedJob;
   });
 }
 
 module.exports = {
   AWAITING_EXECUTION_STATUSES,
   attachJobPendingReasons,
+  isMarkedAdcsJob,
   markAdcsJob,
   pendingReasonForJob,
 };

@@ -129,6 +129,9 @@ export function jobOperationLabel(operation) {
 
 /** Advisory line for a job needing manual reconciliation; reason is optional. */
 export function reconciliationAdvisoryText(reason) {
+  if (reason === 'operator_cancelled_after_execution_started') {
+    return 'TokenTimer stopped coordinating this job. Verify the host before retrying.';
+  }
   if (reason === 'certificate_retirement_overlapped_execution') {
     return 'Certificate retirement overlapped this operation. Verify what is installed and remove or replace retired certificates where needed.';
   }
