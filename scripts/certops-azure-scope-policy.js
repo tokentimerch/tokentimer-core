@@ -7,6 +7,7 @@ const KV = "certops-azure-keyvault-qualification.yml";
 const KV_CLEANUP = "certops-azure-keyvault-janitor.yml";
 const OPERATOR = "certops-azure-operator-qualification.yml";
 const IMDS = "certops-azure-imds-qualification.yml";
+const IIS_ACCESS = "certops-iis-lab-access.yml";
 const PROVISION = Object.freeze([
   KV,
   OPERATOR,
@@ -41,6 +42,15 @@ const EXPIRY_UPLOAD_IF = "success() && steps.expiry-observation.outcome == 'succ
 const OPERATOR_UPLOAD_IF = "success() && steps.operator-journey.outcome == 'success' && steps.operator-cleanup.outcome == 'success'";
 const IMDS_IF = MAIN + " && vars.CERTOPS_AZURE_IMDS_LAB_ENABLED == 'true'";
 const IMDS_UPLOAD_IF = "success() && steps.collect.outcome == 'success' && steps.scrub.outcome == 'success'";
+const IIS_RECEIPT_PATH = "qualification-results/iis-arm-receipt.json";
+const IIS_MAIN = MAIN + " && github.repository == 'tokentimerch/tokentimer-core'";
+const IIS_READ_IF = "inputs.operation == 'read'";
+const IIS_CHECK_IF = "inputs.operation == 'check-cleanup'";
+const IIS_DELETE_IF = "inputs.operation == 'delete-owned-group'";
+const IIS_CONDITIONS = {
+  verifier: IIS_MAIN + " && " + IIS_READ_IF,
+  cleanup: IIS_MAIN + " && (" + IIS_CHECK_IF + " || " + IIS_DELETE_IF + ")",
+};
 const LIFECYCLE_IF = MAIN;
 const SELF_APPROVAL = "TT_AZURE_LAB_SELF_APPROVAL";
 const SELF_APPROVAL_REFERENCE = "${{ secrets.CERTOPS_AZURE_LAB_SELF_APPROVAL }}";
@@ -49,6 +59,7 @@ function allowedCondition(name, value) {
   if (name === KV) return [PROVIDER_IF, EXPIRY_IF, KEYVAULT_IF + " && inputs.final_package"].includes(value);
   if (name === OPERATOR) return value === KEYVAULT_IF;
   if (name === IMDS) return value === IMDS_IF;
+  if (name === IIS_ACCESS) return Object.values(IIS_CONDITIONS).includes(value);
   return PROVISION.includes(name)
     ? value === PROVISION_IF
     : LIFECYCLE.includes(name) && value === LIFECYCLE_IF;
@@ -638,8 +649,76 @@ function keyvaultPolicy(name, workflow, errors) {
       errors.push("Only the reviewed bounded region choice is dispatchable");
   }
 }
+function iisAccessPolicy(workflow, errors) {
+  const keys = (record, expected) => record && same(Object.keys(record).sort(), [...expected].sort());
+  const dispatch = workflow.on?.workflow_dispatch;
+  const inputs = dispatch?.inputs;
+  if (!keys(workflow, ["name", "on", "permissions", "concurrency", "jobs"]) ||
+      !keys(workflow.on, ["workflow_dispatch"]) || !keys(dispatch, ["inputs"]) ||
+      !keys(inputs, ["operation", "confirmation"]) ||
+      !keys(inputs.operation, ["description", "type", "options", "default"]) ||
+      inputs.operation.type !== "choice" || inputs.operation.default !== "read" ||
+      !same(inputs.operation.options, ["read", "check-cleanup", "delete-owned-group"]) ||
+      !keys(inputs.confirmation, ["description", "type", "required"]) ||
+      inputs.confirmation.type !== "string" || inputs.confirmation.required !== false ||
+      !same(workflow.permissions, { contents: "read" }) ||
+      !same(workflow.concurrency, { group: "certops-iis-lab-access", "cancel-in-progress": false }) ||
+      !keys(workflow.jobs, ["verifier", "cleanup"])) {
+    errors.push("IIS Azure access requires manual dispatch with read as the default and separate roles");
+    return;
+  }
+  const bindings = Object.fromEntries(
+    ["TENANT_ID", "SUBSCRIPTION_ID", "CLIENT_ID", "PRINCIPAL_ID", "RUN_ID"]
+      .map(suffix => ["TT_IIS_" + suffix, "${{ vars.TT_IIS_" + suffix + " }}"]),
+  );
+  const pinned = (step, action) => typeof step?.uses === "string" && step.uses.startsWith(action + "@");
+  const command = (step, mode, selectors = {}) =>
+    keys(step, ["name", "run", ...Object.keys(selectors)]) &&
+    Object.entries(selectors).every(([key, value]) => same(step[key], value)) &&
+    step.run === "mkdir -p qualification-results && node infra/certops-iis/lab-access.cjs " + mode + " > " + IIS_RECEIPT_PATH;
+  for (const [id, job] of Object.entries(workflow.jobs)) {
+    const environment = "certops-iis-" + id;
+    if (!keys(job, ["if", "environment", "runs-on", "timeout-minutes", "permissions", "env", "steps"]) ||
+        job.if !== IIS_CONDITIONS[id] || job.environment !== environment ||
+        job["runs-on"] !== "ubuntu-24.04" || job["timeout-minutes"] !== 5 ||
+        !same(job.permissions, { contents: "read", "id-token": "write" }) ||
+        !same(job.env, bindings) || !Array.isArray(job.steps)) {
+      errors.push("IIS Azure access requires its two distinct protected main jobs with only dedicated bindings");
+      continue;
+    }
+    const [checkout, setup, read, remove] = job.steps;
+    const upload = job.steps.at(-1);
+    const verifier = id === "verifier";
+    const expectedOperation = verifier
+      ? command(read, "read")
+      : command(read, "check-cleanup", { if: IIS_CHECK_IF }) &&
+        command(remove, "delete-owned-group", {
+          if: IIS_DELETE_IF, env: {
+            TT_IIS_CONFIRM_GROUP: "${{ inputs.confirmation }}",
+            TT_IIS_EXPIRES_AT: "${{ vars.TT_IIS_EXPIRES_AT }}",
+          },
+        });
+    if (job.steps.length !== (verifier ? 4 : 5) ||
+        !keys(checkout, ["uses", "with"]) || !pinned(checkout, "actions/checkout") ||
+        !same(checkout.with, { "persist-credentials": false }) ||
+        !keys(setup, ["uses", "with"]) || !pinned(setup, "actions/setup-node") ||
+        !same(setup.with, { "node-version": "24.22.3", "package-manager-cache": false }) ||
+        !expectedOperation || !keys(upload, ["uses", "if", "with"]) ||
+        !pinned(upload, "actions/upload-artifact") || upload.if !== "success()" ||
+        !same(upload.with, {
+          name: `iis-azure-${id}-receipt`, path: IIS_RECEIPT_PATH, "if-no-files-found": "error",
+        })) {
+      errors.push("IIS Azure access must run only the reviewed operation and upload its successful receipt");
+    }
+  }
+}
+
 function validate(name, workflow) {
   const errors = [];
+  if (name === IIS_ACCESS) {
+    iisAccessPolicy(workflow, errors);
+    return errors;
+  }
   const known = PROVISION.includes(name) || LIFECYCLE.includes(name);
   const runs = Object.values(workflow.jobs || {}).flatMap((job) =>
     (job.steps || []).map((step) => step.run || ""),
@@ -658,7 +737,7 @@ function validate(name, workflow) {
       ),
     ) ||
     runs.some((run) =>
-      /infra\/certops-(?:adcs\/(?:login-oidc|provision-lab)|azure-keyvault\/)|azure-keyvault-(?:real|operator)\.cjs|certops-(?:retention24h|retention-cadence|adcs-ttl24h)-azure\.js/.test(
+      /infra\/certops-(?:adcs\/(?:login-oidc|provision-lab)|azure-keyvault\/|iis\/lab-access\.cjs)|azure-keyvault-(?:real|operator)\.cjs|certops-(?:retention24h|retention-cadence|adcs-ttl24h)-azure\.js/.test(
         run,
       ),
     );
@@ -719,6 +798,8 @@ module.exports = {
   OPERATOR_UPLOAD_IF,
   EXPIRY_UPLOAD_IF,
   IMDS_UPLOAD_IF,
+  IIS_ACCESS,
+  IIS_RECEIPT_PATH,
   LIFECYCLE_IF,
   allowedCondition,
   validate,

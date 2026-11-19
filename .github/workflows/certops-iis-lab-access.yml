@@ -1,0 +1,91 @@
+name: "CertOps / IIS lab Azure access"
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operation for the reserved IIS lab group
+        type: choice
+        options: [read, check-cleanup, delete-owned-group]
+        default: read
+      confirmation:
+        description: Exact resource group name, required for deletion
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: certops-iis-lab-access
+  cancel-in-progress: false
+
+jobs:
+  verifier:
+    if: github.ref == 'refs/heads/main' && github.repository == 'tokentimerch/tokentimer-core' && inputs.operation == 'read'
+    environment: certops-iis-verifier
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TT_IIS_TENANT_ID: ${{ vars.TT_IIS_TENANT_ID }}
+      TT_IIS_SUBSCRIPTION_ID: ${{ vars.TT_IIS_SUBSCRIPTION_ID }}
+      TT_IIS_CLIENT_ID: ${{ vars.TT_IIS_CLIENT_ID }}
+      TT_IIS_PRINCIPAL_ID: ${{ vars.TT_IIS_PRINCIPAL_ID }}
+      TT_IIS_RUN_ID: ${{ vars.TT_IIS_RUN_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.22.3'
+          package-manager-cache: false
+      - name: Read the exact group and record a sanitized receipt
+        run: mkdir -p qualification-results && node infra/certops-iis/lab-access.cjs read > qualification-results/iis-arm-receipt.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: success()
+        with:
+          name: iis-azure-verifier-receipt
+          path: qualification-results/iis-arm-receipt.json
+          if-no-files-found: error
+
+  cleanup:
+    if: github.ref == 'refs/heads/main' && github.repository == 'tokentimerch/tokentimer-core' && (inputs.operation == 'check-cleanup' || inputs.operation == 'delete-owned-group')
+    environment: certops-iis-cleanup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TT_IIS_TENANT_ID: ${{ vars.TT_IIS_TENANT_ID }}
+      TT_IIS_SUBSCRIPTION_ID: ${{ vars.TT_IIS_SUBSCRIPTION_ID }}
+      TT_IIS_CLIENT_ID: ${{ vars.TT_IIS_CLIENT_ID }}
+      TT_IIS_PRINCIPAL_ID: ${{ vars.TT_IIS_PRINCIPAL_ID }}
+      TT_IIS_RUN_ID: ${{ vars.TT_IIS_RUN_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.22.3'
+          package-manager-cache: false
+      - name: Check access using the backup principal
+        if: inputs.operation == 'check-cleanup'
+        run: mkdir -p qualification-results && node infra/certops-iis/lab-access.cjs check-cleanup > qualification-results/iis-arm-receipt.json
+      - name: Request deletion of the confirmed owned group
+        if: inputs.operation == 'delete-owned-group'
+        env:
+          TT_IIS_CONFIRM_GROUP: ${{ inputs.confirmation }}
+          TT_IIS_EXPIRES_AT: ${{ vars.TT_IIS_EXPIRES_AT }}
+        run: mkdir -p qualification-results && node infra/certops-iis/lab-access.cjs delete-owned-group > qualification-results/iis-arm-receipt.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: success()
+        with:
+          name: iis-azure-cleanup-receipt
+          path: qualification-results/iis-arm-receipt.json
+          if-no-files-found: error
