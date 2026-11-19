@@ -1,11 +1,14 @@
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName='Build')]
 param(
     [Parameter(Mandatory)][string]$PolicyPath,
     [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{64}$', Options='None')][string]$ExpectedPolicySha256,
-    [Parameter(Mandatory)][string]$SourceCheckout,
-    [Parameter(Mandatory)][string]$GoArchive,
-    [Parameter(Mandatory)][string]$OfflineModuleCache,
-    [Parameter(Mandatory)][string]$StageParent
+    [Parameter(Mandatory,ParameterSetName='Build')][string]$SourceCheckout,
+    [Parameter(Mandatory,ParameterSetName='Build')][string]$GoArchive,
+    [Parameter(Mandatory,ParameterSetName='Build')][string]$OfflineModuleCache,
+    [Parameter(Mandatory,ParameterSetName='Build')][string]$StageParent,
+    [Parameter(ParameterSetName='Build')][string]$SourceSigningPolicy,
+    [Parameter(Mandatory,ParameterSetName='Validate')][switch]$ValidatePolicy,
+    [Parameter(ParameterSetName='Validate')][string]$InspectLauncherPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,12 +75,51 @@ function Read-Policy([string]$Path) {
 }
 
 $policy = Read-Policy $PolicyPath
+$trust = [ordered]@{
+    trustedPublisherSHA256 = $policy.publisherLeafSha256
+    trustedRuntimeSHA256 = $policy.upstreamRuntimePublisherLeafSha256
+    qualifiedInstallerSHA256 = $policy.installerSha256
+    qualifiedSourceCommit = $policy.sourceCommit
+    qualifiedVersion = $policy.version
+    qualifiedArchitecture = $policy.architecture
+}
+
+function Assert-LauncherImage([string]$Path) {
+    $file = Get-Item -LiteralPath $Path -Force
+    if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        $file.Length -lt 64 -or $file.Length -gt 32MB) {
+        throw 'Launcher must be a bounded regular file'
+    }
+    $bytes = [IO.File]::ReadAllBytes($file.FullName)
+    $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+    if ($bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a -or $pe -lt 64 -or
+        $pe -gt $bytes.Length - 6 -or [BitConverter]::ToUInt32($bytes, $pe) -ne 0x4550 -or
+        [BitConverter]::ToUInt16($bytes, $pe + 4) -ne 0x8664) {
+        throw 'Launcher is not an amd64 Windows PE'
+    }
+    $binaryText = [Text.Encoding]::Latin1.GetString($bytes)
+    if (@($trust.Values | Where-Object { !$binaryText.Contains([string]$_, [StringComparison]::Ordinal) }).Count -ne 0) {
+        throw 'Reviewed trust tuple was not embedded into the launcher'
+    }
+}
+
+if ($PSCmdlet.ParameterSetName -eq 'Validate') {
+    if ($InspectLauncherPath) { Assert-LauncherImage $InspectLauncherPath }
+    $policy
+    return
+}
+
 $checkout = (Resolve-Path -LiteralPath $SourceCheckout).Path
 $archive = (Resolve-Path -LiteralPath $GoArchive).Path
 $cache = (Resolve-Path -LiteralPath $OfflineModuleCache).Path
 if (!(Test-Path -LiteralPath $cache -PathType Container)) { throw 'The pinned offline Go module cache is unavailable' }
 
-& git --no-replace-objects -C $checkout verify-commit $sourceCommit
+$gitOptions = @('--no-replace-objects','-C',$checkout)
+if ($SourceSigningPolicy) {
+    $allowedSigners = (Resolve-Path -LiteralPath $SourceSigningPolicy).Path
+    $gitOptions += @('-c',"gpg.ssh.allowedSignersFile=$allowedSigners")
+}
+& git @gitOptions verify-commit $sourceCommit
 if ($LASTEXITCODE -ne 0) { throw 'Exact launcher source signature is not verified locally' }
 $files = @(git --no-replace-objects -C $checkout ls-tree -r $sourceCommit -- $modulePath)
 if ($LASTEXITCODE -ne 0 -or $files.Count -eq 0 -or @($files | Where-Object {
@@ -170,36 +212,16 @@ if ((Invoke-OfflineGo @('env','GOVERSION')).Trim() -cne $goVersion) { throw 'Wro
 $null = Invoke-OfflineGo @('mod','download','golang.org/x/sys')
 $null = Invoke-OfflineGo @('mod','verify')
 if ((Get-Sha256 $goSum) -cne $goSumSha256) { throw 'Dependency verification changed the signed Go checksums' }
-$trust = [ordered]@{
-    trustedPublisherSHA256 = $policy.publisherLeafSha256
-    trustedRuntimeSHA256 = $policy.upstreamRuntimePublisherLeafSha256
-    qualifiedInstallerSHA256 = $policy.installerSha256
-    qualifiedSourceCommit = $policy.sourceCommit
-    qualifiedVersion = $policy.version
-    qualifiedArchitecture = $policy.architecture
-}
 $flags = ($trust.GetEnumerator() | ForEach-Object { "-X main.$($_.Key)=$($_.Value)" }) -join ' '
 $output = Join-Path $stage $launcherName
 $null = Invoke-OfflineGo @('build','-mod=readonly','-trimpath','-buildvcs=false','-ldflags',$flags,'-o',$output,'./cmd/agent-launcher')
 $build = Invoke-OfflineGo @('version','-m',$output)
-$launcherFile = Get-Item -LiteralPath $output
-if ($launcherFile.Length -lt 64 -or $launcherFile.Length -gt 32MB -or
-    $build -cnotmatch "(?m)^.+: $([regex]::Escape($goVersion))\r?$" -or
+if ($build -cnotmatch "(?m)^.+: $([regex]::Escape($goVersion))\r?$" -or
     $build -cnotmatch "(?m)^[ \t]+path\t$([regex]::Escape($expectedModule))\r?$" -or
     $build -cnotmatch '\bGOOS=windows\b' -or $build -cnotmatch '\bGOARCH=amd64\b' -or $build -cnotmatch '\bCGO_ENABLED=0\b') {
     throw 'Offline build differs from the expected launcher module and target'
 }
-$launcherBytes = [IO.File]::ReadAllBytes($output)
-$pe = [BitConverter]::ToInt32($launcherBytes, 0x3c)
-if ($launcherBytes[0] -ne 0x4d -or $launcherBytes[1] -ne 0x5a -or $pe -lt 64 -or
-    $pe -gt $launcherBytes.Length - 6 -or [BitConverter]::ToUInt32($launcherBytes, $pe) -ne 0x4550 -or
-    [BitConverter]::ToUInt16($launcherBytes, $pe + 4) -ne 0x8664) {
-    throw 'Launcher is not an amd64 Windows PE'
-}
-$binaryText = [Text.Encoding]::Latin1.GetString($launcherBytes)
-if (@($trust.Values | Where-Object { !$binaryText.Contains([string]$_, [StringComparison]::Ordinal) }).Count -ne 0) {
-    throw 'Reviewed trust tuple was not embedded into the launcher'
-}
+Assert-LauncherImage $output
 
 [ordered]@{
     sourceCommit = $sourceCommit
