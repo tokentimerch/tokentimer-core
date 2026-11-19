@@ -229,10 +229,27 @@ async function getCertificate({
   }
 }
 
-function nameFromId(id, segment) {
-  const pathParts = id ? String(id).split("/").filter(Boolean) : [];
-  const index = pathParts.indexOf(segment);
-  return index >= 0 && pathParts[index + 1] ? pathParts[index + 1] : null;
+function listedObjects(rows, collection, getId = item => item?.id) {
+  const seen = new Set();
+  const objects = [];
+  const objectPath = new RegExp(`^/${collection}/([a-z0-9-]{1,127})(?:/[a-z0-9]{32})?$`, "i");
+  let identityError;
+  for (const item of rows) {
+    const id = getId(item);
+    const url = typeof id === "string" && id.trim() === id ? URL.parse(id) : null;
+    const name = url && /^https?:$/.test(url.protocol) && !url.username && !url.password &&
+      !url.search && !url.hash ? objectPath.exec(url.pathname)?.[1] : null;
+    // Azure declares object identifiers case-insensitive. Keep the original
+    // name for stable inventory IDs while detecting overlaps between pages.
+    const identity = name?.toLowerCase();
+    if (!identity || seen.has(identity)) {
+      identityError = `Azure Key Vault ${collection} listing returned an invalid or repeated object identifier`;
+      continue;
+    }
+    seen.add(identity);
+    objects.push({ item, name });
+  }
+  return { objects, identityError };
 }
 
 function unixAttrIso(value) {
@@ -303,24 +320,14 @@ async function scanAzure({
           count: secretList.length,
         });
 
-        const seenSecrets = new Set();
+        const { objects, identityError } = listedObjects(secretList, "secrets");
         let secretsBudgetExhausted = false;
 
-        for (const secret of secretList) {
+        for (const { item: secret, name: secretName } of objects) {
           if (items.length >= maxItems) {
             secretsBudgetExhausted = true;
             break;
           }
-
-          const secretName = nameFromId(secret.id, "secrets");
-          if (!secretName) {
-            logger.warn("Azure secret missing name", {
-              secretId: secret.id,
-            });
-            continue;
-          }
-          if (seenSecrets.has(secretName)) continue;
-          seenSecrets.add(secretName);
 
           if (secret.attributes?.enabled === false) {
             logger.debug("Skipping disabled Azure secret", { secretName });
@@ -349,7 +356,8 @@ async function scanAzure({
           sourceKind: "azure-key-vault-secret",
           found: secretsFound,
           truncated: secretsTruncated || secretsBudgetExhausted,
-          complete: !secretsTruncated && !secretsBudgetExhausted,
+          ...(identityError ? { error: identityError } : {}),
+          complete: !identityError && !secretsTruncated && !secretsBudgetExhausted,
         });
         logger.info("Azure secrets scan completed", {
           found: secretsFound,
@@ -370,31 +378,19 @@ async function scanAzure({
           count: certificateList.length,
         });
 
-        const seenCertificates = new Set();
+        const { objects, identityError } = listedObjects(certificateList, "certificates");
         const BATCH_SIZE = 10;
         let certsBudgetExhausted = false;
 
-        for (let i = 0; i < certificateList.length; i += BATCH_SIZE) {
+        for (let i = 0; i < objects.length; i += BATCH_SIZE) {
           if (items.length >= maxItems) {
             certsBudgetExhausted = true;
             break;
           }
-          const batch = certificateList.slice(i, i + BATCH_SIZE);
+          const batch = objects.slice(i, i + BATCH_SIZE);
 
           await Promise.all(
-            batch.map(async (cert) => {
-              if (items.length >= maxItems) return;
-
-              const certName = nameFromId(cert.id, "certificates");
-              if (!certName) {
-                logger.warn("Azure certificate missing name", {
-                  certId: cert.id,
-                });
-                return;
-              }
-              if (seenCertificates.has(certName)) return;
-              seenCertificates.add(certName);
-
+            batch.map(async ({ item: cert, name: certName }) => {
               if (cert.attributes?.enabled === false) {
                 logger.debug("Skipping disabled Azure certificate", {
                   certName,
@@ -436,6 +432,10 @@ async function scanAzure({
                 }
               }
 
+              if (items.length >= maxItems) {
+                certsBudgetExhausted = true;
+                return;
+              }
               items.push({
                 source: "azure-key-vault-certificate",
                 sourceKind: "azure-key-vault-certificate",
@@ -471,7 +471,8 @@ async function scanAzure({
           sourceKind: "azure-key-vault-certificate",
           found: certsFound,
           truncated: certsTruncated || certsBudgetExhausted,
-          complete: !certsTruncated && !certsBudgetExhausted,
+          ...(identityError ? { error: identityError } : {}),
+          complete: !identityError && !certsTruncated && !certsBudgetExhausted,
         });
         logger.info("Azure certificates scan completed", {
           found: certsFound,
@@ -494,23 +495,14 @@ async function scanAzure({
           await listKeys(listOpts);
         logger.info("Azure keys list retrieved", { count: keyList.length });
 
-        const seenKeys = new Set();
+        const { objects, identityError } = listedObjects(keyList, "keys", key => key?.kid || key?.id);
         let keysBudgetExhausted = false;
 
-        for (const key of keyList) {
+        for (const { item: key, name: keyName } of objects) {
           if (items.length >= maxItems) {
             keysBudgetExhausted = true;
             break;
           }
-
-          const keyId = key.kid || key.id;
-          const keyName = nameFromId(keyId, "keys");
-          if (!keyName) {
-            logger.warn("Azure key missing name", { keyId });
-            continue;
-          }
-          if (seenKeys.has(keyName)) continue;
-          seenKeys.add(keyName);
 
           if (key.attributes?.enabled === false) {
             logger.debug("Skipping disabled Azure key", { keyName });
@@ -542,7 +534,8 @@ async function scanAzure({
           sourceKind: "azure-key-vault-key",
           found: keysFound,
           truncated: keysTruncated || keysBudgetExhausted,
-          complete: !keysTruncated && !keysBudgetExhausted,
+          ...(identityError ? { error: identityError } : {}),
+          complete: !identityError && !keysTruncated && !keysBudgetExhausted,
         });
         logger.info("Azure keys scan completed", {
           found: keysFound,

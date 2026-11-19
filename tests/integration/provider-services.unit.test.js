@@ -540,6 +540,66 @@ describe("Provider service unit coverage", () => {
       expect(keys[0].expiration).to.be.a("string");
     });
 
+    for (const collection of ["secrets", "certificates", "keys"]) {
+      for (const issue of ["missing identifier", "duplicate across pages"]) {
+        it(`marks ${collection} incomplete after a ${issue} while retaining observed assets`, async () => {
+          const vaultUrl = "https://vault.example.com";
+          const field = collection === "keys" ? "kid" : "id";
+          const azure = requireWithMocks(resolveServiceModule("azureIntegration"), {
+            axios: async ({ url }) => {
+              const request = new URL(url);
+              if (request.pathname.endsWith("/Asset")) return { data: {} };
+              if (request.searchParams.has("$skiptoken")) {
+                return { data: { value: [issue === "missing identifier"
+                  ? { attributes: { enabled: true } }
+                  : { [field]: `${vaultUrl}/${collection}/ASSET` }] } };
+              }
+              return { data: {
+                value: [
+                  { [field]: `${vaultUrl}/${collection}/Asset`, attributes: { exp: 1893456000 } },
+                  { [field]: `${vaultUrl}/${collection}/Disabled`, attributes: { enabled: false } },
+                  ...(collection === "keys" ? [{ id: `${vaultUrl}/keys/Legacy` }] : []),
+                ],
+                nextLink: `${vaultUrl}/${collection}?$skiptoken=page-2`,
+              } };
+            },
+          });
+          const result = await azure.scanAzure({ vaultUrl, token: "test-token", include: { [collection]: true } });
+          expect(result.items.map(item => item.name)).to.deep.equal(collection === "keys" ? ["Asset", "Legacy"] : ["Asset"]);
+          expect(result.items[0].metric_expiration).to.equal("2030-01-01T00:00:00.000Z");
+          expect(result.summary[0]).to.include({ complete: false, truncated: false });
+          expect(result.summary[0].error).to.match(/invalid or repeated object identifier/);
+        });
+      }
+    }
+
+    it("enforces the shared limit when concurrent certificate details finish", async () => {
+      const vaultUrl = "https://vault.example.com";
+      let certificateNames = ["First", "Second"];
+      const azure = requireWithMocks(resolveServiceModule("azureIntegration"), {
+        axios: async ({ url }) => {
+          const path = new URL(url).pathname;
+          if (path === "/secrets") return { data: { value: [{ id: `${vaultUrl}/secrets/Credential` }] } };
+          if (path === "/certificates") return { data: {
+            value: certificateNames.map(name => ({ id: `${vaultUrl}/certificates/${name}` })),
+          } };
+          await new Promise(resolve => setImmediate(resolve));
+          return { data: { attributes: { exp: 1893456000 } } };
+        },
+      });
+      const scan = () => azure.scanAzure({ vaultUrl, token: "test-token",
+        include: { secrets: true, certificates: true }, maxItems: 2 });
+      const capped = await scan();
+      expect(capped.items).to.have.length(2);
+      expect(capped.summary.find(scope => scope.type === "certificates"))
+        .to.include({ found: 1, truncated: true, complete: false });
+      certificateNames = ["First"];
+      const exact = await scan();
+      expect(exact.items).to.have.length(2);
+      expect(exact.summary.find(scope => scope.type === "certificates"))
+        .to.include({ found: 1, truncated: false, complete: true });
+    });
+
     it("refuses Key Vault pagination URLs that leave the vault host", async () => {
       const requestedUrls = [];
       const axiosMock = async (config) => {
