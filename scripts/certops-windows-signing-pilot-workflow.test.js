@@ -50,7 +50,8 @@ test("only the protected signer handles pinned main code and the exact same-run 
   const inventorySign = sign.steps.find(step => step.run?.includes("-Operation SignInventory"));
   assert.equal(inventorySign.env.PILOT_INVENTORY_SHA256, "${{ steps.inventory.outputs.sha256 }}");
   const pilotScript = fs.readFileSync(path.join(__dirname, "windows-signing-pilot.ps1"), "utf8");
-  assert.match(pilotScript, /'\/p7',\$Stage,'\/p7ce','Embedded','\/p7co','1\.2\.840\.113549\.1\.7\.1',\$inventory/);
+  assert.match(pilotScript, /& \$dotnet \(Join-Path \$build 'InventoryCmsSigner\.dll'\) \$publisherPins\[0\]/);
+  assert.match(pilotScript, /restore \.\/InventoryCmsSigner\.csproj --configfile \.\/NuGet\.Config --locked-mode/);
 });
 
 test("signed output leaves the Windows worker only as the encrypted handoff", () => {
