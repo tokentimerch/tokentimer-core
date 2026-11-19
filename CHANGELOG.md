@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Operational diagnostics.** Signed-in users can share dashboard error references with their administrator. Reports record only the error category and dashboard area. Certificate distribution rollout and approval references connect the API and CertOps worker logs. See [configuration](docs/CONFIGURATION.md#core-runtime-and-bootstrap).
+
 ## [0.20.0] - 2026-11-19
 
 ### Added

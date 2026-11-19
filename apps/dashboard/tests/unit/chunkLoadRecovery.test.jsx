@@ -1,6 +1,7 @@
 import React, { lazy, Suspense } from 'react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -8,6 +9,7 @@ import {
   waitFor,
 } from '@testing-library/react';
 import ErrorBoundary from '../../src/components/ErrorBoundary.jsx';
+import { reportDashboardError } from '../../src/utils/apiClient.js';
 import {
   hasRecentChunkRecovery,
   isChunkLoadError,
@@ -15,6 +17,9 @@ import {
 } from '../../src/utils/chunkLoadRecovery.js';
 
 vi.mock('../../src/utils/logger.js', () => ({ logger: { error: vi.fn() } }));
+vi.mock('../../src/utils/apiClient.js', () => ({
+  reportDashboardError: vi.fn(),
+}));
 
 const chunkError = () =>
   new TypeError(
@@ -33,6 +38,7 @@ describe('chunk load recovery', () => {
   };
 
   beforeEach(() => {
+    vi.mocked(reportDashboardError).mockReset().mockResolvedValue(null);
     window.sessionStorage.clear();
     reload = vi.fn();
     vi.stubGlobal(
@@ -50,6 +56,7 @@ describe('chunk load recovery', () => {
     window.removeEventListener('error', handleExpectedError);
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     vi.useRealTimers();
   });
 
@@ -94,6 +101,23 @@ describe('chunk load recovery', () => {
     expect(hasRecentChunkRecovery()).toBe(true);
   });
 
+  it('shows an actionable reference for a reported production render error', async () => {
+    vi.stubEnv('PROD', true);
+    const reference = 'a2bcde12-3456-4789-abcd-0123456789ab';
+    vi.mocked(reportDashboardError).mockResolvedValueOnce(reference);
+    function BrokenPage() {
+      throw new Error('Application error');
+    }
+    render(
+      <ErrorBoundary>
+        <BrokenPage />
+      </ErrorBoundary>
+    );
+    expect(await screen.findByRole('status')).toHaveTextContent(reference);
+    expect(screen.getByText('Something went wrong')).toBeInTheDocument();
+    expect(reportDashboardError).toHaveBeenCalledExactlyOnceWith('render');
+  });
+
   it.each(['CSV', 'XLSX'])(
     'preserves unsaved form state when an optional %s import fails',
     async parser => {
@@ -132,7 +156,10 @@ describe('chunk load recovery', () => {
       expect(reload).toHaveBeenCalledTimes(1);
     }
   );
-  it('shows a prompt for Vite preload failures without swallowing the caller error', () => {
+  it('shows and reports a production Vite preload prompt without swallowing the caller error', async () => {
+    vi.stubEnv('PROD', true);
+    const reference = 'a2bcde12-3456-4789-abcd-0123456789ab';
+    vi.mocked(reportDashboardError).mockResolvedValueOnce(reference);
     render(
       <ErrorBoundary>
         <p>Dashboard</p>
@@ -145,8 +172,58 @@ describe('chunk load recovery', () => {
     expect(
       screen.getByText('Page files could not be loaded')
     ).toBeInTheDocument();
+    expect(await screen.findByRole('status')).toHaveTextContent(reference);
+    expect(reportDashboardError).toHaveBeenCalledExactlyOnceWith('chunk-load');
     expect(reload).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['already reported', true],
+    ['still pending', false],
+  ])(
+    'shows only the reference for the current chunk error when an earlier error is %s',
+    async (_state, firstReported) => {
+      vi.stubEnv('PROD', true);
+      const firstReference = 'a2bcde12-3456-4789-abcd-0123456789ab';
+      const secondReference = 'b2bcde12-3456-4789-abcd-0123456789ab';
+      let resolveFirst;
+      let resolveSecond;
+      vi.mocked(reportDashboardError)
+        .mockImplementationOnce(
+          () => new Promise(resolve => (resolveFirst = resolve))
+        )
+        .mockImplementationOnce(
+          () => new Promise(resolve => (resolveSecond = resolve))
+        );
+      render(
+        <ErrorBoundary>
+          <p>Dashboard</p>
+        </ErrorBoundary>
+      );
+      const firePreloadError = () => {
+        const event = new Event('vite:preloadError', { cancelable: true });
+        event.payload = chunkError();
+        fireEvent(window, event);
+      };
+
+      firePreloadError();
+      if (firstReported) {
+        await act(async () => resolveFirst(firstReference));
+        expect(screen.getByRole('status')).toHaveTextContent(firstReference);
+      }
+
+      firePreloadError();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+      expect(reportDashboardError).toHaveBeenCalledTimes(2);
+      await act(async () => resolveSecond(secondReference));
+      expect(screen.getByRole('status')).toHaveTextContent(secondReference);
+
+      if (!firstReported) {
+        await act(async () => resolveFirst(firstReference));
+        expect(screen.getByRole('status')).toHaveTextContent(secondReference);
+      }
+    }
+  );
 
   it('leaves unrelated Vite errors to the existing error handling', () => {
     render(
@@ -162,6 +239,9 @@ describe('chunk load recovery', () => {
   });
 
   it('lets a rejected lazy import reach the boundary after the Vite prompt', async () => {
+    vi.stubEnv('PROD', true);
+    const reference = 'a2bcde12-3456-4789-abcd-0123456789ab';
+    vi.mocked(reportDashboardError).mockResolvedValueOnce(reference);
     const Page = lazy(() =>
       Promise.reject(chunkError()).catch(error => {
         const event = new Event('vite:preloadError', { cancelable: true });
@@ -183,6 +263,8 @@ describe('chunk load recovery', () => {
       ).toBeInTheDocument();
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
+    expect(await screen.findByRole('status')).toHaveTextContent(reference);
+    expect(reportDashboardError).toHaveBeenCalledExactlyOnceWith('chunk-load');
     expect(reload).not.toHaveBeenCalled();
   });
 
@@ -201,7 +283,7 @@ describe('chunk load recovery', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('remembers a failed recovery across boundary mounts without reloading again', () => {
+  it('offers recovery advice after a recent refresh across boundary mounts', () => {
     refreshAfterChunkFailure();
     const first = render(
       <ErrorBoundary>
@@ -217,9 +299,7 @@ describe('chunk load recovery', () => {
         <BrokenPage />
       </ErrorBoundary>
     );
-    expect(
-      screen.getByText(/Refreshing did not resolve the problem/)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/If refreshing does not help/)).toBeInTheDocument();
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
