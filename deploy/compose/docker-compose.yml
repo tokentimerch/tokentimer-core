@@ -57,6 +57,8 @@ services:
         condition: service_completed_successfully
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      OFFLINE_MODE: ${OFFLINE_MODE:-false}
+      OUTBOUND_ALLOWLIST: ${OUTBOUND_ALLOWLIST:-}
       GLOBAL_RATE_LIMIT_WINDOW_MS: ${GLOBAL_RATE_LIMIT_WINDOW_MS:-}
       GLOBAL_RATE_LIMIT_MAX: ${GLOBAL_RATE_LIMIT_MAX:-}
       GLOBAL_SLOWDOWN_WINDOW_MS: ${GLOBAL_SLOWDOWN_WINDOW_MS:-}
@@ -263,6 +265,8 @@ services:
     command: ["node", "/app/apps/worker/src/runner.js", "discovery"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      OFFLINE_MODE: ${OFFLINE_MODE:-false}
+      OUTBOUND_ALLOWLIST: ${OUTBOUND_ALLOWLIST:-}
       TZ: ${TZ:-UTC}
 
       # Corporate proxy support - see docs/CONFIGURATION.md
@@ -340,6 +344,8 @@ services:
     command: ["node", "/app/apps/worker/src/runner.js", "delivery"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      OFFLINE_MODE: ${OFFLINE_MODE:-false}
+      OUTBOUND_ALLOWLIST: ${OUTBOUND_ALLOWLIST:-}
       TZ: ${TZ:-UTC}
 
       # Corporate proxy support - see docs/CONFIGURATION.md
@@ -437,6 +443,8 @@ services:
     command: ["node", "/app/apps/worker/src/runner.js", "weekly-digest"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      OFFLINE_MODE: ${OFFLINE_MODE:-false}
+      OUTBOUND_ALLOWLIST: ${OUTBOUND_ALLOWLIST:-}
       TZ: ${TZ:-UTC}
 
       # Corporate proxy support - see docs/CONFIGURATION.md
@@ -527,6 +535,8 @@ services:
     command: ["node", "/app/apps/worker/src/runner.js", "auto-sync"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      OFFLINE_MODE: ${OFFLINE_MODE:-false}
+      OUTBOUND_ALLOWLIST: ${OUTBOUND_ALLOWLIST:-}
       TZ: ${TZ:-UTC}
       # Corporate proxy support - see docs/CONFIGURATION.md
       NODE_USE_ENV_PROXY: ${TOKENTIMER_USE_ENV_PROXY:-}
@@ -584,6 +594,8 @@ services:
     command: ["node", "/app/apps/worker/src/runner.js", "endpoint-check"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      OFFLINE_MODE: ${OFFLINE_MODE:-false}
+      OUTBOUND_ALLOWLIST: ${OUTBOUND_ALLOWLIST:-}
       TZ: ${TZ:-UTC}
       # Corporate proxy support - see docs/CONFIGURATION.md
       NODE_USE_ENV_PROXY: ${TOKENTIMER_USE_ENV_PROXY:-}
@@ -629,6 +641,8 @@ services:
     command: ["node", "/app/apps/worker/src/runner.js", "certops"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      OFFLINE_MODE: ${OFFLINE_MODE:-false}
+      OUTBOUND_ALLOWLIST: ${OUTBOUND_ALLOWLIST:-}
       TZ: ${TZ:-UTC}
       # Corporate proxy support - see docs/CONFIGURATION.md
       NODE_USE_ENV_PROXY: ${TOKENTIMER_USE_ENV_PROXY:-}

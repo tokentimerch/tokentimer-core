@@ -1,3 +1,4 @@
+import { assertOutboundHost, isAllowedHost, OUTBOUND_POLICY_DENIED } from "@tokentimer/config/network";
 import nodemailer from "nodemailer";
 import fs from "fs";
 import path from "path";
@@ -536,6 +537,7 @@ function getTransporterForIndex(index) {
   if (!host) return null;
   // Anonymous relay: both absent is valid; only one being set is invalid.
   if (!hasBalancedSmtpAuth(user, pass)) return null;
+  if (!isAllowedHost(host)) return null;
   if (transporters[index]) return transporters[index];
   const tx = nodemailer.createTransport({
     host,
@@ -594,6 +596,7 @@ async function getDbTransporter() {
     return _dbTransporter;
   const config = await getDbSmtpConfig();
   if (!config) return null;
+  assertOutboundHost(config.host);
   const port = config.port || undefined;
   const smtpSecurity = resolveSmtpSecurity(
     port,
@@ -694,8 +697,9 @@ export async function sendEmailNotification({
       }
     }
 
+    const envBlocked = Boolean(process.env.SMTP_HOST && !isAllowedHost(process.env.SMTP_HOST));
     let last = null;
-    for (let i = 0; i < total; i++) {
+    for (let i = 0; !envBlocked && i < total; i++) {
       await maybeBeforeSmtpAttempt(onBeforeAttempt, {
         attempt: "smtp-account",
         accountIndex: i,
@@ -906,10 +910,16 @@ export async function sendEmailNotification({
         }
       } catch (dbErr) {
         if (dbErr?.name === "DeliveryOwnershipLostError") throw dbErr;
+        if (dbErr?.code === OUTBOUND_POLICY_DENIED && !last) {
+          return { success: false, code: OUTBOUND_POLICY_DENIED, error: "SMTP destination is blocked by the outbound policy" };
+        }
         logger.warn("DB SMTP fallback failed:", dbErr.message);
       }
     }
 
+    if (!last && envBlocked) {
+      return { success: false, code: OUTBOUND_POLICY_DENIED, error: "SMTP destination is blocked by the outbound policy" };
+    }
     return last || { success: false, error: "SMTP not configured" };
   } catch (e) {
     // Ownership heartbeats must propagate so the delivery worker aborts the

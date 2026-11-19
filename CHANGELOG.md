@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Shared outbound policy.** Set `OUTBOUND_ALLOWLIST` to restrict Core API and worker connections to approved hosts. Set `OFFLINE_MODE=true` to deny supported outbound connections when the list is empty. Both controls default to off. Domain discovery is unavailable while the policy is enabled. See [configuration](docs/CONFIGURATION.md).
+
 ## [0.20.0] - 2026-11-19
 
 ### Added

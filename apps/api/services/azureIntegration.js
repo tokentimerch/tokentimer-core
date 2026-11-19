@@ -1,5 +1,6 @@
 "use strict";
 
+const { assertOutboundUrl } = require("@tokentimer/config/network");
 const axios = require("axios");
 const { X509Certificate } = require("crypto");
 const {
@@ -45,6 +46,7 @@ async function azureRequest({
 
   const run = async (bearer) => {
     try {
+      assertOutboundUrl(url, { proxyMode: "axios" });
       const response = await axios({
         method,
         url: url.toString(),
@@ -92,6 +94,7 @@ async function azureListPage({
 
   const run = async (bearer) => {
     try {
+      assertOutboundUrl(url, { proxyMode: "axios" });
       const response = await axios({
         method: "GET",
         url: url.toString(),

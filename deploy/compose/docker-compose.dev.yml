@@ -37,6 +37,8 @@ services:
       - "4000:4000"
     environment:
       - NODE_ENV=development
+      - OFFLINE_MODE=${OFFLINE_MODE:-false}
+      - OUTBOUND_ALLOWLIST=${OUTBOUND_ALLOWLIST:-}
       - GLOBAL_RATE_LIMIT_WINDOW_MS=${GLOBAL_RATE_LIMIT_WINDOW_MS:-}
       - GLOBAL_RATE_LIMIT_MAX=${GLOBAL_RATE_LIMIT_MAX:-}
       - GLOBAL_SLOWDOWN_WINDOW_MS=${GLOBAL_SLOWDOWN_WINDOW_MS:-}
@@ -215,6 +217,8 @@ services:
     container_name: tokentimer-core-worker-discovery
     environment:
       - NODE_ENV=development
+      - OFFLINE_MODE=${OFFLINE_MODE:-false}
+      - OUTBOUND_ALLOWLIST=${OUTBOUND_ALLOWLIST:-}
       - TZ=${TZ:-UTC}
       # Corporate proxy support - see docs/CONFIGURATION.md
       - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
@@ -280,6 +284,8 @@ services:
     container_name: tokentimer-core-worker-delivery
     environment:
       - NODE_ENV=development
+      - OFFLINE_MODE=${OFFLINE_MODE:-false}
+      - OUTBOUND_ALLOWLIST=${OUTBOUND_ALLOWLIST:-}
       - TZ=${TZ:-UTC}
       # Corporate proxy support - see docs/CONFIGURATION.md
       - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
@@ -357,6 +363,8 @@ services:
     container_name: tokentimer-core-worker-weekly-digest
     environment:
       - NODE_ENV=development
+      - OFFLINE_MODE=${OFFLINE_MODE:-false}
+      - OUTBOUND_ALLOWLIST=${OUTBOUND_ALLOWLIST:-}
       - TZ=${TZ:-UTC}
       # Corporate proxy support - see docs/CONFIGURATION.md
       - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
@@ -428,6 +436,8 @@ services:
     container_name: tokentimer-core-worker-auto-sync
     environment:
       - NODE_ENV=development
+      - OFFLINE_MODE=${OFFLINE_MODE:-false}
+      - OUTBOUND_ALLOWLIST=${OUTBOUND_ALLOWLIST:-}
       - TZ=${TZ:-UTC}
       # Corporate proxy support - see docs/CONFIGURATION.md
       - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
@@ -488,6 +498,8 @@ services:
     container_name: tokentimer-core-worker-endpoint-check
     environment:
       - NODE_ENV=development
+      - OFFLINE_MODE=${OFFLINE_MODE:-false}
+      - OUTBOUND_ALLOWLIST=${OUTBOUND_ALLOWLIST:-}
       - TZ=${TZ:-UTC}
       # Corporate proxy support - see docs/CONFIGURATION.md
       - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
@@ -535,6 +547,8 @@ services:
     container_name: tokentimer-core-worker-certops
     environment:
       - NODE_ENV=development
+      - OFFLINE_MODE=${OFFLINE_MODE:-false}
+      - OUTBOUND_ALLOWLIST=${OUTBOUND_ALLOWLIST:-}
       - TZ=${TZ:-UTC}
       # Corporate proxy support - see docs/CONFIGURATION.md
       - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}

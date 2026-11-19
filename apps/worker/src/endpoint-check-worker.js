@@ -1,3 +1,4 @@
+import { isAllowedOutboundUrl, OUTBOUND_POLICY_DENIED } from "@tokentimer/config/network";
 /**
  * Endpoint (SSL) Check Worker
  *
@@ -417,6 +418,10 @@ async function runEndpointChecks() {
 
       try {
         const parsedUrl = new URL(url);
+        if (!isAllowedOutboundUrl(parsedUrl, { proxyMode: health_check_enabled ? "node" : "direct" })) {
+          logger.warn("Endpoint check skipped by outbound policy", { monitorId: id, code: OUTBOUND_POLICY_DENIED });
+          continue;
+        }
 
         // 1. SSL cert check (for HTTPS URLs)
         if (parsedUrl.protocol === "https:") {

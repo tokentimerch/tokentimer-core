@@ -1,3 +1,4 @@
+import { assertOutboundUrl, getNetworkConfig } from "@tokentimer/config/network";
 import axios from "axios";
 import crypto from "node:crypto";
 import { logger } from "../logger.js";
@@ -180,7 +181,9 @@ export async function sendWhatsApp({
       params.append("From", `whatsapp:${fromCfg}`);
 
       const postFn = httpPostOverride || axios.post;
+      assertOutboundUrl(url, { proxyMode: "axios" });
       const res = await postFn(url, params, {
+        ...(getNetworkConfig().outboundPolicyEnabled ? { maxRedirects: 0 } : {}),
         auth: { username: authCfg.sid, password: authCfg.token },
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
