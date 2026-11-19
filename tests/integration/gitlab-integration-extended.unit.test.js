@@ -327,6 +327,7 @@ describe("GitLab integration helper coverage", () => {
               description: "real project token description",
               active: true,
               scopes: ["api"],
+              expires_at: "2098-02-23",
             },
           ],
         };
@@ -343,6 +344,7 @@ describe("GitLab integration helper coverage", () => {
               description: "real group token description",
               active: true,
               scopes: ["api"],
+              expires_at: "2098-03-15",
             },
           ],
         };
@@ -393,8 +395,10 @@ describe("GitLab integration helper coverage", () => {
     );
     expect(projectToken).to.exist;
     expect(projectToken.description).to.equal("real project token description");
+    expect(projectToken.metric_expiration).to.equal("2098-02-23");
     expect(groupToken).to.exist;
     expect(groupToken.description).to.equal("real group token description");
+    expect(groupToken.metric_expiration).to.equal("2098-03-15");
   });
 
   it("skips revoked deploy tokens unless includeRevoked is enabled (issue: deploy tokens revoked in GitLab, hence hidden from its UI, were still imported because the scan only checked expires_at)", async () => {
@@ -404,7 +408,7 @@ describe("GitLab integration helper coverage", () => {
         name: "active-deploy-token",
         revoked: false,
         expired: false,
-        expires_at: "2099-01-01T00:00:00Z",
+        expires_at: "2099-01-01T01:02:03Z",
         scopes: ["read_repository"],
       },
       {
@@ -459,6 +463,8 @@ describe("GitLab integration helper coverage", () => {
       .filter((i) => i.source === "gitlab-deploy-token")
       .map((i) => i.name);
     expect(names).to.deep.equal(["active-deploy-token"]);
+    expect(items.find((i) => i.name === "active-deploy-token").metric_expiration)
+      .to.equal("2099-01-01T01:02:03Z");
 
     const gitlabWithRevoked = requireWithMocks(resolveGitlabModule(), {
       axios: axiosMock,

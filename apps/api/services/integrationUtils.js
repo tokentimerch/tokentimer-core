@@ -68,6 +68,25 @@ function formatDateYmd(date) {
   }
 }
 
+// Keep source precision while normalizing offset timestamps to UTC.
+function normalizeProviderExpiry(value) {
+  if (typeof value !== "string") return "";
+  const match = /^([0-9]{4}-[0-9]{2}-[0-9]{2})(?:[Tt](?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.([0-9]{1,9}))?(?:[Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9]))?$/.exec(value);
+  if (!match || match[0] !== value) return "";
+  const [, date, fraction = ""] = match;
+  const day = new Date(date);
+  if (!Number.isFinite(+day) || day.toISOString().slice(0, 10) !== date) return "";
+  if (value === date) return date;
+  const timestamp = new Date(value);
+  if (!Number.isFinite(+timestamp)) return "";
+  const utc = timestamp.toISOString();
+  if (!/^\d{4}-/.test(utc)) return "";
+  // Date handles the offset and milliseconds. Preserve any finer digits
+  // separately, trimming redundant trailing zeroes to keep label keys stable.
+  const finer = fraction.slice(3).replace(/0+$/, "");
+  return finer ? `${utc.slice(0, -1)}${finer}Z` : utc;
+}
+
 /**
  * Axios options that refuse automatic redirects for credentialed integration
  * requests. Following a 3xx would forward tokens to an unvalidated Location.
@@ -205,6 +224,7 @@ module.exports = {
   tryParseDate,
   discoverExpiryFromObject,
   formatDateYmd,
+  normalizeProviderExpiry,
   CREDENTIALED_AXIOS_REDIRECTS,
   joinIntegrationApiUrl,
   isHttpRedirectStatus,

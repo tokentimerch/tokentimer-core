@@ -25,6 +25,7 @@ describe("selectable auto-sync metric metadata", () => {
     const env = { AUTO_SYNC_METRICS_EXTRA_LABELS: "expiration" };
     const settings = { enabled: true, labels: ["expiration"] };
     assert.deepEqual(systemMetricPolicy({ enabled: true, labels: ["kind"] }, env).labels, ["kind"]);
+    assert.deepEqual(systemMetricPolicy({ enabled: true, labels: ["kind"] }, env).extra_labels, ["expiration"]);
     assert.deepEqual(systemMetricPolicy(settings, env).labels, ["expiration"]);
     const payload = (sourceKind, metric_expiration) => ({
       source_provider: "gitlab", source_kind: sourceKind,
@@ -32,7 +33,9 @@ describe("selectable auto-sync metric metadata", () => {
     });
     assert.equal(creationDimensions(payload("gitlab-pat", "2032-02-29"), settings, env).expiration, "2032-02-29");
     assert.equal(creationDimensions(payload("gitlab-deploy-token", "2032-02-29T00:10:20+01:00"), settings, env).expiration, "2032-02-28T23:10:20.000Z");
-    for (const expiry of ["2031-02-29", "2032-02-29T12:30:00", "2032-02-29T24:00:00Z", null, undefined]) {
+    assert.equal(creationDimensions(payload("gitlab-deploy-token", "2032-02-29t23:59:59.123456780-01:00"), settings, env).expiration, "2032-03-01T00:59:59.12345678Z");
+    assert.equal(creationDimensions(payload("gitlab-deploy-token", "2032-02-29T00:10:20.000000000z"), settings, env).expiration, "2032-02-29T00:10:20.000Z");
+    for (const expiry of ["2031-02-29", "2032-02-29T12:30:00", "2032-02-29T24:00:00Z", " 2032-02-29", "2032-02-29\n", null, undefined]) {
       assert.equal(creationDimensions(payload("gitlab-pat", expiry), settings, env).expiration, undefined);
     }
     assert.equal(creationDimensions(payload("gitlab-trigger-token", "2032-02-29"), settings, env).expiration, undefined);

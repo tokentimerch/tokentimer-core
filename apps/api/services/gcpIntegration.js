@@ -1,13 +1,39 @@
 "use strict";
 
 const axios = require("axios");
+const { X509Certificate } = require("node:crypto");
 const {
   tryParseDate,
   formatDateYmd,
+  normalizeProviderExpiry,
   CREDENTIALED_AXIOS_REDIRECTS,
 } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
 const { formatGcpApiError } = require("./gcpApiError");
+
+function certificateMetricExpiry(expireTime, ...pemChains) {
+  if (normalizeProviderExpiry(expireTime)) return expireTime;
+
+  for (const chain of pemChains) {
+    if (typeof chain !== "string") continue;
+    const blocks = chain.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+    if (!blocks) continue;
+    try {
+      const certificates = blocks.map((pem) => new X509Certificate(pem));
+      const leaves = certificates.length === 1
+        ? certificates
+        : certificates.filter((certificate) => !certificate.ca);
+      // Use a single leaf so a bundle cannot supply an intermediate's date.
+      if (leaves.length === 1) {
+        const notAfter = tryParseDate(leaves[0].validTo);
+        if (notAfter) return notAfter.toISOString();
+      }
+    } catch {
+      // A malformed certificate supplies no expiry metadata.
+    }
+  }
+  return "";
+}
 
 async function gcpRequest({ accessToken, method = "GET", path, body = null }) {
   const baseUrl = `https://secretmanager.googleapis.com/v1`;
@@ -583,7 +609,7 @@ async function scanGCP({
             category: "cert",
             type: "ssl_cert",
             expiration: expiresAt ? formatDateYmd(expiresAt) : null,
-            metric_expiration: cert.expireTime,
+            metric_expiration: certificateMetricExpiry(cert.expireTime, cert.pemCertificate),
             location: `gcp:${projectId}/locations/${location}/certificates/${certName}`,
             domains,
             issuer: isManaged ? "Google Trust Services" : null,
@@ -678,7 +704,9 @@ async function scanGCP({
             category: "cert",
             type: "ssl_cert",
             expiration: expiresAt ? formatDateYmd(expiresAt) : null,
-            metric_expiration: cert.expireTime,
+            metric_expiration: certificateMetricExpiry(
+              cert.expireTime, cert.selfManaged?.certificate, cert.certificate,
+            ),
             location: region
               ? `gcp:${projectId}/regions/${region}/sslCertificates/${cert.name}`
               : `gcp:${projectId}/global/sslCertificates/${cert.name}`,

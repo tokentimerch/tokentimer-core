@@ -1,6 +1,7 @@
 "use strict";
 
 const { createHash } = require("node:crypto");
+const { normalizeProviderExpiry: metricExpiration } = require("./integrationUtils");
 
 const EXPLICIT_SELECTION_LABELS = ["owner_username", "expiration"];
 const OPTIONAL_LABELS = ["configuration_name", "monitoring_group", "kind", "asset_name", "project", "group", ...EXPLICIT_SELECTION_LABELS];
@@ -82,6 +83,7 @@ function systemMetricPolicy(stored = {}, env = process.env) {
       ...permitted.filter(label => !EXPLICIT_SELECTION_LABELS.includes(label) || configured.includes(label))] : configured;
   const group = typeof env.AUTO_SYNC_METRICS_MONITORING_GROUP === "string" ? env.AUTO_SYNC_METRICS_MONITORING_GROUP.trim() : "";
   return { enabled, labels: labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label) || permitted.includes(label)),
+    extra_labels: permitted,
     override_metrics: Boolean(raw) || (stored?.override_metrics ?? typeof stored?.enabled === "boolean"),
     override_monitoring_group: Boolean(group) || stored?.override_monitoring_group === true,
     monitoring_group: group || (stored?.monitoring_group || "").trim(),
@@ -115,8 +117,7 @@ function effectiveMetricSettings(value, env = process.env, storedPolicy) {
     settings.labels = policy.labels;
   }
   if (policy.override_monitoring_group) settings.monitoring_group = policy.monitoring_group;
-  const permitted = permittedExtraLabels(env, storedPolicy);
-  settings.labels = settings.labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label) || permitted.includes(label));
+  settings.labels = settings.labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label) || policy.extra_labels.includes(label));
   return settings;
 }
 function metadata(value) { return typeof value === "string" && value.length <= 512 ? value : ""; }
@@ -144,17 +145,6 @@ const EXPIRING_ASSET_PROVIDERS = new Map([
 
 function supportsMetricExpiration(provider, sourceKind) {
   return EXPIRING_ASSET_PROVIDERS.has(sourceKind) && EXPIRING_ASSET_PROVIDERS.get(sourceKind) === provider;
-}
-
-function metricExpiration(value) {
-  if (typeof value !== "string") return "";
-  const match = /^([0-9]{4}-[0-9]{2}-[0-9]{2})(?:T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9]))?$/.exec(value);
-  if (!match || match[0] !== value) return "";
-  const day = new Date(match[1]);
-  if (!Number.isFinite(+day) || day.toISOString().slice(0, 10) !== match[1]) return "";
-  if (value === match[1]) return value;
-  const timestamp = new Date(value);
-  return Number.isFinite(+timestamp) ? timestamp.toISOString() : "";
 }
 
 function metricSourceDimensions(item, dimensions = {

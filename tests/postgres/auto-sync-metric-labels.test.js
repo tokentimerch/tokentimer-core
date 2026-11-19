@@ -574,6 +574,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     const token = "synthetic-provider-token";
     const authoritativeTime = "2032-03-01T01:02:03+01:00";
     const utcTime = "2032-03-01T00:02:03.000Z";
+    const gcpExpiry = "2032-03-01T00:02:03.123456789Z";
     const fixture = (name, sourceKind, metricExpiration, attributes) => ({
       name, source: sourceKind, sourceKind, sourceObjectId: name,
       location: `fixture:${name}`, category: "key_secret", type: "api_key",
@@ -603,7 +604,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
         [fixture("entra-sp-certificate", "azure-ad-sp-certificate", authoritativeTime, { ...cert, servicePrincipalType: "Application" }), utcTime],
       ]],
       ["gcp", { projectId: "fixture-project", accessToken: token }, {}, [
-        [fixture("gcp-secret", "gcp-secret-manager", authoritativeTime, { dimensions: { project: "fixture-project" } }), utcTime],
+        [fixture("gcp-secret", "gcp-secret-manager", gcpExpiry, { dimensions: { project: "fixture-project" } }), gcpExpiry],
         [fixture("gcp-certificate", "gcp-compute-ssl-cert", authoritativeTime, cert), utcTime],
         [fixture("gcp-rotation-only", "gcp-secret-manager"), ""],
       ]],
@@ -689,6 +690,25 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     const restrictedSamples = restricted.text.split("\n").filter(line => families.some(family => line.startsWith(`${family}{`)));
     assert.equal(restrictedSamples.length, expected.length * families.length);
     assert.ok(restrictedSamples.every(line => line.includes('expiration=""')));
+  });
+
+  it("offers expiry to connections allowed by deployment without selecting it globally", async () => {
+    const config = await configuration();
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "expiration";
+    const url = `/api/v1/workspaces/${workspaceId}/auto-sync`;
+    const list = await request(app).get(url);
+    assert.equal(list.status, 200);
+    assert.deepEqual(list.body.metric_label_policy.extra_labels, ["expiration"]);
+    assert.ok(!list.body.metric_label_policy.system.labels.includes("expiration"));
+    const updated = await request(app).put(`${url}/${config.id}`).send({
+      metrics_settings: { enabled: true, labels: ["kind", "expiration"] },
+    });
+    assert.equal(updated.status, 200, updated.text);
+    assert.deepEqual(updated.body.metrics_settings.labels, ["expiration", "kind"]);
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "none";
+    const denied = await request(app).get(url);
+    assert.equal(denied.status, 200);
+    assert.deepEqual(denied.body.metric_label_policy.extra_labels, []);
   });
 
   it("saves a system-wide owner override, applies it to opted-out connections and respects deployment restrictions", async () => {

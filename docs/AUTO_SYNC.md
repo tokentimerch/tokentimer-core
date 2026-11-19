@@ -114,7 +114,7 @@ no single asset owner. These metrics retain their low-cardinality labels.
 
 ### Asset expiration labels
 
-The same two detailed creation metrics can include `expiration` for assets with verified expiry from GitLab, AWS ACM, Azure Key Vault, Microsoft Entra ID, GCP or Vault. Select **Asset expiration** and add `expiration` to any configured deployment allowlist. The label is off by default. It shows the date or UTC timestamp captured at import and stays empty when expiry is unavailable. Rotation schedules and inventory defaults are excluded. In Grafana, retain `expiration` in `max by (...)` and use `{{ $labels.expiration }}` in the creation alert annotation. Later changes to the asset do not refresh this value.
+Core exposes `expiration` for GitLab auto-sync. Enterprise also supports AWS ACM, Azure Key Vault, Microsoft Entra ID, GCP and Vault. Allow `expiration` and select **Asset expiration** to turn it on. It reports the source date or UTC timestamp at import, retaining meaningful fractional seconds. Unavailable expiry, rotation schedules and inventory defaults leave the label blank. Later changes to the asset do not refresh it. In Grafana, retain `expiration` in `max by (...)` and use `{{ $labels.expiration }}` in the creation alert annotation.
 
 ## Cleanup and removal
 

@@ -564,12 +564,10 @@ async function scanGitHub({
       }
     }
 
-    // Note: GitHub Personal Access Tokens cannot be enumerated via API
-    // Users would need to manually track them or use GitHub's token management UI
     if (include.tokens) {
       summary.push({
         type: "personal_access_tokens",
-        note: "GitHub PATs cannot be enumerated via API. Please track manually.",
+        note: "This scan does not discover GitHub PATs. Track them manually.",
       });
     }
   } catch (e) {

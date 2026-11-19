@@ -1,4 +1,5 @@
 const { expect } = require("chai");
+const { readFileSync } = require("node:fs");
 const Module = require("module");
 const path = require("path");
 
@@ -1029,6 +1030,44 @@ describe("Provider service unit coverage", () => {
         found: 1,
         complete: true,
       });
+    });
+
+    it("uses the leaf certificate expiry when GCP certificate time metadata is unavailable", async () => {
+      const chain = readFileSync(path.resolve(
+        __dirname, "../../packages/agent/src/verify/fixtures/chain-leaf-fullchain.crt.pem",
+      ), "utf8");
+      const reversedChain = chain.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g)
+        .reverse().join("\n");
+      const explicitExpiry = "2030-08-01T16:45:00Z";
+      const axiosMock = async ({ url }) => {
+        if (String(url).includes("certificatemanager.googleapis.com")) {
+          return { data: { certificates: [
+            { name: "projects/proj/locations/global/certificates/cm-pem", pemCertificate: chain },
+            { name: "projects/proj/locations/global/certificates/cm-explicit", pemCertificate: chain, expireTime: explicitExpiry },
+          ] } };
+        }
+        return { data: { items: { global: { sslCertificates: [
+          { name: "compute-pem", certificate: chain },
+          { name: "compute-self-managed", expireTime: "invalid", selfManaged: { certificate: reversedChain } },
+          { name: "compute-bad-pem", certificate: "malformed" },
+        ] } } } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const { items } = await gcp.scanGCP({
+        projectId: "proj", accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+      const byName = Object.fromEntries(items.map((item) => [item.name, item]));
+      for (const name of ["cm-pem", "compute-pem", "compute-self-managed"]) {
+        expect(byName[name]).to.include({
+          expiration: null,
+          metric_expiration: "2028-10-26T08:57:15.000Z",
+        });
+      }
+      expect(byName["cm-explicit"].metric_expiration).to.equal(explicitExpiry);
+      expect(byName["compute-bad-pem"].metric_expiration).to.equal("");
     });
 
     it("reports an empty complete sub-scope for both cert kinds when the project has none", async () => {
