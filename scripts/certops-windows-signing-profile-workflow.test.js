@@ -41,6 +41,9 @@ test("profile inspection runs only pinned login, fixed reads, and a public-evide
     'az rest --method get --url "$resource/certchain?api-version=2022-06-15-preview"',
     'az rest --method get --url "$resource/eku?api-version=2022-06-15-preview"',
   ]);
+  assert.match(steps[2].run, /certchain[^\n]+\n\s*--headers 'Accept=application\/pkcs7-mime'/);
+  assert.match(steps[2].run, /eku[^\n]+\n\s*--headers 'Accept=application\/json'/);
+  assert.match(steps[2].run, /openssl pkcs7 -inform DER -in "\$output\/chain\.der" -print_certs/);
   assert.equal(steps[3].with.path.trim(), [
     "${{ runner.temp }}/windows-signing-public-chain/chain.der",
     "${{ runner.temp }}/windows-signing-public-chain/eku.json",
