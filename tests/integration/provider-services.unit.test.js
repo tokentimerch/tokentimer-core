@@ -314,7 +314,7 @@ describe("Provider service unit coverage", () => {
           secretAccessKey: "super-secret-key",
           region: "us-east-1",
           include: { secrets: true, iam: true, certificates: true },
-          maxItems: 10,
+          maxItems: 2,
         }),
       );
 
@@ -337,7 +337,8 @@ describe("Provider service unit coverage", () => {
       expect(
         result.summary.some((s) => s.type === "acm_certificates"),
       ).to.equal(true);
-      expect(result.summary.some((s) => s.type === "iam_keys")).to.equal(true);
+      expect(result.summary.find((s) => s.type === "iam_keys"))
+        .to.include({ found: 2, truncated: false, complete: true });
     });
 
     // Regression guard: ACM ListCertificates defaults to server-side

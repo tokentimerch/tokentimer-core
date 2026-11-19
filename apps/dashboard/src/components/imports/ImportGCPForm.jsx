@@ -243,7 +243,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
         return;
       }
 
-      await integrationAPI.import({
+      const result = await integrationAPI.import({
         workspaceId,
         items: selected,
         filterRules: sanitizeFilterRules(filterRules),
@@ -261,7 +261,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
               }
             : undefined,
       });
-      onImportComplete && onImportComplete(selected);
+      onImportComplete?.(result);
     } catch (e) {
       onError && onError(e?.message || 'GCP import failed');
     }
@@ -410,7 +410,8 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
             colorScheme='red'
             isDisabled={!lastScanId}
           >
-            Remove previously imported items no longer found at the source
+            Remove previously imported items missing from this scan, including
+            items excluded by filters
           </Checkbox>
           {!lastScanId ? (
             <Text fontSize='xs' color={helpTextColor} pl={6}>

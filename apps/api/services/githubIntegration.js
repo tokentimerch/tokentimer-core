@@ -256,7 +256,7 @@ async function collectGitHubList({
         return { items, truncated: seen.size > items.length };
       }
       if (hasNext) promisedThrough = page + 1;
-      if (items.length === maxItems) return { items, truncated: true };
+      if (items.length === maxItems && (hasNext || seen.size > items.length)) return { items, truncated: true };
     }
     return { items, truncated: true };
   } catch (error) {
@@ -323,6 +323,7 @@ async function scanGitHub({
 
   const items = [];
   const summary = [];
+  const cleanupParentIds = {};
   let host = null;
   let ghUser = null;
 
@@ -462,7 +463,10 @@ async function scanGitHub({
 
           await Promise.all(
             batch.map(async (repo) => {
-              if (items.length >= maxItems) return;
+              if (items.length >= maxItems) {
+                reposSkippedByCap++;
+                return;
+              }
               try {
                 const { items: secrets, truncated, error } = await listRepoSecrets({
                   baseUrl: apiBase,
@@ -477,7 +481,10 @@ async function scanGitHub({
                 }
                 listsTruncated ||= truncated;
                 for (const secret of secrets) {
-                  if (items.length >= maxItems) break;
+                  if (items.length >= maxItems) {
+                    listsTruncated = true;
+                    break;
+                  }
                   // GitHub secrets don't expose expiration dates in the API
                   items.push({
                     source: "github-secret",
@@ -509,7 +516,8 @@ async function scanGitHub({
         // repo we did visit succeeded, and the shared item cap never cut
         // the scan short before every repo was visited.
         const truncated =
-          reposListTruncated || listsTruncated || reposSkippedByCap > 0 || items.length >= maxItems;
+          reposListTruncated || listsTruncated || reposSkippedByCap > 0;
+        cleanupParentIds["github-secret"] = repos.map(repo => String(repo.id));
         summary.push({
           type: "repository_secrets",
           sourceKind: "github-secret",
@@ -559,7 +567,10 @@ async function scanGitHub({
 
           await Promise.all(
             batch.map(async (repo) => {
-              if (items.length >= maxItems) return;
+              if (items.length >= maxItems) {
+                reposSkippedByCap++;
+                return;
+              }
               try {
                 const { items: deployKeys, truncated, error } = await listRepoDeployKeys({
                   baseUrl: apiBase,
@@ -574,7 +585,10 @@ async function scanGitHub({
                 }
                 listsTruncated ||= truncated;
                 for (const key of deployKeys) {
-                  if (items.length >= maxItems) break;
+                  if (items.length >= maxItems) {
+                    listsTruncated = true;
+                    break;
+                  }
                   items.push({
                     source: "github-deploy-key",
                     sourceKind: "github-deploy-key",
@@ -598,7 +612,8 @@ async function scanGitHub({
           );
         }
         const truncated =
-          reposListTruncated || listsTruncated || reposSkippedByCap > 0 || items.length >= maxItems;
+          reposListTruncated || listsTruncated || reposSkippedByCap > 0;
+        cleanupParentIds["github-deploy-key"] = repos.map(repo => String(repo.id));
         summary.push({
           type: "deploy_keys",
           sourceKind: "github-deploy-key",
@@ -729,7 +744,7 @@ async function scanGitHub({
   }
 
   logger.info("GitHub scan completed", { itemsFound: items.length });
-  return { items, summary, host, ownerKey: ghUser?.id ? String(ghUser.id) : null };
+  return { items, summary, cleanupParentIds, host, ownerKey: ghUser?.id ? String(ghUser.id) : null };
 }
 
 module.exports = {

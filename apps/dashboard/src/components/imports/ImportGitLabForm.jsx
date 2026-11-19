@@ -334,7 +334,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
         return;
       }
 
-      await integrationAPI.import({
+      const result = await integrationAPI.import({
         workspaceId,
         items: selected,
         filterRules: sanitizeFilterRules(filterRules),
@@ -352,7 +352,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
               }
             : undefined,
       });
-      onImportComplete && onImportComplete(selected);
+      onImportComplete?.(result);
     } catch (e) {
       onError && onError(e?.message || 'GitLab import failed');
     }
@@ -579,7 +579,8 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
                 colorScheme='red'
                 isDisabled={!lastScanId}
               >
-                Remove previously imported tokens no longer found at the source
+                Remove previously imported items missing from this scan, including
+                items excluded by filters
               </Checkbox>
               {!lastScanId ? (
                 <Text fontSize='xs' color={helpTextColor} pl={6}>

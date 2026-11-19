@@ -2,7 +2,7 @@
 
 const { pool } = require("../db/database");
 const { claimScanForCleanup, getScan } = require("./integrationScans");
-const { buildDimensionFilterSql } = require("./importCleanup");
+const { buildDimensionFilterSql, isCompleteCleanupScope } = require("./importCleanup");
 const { validateFilterRules } = require("./importFilterRules");
 const { validateManagedIdentityMode } = require("./azureADIntegration");
 
@@ -176,7 +176,7 @@ async function resolveAutoSyncImportContext(req, workspaceId, provider, scanId) 
       throw error;
     }
     const scopes = scan.cleanup_scope?.subScopes;
-    context.scanComplete = Array.isArray(scopes) && scopes.length > 0 && scopes.every(scope => scope.complete === true);
+    context.scanComplete = Array.isArray(scopes) && scopes.length > 0 && scopes.every(isCompleteCleanupScope);
   });
   return context;
 }
@@ -335,7 +335,7 @@ async function reconcileAutoSyncRun(context, scanIds = [context.scanId]) {
       });
       const scopes = scan?.cleanup_scope?.subScopes;
       if (!scan?.completed_at || !Array.isArray(scopes) || scopes.length === 0 ||
-          scopes.some((scope) => scope?.complete !== true)) {
+          !scopes.every(isCompleteCleanupScope)) {
         await client.query("COMMIT");
         return result;
       }

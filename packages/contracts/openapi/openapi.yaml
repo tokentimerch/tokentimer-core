@@ -4206,7 +4206,7 @@ paths:
             schema:
               $ref: "#/components/schemas/IntegrationImportRequest"
       responses:
-        "200":
+        "201":
           description: Import result
           content:
             application/json:
@@ -4446,7 +4446,7 @@ paths:
             schema:
               $ref: "#/components/schemas/IntegrationImportRequest"
       responses:
-        "200":
+        "201":
           description: Import result
           content:
             application/json:
@@ -17828,10 +17828,23 @@ components:
     IntegrationImportResponse:
       type: object
       properties:
+        created_count: { type: integer, minimum: 0 }
+        updated_count: { type: integer, minimum: 0 }
+        error_count: { type: integer, minimum: 0 }
+        deleted_count: { type: integer, minimum: 0 }
+        cleanup_status:
+          type: string
+          enum: [completed, partial, skipped_import_errors, skipped_incomplete, skipped_unavailable, failed]
+          description: Outcome of requested one-time cleanup. Omitted when no one-time cleanup was requested. Partial means only complete scan scopes were processed.
         created:
-          type: integer
+          type: array
+          items: { type: object, additionalProperties: true }
         updated:
-          type: integer
+          type: array
+          items: { type: object, additionalProperties: true }
+        deleted:
+          type: array
+          items: { type: object, additionalProperties: true }
         errors:
           type: array
           items:

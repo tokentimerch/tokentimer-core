@@ -37,11 +37,13 @@ function view(
   policy = {},
   value = local,
   onChange = vi.fn(),
-  allowedExtraLabels = ['project']
+  allowedExtraLabels = ['project'],
+  provider
 ) {
   return (
     <ChakraProvider>
       <AutoSyncMetricSettings
+        provider={provider}
         value={value}
         systemPolicy={{ ...defaults, ...policy }}
         allowedExtraLabels={allowedExtraLabels}
@@ -167,6 +169,22 @@ describe('connection metric settings', () => {
     expect(
       screen.getByRole('checkbox', { name: 'Project / repository' })
     ).toBeEnabled();
+  });
+  it('explains how to allow expiration and identifies GitHub without expiry', async () => {
+    const { rerender } = render(view());
+    await expand();
+    expect(
+      screen.getByText(
+        'Allow Asset expiration in System Settings → Auto-sync first.'
+      )
+    ).toBeInTheDocument();
+    rerender(view({}, local, vi.fn(), ['expiration'], 'github'));
+    expect(
+      screen.getByRole('checkbox', { name: 'Asset expiration' })
+    ).toBeDisabled();
+    expect(
+      screen.getByText('GitHub does not provide expiry for these asset types.')
+    ).toBeInTheDocument();
   });
   it('keeps owner usernames disabled unless deployment permits them', async () => {
     const saved = { ...local, labels: ['kind', 'owner_username'] };
@@ -672,6 +690,37 @@ it.each([false, true])(
     expect(owner.checked).toBe(!selected);
   }
 );
+
+it('can grant connection expiry permission without enabling a global override', async () => {
+  const configured = vi.fn();
+  const policy = {
+    ...defaults,
+    extra_labels: [...defaults.extra_labels, 'expiration'],
+  };
+  apiClient.get.mockResolvedValue({ data: policy });
+  apiClient.put.mockImplementation((_url, body) =>
+    Promise.resolve({ data: { ...policy, ...body } })
+  );
+  render(
+    <ChakraProvider>
+      <AutoSyncSystemMetricSettings onConfiguredChange={configured} />
+    </ChakraProvider>
+  );
+  fireEvent.click(
+    await screen.findByRole('checkbox', { name: 'Asset expiration' })
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Save auto-sync settings' }));
+  await screen.findByRole('status');
+  expect(apiClient.put).toHaveBeenCalledWith(
+    '/api/v1/admin/auto-sync/metrics',
+    expect.objectContaining({
+      enabled: false,
+      override_metrics: false,
+      labels: [...low, 'expiration'],
+    })
+  );
+  expect(configured).toHaveBeenLastCalledWith(true);
+});
 
 it('saves expiration only when explicitly selected under a deployment allowlist', async () => {
   const policy = {

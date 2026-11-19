@@ -41,6 +41,7 @@ import {
   Divider,
 } from '@chakra-ui/react';
 import { logger } from '../utils/logger';
+import { integrationImportWarning } from '../utils/integrationImportWarning.js';
 import { IMPORT_DOCS } from '../utils/docsUrls';
 import LearnMorePanel from './LearnMorePanel';
 import apiClient, {
@@ -1250,6 +1251,7 @@ function ImportTokensModalContent({
   const renderAutoSyncMetrics = () => (
     <AutoSyncMetricSettings
       key={source + '/' + (autoSyncConfig?.id || 'new')}
+      provider={source}
       value={autoSyncMetricSettings}
       allowedExtraLabels={allowedExtraMetricLabels}
       systemPolicy={systemMetricPolicy}
@@ -2621,6 +2623,16 @@ function ImportTokensModalContent({
     }
   };
 
+  const completeIntegrationImport = result => {
+    const warning = integrationImportWarning(result);
+    setError(warning ? `${warning.title}. ${warning.description}` : '');
+    setIsImporting(false);
+    onImported?.(
+      [...(result?.created || []), ...(result?.updated || [])],
+      result?.deleted_count ?? 0
+    );
+  };
+
   const importAzureADSelected = async () => {
     if (!azureADPreviewReady || isScanning) {
       setError(
@@ -2644,7 +2656,7 @@ function ImportTokensModalContent({
         return;
       }
 
-      await integrationAPI.import({
+      const result = await integrationAPI.import({
         filterRules: sanitizeFilterRules(azureADFilterRules),
         workspaceId,
         items: selected,
@@ -2662,7 +2674,7 @@ function ImportTokensModalContent({
               }
             : undefined,
       });
-      onImported && onImported(selected);
+      completeIntegrationImport(result);
     } catch (e) {
       setError(e?.message || 'Microsoft Entra ID import failed');
     } finally {
@@ -3530,10 +3542,7 @@ function ImportTokensModalContent({
                       : null
                   }
                   workspaceId={workspaceId}
-                  onImportComplete={selected => {
-                    setIsImporting(false);
-                    onImported && onImported(selected);
-                  }}
+                  onImportComplete={completeIntegrationImport}
                   onError={err => {
                     setError(err);
                     setIsImporting(false);
@@ -3563,10 +3572,7 @@ function ImportTokensModalContent({
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={gitlabFormRef}
                   workspaceId={workspaceId}
-                  onImportComplete={selected => {
-                    setIsImporting(false);
-                    onImported && onImported(selected);
-                  }}
+                  onImportComplete={completeIntegrationImport}
                   onError={err => {
                     setError(err);
                     setIsImporting(false);
@@ -3612,10 +3618,7 @@ function ImportTokensModalContent({
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={githubFormRef}
                   workspaceId={workspaceId}
-                  onImportComplete={selected => {
-                    setIsImporting(false);
-                    onImported && onImported(selected);
-                  }}
+                  onImportComplete={completeIntegrationImport}
                   onError={err => {
                     setError(err);
                     setIsImporting(false);
@@ -3659,10 +3662,7 @@ function ImportTokensModalContent({
                   ref={awsFormRef}
                   initialAutoSyncScanParams={awsAutoSyncScanParams}
                   workspaceId={workspaceId}
-                  onImportComplete={selected => {
-                    setIsImporting(false);
-                    onImported && onImported(selected);
-                  }}
+                  onImportComplete={completeIntegrationImport}
                   onError={err => {
                     setError(err);
                     setIsImporting(false);
@@ -3694,10 +3694,7 @@ function ImportTokensModalContent({
                       : null
                   }
                   workspaceId={workspaceId}
-                  onImportComplete={selected => {
-                    setIsImporting(false);
-                    onImported && onImported(selected);
-                  }}
+                  onImportComplete={completeIntegrationImport}
                   onError={err => {
                     setError(err);
                     setIsImporting(false);
@@ -3729,10 +3726,7 @@ function ImportTokensModalContent({
                     restoredScanParamsFor === 'gcp' ? restoredScanParams : null
                   }
                   workspaceId={workspaceId}
-                  onImportComplete={selected => {
-                    setIsImporting(false);
-                    onImported && onImported(selected);
-                  }}
+                  onImportComplete={completeIntegrationImport}
                   onError={err => {
                     setError(err);
                     setIsImporting(false);
@@ -3910,8 +3904,8 @@ function ImportTokensModalContent({
                         colorScheme='red'
                         isDisabled={!azureADLastScanId}
                       >
-                        Remove previously imported items no longer found at the
-                        source
+                        Remove previously imported items missing from this
+                        scan, including items excluded by filters
                       </Checkbox>
                       {!azureADLastScanId ? (
                         <Text fontSize='xs' color={muted} pl={6}>

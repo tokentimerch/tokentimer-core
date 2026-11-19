@@ -73,8 +73,33 @@ const { bindImportItemsToScan } = require("../services/scanBinding");
 const router = require("express").Router();
 
 function publicScanResult(result) {
-  for (const item of result.items || []) delete item.metric_expiration;
+  for (const item of result.items || []) {
+    delete item.metric_expiration;
+    delete item.gitlab_pat_owned_by_principal;
+  }
+  delete result.cleanupParentIds;
+  delete result.gitLabPatCoverage;
   return result;
+}
+
+function gitHostingCleanupSubScopes(result) {
+  return (result.summary || [])
+    // GitHub's PAT note describes an unsupported feature, not a scanned scope.
+    .filter(scope => !(scope?.type === "personal_access_tokens" && scope.note && !scope.sourceKind && !scope.error))
+    .map(scope => {
+      const parents = result.cleanupParentIds?.[scope.sourceKind];
+      const dimensions = {};
+      if (Array.isArray(parents)) dimensions.sourceObjectParentIds = parents;
+      if (scope.sourceKind === "gitlab-pat" && result.gitLabPatCoverage) {
+        dimensions.gitLabPatCoverage = result.gitLabPatCoverage;
+      }
+      return {
+        sourceKind: scope.sourceKind,
+        dimensions,
+        complete: scope.complete === true,
+        reason: scope.error ? "error" : scope.truncated ? "truncated" : null,
+      };
+    });
 }
 router.use((req, _res, next) => {
   req.integrationScanStartedAt = new Date();
@@ -874,8 +899,10 @@ router.post(
       // contract) rather than a client-reconstructed scope.
       let cleanupDeleted = [];
       let autoCleanupResult = null;
+      let cleanupStatus;
       await recordAutoSyncImportErrors(autoSyncRun, errors.length);
       if (effectiveCleanup && effectiveCleanup.enabled === true) {
+        if (!req.isWorkerCall && errors.length) cleanupStatus = "skipped_import_errors";
         try {
           if (autoSyncRun) {
             if (errors.length === 0) autoCleanupResult = await reconcileAutoSyncRun(autoSyncRun, req.body?.auto_sync_scan_ids);
@@ -889,6 +916,7 @@ router.post(
               reason: "import_cleanup",
             });
             cleanupDeleted = cleanupResult.deleted;
+            cleanupStatus = cleanupResult.status;
           }
         } catch (cleanupErr) {
           logger.error("Obsolete token cleanup failed", {
@@ -901,6 +929,7 @@ router.post(
               code: "AUTO_SYNC_RECONCILIATION_FAILED",
             });
           }
+          if (!req.isWorkerCall) cleanupStatus = "failed";
         }
       }
 
@@ -938,6 +967,7 @@ router.post(
         detached_count: autoCleanupResult?.detached || 0,
         cleanup_complete: autoCleanupResult?.complete ?? null,
         scan_complete: autoSyncRun?.scanComplete ?? null,
+        ...(cleanupStatus ? { cleanup_status: cleanupStatus } : {}),
         deleted: cleanupDeleted,
         created,
         updated,
@@ -1073,14 +1103,11 @@ router.post(
             items: (result.items || []).map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: metricSourceDimensions(item),
+              dimensions: { ...metricSourceDimensions(item),
+                ...(item.sourceKind === "gitlab-pat" && item.gitlab_pat_owned_by_principal === true
+                  ? { gitlab_pat_owned_by_principal: true } : {}) },
             })),
-            subScopes: (result.summary || []).map((s) => ({
-              sourceKind: s.sourceKind,
-              dimensions: {},
-              complete: s.complete === true,
-              reason: s.error ? "error" : s.truncated ? "truncated" : null,
-            })),
+            subScopes: gitHostingCleanupSubScopes(result),
           });
           result.scan_id = scan.scanId;
         }
@@ -1299,15 +1326,7 @@ router.post(
               sourceObjectId: item.sourceObjectId,
               dimensions: metricSourceDimensions(item),
             })),
-            // The PAT note describes an unsupported feature, not a scanned scope.
-            subScopes: (result.summary || []).filter((s) =>
-              !(s?.type === "personal_access_tokens" && s.note && !s.sourceKind && !s.error),
-            ).map((s) => ({
-              sourceKind: s.sourceKind,
-              dimensions: {},
-              complete: s.complete === true,
-              reason: s.error ? "error" : s.truncated ? "truncated" : null,
-            })),
+            subScopes: gitHostingCleanupSubScopes(result),
           });
           result.scan_id = scan.scanId;
         }
@@ -2863,8 +2882,10 @@ router.post(
       // contract) rather than a client-reconstructed scope.
       let cleanupDeleted = [];
       let autoCleanupResult = null;
+      let cleanupStatus;
       await recordAutoSyncImportErrors(autoSyncRun, errors.length);
       if (effectiveCleanup && effectiveCleanup.enabled === true) {
+        if (!req.isWorkerCall && errors.length) cleanupStatus = "skipped_import_errors";
         try {
           if (autoSyncRun) {
             if (errors.length === 0) autoCleanupResult = await reconcileAutoSyncRun(autoSyncRun, req.body?.auto_sync_scan_ids);
@@ -2878,6 +2899,7 @@ router.post(
               reason: "import_cleanup",
             });
             cleanupDeleted = cleanupResult.deleted;
+            cleanupStatus = cleanupResult.status;
           }
         } catch (cleanupErr) {
           logger.error("Obsolete token cleanup failed", {
@@ -2890,6 +2912,7 @@ router.post(
               code: "AUTO_SYNC_RECONCILIATION_FAILED",
             });
           }
+          if (!req.isWorkerCall) cleanupStatus = "failed";
         }
       }
 
@@ -2927,6 +2950,7 @@ router.post(
         detached_count: autoCleanupResult?.detached || 0,
         cleanup_complete: autoCleanupResult?.complete ?? null,
         scan_complete: autoSyncRun?.scanComplete ?? null,
+        ...(cleanupStatus ? { cleanup_status: cleanupStatus } : {}),
         deleted: cleanupDeleted,
         created,
         updated,

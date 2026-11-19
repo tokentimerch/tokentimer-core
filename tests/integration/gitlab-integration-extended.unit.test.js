@@ -178,7 +178,7 @@ describe("GitLab integration helper coverage", () => {
       if (call === 1) {
         return {
           data: [{ id: 1 }, { id: 2 }, { id: 3 }],
-          headers: {},
+          headers: { "x-next-page": "2" },
         };
       }
       return {
@@ -197,6 +197,23 @@ describe("GitLab integration helper coverage", () => {
     expect(projects.map((p) => p.id)).to.deep.equal([1, 2, 3]);
     expect(truncated).to.equal(true);
     expect(call).to.equal(1);
+  });
+
+  it("confirms headerless exhaustion when the terminal project page exactly fills the limit", async () => {
+    const pages = [];
+    const gitlab = requireWithMocks(resolveGitlabModule(), {
+      axios: async ({ params }) => {
+        pages.push(params.page);
+        return { data: params.page === 1 ? [{ id: 1 }] : [], headers: {} };
+      },
+    });
+    const { projects, truncated, error } = await gitlab._test.listProjects({
+      baseUrl: "https://gitlab.example.com", token: "token", maxItems: 1,
+    });
+    expect(pages).to.deep.equal([1, 2]);
+    expect(projects).to.deep.equal([{ id: 1 }]);
+    expect(truncated).to.equal(false);
+    expect(error).to.equal(undefined);
   });
 
   it("does not filter listProjects by owned, so group projects with Maintainer-only access are included", async () => {

@@ -26,6 +26,16 @@ import {
   HIGH_CARDINALITY_METRIC_LABELS as EXTRA,
   EXPLICIT_SELECTION_METRIC_LABELS,
 } from './imports/AutoSyncMetricSettings.jsx';
+
+function metricPolicyConfigured(policy) {
+  return (
+    policy.override_metrics ||
+    policy.override_monitoring_group ||
+    policy.extra_labels_locked ||
+    policy.labels.some(label => EXTRA.includes(label))
+  );
+}
+
 export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
   const muted = useColorModeValue('gray.600', 'gray.400');
 
@@ -40,13 +50,7 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
       .then(r => {
         if (active) {
           setPolicy(r.data);
-          onConfiguredChange?.(
-            Boolean(
-              r.data.override_metrics ||
-              r.data.override_monitoring_group ||
-              r.data.extra_labels_locked
-            )
-          );
+          onConfiguredChange?.(metricPolicyConfigured(r.data));
         }
       })
       .catch(() => {
@@ -73,13 +77,7 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
         monitoring_group: policy.monitoring_group,
       });
       setPolicy(r.data);
-      onConfiguredChange?.(
-        Boolean(
-          r.data.override_metrics ||
-          r.data.override_monitoring_group ||
-          r.data.extra_labels_locked
-        )
-      );
+      onConfiguredChange?.(metricPolicyConfigured(r.data));
       setSaved(true);
     } catch {
       setError('Unable to save auto-sync settings.');
@@ -152,23 +150,28 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
           >
             Enable additional auto-sync metrics
           </Checkbox>
+          {!policy.override_metrics && !policy.extra_labels_locked && (
+            <Text fontSize='sm'>
+              Allow asset labels for individual connections. Each connection
+              still chooses which labels to expose.
+            </Text>
+          )}
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={2}>
             {METRIC_LABEL_CHOICES.map(([key, title]) => {
-              const permitted =
-                !EXTRA.includes(key) || policy.extra_labels.includes(key);
+              const extra = EXTRA.includes(key);
+              const permitted = !extra || policy.extra_labels.includes(key);
+              const editable = policy.override_metrics
+                ? policy.enabled &&
+                  (!extra ||
+                    !policy.extra_labels_locked ||
+                    EXPLICIT_SELECTION_METRIC_LABELS.includes(key))
+                : extra && !policy.extra_labels_locked;
               return (
                 <Checkbox
                   key={key}
                   isChecked={permitted && policy.labels.includes(key)}
                   isDisabled={
-                    saving ||
-                    policy.labels_locked ||
-                    !policy.override_metrics ||
-                    !policy.enabled ||
-                    !permitted ||
-                    (!EXPLICIT_SELECTION_METRIC_LABELS.includes(key) &&
-                      EXTRA.includes(key) &&
-                      policy.extra_labels_locked)
+                    saving || policy.labels_locked || !permitted || !editable
                   }
                   onChange={e =>
                     change({

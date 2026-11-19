@@ -259,7 +259,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
         return;
       }
 
-      await integrationAPI.import({
+      const result = await integrationAPI.import({
         workspaceId,
         items: selected,
         filterRules: sanitizeFilterRules(filterRules),
@@ -277,7 +277,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
               }
             : undefined,
       });
-      onImportComplete && onImportComplete(selected);
+      onImportComplete?.(result);
     } catch (e) {
       onError && onError(e?.message || 'Azure import failed');
     }
@@ -452,7 +452,8 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
             colorScheme='red'
             isDisabled={!lastScanId}
           >
-            Remove previously imported items no longer found at the source
+            Remove previously imported items missing from this scan, including
+            items excluded by filters
           </Checkbox>
           {!lastScanId ? (
             <Text fontSize='xs' color={helpTextColor} pl={6}>

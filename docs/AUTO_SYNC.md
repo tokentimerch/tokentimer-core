@@ -114,11 +114,15 @@ no single asset owner. These metrics retain their low-cardinality labels.
 
 ### Asset expiration labels
 
-Core exposes `expiration` for GitLab auto-sync. Enterprise also supports AWS ACM, Azure Key Vault, Microsoft Entra ID, GCP and Vault. Allow `expiration` and select **Asset expiration** to turn it on. It reports the source date or UTC timestamp at import, retaining meaningful fractional seconds. Unavailable expiry, rotation schedules and inventory defaults leave the label blank. Later changes to the asset do not refresh it. In Grafana, retain `expiration` in `max by (...)` and use `{{ $labels.expiration }}` in the creation alert annotation.
+- For one connection, allow **Asset expiration** in **System Settings → Auto-sync** with **Override integration metrics** off. Then enable additional metrics and select it on the connection. For all connections, select it in the system override. Helm can allow it through `monitoring.metrics.extraLabels`.
+- The label records a date or UTC timestamp for newly created assets with a verified source expiry. Core supports GitLab. Enterprise adds AWS ACM, Azure Key Vault, Entra ID, GCP and Vault.
+- After a new creation, verify `expiration` on `auto_sync_last_creation_timestamp_seconds` in Grafana. Use an instant query, retain `expiration` in `max by (...)`, and use a query or threshold alert condition. Preview `{{ $labels.expiration }}` in the rule annotation. [Grafana annotation templates](https://grafana.com/docs/grafana/latest/alerting/alerting-rules/templates/reference/#labels).
 
 ## Cleanup and removal
 
 Destructive cleanup is opt-in. Leave it off while changing filters or splitting configurations. If any requested scope is incomplete, auto-sync can import the assets it found, marks the run partial, and keeps existing associations. One-time imports clean up only fully scanned scopes and only after all selected assets import successfully. Another configuration's association prevents deletion, and manually owned inventory survives detachment.
+
+GitHub and GitLab keep assets under repositories, projects or groups the scan could no longer access. For one-time imports, read any cleanup warning before retrying. A fresh scan rechecks coverage.
 
 **Disable auto-sync** deletes the selected configuration and detaches its associations; it does not blanket-delete inventory. Retained or manually adopted assets stay visible. Other configurations continue to protect their associated records. Inspect run/provenance history before deleting anything manually.
 

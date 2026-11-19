@@ -267,7 +267,7 @@ async function collectGitLabList({ baseUrl, token, path, params = {}, maxItems =
       if (hasNext) promisedThrough = page + 1;
       // A short headerless page leaves coverage unknown. Keep scanning while
       // the raw-item and page budgets allow an exhaustion check.
-      if (items.length === maxItems) return { items, truncated: true };
+      if (items.length === maxItems && (hasNext || seen.size > items.length)) return { items, truncated: true };
     }
     return { items, truncated: true };
   } catch (error) {
@@ -456,6 +456,8 @@ async function scanGitLab({
 
   const items = [];
   const summary = [];
+  const cleanupParentIds = {};
+  let gitLabPatCoverage;
   const BATCH_SIZE = 10; // Concurrency limit for parallel API calls
   let currentUser = null;
 
@@ -530,7 +532,10 @@ async function scanGitLab({
 
           await Promise.all(
             batch.map(async (project) => {
-              if (items.length >= maxItems) return;
+              if (items.length >= maxItems) {
+                projectsSkippedByCap++;
+                return;
+              }
               projectsScanned++;
               try {
                 const { items: projectTokens, truncated, error } = await listProjectAccessTokens({
@@ -549,7 +554,10 @@ async function scanGitLab({
                 if (projectTokens.length > 0) projectsWithTokens++;
 
                 for (const pt of projectTokens) {
-                  if (items.length >= maxItems) break;
+                  if (items.length >= maxItems) {
+                    tokenListsTruncated = true;
+                    break;
+                  }
 
                   // Skip revoked/inactive tokens unless includeRevoked filter is enabled
                   if (
@@ -620,8 +628,8 @@ async function scanGitLab({
         const truncated =
           projectsListTruncated ||
           tokenListsTruncated ||
-          projectsSkippedByCap > 0 ||
-          items.length >= maxItems;
+          projectsSkippedByCap > 0;
+        cleanupParentIds["gitlab-project-token"] = projects.map(project => String(project.id));
         summary.push({
           type: "project_access_tokens",
           sourceKind: "gitlab-project-token",
@@ -689,7 +697,10 @@ async function scanGitLab({
 
           await Promise.all(
             batch.map(async (group) => {
-              if (items.length >= maxItems) return;
+              if (items.length >= maxItems) {
+                groupsSkippedByCap++;
+                return;
+              }
               groupsScanned++;
               try {
                 const { items: groupTokens, truncated, error } = await listGroupAccessTokens({
@@ -708,7 +719,10 @@ async function scanGitLab({
                 if (groupTokens.length > 0) groupsWithTokens++;
 
                 for (const gt of groupTokens) {
-                  if (items.length >= maxItems) break;
+                  if (items.length >= maxItems) {
+                    tokenListsTruncated = true;
+                    break;
+                  }
 
                   // Skip revoked/inactive tokens unless includeRevoked filter is enabled
                   if (
@@ -778,8 +792,8 @@ async function scanGitLab({
         const truncated =
           groupsListTruncated ||
           tokenListsTruncated ||
-          groupsSkippedByCap > 0 ||
-          items.length >= maxItems;
+          groupsSkippedByCap > 0;
+        cleanupParentIds["gitlab-group-token"] = groups.map(group => String(group.id));
         summary.push({
           type: "group_access_tokens",
           sourceKind: "gitlab-group-token",
@@ -823,6 +837,7 @@ async function scanGitLab({
       try {
         let patsFound = 0;
         const isAdmin = currentUser?.is_admin === true;
+        gitLabPatCoverage = "own";
 
         let skippedRevoked = 0; // Declare at function scope for admin scanning
         let skippedExpired = 0; // Track expired tokens that are skipped
@@ -833,6 +848,7 @@ async function scanGitLab({
         let unclassifiedUserPATs = 0; // Unknown owners cannot satisfy the user-exclusion filter.
         let ownerClassificationIncomplete = false;
         let ownScanError;
+        let observedOtherOwner = false;
 
         // Build a set of bot user IDs from group and project tokens to avoid duplicates
         // Group/project access tokens create bot users whose PATs would be counted separately
@@ -949,6 +965,9 @@ async function scanGitLab({
                   patsTruncated = true;
                   break adminPatPages;
                 }
+                if (Number.isSafeInteger(pat.user_id) && pat.user_id > 0 && pat.user_id !== currentUser.id) {
+                  observedOtherOwner = true;
+                }
 
                 // Skip PATs that belong to bot users (group/project token bot accounts)
                 // This prevents double counting the same token as both group/project token and PAT
@@ -1019,6 +1038,7 @@ async function scanGitLab({
                   description: pat.description || null,
                   expiration: expiresAt ? formatDateYmd(expiresAt) : null,
                   metric_expiration: pat.expires_at,
+                  gitlab_pat_owned_by_principal: pat.user_id === currentUser.id,
                   location: username
                     ? `gitlab:users/${username}/personal_access_tokens/${pat.id}`
                     : `gitlab:personal_access_tokens/${pat.id}`,
@@ -1032,14 +1052,6 @@ async function scanGitLab({
                 });
                 patsFound++;
               }
-
-              if (items.length >= maxItems) {
-                // Stopped early with more PATs potentially unseen on this
-                // page or later pages -- this sub-scope did not see the
-                // whole instance.
-                patsTruncated = true;
-                break adminPatPages;
-              }
             }
           } catch (e) {
             logger.warn("Admin PAT scanning failed", {
@@ -1051,6 +1063,25 @@ async function scanGitLab({
             // silently reporting complete: true with whatever partial
             // results we gathered before the failure.
             adminScanFailed = true;
+          }
+          if (!adminScanFailed && !patsTruncated && !ownerClassificationIncomplete) {
+            // The account's is_admin flag can remain true when this PAT lacks
+            // Admin Mode privileges. Confirm effective access before using
+            // absence to clean up another user's PAT.
+            if (observedOtherOwner) {
+              gitLabPatCoverage = "all";
+            } else {
+              try {
+                const settings = await gitlabRequest({ baseUrl: normalizedUrl, token,
+                  path: "/api/v4/application/settings", timeout: 5000 });
+                if (typeof settings?.signup_enabled === "boolean" &&
+                    Number.isSafeInteger(settings.default_projects_limit)) {
+                  gitLabPatCoverage = "all";
+                }
+              } catch (_) {
+                // Without effective admin proof, only this principal's PATs are covered.
+              }
+            }
           }
         } else {
           // Regular user mode: Only scan own PATs
@@ -1109,6 +1140,7 @@ async function scanGitLab({
                     description: pat.description || null,
                     expiration: expiresAt ? formatDateYmd(expiresAt) : null,
                     metric_expiration: pat.expires_at,
+                    gitlab_pat_owned_by_principal: pat.user_id === currentUser.id,
                     location: `gitlab:personal_access_tokens/${pat.id}`,
                     scopes: pat.scopes || [],
                     created_at: pat.created_at || null,
@@ -1216,7 +1248,10 @@ async function scanGitLab({
 
           await Promise.all(
             batch.map(async (project) => {
-              if (items.length >= maxItems) return;
+              if (items.length >= maxItems) {
+                projectsSkippedByCap++;
+                return;
+              }
               projectsScanned++;
               try {
                 const { items: deployTokens, truncated, error } = await listDeployTokens({
@@ -1234,7 +1269,10 @@ async function scanGitLab({
                 if (deployTokens.length > 0) projectsWithTokens++;
 
                 for (const dt of deployTokens) {
-                  if (items.length >= maxItems) break;
+                  if (items.length >= maxItems) {
+                    tokenListsTruncated = true;
+                    break;
+                  }
 
                   // GitLab hides revoked/deleted deploy tokens in its UI but
                   // the API still returns them with revoked: true (their
@@ -1297,8 +1335,8 @@ async function scanGitLab({
         const truncated =
           projectsListTruncated ||
           tokenListsTruncated ||
-          projectsSkippedByCap > 0 ||
-          items.length >= maxItems;
+          projectsSkippedByCap > 0;
+        cleanupParentIds["gitlab-deploy-token"] = projects.map(project => String(project.id));
         summary.push({
           type: "deploy_tokens",
           sourceKind: "gitlab-deploy-token",
@@ -1355,7 +1393,10 @@ async function scanGitLab({
 
           await Promise.all(
             batch.map(async (project) => {
-              if (items.length >= maxItems) return;
+              if (items.length >= maxItems) {
+                projectsSkippedByCap++;
+                return;
+              }
               projectsScanned++;
               try {
                 const { items: triggers, truncated, error } = await listPipelineTriggers({
@@ -1373,7 +1414,10 @@ async function scanGitLab({
                 if (triggers.length > 0) projectsWithTriggers++;
 
                 for (const trigger of triggers) {
-                  if (items.length >= maxItems) break;
+                  if (items.length >= maxItems) {
+                    tokenListsTruncated = true;
+                    break;
+                  }
 
                   items.push({
                     source: "gitlab-trigger-token",
@@ -1415,7 +1459,8 @@ async function scanGitLab({
           tokensFound: triggerTokensCount,
         });
         const truncated = projectsListTruncated || tokenListsTruncated ||
-          projectsSkippedByCap > 0 || items.length >= maxItems;
+          projectsSkippedByCap > 0;
+        cleanupParentIds["gitlab-trigger-token"] = projects.map(project => String(project.id));
         summary.push({
           type: "pipeline_trigger_tokens",
           sourceKind: "gitlab-trigger-token",
@@ -1445,14 +1490,18 @@ async function scanGitLab({
     if (include.keys && filters.includeSSHKeys) {
       try {
         // Always use the user endpoint (no userId) - admin endpoint requires elevated privileges
-        const { items: sshKeys, truncated: keysListTruncated, error } = await listSSHKeys({
+        const { items: sshKeys, truncated: listTruncated, error } = await listSSHKeys({
           baseUrl: normalizedUrl,
           token,
           maxItems,
         });
         let keysFound = 0;
+        let keysListTruncated = listTruncated;
         for (const key of sshKeys) {
-          if (items.length >= maxItems) break;
+          if (items.length >= maxItems) {
+            keysListTruncated = true;
+            break;
+          }
           const expiresAt = key.expires_at
             ? tryParseDate(key.expires_at)
             : null;
@@ -1477,7 +1526,7 @@ async function scanGitLab({
           });
           keysFound++;
         }
-        const truncated = keysListTruncated || items.length >= maxItems;
+        const truncated = keysListTruncated;
         summary.push({
           type: "ssh_keys",
           sourceKind: "gitlab-ssh-key",
@@ -1625,7 +1674,8 @@ async function scanGitLab({
     ...resultsByType,
   });
 
-  return { items, summary, host, ownerKey: currentUser?.id ? String(currentUser.id) : null };
+  return { items, summary, cleanupParentIds, gitLabPatCoverage, host,
+    ownerKey: currentUser?.id ? String(currentUser.id) : null };
 }
 
 module.exports = {

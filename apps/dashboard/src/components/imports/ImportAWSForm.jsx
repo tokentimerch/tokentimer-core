@@ -402,7 +402,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         return;
       }
 
-      await integrationAPI.import({
+      const result = await integrationAPI.import({
         workspaceId,
         items: selected,
         filterRules: sanitizeFilterRules(filterRules),
@@ -420,7 +420,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
               }
             : undefined,
       });
-      onImportComplete && onImportComplete(selected);
+      onImportComplete?.(result);
     } catch (e) {
       onError && onError(e?.message || 'AWS import failed');
     }
@@ -532,7 +532,8 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
             size='sm'
             colorScheme='red'
           >
-            Remove previously imported items no longer found at the source
+            Remove previously imported items missing from this scan, including
+            items excluded by filters
           </Checkbox>
           <Text fontSize='xs' color={helpTextColor} pl={6}>
             <strong>Cleanup scope:</strong> Available immediately after a scan.

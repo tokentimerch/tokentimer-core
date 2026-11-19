@@ -625,7 +625,10 @@ async function scanAWSSingleRegion({
 
         await Promise.all(
           batch.map(async (user) => {
-            if (iamKeysCount >= maxItems) return;
+            if (iamKeysCount >= maxItems) {
+              usersSkippedByCap++;
+              return;
+            }
             try {
               const { items: keys, truncated } = await collectAwsList({
                 fetchPage: Marker => client.send(new ListAccessKeysCommand({ UserName: user.UserName, Marker })),
@@ -634,7 +637,10 @@ async function scanAWSSingleRegion({
               keysListTruncated ||= truncated;
 
               for (const key of keys) {
-                if (iamKeysCount >= maxItems) break;
+                if (iamKeysCount >= maxItems) {
+                  keysListTruncated = true;
+                  break;
+                }
 
                 // Fetch last used information for this access key
                 let lastUsedAt = null;
@@ -659,7 +665,10 @@ async function scanAWSSingleRegion({
                   });
                 }
 
-                if (iamKeysCount >= maxItems) break;
+                if (iamKeysCount >= maxItems) {
+                  keysListTruncated = true;
+                  break;
+                }
                 items.push({
                   source: "aws-iam-key",
                   name: `${user.UserName}/${key.AccessKeyId}`,
@@ -693,7 +702,7 @@ async function scanAWSSingleRegion({
       // omit `region` entirely -- a token here is never partitioned by
       // which region happened to be selected for the rest of the scan.
       const iamTruncated =
-        usersListTruncated || keysListTruncated || usersSkippedByCap > 0 || iamKeysCount >= maxItems;
+        usersListTruncated || keysListTruncated || usersSkippedByCap > 0;
       summary.push({
         type: "iam_keys",
         sourceKind: "aws-iam-key",

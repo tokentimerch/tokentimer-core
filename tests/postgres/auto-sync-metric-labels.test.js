@@ -854,11 +854,17 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
 
   it("keeps GitHub page-two inventory on denied scans and reconciles complete absence", async (t) => {
     const github = await gitlabPatFixture(t);
+    let repositoryIds = [5, 6];
     github.routes.set("/api/v3/user", () => ({ data: { id: 31, login: "fixture" } }));
     github.routes.set("/api/v3/user/repos", url => ({
       data: Number(url.searchParams.get("page") || 1) === 1
-        ? [{ id: 5, owner: { login: "fixture" }, name: "repo", full_name: "fixture/repo" }]
+        ? repositoryIds.map(id => ({ id, owner: { login: "fixture" },
+          name: id === 5 ? "repo" : "hidden", full_name: id === 5 ? "fixture/repo" : "fixture/hidden" }))
         : [],
+    }));
+    github.routes.set("/api/v3/repos/fixture/hidden/actions/secrets", () => ({
+      data: repositoryIds.length === 1
+        ? { secrets: [], total_count: 0 } : { secrets: [{ name: "HIDDEN" }], total_count: 1 },
     }));
     const secretPath = "/api/v3/repos/fixture/repo/actions/secrets";
     let mode = "healthy";
@@ -875,12 +881,12 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     const config = await configuration("GitHub paginated", "github");
     const workerPost = path => request(app).post(`${path}?workspace_id=${workspaceId}`)
       .set("Authorization", "Bearer issue71-test-worker");
-    async function scanAndImport() {
+    async function scanAndImport(maxItems) {
       github.calls.length = 0;
       const run = await start(config);
       const runContext = runs.runContext(run.config);
       const scanned = await workerPost("/api/v1/integrations/github/scan").send({
-        baseUrl: `${github.baseUrl}/api/v3`, token: github.options.token, auto_sync_run: runContext,
+        baseUrl: `${github.baseUrl}/api/v3`, token: github.options.token, auto_sync_run: runContext, maxItems,
         include: { tokens: true, sshKeys: false, deployKeys: false, secrets: true },
       });
       assert.equal(scanned.status, 200, scanned.text);
@@ -900,7 +906,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
       .map(url => Number(url.searchParams.get("page") || 1));
     const initial = await scanAndImport();
     assert.deepEqual(listedPages(), [1, 2]);
-    assert.equal(initial.created_count, 2);
+    assert.equal(initial.created_count, 3);
     assert.equal(initial.scan_complete, true, "An informational PAT note is not a failed scope");
     assert.equal(initial.cleanup_complete, true);
     const { rows: [tracked] } = await pool.query(
@@ -912,26 +918,116 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     assert.deepEqual(listedPages(), [1, 2]);
     assert.equal(partial.scan_complete, false);
     assert.equal(partial.cleanup_complete, false);
-    assert.equal(partial.updated_count, 1);
+    assert.equal(partial.updated_count, 2);
     assert.equal(partial.deleted_count, 0);
     assert.equal((await pool.query(
       "SELECT 1 FROM tokens t JOIN auto_sync_token_links l ON l.token_id=t.id WHERE t.id=$1 AND l.config_id=$2",
       [tracked.id, config.id],
     )).rowCount, 1);
     mode = "gone";
-    const complete = await scanAndImport();
+    repositoryIds = [5];
+    const complete = await scanAndImport(1);
     assert.deepEqual(listedPages(), [1]);
     assert.equal(complete.cleanup_complete, true);
     assert.equal(complete.deleted_count, 1);
     assert.equal((await pool.query("SELECT 1 FROM tokens WHERE id=$1", [tracked.id])).rowCount, 0);
+    const hiddenLink = () => pool.query(`SELECT 1 FROM tokens t JOIN auto_sync_token_links l ON l.token_id=t.id
+      WHERE t.workspace_id=$1 AND l.config_id=$2 AND t.source_object_id='6:HIDDEN'`, [workspaceId, config.id]);
+    assert.equal((await hiddenLink()).rowCount, 1, "A no-longer-visible repository is outside this cleanup scope");
+
+    repositoryIds = [];
+    const noParents = await scanAndImport();
+    assert.equal(noParents.cleanup_complete, true);
+    assert.equal(noParents.deleted_count, 0);
+    assert.equal((await hiddenLink()).rowCount, 1);
+
+    repositoryIds = [6];
+    const emptyChildList = await scanAndImport();
+    assert.equal(emptyChildList.cleanup_complete, true);
+    assert.equal(emptyChildList.deleted_count, 1, "A visible repository's verified empty child list can drive cleanup");
+    assert.equal((await hiddenLink()).rowCount, 0);
+  });
+
+  it("limits manual GitLab cleanup to parents whose child lists were checked", async (t) => {
+    const gitlab = await gitlabPatFixture(t);
+    let projectIds = [7, 8];
+    let empty = false;
+    let deny = false;
+    let includeKeys = false;
+    const listed = data => ({ data, headers: { "x-next-page": "" } });
+    gitlab.routes.set("/api/v4/projects", () => listed(projectIds.map(id => ({ id, name: `project-${id}` }))));
+    for (const id of projectIds) {
+      gitlab.routes.set(`/api/v4/projects/${id}/access_tokens`, () => deny
+        ? { status: 403 } : listed(empty ? [] : [{ id: 42, name: `token-${id}`, active: true }]));
+    }
+    const post = endpoint => request(app).post(`/api/v1/integrations/${endpoint}?workspace_id=${workspaceId}`);
+    async function scanAndImport(cleanup, maxItems) {
+      const scanned = await post("gitlab/scan").send({
+        ...gitlab.options,
+        include: { tokens: true, keys: includeKeys }, maxItems,
+        filters: { includePATs: false, includeProjectTokens: true, includeGroupTokens: false, includeDeployTokens: false },
+      });
+      assert.equal(scanned.status, 200, scanned.text);
+      const { scan_id: scanId, items } = scanned.body;
+      assert.ok(scanId);
+      assert.equal(Object.hasOwn(scanned.body, "cleanupParentIds"), false);
+      const imported = await post("import").send({ scan_id: scanId, items,
+        ...(cleanup ? { cleanup: { enabled: true, provider: "gitlab", scanId } } : {}),
+      });
+      assert.equal(imported.status, 201, imported.text);
+      assert.equal(imported.body.error_count, 0, imported.text);
+      return imported.body;
+    }
+    const inventory = async () => (await pool.query(`SELECT source_object_id FROM tokens
+      WHERE workspace_id=$1 AND source_kind='gitlab-project-token' ORDER BY source_object_id`, [workspaceId]))
+      .rows.map(row => row.source_object_id);
+    assert.equal((await scanAndImport(false)).created_count, 2);
+    assert.deepEqual(await inventory(), ["7:42", "8:42"]);
+
+    const legacyScan = await persistScan({
+      workspaceId, provider: "gitlab", createdBy: userId,
+      identityContext: { host: new URL(gitlab.baseUrl).host, ownerKey: "17" },
+      items: [], subScopes: [{ sourceKind: "gitlab-project-token", complete: true }],
+    });
+    const legacyImport = await post("import").send({ items: [], scan_id: legacyScan.scanId,
+      cleanup: { enabled: true, provider: "gitlab", scanId: legacyScan.scanId } });
+    assert.equal(legacyImport.status, 201, legacyImport.text);
+    assert.equal(legacyImport.body.deleted_count, 0);
+    assert.equal(legacyImport.body.cleanup_status, "skipped_incomplete");
+    assert.deepEqual(await inventory(), ["7:42", "8:42"]);
+    const legacyReplay = await post("import").send({ items: [], scan_id: legacyScan.scanId,
+      cleanup: { enabled: true, provider: "gitlab", scanId: legacyScan.scanId } });
+    assert.equal(legacyReplay.status, 201, legacyReplay.text);
+    assert.equal(legacyReplay.body.cleanup_status, "skipped_unavailable");
+
+    projectIds = [7];
+    deny = true;
+    const denied = await scanAndImport(true);
+    assert.equal(denied.deleted_count, 0);
+    assert.equal(denied.cleanup_status, "skipped_incomplete");
+    includeKeys = true;
+    const partial = await scanAndImport(true);
+    assert.equal(partial.deleted_count, 0);
+    assert.equal(partial.cleanup_status, "partial");
+    includeKeys = false;
+    assert.deepEqual(await inventory(), ["7:42", "8:42"]);
+    deny = false;
+    const exactLimit = await scanAndImport(true, 1);
+    assert.equal(exactLimit.updated_count, 1);
+    assert.equal(exactLimit.cleanup_status, "completed");
+    empty = true;
+    const covered = await scanAndImport(true);
+    assert.equal(covered.deleted_count, 1);
+    assert.equal(covered.cleanup_status, "completed");
+    assert.deepEqual(await inventory(), ["8:42"]);
   });
 
   it("defers manual cleanup when an import fails, including an otherwise complete scan", async () => {
-    const { token } = await imported(null, { name: "Manual candidate" }, true);
+    const { token } = await imported(null, { name: "Manual candidate", source_object_id: "7:42" }, true);
     const scan = await persistScan({
       workspaceId, provider: "gitlab", createdBy: userId,
       identityContext: { host: source.source_instance, ownerKey: source.source_owner_key },
-      items: [], subScopes: [{ sourceKind: source.source_kind, complete: true }],
+      items: [], subScopes: [{ sourceKind: source.source_kind, dimensions: { sourceObjectParentIds: ["7"] }, complete: true }],
     });
     const url = `/api/v1/integrations/import?workspace_id=${workspaceId}`;
     const body = { scan_id: scan.scanId, cleanup: { enabled: true, provider: "gitlab", scanId: scan.scanId } };
@@ -942,6 +1038,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     assert.equal(failed.status, 201, failed.text);
     assert.equal(failed.body.error_count, 1, failed.text);
     assert.equal(failed.body.deleted_count, 0);
+    assert.equal(failed.body.cleanup_status, "skipped_import_errors");
     assert.equal((await pool.query("SELECT 1 FROM tokens WHERE id=$1", [token.id])).rowCount, 1);
     assert.equal((await pool.query(
       "SELECT cleanup_consumed_at FROM integration_scans WHERE id=$1", [scan.scanId],
@@ -949,6 +1046,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     const complete = await request(app).post(url).send({ ...body, items: [] });
     assert.equal(complete.status, 201, complete.text);
     assert.equal(complete.body.deleted_count, 1);
+    assert.equal(complete.body.cleanup_status, "completed");
   });
 
   it("offers expiry to connections allowed by deployment without selecting it globally", async () => {

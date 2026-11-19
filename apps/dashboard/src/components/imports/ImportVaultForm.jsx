@@ -458,7 +458,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         onError && onError('Please select a workspace first.');
         return;
       }
-      await vaultAPI.import({
+      const result = await vaultAPI.import({
         workspaceId,
         items: selected,
         filterRules: sanitizeFilterRules(filterRules),
@@ -479,7 +479,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
               }
             : undefined,
       });
-      onImportComplete && onImportComplete(selected);
+      onImportComplete?.(result);
     } catch (e) {
       onError && onError(e?.message || 'Vault import failed');
     }
@@ -766,7 +766,8 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
               colorScheme='red'
               isDisabled={!lastScanId}
             >
-              Remove previously imported items no longer found at the source
+              Remove previously imported items missing from this scan, including
+              items excluded by filters
             </Checkbox>
             {!lastScanId ? (
               <Text fontSize='xs' color={helpTextColor} pl={6}>

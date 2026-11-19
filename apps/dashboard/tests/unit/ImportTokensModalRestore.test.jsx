@@ -857,6 +857,23 @@ describe('Entra identity selection and saved filters', () => {
     });
   });
 
+  it('keeps a partial import preview and shows the item error and cleanup outcome', async () => {
+    integrationAPI.import.mockResolvedValueOnce({
+      created: [],
+      created_count: 0,
+      updated: [],
+      error_count: 1,
+      cleanup_status: 'skipped_import_errors',
+      errors: [{ item: 'Ordinary principal', error: 'Name is required' }],
+    });
+    await scanEntra();
+    fireEvent.click(screen.getByRole('button', { name: 'Import selected' }));
+    expect(
+      await screen.findByText(/Ordinary principal · Name is required/)
+    ).toHaveTextContent('Obsolete-item cleanup was skipped.');
+    expect(screen.getByRole('button', { name: 'Import selected' })).toBeEnabled();
+  });
+
   it.each(['identity', 'rules', 'scope', 'credentials'])(
     'invalidates an Entra preview after changing %s',
     async change => {
@@ -1054,7 +1071,7 @@ describe('ImportTokensModal docs panel', () => {
     expect(await screen.findByText(/Incomplete scan:/)).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole('checkbox', {
-        name: /Remove previously imported items no longer found/,
+        name: /Remove previously imported items missing from this scan, including items excluded by filters/,
       })
     );
     expect(screen.getByText(/Permanent deletion:/)).toBeInTheDocument();
