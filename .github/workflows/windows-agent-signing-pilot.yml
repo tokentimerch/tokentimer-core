@@ -1,0 +1,231 @@
+name: Qualify the Windows agent signing pilot
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Exact reviewed Core main workflow commit
+        required: true
+        type: string
+      reviewed_source_sha:
+        description: Exact approved Windows agent source commit
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: windows-agent-signing-pilot
+  cancel-in-progress: false
+
+env:
+  PILOT_SOURCE: '097efce0423c48a2264943009b62fb7bf402e84d'
+  PILOT_VERSION: '0.20.0'
+  PILOT_NODE_VERSION: '24.22.3'
+  PILOT_GO_VERSION: '1.26.11'
+  PILOT_NODE_ZIP_HASH: 'e612af99f626ab415ea225af6bce5c971feb448cb5cae250bb1c3fa50c5f7d9f'
+  PILOT_NODE_EXE_HASH: '86fc4785327db5f5c7558dc6156c543b433c313e813a222e088086222ab4afa6'
+  GOTOOLCHAIN: local
+
+jobs:
+  build:
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == '097efce0423c48a2264943009b62fb7bf402e84d'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      archive_sha256: ${{ steps.package.outputs.sha256 }}
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+    steps:
+      - name: Require the exact signed Core source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/commits/$PILOT_SOURCE" |
+            jq -e --arg expected "$PILOT_SOURCE" '.sha == $expected and .commit.verification.verified == true' >/dev/null
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.PILOT_SOURCE }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: ${{ env.PILOT_NODE_VERSION }}
+          package-manager-cache: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.PILOT_GO_VERSION }}
+          cache: false
+
+      - name: Build the pinned Windows source without production credentials
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PILOT_SOURCE"
+          test "$(go env GOVERSION)" = "go$PILOT_GO_VERSION"
+          test "$(node -p "require('./packages/agent/package.json').version")" = "$PILOT_VERSION"
+          runtime="$RUNNER_TEMP/node-runtime"
+          mkdir -m 700 "$runtime"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            'https://raw.githubusercontent.com/nodejs/release-keys/481637f813e912c4aa3622d7964ab426c97b8e8d/gpg/pubring.kbx' \
+            -o "$runtime/node-release-keys.kbx"
+          printf '%s  %s\n' '610b8d249da3d5733f5a128def2dd0294dbbf5b5713e6ca2529db8db419dee00' \
+            "$runtime/node-release-keys.kbx" | sha256sum --check
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            "https://nodejs.org/dist/v$PILOT_NODE_VERSION/SHASUMS256.txt.asc" -o "$runtime/SHASUMS256.txt.asc"
+          gpgv --keyring "$runtime/node-release-keys.kbx" --output "$runtime/SHASUMS256.txt" "$runtime/SHASUMS256.txt.asc"
+          grep -Fx "$PILOT_NODE_ZIP_HASH  node-v$PILOT_NODE_VERSION-win-x64.zip" "$runtime/SHASUMS256.txt"
+          grep -Fx "b3cc74a295b39d4f273271e96f58c06dd2b35757ca12abec64c7d0598b434f14  node-v$PILOT_NODE_VERSION-win-arm64.zip" "$runtime/SHASUMS256.txt"
+          # The producer prepares both upstream runtime inputs. Only the amd64 output is transferred.
+          for arch in x64 arm64; do
+            file="node-v$PILOT_NODE_VERSION-win-$arch.zip"
+            curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+              "https://nodejs.org/dist/v$PILOT_NODE_VERSION/$file" -o "$runtime/$file"
+          done
+          node packages/agent/scripts/pack-release.js --out-dir "$RUNNER_TEMP/agent-build" --windows-runtime-dir "$runtime"
+          name="tokentimer-agent-$PILOT_VERSION-windows-amd64.tgz"
+          output="$RUNNER_TEMP/windows-pilot-unsigned"
+          mkdir -m 700 "$output"
+          archive="$output/$name"
+          mv "$RUNNER_TEMP/agent-build/$name" "$archive"
+          node scripts/verify-agent-native-package.js --archive "$archive" --go-version "$PILOT_GO_VERSION" \
+            --source-sha "$PILOT_SOURCE" --out "$output/native-provenance.json"
+          digest=$(sha256sum "$archive" | cut -d ' ' -f 1)
+          jq -n --arg source "$PILOT_SOURCE" --arg workflow "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" \
+            --arg attempt "$GITHUB_RUN_ATTEMPT" --arg name "$name" --arg sha "$digest" \
+            '{sourceCommit:$source,workflowCommit:$workflow,runId:$run,runAttempt:$attempt,archive:$name,sha256:$sha}' \
+            > "$output/producer.json"
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Transfer only unsigned amd64 input and provenance
+        id: artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-pilot-unsigned-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/windows-pilot-unsigned/tokentimer-agent-0.20.0-windows-amd64.tgz
+            ${{ runner.temp }}/windows-pilot-unsigned/producer.json
+            ${{ runner.temp }}/windows-pilot-unsigned/native-provenance.json
+          if-no-files-found: error
+          retention-days: 1
+
+  sign-amd64:
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == '097efce0423c48a2264943009b62fb7bf402e84d'
+    needs: build
+    environment: windows-agent-signing
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: windows-2025
+    timeout-minutes: 35
+    env:
+      GOPROXY: 'off'
+      PILOT_UNSIGNED_SHA256: ${{ needs.build.outputs.archive_sha256 }}
+      PILOT_UNSIGNED_ARTIFACT: ${{ needs.build.outputs.artifact_id }}
+      PILOT_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+      PILOT_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      PILOT_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+      PILOT_PROFILE_EKU: ${{ vars.AZURE_SIGNING_PROFILE_EKU }}
+      PILOT_ISSUER_SHA256: ${{ vars.AZURE_SIGNING_ISSUER_SHA256 }}
+      PILOT_LAB_RECIPIENT: ${{ vars.WINDOWS_SIGNING_LAB_RECIPIENT }}
+    steps:
+      # Only reviewed main tooling is checked out on the worker with OIDC.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: ${{ env.PILOT_NODE_VERSION }}
+          package-manager-cache: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.PILOT_GO_VERSION }}
+          cache: false
+
+      - name: Prepare a private Windows stage with the verified lab recipient
+        id: stage
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git rev-parse HEAD) -cne $env:GITHUB_SHA) { throw 'Wrong trusted workflow checkout' }
+          $private = & ./scripts/windows-signing-pilot-stage.ps1 -RunnerTemp $env:RUNNER_TEMP
+          "path=$private" >> $env:GITHUB_OUTPUT
+          "PILOT_STAGE=$private" >> $env:GITHUB_ENV
+          & ./scripts/windows-signing-pilot.ps1 -Operation Initialize -Stage $private
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: ${{ steps.stage.outputs.path }}/unsigned
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Bind and extract the exact same-run unsigned archive as data
+        shell: pwsh
+        run: ./scripts/windows-signing-pilot.ps1 -Operation Extract -Stage $env:PILOT_STAGE
+
+      - name: Sign and verify only the eleven approved first-party files
+        uses: ./.github/actions/windows-agent-sign
+        with:
+          package-root: ${{ steps.stage.outputs.path }}/files/package
+          architecture: amd64
+          client-id: ${{ vars.AZURE_SIGNING_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_SIGNING_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SIGNING_SUBSCRIPTION_ID }}
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          profile-eku: ${{ vars.AZURE_SIGNING_PROFILE_EKU }}
+          issuer-sha256: ${{ vars.AZURE_SIGNING_ISSUER_SHA256 }}
+          node-sha256: ${{ env.PILOT_NODE_EXE_HASH }}
+
+      - name: Build the final archive, SBOM and exact inventory on this worker
+        id: inventory
+        shell: pwsh
+        run: ./scripts/windows-signing-pilot.ps1 -Operation Inventory -Stage $env:PILOT_STAGE
+
+      - name: Sign the exact bound pilot inventory
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files: ${{ steps.inventory.outputs.path }}
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          generate-pkcs7: true
+          pkcs7-options: Embedded
+          pkcs7-oid: 1.2.840.113549.1.7.1
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+          cache-dependencies: false
+
+      - name: Verify CMS and seal all lab files to the protected recipient key
+        shell: pwsh
+        env:
+          PILOT_INVENTORY_SHA256: ${{ steps.inventory.outputs.sha256 }}
+        run: ./scripts/windows-signing-pilot.ps1 -Operation Seal -Stage $env:PILOT_STAGE
+
+      - name: Upload only the encrypted lab handoff and its receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-amd64-pilot-sealed-${{ github.run_attempt }}
+          path: |
+            ${{ steps.stage.outputs.path }}/sealed/windows-amd64-pilot.zip.age
+            ${{ steps.stage.outputs.path }}/sealed/receipt.json
+          if-no-files-found: error
+          retention-days: 1
