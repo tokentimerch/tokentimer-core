@@ -252,6 +252,10 @@ Upgrade the control plane before agents. Download and verify the new package, th
 
 Retire the agent in the fleet panel after its jobs finish. `install-agent.sh --uninstall` or `install-agent.ps1 --uninstall` removes the service and app while preserving state. Review and back up custody and recovery state before any manual deletion.
 
+### Unattended Windows upgrades
+
+For the classic Windows agent that uses a separately installed Node.js runtime, stage the checksum-verified package and run the installer elevated with the enrolled API URL and workspace ID. When the enrolled credential is present, set `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_unused` for the installer process. Start with a small batch. Advance once each installer exits with `0` and the original fleet row shows the expected version, compatibility, and a fresh heartbeat. If an upgrade is interrupted or a check fails, pause the rollout and preserve the protected state and package directories. [Reconcile uncertain jobs](#9-troubleshooting) before retrying.
+
 ### Linux removal behavior
 
 `install-agent.sh --uninstall` stops and disables the service, then removes the app directory, unit file, drop-in override, and polkit rule. It preserves the state directory and system user. Retire the agent in the dashboard too; otherwise the fleet continues to list it until the stale-agent sweep marks it offline. Manually delete state only after preserving required credentials, custody keys, and recovery journals.
