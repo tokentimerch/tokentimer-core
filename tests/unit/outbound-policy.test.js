@@ -88,7 +88,7 @@ test("endpoint monitor listing reports scheduled TLS and manual HTTP policy sepa
   ]);
 });
 
-test("bulk import saves certificate data but skips new policy-blocked endpoint monitors", async (t) => {
+test("bulk import reports policy skips and preserves the response when checks are allowed", async (t) => {
   setPolicy(t, { offline: "true" });
   const { pool } = require("../../apps/api/db/database");
   const router = require("../../apps/api/routes/admin");
@@ -98,25 +98,38 @@ test("bulk import saves certificate data but skips new policy-blocked endpoint m
     query: async (sql) => ({ rows: sql.includes("INSERT INTO tokens") ? [token] : [] }),
     release() {},
   }));
-  const query = t.mock.method(pool, "query", async () => ({ rows: [] }));
-  let status;
-  let data;
-  await route.stack.at(-1).handle({
-    workspace: { id: 1 },
-    user: { id: 1 },
-    body: {
-      domain: "example.com",
-      certificates: [{ domains: [token.name], expiration: token.expiration }],
-      monitorOptions: { enabled: true },
-    },
-  }, {
-    status(code) { status = code; return this; },
-    json(body) { data = body; },
-  });
-  assert.equal(status, 201);
-  assert.equal(data.imported[0].tokenId, token.id);
-  assert.deepEqual(data.monitors, { created: 0, existing: 0, blocked: 1 });
-  assert.equal(query.mock.calls.some(({ arguments: [sql] }) => sql.includes("INSERT INTO domain_monitors")), false);
+  const query = t.mock.method(pool, "query", async (sql) => ({
+    rows: sql.includes("INSERT INTO domain_monitors") ? [{ id: 1, token_id: token.id }] : [],
+  }));
+  const monitorInserts = () => query.mock.calls.filter(({ arguments: [sql] }) =>
+    sql.includes("INSERT INTO domain_monitors"),
+  ).length;
+  async function importCertificate() {
+    let status;
+    let data;
+    await route.stack.at(-1).handle({
+      workspace: { id: 1 },
+      user: { id: 1 },
+      body: {
+        domain: "example.com",
+        certificates: [{ domains: [token.name], expiration: token.expiration }],
+        monitorOptions: { enabled: true },
+      },
+    }, {
+      status(code) { status = code; return this; },
+      json(body) { data = body; },
+    });
+    assert.equal(status, 201);
+    assert.equal(data.imported[0].tokenId, token.id);
+    return data.monitors;
+  }
+
+  assert.deepEqual(await importCertificate(), { created: 0, existing: 0, blocked: 1 });
+  assert.equal(monitorInserts(), 0);
+
+  process.env.OUTBOUND_ALLOWLIST = token.name;
+  assert.deepEqual(await importCertificate(), { created: 1, existing: 0 });
+  assert.equal(monitorInserts(), 1);
 });
 
 test("API integration validation denies before resolution even when private addresses are enabled", async (t) => {

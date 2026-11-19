@@ -1825,7 +1825,11 @@ router.post(
           duplicate: skippedDuplicate,
           invalid: skippedInvalid,
         },
-        monitors: { created: monitorsCreated, existing: monitorsExisting, blocked: blockedMonitorUrls.size },
+        monitors: {
+          created: monitorsCreated,
+          existing: monitorsExisting,
+          ...(blockedMonitorUrls.size ? { blocked: blockedMonitorUrls.size } : {}),
+        },
       });
     } catch (e) {
       logger.error("Domain checker import failed", {
