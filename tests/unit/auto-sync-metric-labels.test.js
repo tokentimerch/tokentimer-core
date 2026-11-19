@@ -21,7 +21,7 @@ describe("selectable auto-sync metric metadata", () => {
     assert.deepEqual(metricSourceDimensions({ repository: "org/repo" }), { project: "org/repo", group: "" });
   });
 
-  it("captures provider dates and timezone-aware timestamps only for eligible, selected GitLab tokens", () => {
+  it("captures provider dates and timezone-aware timestamps only for eligible, selected assets", () => {
     const env = { AUTO_SYNC_METRICS_EXTRA_LABELS: "expiration" };
     const settings = { enabled: true, labels: ["expiration"] };
     assert.deepEqual(systemMetricPolicy({ enabled: true, labels: ["kind"] }, env).labels, ["kind"]);
@@ -35,8 +35,19 @@ describe("selectable auto-sync metric metadata", () => {
     for (const expiry of ["2031-02-29", "2032-02-29T12:30:00", "2032-02-29T24:00:00Z", null, undefined]) {
       assert.equal(creationDimensions(payload("gitlab-pat", expiry), settings, env).expiration, undefined);
     }
-    assert.equal(creationDimensions(payload("gitlab-ssh-key", "2032-02-29"), settings, env).expiration, undefined);
+    assert.equal(creationDimensions(payload("gitlab-trigger-token", "2032-02-29"), settings, env).expiration, undefined);
+    assert.equal(creationDimensions({ ...payload("gitlab-pat", "2032-02-29"), source_provider: "github" }, settings, env).expiration, undefined);
     assert.equal(creationDimensions(payload("gitlab-pat", "2032-02-29"), settings, {}).expiration, undefined);
+  });
+
+  it("retains cleanup dimensions while restricting expiry to the scanner field", () => {
+    const dimensions = { region: "eu-west-1" };
+    assert.deepEqual(metricSourceDimensions({
+      sourceKind: "aws-acm", metric_expiration: "2032-03-01T01:00:00+01:00",
+    }, dimensions), { ...dimensions, expiration: "2032-03-01T00:00:00.000Z" });
+    assert.deepEqual(metricSourceDimensions({
+      sourceKind: "aws-secrets-manager", expiration: "2032-03-01",
+    }, { ...dimensions, expiration: "2032-03-01" }), dimensions);
   });
 });
 

@@ -13949,7 +13949,7 @@ components:
     AutoSyncMetricSettings:
       type: object
       additionalProperties: false
-      description: Connection metric settings, overridden independently by active system metric or monitoring-group overrides. Configuration ID is always included. Extra labels are off by default and can multiply time series and expose metadata to metrics readers. Environment settings take precedence over saved system defaults. owner_username is the best-effort GitLab PAT owner. expiration is the provider-reported date or UTC timestamp for a GitLab personal, project, group, or deploy token. Both labels require permission and selection and describe newly created inventory as observed by auto-sync.
+      description: Connection metric settings, overridden independently by active system metric or monitoring-group overrides. Configuration ID is always included. Extra labels are off by default and can multiply time series and expose metadata to metrics readers. Environment settings take precedence over saved system defaults. owner_username is the best-effort GitLab PAT owner. expiration is the verified expiry date or UTC timestamp from the source scan, when available. Both labels require permission and selection and describe newly created inventory as observed by auto-sync.
       properties:
         inherit_system:
           type: boolean

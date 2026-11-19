@@ -2,7 +2,7 @@
 
 // Run against a migrated, disposable database whose name ends in _metric_labels_test.
 // This suite uses real PostgreSQL transactions, locks, routes, and token models.
-const { before, beforeEach, after, describe, it } = require("node:test");
+const { before, beforeEach, after, describe, it, mock } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const request = require("supertest");
@@ -15,19 +15,20 @@ let runs, workerPool, userId, workspaceId, app;
 let sequence = 0;
 const source = { source_provider: "gitlab", source_instance: "gitlab.example",
   source_owner_key: "17", source_kind: "gitlab-project-token", source_object_id: "42" };
+const providerScanFixtures = new Map();
 
-async function configuration(name = `Config ${++sequence}`) {
+async function configuration(name = `Config ${++sequence}`, provider = "gitlab") {
   const result = await pool.query(`INSERT INTO auto_sync_configs
     (workspace_id, provider, credentials_encrypted, connection_key, created_by, next_sync_at)
-    VALUES ($1, 'gitlab', 'test-only', $2, $3, NOW() + INTERVAL '1 day') RETURNING *`,
-  [workspaceId, name, userId]);
+    VALUES ($1, $2, 'test-only', $3, $4, NOW() + INTERVAL '1 day') RETURNING *`,
+  [workspaceId, provider, name, userId]);
   return result.rows[0];
 }
 async function start(config) {
   await pool.query("UPDATE auto_sync_configs SET next_sync_at = NOW() WHERE id = $1", [config.id]);
   const [claimed] = await runs.claimDueAutoSyncRuns();
   assert.equal(claimed.id, config.id);
-  return { config: claimed, context: { configId: claimed.id, workspaceId, provider: "gitlab",
+  return { config: claimed, context: { configId: claimed.id, workspaceId, provider: claimed.provider,
     runId: claimed.runId, generation: claimed.generation, scanVersion: Number(claimed.scanVersion), leaseOwner: claimed.leaseOwner } };
 }
 async function scan(run, items = [], complete = true) {
@@ -104,6 +105,22 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     });
     app.use(require("../../apps/api/routes/admin"));
     process.env.WORKER_API_KEY = "issue71-test-worker";
+    // Stub only the provider boundary. The HTTP scan routes still apply
+    // their own provenance mapping, fencing and response serialization.
+    for (const [provider, moduleName, method] of [
+      ["github", "githubIntegration", "scanGitHub"],
+      ["gitlab", "gitlabIntegration", "scanGitLab"],
+      ["aws", "awsIntegration", "scanAWS"],
+      ["azure", "azureIntegration", "scanAzure"],
+      ["azure-ad", "azureADIntegration", "scanAzureAD"],
+      ["gcp", "gcpIntegration", "scanGCP"],
+      ["vault", "vaultIntegration", "scanVault"],
+    ]) {
+      const scanner = require(`../../apps/api/services/${moduleName}`);
+      const original = scanner[method];
+      mock.method(scanner, method, (...args) => providerScanFixtures.has(provider)
+        ? structuredClone(providerScanFixtures.get(provider)) : original(...args));
+    }
     app.use(require("../../apps/api/routes/integrations"));
     require("../../apps/api/services/autoSyncMetrics").registerAutoSyncMetrics(
       require("../../apps/api/node_modules/prom-client").register,
@@ -111,6 +128,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     app.use(require("../../apps/api/routes/health"));
   });
   beforeEach(async () => {
+    providerScanFixtures.clear();
     await pool.query('UPDATE users SET is_admin=FALSE WHERE id=$1',[userId]);
     delete process.env.AUTO_SYNC_METRICS_ENABLED;
     delete process.env.AUTO_SYNC_METRICS_LABELS;
@@ -125,6 +143,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     await pool.query("UPDATE auto_sync_feature_state SET multi_config_enabled = TRUE WHERE id = TRUE");
   });
   after(async () => {
+    mock.restoreAll();
     if (workspaceId) await pool.query("DELETE FROM workspaces WHERE id = $1", [workspaceId]);
     // Audit history is immutable; the disposable database owns the user fixture.
     await workerPool?.end();
@@ -548,6 +567,128 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     const { rows } = await pool.query("SELECT source_dimensions FROM tokens WHERE workspace_id=$1", [workspaceId]);
     assert.ok(rows.every(row => !Object.hasOwn(row.source_dimensions, "expiration")));
     await finish(run);
+  });
+
+  it("carries authoritative expiration through every provider scan and import route to HTTP metrics", async () => {
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "asset_name,expiration,owner_username";
+    const token = "synthetic-provider-token";
+    const authoritativeTime = "2032-03-01T01:02:03+01:00";
+    const utcTime = "2032-03-01T00:02:03.000Z";
+    const fixture = (name, sourceKind, metricExpiration, attributes) => ({
+      name, source: sourceKind, sourceKind, sourceObjectId: name,
+      location: `fixture:${name}`, category: "key_secret", type: "api_key",
+      expiration: "2032-03-01", metric_expiration: metricExpiration, ...attributes,
+    });
+    const cert = { category: "cert", type: "tls_cert" };
+    const cases = [
+      ["gitlab", { baseUrl: "https://gitlab.example", token }, { host: "gitlab.example", ownerKey: "17" }, [
+        [fixture("gitlab-pat", "gitlab-pat", "2032-02-29", { owner_username: "fixture-owner" }), "2032-02-29"],
+        [fixture("gitlab-deploy", "gitlab-deploy-token", authoritativeTime), utcTime],
+        [fixture("gitlab-no-expiry", "gitlab-pat", null, { expiration: null }), ""],
+      ]],
+      ["github", { baseUrl: "https://github.example", token }, { host: "github.example", ownerKey: "18" }, [
+        [fixture("github-ssh", "github-ssh-key", undefined, { expiration: null, type: "ssh_key" }), ""],
+      ]],
+      ["aws", { accessKeyId: "synthetic-access-id", secretAccessKey: token, region: "us-east-1" }, { accountId: "123456789012" }, [
+        [fixture("aws-certificate", "aws-acm", authoritativeTime, { ...cert, region: "us-east-1" }), utcTime],
+        [fixture("aws-rotation-only", "aws-secrets-manager", undefined, { region: "us-east-1" }), ""],
+      ]],
+      ["azure", { vaultUrl: "https://fixture.vault.azure.net", token }, {}, [
+        [fixture("azure-key", "azure-key-vault-key", authoritativeTime), utcTime],
+        [fixture("azure-secret", "azure-key-vault-secret", authoritativeTime), utcTime],
+        [fixture("azure-certificate", "azure-key-vault-certificate", authoritativeTime, cert), utcTime],
+      ]],
+      ["azure-ad", { token }, { tenantId: "00000000-0000-4000-8000-000000000017" }, [
+        [fixture("entra-app-secret", "azure-ad-client-secret", authoritativeTime), utcTime],
+        [fixture("entra-sp-certificate", "azure-ad-sp-certificate", authoritativeTime, { ...cert, servicePrincipalType: "Application" }), utcTime],
+      ]],
+      ["gcp", { projectId: "fixture-project", accessToken: token }, {}, [
+        [fixture("gcp-secret", "gcp-secret-manager", authoritativeTime, { dimensions: { project: "fixture-project" } }), utcTime],
+        [fixture("gcp-certificate", "gcp-compute-ssl-cert", authoritativeTime, cert), utcTime],
+        [fixture("gcp-rotation-only", "gcp-secret-manager"), ""],
+      ]],
+      ["vault", { address: "https://vault.example", token }, {}, [
+        [fixture("vault-pki-certificate", "vault-pki", authoritativeTime, { ...cert, mount: "pki", path: "cert/01" }), utcTime],
+        [fixture("vault-kv-certificate", "vault-kv", authoritativeTime, { ...cert, mount: "secret", path: "example-cert" }), utcTime],
+        [fixture("vault-rotation-only", "vault-kv", undefined, { mount: "secret", path: "rotation" }), ""],
+      ]],
+    ];
+    const workerPost = path => request(app).post(`${path}?workspace_id=${workspaceId}`)
+      .set("Authorization", "Bearer issue71-test-worker");
+    const labels = ["asset_name", "kind", "monitoring_group", "owner_username"];
+    const expected = [];
+    const beforeCreation = Date.now() / 1000;
+    async function scanAndImport(provider, credentials, sourceIdentity, fixtures, expirationSelected = true) {
+      const config = await configuration(`${provider} ${expected.length}`, provider);
+      await settings(config, expirationSelected ? [...labels, "expiration"] : labels);
+      const run = await start(config);
+      const runContext = runs.runContext(run.config);
+      const items = fixtures.map(([item]) => item);
+      providerScanFixtures.set(provider, { ...sourceIdentity, items,
+        summary: items.map(item => ({ sourceKind: item.sourceKind, complete: true })) });
+      const scanResponse = await workerPost(`/api/v1/integrations/${provider}/scan`)
+        .send({ ...credentials, auto_sync_run: runContext });
+      assert.equal(scanResponse.status, 200, `${provider} scan: ${scanResponse.text}`);
+      const scanId = scanResponse.body.scan_id;
+      assert.ok(scanId, `${provider} scan must be persisted`);
+      assert.ok(scanResponse.body.items.every(item => !Object.hasOwn(item, "metric_expiration")));
+      const { rows } = await pool.query(
+        "SELECT source_object_id, source_dimensions FROM integration_scan_items WHERE scan_id=$1", [scanId],
+      );
+      assert.equal(rows.length, items.length);
+      for (const [item, expiration] of fixtures) {
+        const persisted = rows.find(row => row.source_object_id === item.sourceObjectId);
+        assert.equal(persisted.source_dimensions.expiration, expirationSelected && expiration ? expiration : undefined, item.name);
+        expected.push({ provider, name: item.name, expiration: expirationSelected ? expiration : "", configId: config.id });
+      }
+      const importPath = provider === "vault" ? "/api/v1/integrations/vault/import" : "/api/v1/integrations/import";
+      const imported = await workerPost(importPath).send({
+        scan_id: scanId, auto_sync_run: runContext,
+        items: scanResponse.body.items.map(item => ({ ...item,
+          expiration: "2099-12-31", metric_expiration: "2099-12-31", source_dimensions: { expiration: "2099-12-31" },
+        })),
+      });
+      assert.equal(imported.status, 201, `${provider} import: ${imported.text}`);
+      assert.equal(imported.body.created_count, items.length, imported.text);
+      await finish(run);
+    }
+
+    for (const args of cases) await scanAndImport(...args);
+    const [provider, credentials, identity] = cases.find(([provider]) => provider === "aws");
+    await scanAndImport(provider, credentials, identity, [
+      [fixture("aws-unselected-expiry", "aws-acm", authoritativeTime, cert), utcTime],
+    ], false);
+
+    const scrape = await request(app).get("/metrics");
+    assert.equal(scrape.status, 200, scrape.text);
+    assert.match(scrape.headers["content-type"], /^text\/plain;.*version=0\.0\.4/);
+    const families = ["auto_sync_items_created_detailed_total", "auto_sync_last_creation_timestamp_seconds"];
+    for (const family of families) {
+      const lines = scrape.text.split("\n").filter(line => line.startsWith(`${family}{`));
+      assert.equal(lines.length, expected.length);
+      for (const { provider, name, expiration, configId } of expected) {
+        const line = lines.find(line => line.includes(`asset_name="${name}"`));
+        assert.ok(line, `Missing ${family} sample for ${name}`);
+        assert.ok(line.includes(`provider="${provider}"`) && line.includes(`configuration_id="${configId}"`));
+        assert.ok(line.includes(`expiration="${expiration}"`), line);
+        assert.ok(line.includes(`owner_username="${name === "gitlab-pat" ? "fixture-owner" : ""}"`), line);
+        const value = Number(line.slice(line.lastIndexOf(" ") + 1));
+        if (family.endsWith("_total")) assert.equal(value, 1);
+        else assert.ok(value >= beforeCreation && value <= Date.now() / 1000, `${name}: ${value}`);
+      }
+    }
+
+    const { rows } = await pool.query("SELECT source_dimensions FROM tokens WHERE workspace_id=$1", [workspaceId]);
+    assert.ok(rows.every(row => !Object.hasOwn(row.source_dimensions, "expiration")));
+    const aggregateSamples = scrape.text.split("\n").filter(line => line.startsWith("auto_sync_") &&
+      !families.some(family => line.startsWith(`${family}{`)));
+    assert.ok(aggregateSamples.every(line => !line.includes("expiration=")));
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "asset_name,owner_username";
+    const restricted = await request(app).get("/metrics");
+    assert.equal(restricted.status, 200, restricted.text);
+    const restrictedSamples = restricted.text.split("\n").filter(line => families.some(family => line.startsWith(`${family}{`)));
+    assert.equal(restrictedSamples.length, expected.length * families.length);
+    assert.ok(restrictedSamples.every(line => line.includes('expiration=""')));
   });
 
   it("saves a system-wide owner override, applies it to opted-out connections and respects deployment restrictions", async () => {

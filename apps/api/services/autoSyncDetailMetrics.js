@@ -1,6 +1,6 @@
 "use strict";
 const { pool } = require("../db/database");
-const { OPTIONAL_LABELS, KNOWN_KINDS, GITLAB_EXPIRING_TOKEN_KINDS, effectiveMetricSettings } = require("./autoSyncMetricLabels");
+const { OPTIONAL_LABELS, KNOWN_KINDS, supportsMetricExpiration, effectiveMetricSettings } = require("./autoSyncMetricLabels");
 
 function counter(value) {
   const number = Number(value);
@@ -29,7 +29,7 @@ async function detailedSamples() {
       monitoring_group: settings.monitoring_group,
       group: row.group_name,
       owner_username: row.provider === "gitlab" && row.kind === "gitlab-pat" ? row.owner_username : "",
-      expiration: row.provider === "gitlab" && GITLAB_EXPIRING_TOKEN_KINDS.has(row.kind) ? row.expiration : "",
+      expiration: supportsMetricExpiration(row.provider, row.kind) ? row.expiration : "",
     };
     for (const label of OPTIONAL_LABELS) {
       labels[label] = settings.labels.includes(label) ? dimensions[label] ?? "" : "";

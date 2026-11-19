@@ -35,7 +35,7 @@ export const METRIC_LABEL_CHOICES = [
   ['project', 'Project / repository'],
   ['group', 'Source group'],
   ['owner_username', 'GitLab PAT owner username'],
-  ['expiration', 'GitLab token expiration'],
+  ['expiration', 'Asset expiration'],
 ];
 export const HIGH_CARDINALITY_METRIC_LABELS = [
   'asset_name',
@@ -251,7 +251,7 @@ export default function AutoSyncMetricSettings({
             </Alert>
             <Text fontSize='xs' color={muted}>
               Asset metadata is captured when auto-sync creates an inventory
-              item. GitLab token expiration appears when available in that scan.
+              item. Asset expiration appears when the scanner can verify it.
               GitLab PAT owner usernames are best effort. Previous samples
               remain until Prometheus retention expires.
             </Text>

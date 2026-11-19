@@ -358,6 +358,7 @@ async function scanAzureAD({
               category: "key_secret",
               type: "api_key",
               expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+              metric_expiration: cred.endDateTime,
               location: `azure-ad:applications/${app.appId}/secrets/${cred.keyId}`,
               description: `App ID: ${app.appId}\nKey ID: ${cred.keyId}\nCreated: ${startAt ? startAt.toISOString().split("T")[0] : "N/A"}`,
               app_id: app.appId,
@@ -390,6 +391,7 @@ async function scanAzureAD({
               category: "cert",
               type: "ssl_cert",
               expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+              metric_expiration: cert.endDateTime,
               location: `azure-ad:applications/${app.appId}/certificates/${cert.keyId}`,
               description: `App ID: ${app.appId}\nKey ID: ${cert.keyId}\nType: ${cert.type || "N/A"}\nUsage: ${cert.usage || "N/A"}\nCreated: ${startAt ? startAt.toISOString().split("T")[0] : "N/A"}`,
               app_id: app.appId,
@@ -484,6 +486,7 @@ async function scanAzureAD({
               category: "key_secret",
               type: "api_key",
               expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+              metric_expiration: cred.endDateTime,
               location: `azure-ad:${locationType}/${sp.appId}/secrets/${cred.keyId}`,
               ...identityMetadata,
               ...(managedIdentity
@@ -522,6 +525,7 @@ async function scanAzureAD({
               category: "cert",
               type: "ssl_cert",
               expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+              metric_expiration: cert.endDateTime,
               location: `azure-ad:${locationType}/${sp.appId}/certificates/${cert.keyId}`,
               ...identityMetadata,
               ...(managedIdentity

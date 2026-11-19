@@ -416,6 +416,7 @@ async function scanGCP({
           await Promise.all(
             batch.map(async (secret) => {
               if (items.length >= maxItems) return;
+              const secretExpiration = secret.expireTime || secret.expiration?.expireTime;
               const secretName = secret.name.split("/").pop();
 
               // Get enabled versions to check expiration
@@ -479,6 +480,7 @@ async function scanGCP({
                   category: "key_secret",
                   type: "secret",
                   expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                  metric_expiration: secretExpiration,
                   location: `gcp:${projectId}/secrets/${secretName}`,
                   created_at: secret.createTime || null,
                   updated_at: secret.updateTime || null,
@@ -503,6 +505,7 @@ async function scanGCP({
                   category: "key_secret",
                   type: "secret",
                   expiration: null,
+                  metric_expiration: secretExpiration,
                   location: `gcp:${projectId}/secrets/${secretName}`,
                   created_at: secret.createTime || null,
                   updated_at: secret.updateTime || null,
@@ -580,6 +583,7 @@ async function scanGCP({
             category: "cert",
             type: "ssl_cert",
             expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+            metric_expiration: cert.expireTime,
             location: `gcp:${projectId}/locations/${location}/certificates/${certName}`,
             domains,
             issuer: isManaged ? "Google Trust Services" : null,
@@ -674,6 +678,7 @@ async function scanGCP({
             category: "cert",
             type: "ssl_cert",
             expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+            metric_expiration: cert.expireTime,
             location: region
               ? `gcp:${projectId}/regions/${region}/sslCertificates/${cert.name}`
               : `gcp:${projectId}/global/sslCertificates/${cert.name}`,

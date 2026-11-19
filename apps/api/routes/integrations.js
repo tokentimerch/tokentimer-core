@@ -71,6 +71,11 @@ const {
 const { bindImportItemsToScan } = require("../services/scanBinding");
 
 const router = require("express").Router();
+
+function publicScanResult(result) {
+  for (const item of result.items || []) delete item.metric_expiration;
+  return result;
+}
 router.use((req, _res, next) => {
   req.integrationScanStartedAt = new Date();
   next();
@@ -319,11 +324,11 @@ router.post(
             items: result.items.map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: {
+              dimensions: metricSourceDimensions(item, {
                 mount: item.mount,
                 path: item.path,
                 category: item.category,
-              },
+              }),
             })),
             subScopes: (result.summary || []).map((s) => ({
               sourceKind: s.sourceKind,
@@ -340,7 +345,7 @@ router.post(
         });
       }
 
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({
@@ -1084,8 +1089,7 @@ router.post(
         });
       }
 
-      for (const item of result.items || []) delete item.metric_expiration;
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({
@@ -1309,7 +1313,7 @@ router.post(
         });
       }
 
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({
@@ -1607,7 +1611,7 @@ router.post(
         });
       }
 
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({
@@ -1819,7 +1823,7 @@ router.post(
             items: (result.items || []).map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: {},
+              dimensions: metricSourceDimensions(item, {}),
             })),
             subScopes: (result.summary || []).map((s) => ({
               sourceKind: s.sourceKind,
@@ -1836,7 +1840,7 @@ router.post(
         });
       }
 
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({
@@ -1951,7 +1955,7 @@ router.post(
             items: (result.items || []).map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: item.dimensions || {},
+              dimensions: metricSourceDimensions(item, item.dimensions || {}),
             })),
             subScopes: (result.summary || [])
               .filter((s) => s && s.sourceKind)
@@ -1970,7 +1974,7 @@ router.post(
         });
       }
 
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({
@@ -2152,8 +2156,8 @@ router.post(
             items: (result.items || []).map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: item.servicePrincipalType
-                ? { servicePrincipalType: item.servicePrincipalType } : {},
+              dimensions: metricSourceDimensions(item, item.servicePrincipalType
+                ? { servicePrincipalType: item.servicePrincipalType } : {}),
             })),
             subScopes: (result.summary || []).map((s) => {
               // Manual cleanup cannot delete principals outside the selected class.
@@ -2178,7 +2182,7 @@ router.post(
         });
       }
 
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({

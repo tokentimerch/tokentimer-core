@@ -1527,6 +1527,7 @@ async function scanGitLab({
             category: "key_secret",
             type: "ssh_key",
             expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+            metric_expiration: key.expires_at,
             location: `gitlab:user/keys/${key.id}`,
             created_at: key.created_at || null,
             last_used_at: key.last_used_at || null,

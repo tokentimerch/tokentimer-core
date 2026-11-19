@@ -691,7 +691,7 @@ it('saves expiration only when explicitly selected under a deployment allowlist'
     </ChakraProvider>
   );
   const checkbox = await screen.findByRole('checkbox', {
-    name: 'GitLab token expiration',
+    name: 'Asset expiration',
   });
   expect(checkbox).toBeEnabled();
   expect(checkbox).not.toBeChecked();

@@ -225,14 +225,14 @@ async function persistScan({ workspaceId, provider, identityContext, items, subS
   }
   return withFencedImport(context, async (client, config) => {
     const identity = resolveSourceIdentity(provider, identityContext);
-    const { effectiveMetricSettings, GITLAB_EXPIRING_TOKEN_KINDS, metricExpiration } = require("./autoSyncMetricLabels");
-    const settings = context && provider === "gitlab"
+    const { effectiveMetricSettings, supportsMetricExpiration, metricExpiration } = require("./autoSyncMetricLabels");
+    const settings = context
       ? effectiveMetricSettings(config.metrics_settings, process.env, config.system_metric_policy) : null;
-    const captureOwner = settings?.enabled && settings.labels.includes("owner_username");
+    const captureOwner = provider === "gitlab" && settings?.enabled && settings.labels.includes("owner_username");
     const captureExpiration = settings?.enabled && settings.labels.includes("expiration");
     const scanItems = (items || []).map(item => {
       const { owner_username, expiration, ...dimensions } = item.dimensions || {};
-      const expires = captureExpiration && GITLAB_EXPIRING_TOKEN_KINDS.has(item.sourceKind)
+      const expires = captureExpiration && supportsMetricExpiration(provider, item.sourceKind)
         ? metricExpiration(expiration) : "";
       return { ...item, dimensions: { ...dimensions,
         ...(expires ? { expiration: expires } : {}),

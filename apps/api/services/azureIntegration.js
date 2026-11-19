@@ -243,6 +243,13 @@ function unixExpYmd(value) {
   return parsed ? formatDateYmd(parsed) : null;
 }
 
+function unixExpirationIso(value) {
+  const seconds = typeof value === "string" && /^[0-9]+$/.test(value)
+    ? Number(value)
+    : value;
+  return Number.isSafeInteger(seconds) ? unixAttrIso(seconds) : null;
+}
+
 function failedScopeSummary(type, sourceKind, error) {
   return {
     type,
@@ -324,6 +331,7 @@ async function scanAzure({
             category: "key_secret",
             type: "secret",
             expiration: unixExpYmd(secret.attributes?.exp),
+            metric_expiration: unixExpirationIso(secret.attributes?.exp),
             location: `azure:${normalizedUrl}/secrets/${secretName}`,
             created_at: unixAttrIso(secret.attributes?.created),
             updated_at: unixAttrIso(secret.attributes?.updated),
@@ -407,6 +415,7 @@ async function scanAzure({
 
               let subject = certDetails?.policy?.x509_props?.subject || null;
               let issuer = certDetails?.policy?.issuer?.name || null;
+              let certificateExpiration = null;
               if (certDetails?.cer) {
                 try {
                   const parsed = new X509Certificate(
@@ -414,6 +423,7 @@ async function scanAzure({
                   );
                   subject = parsed.subject || subject;
                   issuer = parsed.issuer || issuer;
+                  certificateExpiration = tryParseDate(parsed.validTo)?.toISOString() || null;
                 } catch (e) {
                   logger.debug("Failed to parse Azure certificate cer", {
                     certName,
@@ -432,6 +442,10 @@ async function scanAzure({
                 expiration: unixExpYmd(
                   certDetails?.attributes?.exp ?? cert.attributes?.exp,
                 ),
+                metric_expiration:
+                  unixExpirationIso(certDetails?.attributes?.exp) ||
+                  unixExpirationIso(cert.attributes?.exp) ||
+                  certificateExpiration,
                 location: `azure:${normalizedUrl}/certificates/${certName}`,
                 issuer: issuer,
                 subject: subject || certName,
@@ -507,6 +521,7 @@ async function scanAzure({
             category: "key_secret",
             type: "encryption_key",
             expiration: unixExpYmd(key.attributes?.exp),
+            metric_expiration: unixExpirationIso(key.attributes?.exp),
             location: `azure:${normalizedUrl}/keys/${keyName}`,
             key_type: key.kty || null,
             key_size: key.key_size || null,

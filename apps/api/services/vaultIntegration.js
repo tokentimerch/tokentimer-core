@@ -481,6 +481,7 @@ function buildKvSecretItems({ mountPath, key, secret }) {
       category: "cert",
       type: "ssl_cert",
       expiration: expires ? formatDateYmd(expires) : null,
+      metric_expiration: formatDateYmd(parsed.notAfter) ? parsed.notAfter.toISOString() : null,
       issuer,
       subject,
       // Single-cert secrets keep the legacy location so tokens imported
@@ -677,6 +678,7 @@ async function scanPki({ address, session, mount, maxItems = 500 }) {
         if (!pem) return null;
         const parsed = parseCertificatePemForDatesAndNames(pem);
         const notAfter = parsed && parsed.notAfter ? parsed.notAfter : null;
+        const expiration = formatDateYmd(notAfter);
         const subject = parsed && parsed.subject ? parsed.subject : null;
         const issuer = parsed && parsed.issuer ? parsed.issuer : null;
         const name = extractCommonName(subject) || `${mountPath}cert/${serial}`;
@@ -687,7 +689,8 @@ async function scanPki({ address, session, mount, maxItems = 500 }) {
           name,
           category: "cert",
           type: "ssl_cert",
-          expiration: notAfter ? formatDateYmd(notAfter) : null,
+          expiration,
+          metric_expiration: expiration ? notAfter.toISOString() : null,
           issuer,
           subject,
           location: `vault:${mountPath}cert/${serial}`,

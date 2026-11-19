@@ -120,9 +120,31 @@ function effectiveMetricSettings(value, env = process.env, storedPolicy) {
   return settings;
 }
 function metadata(value) { return typeof value === "string" && value.length <= 512 ? value : ""; }
-const GITLAB_EXPIRING_TOKEN_KINDS = new Set([
-  "gitlab-pat", "gitlab-project-token", "gitlab-group-token", "gitlab-deploy-token",
+// Only scanners with an authoritative expiry emit metric_expiration.
+const EXPIRING_ASSET_PROVIDERS = new Map([
+  ["gitlab-pat", "gitlab"],
+  ["gitlab-project-token", "gitlab"],
+  ["gitlab-group-token", "gitlab"],
+  ["gitlab-deploy-token", "gitlab"],
+  ["gitlab-ssh-key", "gitlab"],
+  ["aws-acm", "aws"],
+  ["azure-key-vault-secret", "azure"],
+  ["azure-key-vault-key", "azure"],
+  ["azure-key-vault-certificate", "azure"],
+  ["azure-ad-client-secret", "azure-ad"],
+  ["azure-ad-certificate", "azure-ad"],
+  ["azure-ad-sp-secret", "azure-ad"],
+  ["azure-ad-sp-certificate", "azure-ad"],
+  ["gcp-secret-manager", "gcp"],
+  ["gcp-certificate-manager-cert", "gcp"],
+  ["gcp-compute-ssl-cert", "gcp"],
+  ["vault-pki", "vault"],
+  ["vault-kv", "vault"],
 ]);
+
+function supportsMetricExpiration(provider, sourceKind) {
+  return EXPIRING_ASSET_PROVIDERS.has(sourceKind) && EXPIRING_ASSET_PROVIDERS.get(sourceKind) === provider;
+}
 
 function metricExpiration(value) {
   if (typeof value !== "string") return "";
@@ -135,10 +157,13 @@ function metricExpiration(value) {
   return Number.isFinite(+timestamp) ? timestamp.toISOString() : "";
 }
 
-function metricSourceDimensions(item) {
-  const expiration = GITLAB_EXPIRING_TOKEN_KINDS.has(item.sourceKind) ? metricExpiration(item.metric_expiration) : "";
-  return { project: metadata(item.project_path || item.project_name || item.repository || item.projectId),
-    group: metadata(item.group_path || item.group_name),
+function metricSourceDimensions(item, dimensions = {
+  project: metadata(item.project_path || item.project_name || item.repository || item.projectId),
+  group: metadata(item.group_path || item.group_name),
+}) {
+  const { expiration: _expiration, ...sourceDimensions } = dimensions;
+  const expiration = EXPIRING_ASSET_PROVIDERS.has(item.sourceKind) ? metricExpiration(item.metric_expiration) : "";
+  return { ...sourceDimensions,
     ...(expiration ? { expiration } : {}),
     ...(item.sourceKind === "gitlab-pat" && metadata(item.owner_username)
       ? { owner_username: metadata(item.owner_username) } : {}) };
@@ -148,7 +173,7 @@ function creationDimensions(payload, settings, env = process.env, policy) {
   const exposes = label => selected.enabled && selected.labels.includes(label);
   const owner = payload.source_provider === "gitlab" && payload.source_kind === "gitlab-pat" &&
     exposes("owner_username") ? metadata(payload.source_dimensions?.owner_username) : "";
-  const expiration = payload.source_provider === "gitlab" && GITLAB_EXPIRING_TOKEN_KINDS.has(payload.source_kind) &&
+  const expiration = supportsMetricExpiration(payload.source_provider, payload.source_kind) &&
     exposes("expiration") ? metricExpiration(payload.source_dimensions?.expiration) : "";
   return { kind: KNOWN_KINDS.has(payload.source_kind) ? payload.source_kind : "other",
     asset_name: exposes("asset_name") ? metadata(payload.name) : "",
@@ -171,4 +196,4 @@ async function recordCreationMetrics(client, context, payload, settings, policy)
   [context.configId, dimensions.kind, dimensions.asset_name, dimensions.project, dimensions.group,
     createHash("sha256").update(JSON.stringify(dimensions)).digest("hex"), dimensions.owner_username || "", dimensions.expiration || ""]);
 }
-module.exports = { deploymentMetricLabels, deploymentMetricLabelOptions, systemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, readSystemMetricPolicy, DEFAULT_SYSTEM_LABELS, permittedExtraLabels, HIGH_CARDINALITY_LABELS, EXPLICIT_SELECTION_LABELS, effectiveMetricSettings, KNOWN_KINDS, OPTIONAL_LABELS, GITLAB_EXPIRING_TOKEN_KINDS, metricSettingsError, normalizeMetricSettings, metricSourceDimensions, metricExpiration, creationDimensions, recordCreationMetrics };
+module.exports = { deploymentMetricLabels, deploymentMetricLabelOptions, systemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, readSystemMetricPolicy, DEFAULT_SYSTEM_LABELS, permittedExtraLabels, HIGH_CARDINALITY_LABELS, EXPLICIT_SELECTION_LABELS, effectiveMetricSettings, KNOWN_KINDS, OPTIONAL_LABELS, supportsMetricExpiration, metricSettingsError, normalizeMetricSettings, metricSourceDimensions, metricExpiration, creationDimensions, recordCreationMetrics };

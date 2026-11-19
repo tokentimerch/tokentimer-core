@@ -112,9 +112,9 @@ no single asset owner. These metrics retain their low-cardinality labels.
 - Usernames increase cardinality and expose personal metadata to metrics readers and alert recipients. Effective opt-ins gate scan/statistics capture, not just display. Opt-out hides retained statistics; configuration deletion removes them. Persisted scan metadata remains until its scan/workspace is deleted; old Prometheus samples follow Prometheus retention.
 - In Grafana/Prometheus, explicit `max by (...)` lists must preserve `owner_username`; annotations can use `{{ $labels.owner_username }}`. Aggregation that drops it cannot show the owner.
 
-### GitLab token expiration labels
+### Asset expiration labels
 
-The same two detailed creation metrics can include `expiration` for GitLab personal, project, group, and deploy tokens. Select **GitLab token expiration** and add `expiration` to any deployment allowlist configured above. The label is off by default. It shows the date or UTC timestamp captured when auto-sync created the item, or stays empty when unavailable. In Grafana, retain `expiration` in `max by (...)` and use `{{ $labels.expiration }}` in the creation alert annotation. The value describes the original import and may become stale if expiry changes afterward.
+The same two detailed creation metrics can include `expiration` for assets with verified expiry from GitLab, AWS ACM, Azure Key Vault, Microsoft Entra ID, GCP or Vault. Select **Asset expiration** and add `expiration` to any configured deployment allowlist. The label is off by default. It shows the date or UTC timestamp captured at import and stays empty when expiry is unavailable. Rotation schedules and inventory defaults are excluded. In Grafana, retain `expiration` in `max by (...)` and use `{{ $labels.expiration }}` in the creation alert annotation. Later changes to the asset do not refresh this value.
 
 ## Cleanup and removal
 

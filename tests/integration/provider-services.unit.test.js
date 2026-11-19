@@ -268,7 +268,7 @@ describe("Provider service unit coverage", () => {
           if (command instanceof DescribeCertificateCommand) {
             return {
               Certificate: {
-                NotAfter: new Date("2026-06-01T00:00:00Z"),
+                NotAfter: new Date("2026-06-01T08:19:23Z"),
                 Issuer: "LetsEncrypt",
                 Serial: "serial-123",
                 InUseBy: ["alb-1"],
@@ -315,13 +315,16 @@ describe("Provider service unit coverage", () => {
       );
 
       expect(result.items).to.be.an("array").with.length.greaterThan(0);
-      expect(
-        result.items.some((i) => i.source === "aws-secrets-manager"),
-      ).to.equal(true);
-      expect(result.items.some((i) => i.source === "aws-acm")).to.equal(true);
-      expect(result.items.some((i) => i.source === "aws-iam-key")).to.equal(
-        true,
-      );
+      expect(result.items.find((i) => i.source === "aws-secrets-manager"))
+        .to.include({ expiration: "2026-01-01" })
+        .and.not.have.property("metric_expiration");
+      expect(result.items.find((i) => i.source === "aws-acm")).to.include({
+        expiration: "2026-06-01",
+        metric_expiration: "2026-06-01T08:19:23.000Z",
+      });
+      expect(result.items.find((i) => i.source === "aws-iam-key"))
+        .to.be.an("object")
+        .and.not.have.property("metric_expiration");
       expect(result.summary.some((s) => s.type === "secrets_manager")).to.equal(
         true,
       );
@@ -780,6 +783,9 @@ describe("Provider service unit coverage", () => {
       });
 
       expect(result.items).to.have.length(6);
+      expect(result.items.map((item) => item.metric_expiration)).to.deep.equal(
+        Array(6).fill(end),
+      );
       const byKind = Object.fromEntries(
         result.summary.map((s) => [s.sourceKind, s]),
       );
@@ -888,6 +894,7 @@ describe("Provider service unit coverage", () => {
                 {
                   name: "projects/proj/secrets/ok/versions/1",
                   state: "ENABLED",
+                  expireTime: "2030-07-01T12:30:00Z",
                 },
               ],
             },
@@ -897,7 +904,10 @@ describe("Provider service unit coverage", () => {
           data: {
             secrets: [
               { name: "projects/proj/secrets/ok" },
-              { name: "projects/proj/secrets/blocked" },
+              {
+                name: "projects/proj/secrets/blocked",
+                expireTime: "2030-08-01T16:45:00Z",
+              },
             ],
           },
         };
@@ -916,8 +926,15 @@ describe("Provider service unit coverage", () => {
         "ok",
       ]);
       expect(result.items.find((i) => i.sourceObjectId === "blocked")).to.include(
-        { expiration: null },
+        {
+          expiration: null,
+          metric_expiration: "2030-08-01T16:45:00Z",
+        },
       );
+      expect(result.items.find((i) => i.sourceObjectId === "ok")).to.include({
+        expiration: "2030-07-01",
+        metric_expiration: undefined,
+      });
       expect(result.summary).to.have.length(1);
       expect(result.summary[0]).to.include({
         sourceKind: "gcp-secret-manager",
@@ -983,6 +1000,7 @@ describe("Provider service unit coverage", () => {
         category: "cert",
         type: "ssl_cert",
         expiration: "2030-01-01",
+        metric_expiration: "2030-01-01T00:00:00Z",
       });
       expect(cmItem.dimensions).to.deep.equal({ location: "global" });
 
@@ -996,6 +1014,7 @@ describe("Provider service unit coverage", () => {
         category: "cert",
         type: "ssl_cert",
         expiration: "2031-02-02",
+        metric_expiration: "2031-02-02T00:00:00Z",
       });
       expect(computeItem.dimensions).to.deep.equal({ location: "global" });
 

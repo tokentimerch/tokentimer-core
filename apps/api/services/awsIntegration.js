@@ -506,14 +506,15 @@ async function scanAWSSingleRegion({
                 });
               }
 
+              const notAfter = certificate.NotAfter;
+              const expiration = formatDateYmd(notAfter);
               items.push({
                 source: "aws-acm",
                 name: certificate.DomainName,
                 category: "cert",
                 type: "ssl_cert",
-                expiration: certificate.NotAfter
-                  ? formatDateYmd(certificate.NotAfter)
-                  : null,
+                expiration,
+                metric_expiration: expiration && (notAfter instanceof Date ? notAfter.toISOString() : notAfter),
                 location: `aws:acm:${region}:${cert.CertificateArn}`,
                 domains: domainList, // Keep as array for proper import
                 issuer: certificate.Issuer || "Amazon",

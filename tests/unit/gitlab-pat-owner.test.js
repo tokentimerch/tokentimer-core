@@ -489,7 +489,9 @@ test("non-PAT inventory never receives the structured PAT owner field", async ()
     respond: (pathname) => {
       if (pathname === "/api/v4/projects") return [{ id: 7, name: "project" }];
       if (pathname === "/api/v4/groups") return [{ id: 8, name: "group" }];
-      if (pathname === "/api/v4/user/keys") return [{ id: 9, title: "ssh" }];
+      if (pathname === "/api/v4/user/keys") {
+        return [{ id: 9, title: "ssh", expires_at: "2034-02-19T17:45:30Z" }];
+      }
       if (pathname === "/api/v4/projects/7/access_tokens") {
         return [{ id: 10, username: "project-bot", user_id: 1 }];
       }
@@ -513,6 +515,10 @@ test("non-PAT inventory never receives the structured PAT owner field", async ()
     },
   });
   assert.equal(result.items.length, 5);
+  assert.equal(
+    result.items.find((item) => item.sourceKind === "gitlab-ssh-key").metric_expiration,
+    "2034-02-19T17:45:30Z",
+  );
   assert.ok(
     result.items.every((item) => !Object.hasOwn(item, "owner_username")),
   );
