@@ -40,6 +40,12 @@ separate service bindings remain distinct. Unknown visibility at a genuinely
 unmonitored location is still shown and still matters for decommissioning.
 Seeing a certificate does not by itself configure automatic renewal.
 
+Open **Observation history** under **Observed locations**. If there are several
+registrations, select the one to inspect. Filter by verdict, location or date.
+History covers the selected registration and its current fingerprint. An empty
+result does not establish certificate removal or a successful check. Viewer API
+responses omit host and location details.
+
 ## Certificate management
 
 This section answers **“Through which registrations does CertOps track or
