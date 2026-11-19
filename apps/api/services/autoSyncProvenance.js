@@ -237,7 +237,7 @@ async function upsertImportedToken({ context, payload, workspaceId, userId, manu
     // Keep metric-only metadata out of permanent inventory provenance.
     const inventoryPayload = { ...payload };
     if (payload.source_dimensions) {
-      const { owner_username: _owner, ...dimensions } = payload.source_dimensions;
+      const { owner_username: _owner, expiration: _expiration, ...dimensions } = payload.source_dimensions;
       inventoryPayload.source_dimensions = dimensions;
     }
     const token = existing ? await Token.update(existing.id, {

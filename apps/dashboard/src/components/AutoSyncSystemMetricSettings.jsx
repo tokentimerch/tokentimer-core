@@ -24,6 +24,7 @@ import { DashboardActionButton } from './DashboardPrimitives';
 import {
   METRIC_LABEL_CHOICES,
   HIGH_CARDINALITY_METRIC_LABELS as EXTRA,
+  EXPLICIT_SELECTION_METRIC_LABELS,
 } from './imports/AutoSyncMetricSettings.jsx';
 export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
   const muted = useColorModeValue('gray.600', 'gray.400');
@@ -165,7 +166,7 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
                     !policy.override_metrics ||
                     !policy.enabled ||
                     !permitted ||
-                    (key !== 'owner_username' &&
+                    (!EXPLICIT_SELECTION_METRIC_LABELS.includes(key) &&
                       EXTRA.includes(key) &&
                       policy.extra_labels_locked)
                   }
@@ -186,8 +187,8 @@ export default function AutoSyncSystemMetricSettings({ onConfiguredChange }) {
             <Badge alignSelf='start'>Labels set by environment</Badge>
           ) : policy.extra_labels_locked ? (
             <Badge alignSelf='start'>
-              Asset labels restricted by environment; permitted owner is
-              optional
+              Environment restricts asset labels. Select permitted owner and
+              expiration labels separately.
             </Badge>
           ) : null}
           <Text fontSize='xs' color={muted}>

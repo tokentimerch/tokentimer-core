@@ -186,11 +186,12 @@ describe('connection metric settings', () => {
     fireEvent.click(owner);
     expect(change).toHaveBeenLastCalledWith({ ...saved, labels: ['kind'] });
   });
-  it('does not select owner usernames when first enabling metrics', async () => {
+  it('leaves optional owner and expiration labels off when first enabling metrics', async () => {
     const change = vi.fn();
     render(
       view({}, { enabled: false, labels: [], monitoring_group: '' }, change, [
         'owner_username',
+        'expiration',
       ])
     );
     await expand();
@@ -655,7 +656,7 @@ it.each([false, true])(
     expect(owner.checked).toBe(selected);
     expect(screen.getByRole('checkbox', { name: 'Project / repository' })).toBeDisabled();
     expect(screen.getByRole('checkbox', { name: 'Project / repository' })).toBeChecked();
-    expect(screen.getByText(/permitted owner is optional/)).toBeVisible();
+    expect(screen.getByText(/Environment restricts asset labels/)).toBeVisible();
     fireEvent.click(owner);
     fireEvent.click(
       screen.getByRole('button', { name: 'Save auto-sync settings' })
@@ -671,6 +672,37 @@ it.each([false, true])(
     expect(owner.checked).toBe(!selected);
   }
 );
+
+it('saves expiration only when explicitly selected under a deployment allowlist', async () => {
+  const policy = {
+    ...defaults,
+    enabled: true,
+    override_metrics: true,
+    extra_labels: ['expiration'],
+    extra_labels_locked: true,
+  };
+  apiClient.get.mockResolvedValue({ data: policy });
+  apiClient.put.mockImplementation((_url, body) =>
+    Promise.resolve({ data: { ...policy, ...body } })
+  );
+  render(
+    <ChakraProvider>
+      <AutoSyncSystemMetricSettings />
+    </ChakraProvider>
+  );
+  const checkbox = await screen.findByRole('checkbox', {
+    name: 'GitLab token expiration',
+  });
+  expect(checkbox).toBeEnabled();
+  expect(checkbox).not.toBeChecked();
+  fireEvent.click(checkbox);
+  fireEvent.click(screen.getByRole('button', { name: 'Save auto-sync settings' }));
+  await screen.findByRole('status');
+  expect(apiClient.put).toHaveBeenCalledWith(
+    '/api/v1/admin/auto-sync/metrics',
+    expect.objectContaining({ labels: [...low, 'expiration'] })
+  );
+});
 
 it.each([
   ['denied owner', { extra_labels: ['project'], extra_labels_locked: true }],

@@ -663,6 +663,7 @@ async function scanGitLab({
                     type: "api_key",
                     description: pt.description || null,
                     expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                    metric_expiration: pt.expires_at,
                     location: `gitlab:projects/${project.id}/access_tokens/${pt.id}`,
                     project_id: project.id,
                     project_name: project.name || project.path_with_namespace,
@@ -808,6 +809,7 @@ async function scanGitLab({
                     type: "api_key",
                     description: gt.description || null,
                     expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                    metric_expiration: gt.expires_at,
                     location: `gitlab:groups/${group.id}/access_tokens/${gt.id}`,
                     group_id: group.id,
                     group_name: group.name || group.full_path,
@@ -1078,6 +1080,7 @@ async function scanGitLab({
                   // filter rules match against for the "description" field.
                   description: pat.description || null,
                   expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                  metric_expiration: pat.expires_at,
                   location: username
                     ? `gitlab:users/${username}/personal_access_tokens/${pat.id}`
                     : `gitlab:personal_access_tokens/${pat.id}`,
@@ -1167,6 +1170,7 @@ async function scanGitLab({
                     type: "api_key",
                     description: pat.description || null,
                     expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                    metric_expiration: pat.expires_at,
                     location: `gitlab:personal_access_tokens/${pat.id}`,
                     scopes: pat.scopes || [],
                     created_at: pat.created_at || null,
@@ -1316,6 +1320,7 @@ async function scanGitLab({
                     category: "key_secret",
                     type: "api_key",
                     expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                    metric_expiration: dt.expires_at,
                     location: `gitlab:projects/${project.id}/deploy_tokens/${dt.id}`,
                     project_id: project.id,
                     project_name: project.name || project.path_with_namespace,

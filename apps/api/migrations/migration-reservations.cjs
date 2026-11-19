@@ -33,6 +33,7 @@ const reservations = Object.freeze({
   111: "auto_sync_owner_username",
   112: "certops_retirement_dossiers",
   113: "certops_material_reconciliation",
+  115: "auto_sync_creation_expiration",
 });
 
 function validateMigrationReservations(migrations) {

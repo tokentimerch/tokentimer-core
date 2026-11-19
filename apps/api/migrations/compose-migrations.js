@@ -97,7 +97,7 @@ function composeMigrations(migrations, recorded = []) {
     const oldRows = recorded.filter((row) => row.version <= 109);
     const oldComposed = composeMigrations(oldRegistry, oldRows);
     const oldIdentity = new Map(oldComposed.map((entry) => [entry.name, entry.version]));
-    const appended = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation", "distribution_pagerduty_recovery"];
+    const appended = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation", "distribution_pagerduty_recovery", "auto_sync_creation_expiration"];
     recognizedRetirementPreview = oldRows.every((row) => row.version < 70 || oldIdentity.get(row.name) === row.version) &&
       rows.filter((row) => row.version > 109).every((row, index) => row.version === 110 + index && row.name === appended[index]);
     if (!recognizedRetirementPreview) throw new Error("Unsupported Core retirement preview migration history");
@@ -281,6 +281,7 @@ function composeMigrations(migrations, recorded = []) {
     auto_sync_metric_labels: ["auto_sync_run_metrics"],
     auto_sync_system_metrics: ["auto_sync_metric_labels"],
     auto_sync_owner_username: ["auto_sync_metric_labels"],
+    auto_sync_creation_expiration: ["auto_sync_owner_username"],
     certops_distribution_lifecycle: ["certops_installed_file_distribution"],
     certops_distribution_incident_delivery: ["certops_distribution_lifecycle"],
     certops_material_cleanup: ["certops_distribution_lifecycle"],

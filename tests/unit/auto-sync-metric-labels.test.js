@@ -1,7 +1,7 @@
 "use strict";
 const { describe, it, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
-const { normalizeMetricSettings, metricSettingsError, creationDimensions, metricSourceDimensions, permittedExtraLabels } = require("../../apps/api/services/autoSyncMetricLabels");
+const { normalizeMetricSettings, metricSettingsError, creationDimensions, metricSourceDimensions, permittedExtraLabels, systemMetricPolicy } = require("../../apps/api/services/autoSyncMetricLabels");
 describe("selectable auto-sync metric metadata", () => {
   it("defaults to no detailed exposure and validates an explicit label allowlist", () => {
     assert.deepEqual(normalizeMetricSettings(), { enabled: false, labels: [], monitoring_group: "" });
@@ -20,6 +20,24 @@ describe("selectable auto-sync metric metadata", () => {
     assert.deepEqual(metricSourceDimensions({ project_path: "platform/backend", project_name: "backend", group_path: "platform", token: "secret" }), { project: "platform/backend", group: "platform" });
     assert.deepEqual(metricSourceDimensions({ repository: "org/repo" }), { project: "org/repo", group: "" });
   });
+
+  it("captures provider dates and timezone-aware timestamps only for eligible, selected GitLab tokens", () => {
+    const env = { AUTO_SYNC_METRICS_EXTRA_LABELS: "expiration" };
+    const settings = { enabled: true, labels: ["expiration"] };
+    assert.deepEqual(systemMetricPolicy({ enabled: true, labels: ["kind"] }, env).labels, ["kind"]);
+    assert.deepEqual(systemMetricPolicy(settings, env).labels, ["expiration"]);
+    const payload = (sourceKind, metric_expiration) => ({
+      source_provider: "gitlab", source_kind: sourceKind,
+      source_dimensions: metricSourceDimensions({ sourceKind, metric_expiration, expiration: "2099-12-31" }),
+    });
+    assert.equal(creationDimensions(payload("gitlab-pat", "2032-02-29"), settings, env).expiration, "2032-02-29");
+    assert.equal(creationDimensions(payload("gitlab-deploy-token", "2032-02-29T00:10:20+01:00"), settings, env).expiration, "2032-02-28T23:10:20.000Z");
+    for (const expiry of ["2031-02-29", "2032-02-29T12:30:00", "2032-02-29T24:00:00Z", null, undefined]) {
+      assert.equal(creationDimensions(payload("gitlab-pat", expiry), settings, env).expiration, undefined);
+    }
+    assert.equal(creationDimensions(payload("gitlab-ssh-key", "2032-02-29"), settings, env).expiration, undefined);
+    assert.equal(creationDimensions(payload("gitlab-pat", "2032-02-29"), settings, {}).expiration, undefined);
+  });
 });
 
 const { Registry } = require("../../apps/api/node_modules/prom-client");
@@ -34,6 +52,23 @@ describe("optional detailed metric collection", () => {
     kind: "gitlab-project-token", asset_name: "deploy-token", project: "platform/backend", group_name: "platform",
     items_created_total: "2", last_created: "1793000000", metrics_settings: { enabled: true,
       labels: ["configuration_name", "kind", "monitoring_group"], monitoring_group: "critical" } };
+  it("exposes expiration on both detailed metrics and regroups the same data when disabled", async t => {
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "expiration";
+    const settings = { enabled: true, labels: ["kind", "expiration"] };
+    t.mock.method(pool, "query", async () => ({ rows: [
+      { ...row, metrics_settings: settings, expiration: "" },
+      { ...row, metrics_settings: settings, expiration: "2032-02-29", last_created: "1793000001" },
+    ] }));
+    const registry = new Registry();
+    registerAutoSyncMetrics(registry);
+    const count = registry.getSingleMetric("auto_sync_items_created_detailed_total");
+    const timestamp = registry.getSingleMetric("auto_sync_last_creation_timestamp_seconds");
+    assert.deepEqual((await count.get()).values.map(sample => [sample.labels.expiration, sample.value]), [["", 2], ["2032-02-29", 2]]);
+    assert.deepEqual((await timestamp.get()).values.map(sample => [sample.labels.expiration, sample.value]), [["", 1793000000], ["2032-02-29", 1793000001]]);
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "none";
+    assert.deepEqual((await count.get()).values.map(sample => [sample.labels.expiration, sample.value]), [["", 4]]);
+    assert.deepEqual((await timestamp.get()).values.map(sample => [sample.labels.expiration, sample.value]), [["", 1793000001]]);
+  });
   it("aggregates unselected dimensions without leaking asset names and deduplicates registration", async t => {
     t.mock.method(pool, "query", async sql => ({ rows: sql.includes("auto_sync_creation_stats")
       ? [row, { ...row, asset_name: "another-token", items_created_total: "3", last_created: "1793000001" }] : [] }));

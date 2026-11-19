@@ -98,7 +98,7 @@ no single asset owner. These metrics retain their low-cardinality labels.
 
 ### Optional configuration and asset labels
 
-- Apply migrations through 111 with matching API/dashboard code; aggregate counters stay unchanged.
+- Apply migrations through 115 with matching API/dashboard code; aggregate counters stay unchanged.
 - System Settings → Auto-sync independently overrides metrics/labels and monitoring group, locking integration controls. Otherwise, integrations retain their choices.
 - Environment wins: `AUTO_SYNC_METRICS_ENABLED=true/false`, optional `AUTO_SYNC_METRICS_LABELS` (CSV or `none`), and independent `AUTO_SYNC_METRICS_MONITORING_GROUP`. Empty restores saved values; `AUTO_SYNC_METRICS_EXTRA_LABELS` optionally restricts asset labels.
 - Helm: `monitoring.metrics.autoSyncEnabled`, `autoSyncLabels`, `autoSyncMonitoringGroup` (under `tokentimer` in Enterprise). Available labels are listed beside these settings.
@@ -108,9 +108,13 @@ no single asset owner. These metrics retain their low-cardinality labels.
 
 - `owner_username` resolves the GitLab PAT's owner ID to a username, never the importer or configuration creator. Missing IDs, inaccessible/deleted users, older servers and lookup limits leave it empty; old PAT coverage is not guaranteed.
 - Disabled by default. Select **GitLab PAT owner username** in **System Settings → Auto-sync → Override integration metrics** for all connections, or in individual connection settings. An empty `AUTO_SYNC_METRICS_EXTRA_LABELS` uses saved System Settings permissions. A nonempty list restricts permitted labels, for example `owner_username` (Helm: `monitoring.metrics.extraLabels: [owner_username]`); `none` denies them. Owner permission never selects the label: the effective global or connection selection must also include it. Connection selection alone grants no permission.
-- Both `auto_sync_last_creation_timestamp_seconds` and `auto_sync_items_created_detailed_total` use creation-time metadata, not expiry. Rediscovery or renaming does not create an event or enrich old inventory; unknown/unselected owners are empty.
+- Both `auto_sync_last_creation_timestamp_seconds` and `auto_sync_items_created_detailed_total` use creation-time metadata. Rediscovery or renaming does not create an event or enrich old inventory; unknown/unselected owners are empty.
 - Usernames increase cardinality and expose personal metadata to metrics readers and alert recipients. Effective opt-ins gate scan/statistics capture, not just display. Opt-out hides retained statistics; configuration deletion removes them. Persisted scan metadata remains until its scan/workspace is deleted; old Prometheus samples follow Prometheus retention.
 - In Grafana/Prometheus, explicit `max by (...)` lists must preserve `owner_username`; annotations can use `{{ $labels.owner_username }}`. Aggregation that drops it cannot show the owner.
+
+### GitLab token expiration labels
+
+The same two detailed creation metrics can include `expiration` for GitLab personal, project, group, and deploy tokens. Select **GitLab token expiration** and add `expiration` to any deployment allowlist configured above. The label is off by default. It shows the date or UTC timestamp captured when auto-sync created the item, or stays empty when unavailable. In Grafana, retain `expiration` in `max by (...)` and use `{{ $labels.expiration }}` in the creation alert annotation. The value describes the original import and may become stale if expiry changes afterward.
 
 ## Cleanup and removal
 
@@ -120,11 +124,9 @@ Destructive cleanup is explicit opt-in; leave it off while changing filters or s
 
 ## Deployment activation and rollback
 
-Apply migration 111 before the new API reads or writes statistics. Upgrade the
-entire API/dashboard fleet before saving owner selections: older validators do
-not recognize them. Keep this label off during mixed-version rollout; existing
-settings and ownerless dimension hashes remain unchanged. No ownership backfill
-is performed.
+Apply migration 111 for owner labels and migration 115 for expiration labels
+before the new API reads or writes statistics. Upgrade every API and dashboard
+replica before selecting these labels so all replicas recognize the settings.
 
 For an installation upgrading to multiple configurations, migration leaves activation off. As a system administrator:
 

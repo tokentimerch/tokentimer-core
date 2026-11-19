@@ -1,4 +1,4 @@
-const { normalizeMetricSettings, deploymentMetricLabelOptions, readSystemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, HIGH_CARDINALITY_LABELS } = require("../services/autoSyncMetricLabels");
+const { normalizeMetricSettings, deploymentMetricLabelOptions, readSystemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, HIGH_CARDINALITY_LABELS, EXPLICIT_SELECTION_LABELS } = require("../services/autoSyncMetricLabels");
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
@@ -305,9 +305,9 @@ router.put("/api/v1/admin/auto-sync/metrics", getApiLimiter(), requireAuth, asyn
     if (currentPolicy.labels_locked) delete payload.labels;
     else if (options.extra_labels_locked) {
       const previous = await systemSettings.getJsonSetting(pool, "auto_sync_metrics", "labels");
-      // Owner permission allows selection; older asset labels retain deployment defaults.
+      // Explicit selections remain editable within the deployment allowlist.
       const editable = label => !HIGH_CARDINALITY_LABELS.includes(label) ||
-        (label === "owner_username" && options.extra_labels.includes(label));
+        (EXPLICIT_SELECTION_LABELS.includes(label) && options.extra_labels.includes(label));
       payload.labels = [...body.labels.filter(editable),
         ...(Array.isArray(previous.value) ? previous.value.filter(label => !editable(label)) : [])];
     }

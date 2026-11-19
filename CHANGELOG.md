@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **GitLab token expiration in auto-sync metrics.** Detailed creation metrics can include the expiration of newly imported personal, project, group, and deploy tokens. **Operator guidance:** allow and select `expiration` to include the date or time in creation alerts. See the [auto-sync metrics guide](docs/AUTO_SYNC.md#gitlab-token-expiration-labels).
+
 ## [0.20.0] - 2026-11-19
 
 ### Added

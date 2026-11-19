@@ -1084,6 +1084,7 @@ router.post(
         });
       }
 
+      for (const item of result.items || []) delete item.metric_expiration;
       res.json(withQuota(result));
       try {
         if (req && req.user) {

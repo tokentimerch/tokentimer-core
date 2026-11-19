@@ -128,6 +128,16 @@ test("admin PAT owners come from the user cache without Admin suffixes or token 
   assertComplete(result);
 });
 
+test("admin and self scans preserve GitLab PAT expiry precision for metrics", async () => {
+  for (const admin of [true, false]) {
+    const result = await scanner({
+      admin,
+      pats: [pat(10, 1, { expires_at: "2034-02-19" }), pat(11, 1, { expires_at: null })],
+    }).scan();
+    assert.deepEqual(result.items.map(item => item.metric_expiration), ["2034-02-19", null]);
+  }
+});
+
 test("admin resolves inactive owners by ID and caches deleted owners", async () => {
   const fixture = scanner({
     pats: [pat(10, 2), pat(11, 2), pat(12, 3), pat(13, 3)],

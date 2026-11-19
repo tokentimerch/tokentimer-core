@@ -146,9 +146,10 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     const result = await persistScan({
       workspaceId, provider: "gitlab", createdBy: userId,
       identityContext: { host: source.source_instance, ownerKey: source.source_owner_key },
-      items: entries.map(([id, owner, kind = "gitlab-pat"]) => ({
+      items: entries.map(([id, owner, kind = "gitlab-pat", expiration]) => ({
         sourceKind: kind, sourceObjectId: id,
-        dimensions: { project: "platform/backend", ...(owner === undefined ? {} : { owner_username: owner }) },
+        dimensions: { project: "platform/backend", ...(owner === undefined ? {} : { owner_username: owner }),
+          ...(expiration === undefined ? {} : { expiration }) },
       })),
       subScopes: [{ sourceKind: "gitlab-pat", complete: true }],
       request: manual ? null : {
@@ -513,6 +514,42 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     assert.ok(inventory.every(row => !Object.hasOwn(row.source_dimensions, "owner_username")));
   });
 
+  it("keeps provider expiry on creation samples and ignores dates supplied by the importer", async () => {
+    const config = await configuration();
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "expiration,asset_name";
+    await settings(config, ["expiration", "asset_name", "kind"]);
+    const run = await start(config);
+    await ownerScan(run, [
+      ["known-expiry", undefined, "gitlab-pat", "2032-02-29"],
+      ["missing-expiry", undefined, "gitlab-pat"],
+      ["deploy-expiry", undefined, "gitlab-deploy-token", "2032-03-01T01:00:00+01:00"],
+    ]);
+    const response = await request(app)
+      .post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
+      .set("Authorization", "Bearer issue71-test-worker")
+      .send({
+        scan_id: run.context.scanId, auto_sync_run: runs.runContext(run.config),
+        items: ["known-expiry", "missing-expiry", "deploy-expiry"].map(id => ({
+          name: id, location: `gitlab.example/${id}`,
+          source: "gitlab", sourceKind: id === "deploy-expiry" ? "gitlab-deploy-token" : "gitlab-pat",
+          sourceObjectId: id, type: "api_key", expiration: "2099-12-31",
+          source_dimensions: { expiration: "2099-12-31" },
+        })),
+      });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.created_count, 3);
+    for (const metricName of ["auto_sync_items_created_detailed_total", "auto_sync_last_creation_timestamp_seconds"]) {
+      const samples = await metric(metricName);
+      assert.deepEqual(Object.fromEntries(samples.map(sample => [sample.labels.asset_name, sample.labels.expiration])), {
+        "known-expiry": "2032-02-29", "missing-expiry": "", "deploy-expiry": "2032-03-01T00:00:00.000Z",
+      });
+      assert.ok(samples.every(sample => metricName.endsWith("_total") ? sample.value === 1 : sample.value > 0));
+    }
+    const { rows } = await pool.query("SELECT source_dimensions FROM tokens WHERE workspace_id=$1", [workspaceId]);
+    assert.ok(rows.every(row => !Object.hasOwn(row.source_dimensions, "expiration")));
+    await finish(run);
+  });
+
   it("saves a system-wide owner override, applies it to opted-out connections and respects deployment restrictions", async () => {
     const config = await configuration();
     const local = { enabled: false, labels: ["kind"], inherit_system: false };
@@ -780,6 +817,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
       await client.query(`CREATE TEMP TABLE auto_sync_creation_stats
         (LIKE public.auto_sync_creation_stats INCLUDING ALL) ON COMMIT DROP`);
       await client.query("ALTER TABLE pg_temp.auto_sync_creation_stats DROP COLUMN owner_username");
+      await client.query("ALTER TABLE pg_temp.auto_sync_creation_stats DROP COLUMN expiration");
       await client.query(`INSERT INTO pg_temp.auto_sync_creation_stats
         (config_id,kind,asset_name,project,group_name,dimension_key,items_created_total,last_created_at)
         VALUES ($1,'gitlab-pat','','','',$2,7,'2026-01-02T03:04:05Z')`, [config.id, key]);
@@ -787,9 +825,12 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
       const sql = require("node:fs").readFileSync(require("node:path").join(
         __dirname, "../../apps/api/migrations/111-auto-sync-owner-username.sql"), "utf8");
       await client.query(sql);
+      await client.query(require("node:fs").readFileSync(require("node:path").join(
+        __dirname, "../../apps/api/migrations/115-auto-sync-creation-expiration.sql"), "utf8"));
       const upgraded = (await client.query("SELECT * FROM pg_temp.auto_sync_creation_stats")).rows[0];
       assert.equal(upgraded.owner_username, "");
-      const { owner_username: _owner, ...unchanged } = upgraded;
+      assert.equal(upgraded.expiration, "");
+      const { owner_username: _owner, expiration: _expiration, ...unchanged } = upgraded;
       assert.deepEqual(unchanged, before);
       await require("../../apps/api/services/autoSyncMetricLabels").recordCreationMetrics(
         client, { provider: "gitlab", configId: config.id },
