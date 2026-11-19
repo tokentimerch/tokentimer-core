@@ -1005,6 +1005,9 @@ jobs:
           tar -xzf "$actionlint_directory/actionlint.tar.gz" -C "$actionlint_directory" actionlint
           chmod 0755 "$actionlint_directory/actionlint"
           echo "$actionlint_directory" >> "$GITHUB_PATH"
+      - name: Lint all GitHub Actions workflows
+        if: runner.os == 'Linux'
+        run: actionlint -shellcheck= -pyflakes=
       - name: Install checksum-pinned Windows Actions schema validator
         if: runner.os == 'Windows'
         shell: pwsh
