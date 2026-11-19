@@ -87,6 +87,12 @@ jobs:
               "https://nodejs.org/dist/v$PILOT_NODE_VERSION/$file" -o "$runtime/$file"
           done
           node packages/agent/scripts/pack-release.js --out-dir "$RUNNER_TEMP/agent-build" --windows-runtime-dir "$runtime"
+          # The full packer also rebuilds these tracked Linux binaries. The pilot
+          # transfers the Windows archive only. Restore the unrelated build outputs
+          # before the provenance check verifies the unchanged source checkout.
+          git restore --source="$PILOT_SOURCE" --worktree -- \
+            packages/agent/bin/tokentimer-observed-revocation-linux-amd64 \
+            packages/agent/bin/tokentimer-observed-revocation-linux-arm64
           name="tokentimer-agent-$PILOT_VERSION-windows-amd64.tgz"
           output="$RUNNER_TEMP/windows-pilot-unsigned"
           mkdir -m 700 "$output"
