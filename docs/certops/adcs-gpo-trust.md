@@ -1,0 +1,11 @@
+# Distribute AD CS trust with Group Policy
+
+Use Group Policy to place **public CA certificates** in the computer trust stores of selected domain members. TokenTimer enrollment and GPO trust distribution are separate operations; a GPO does not create a TokenTimer trust-job receipt.
+
+1. On a domain management host, open Group Policy Management with permission to create, edit and link a GPO. Choose a pilot OU of computer accounts and first check whether the CA is already trusted. Obtain the public root and issuing/intermediate CA certificates through a trusted channel and independently verify their fingerprints. Do not export or distribute CA private keys or PFX files.
+2. Create a dedicated GPO and link it to the pilot OU. Under **Computer Configuration → Policies → Windows Settings → Security Settings → Public Key Policies**, import the public root certificate into **Trusted Root Certification Authorities** and each public intermediate into **Intermediate Certification Authorities**. Avoid modifying the Default Domain Policy for this pilot.
+3. Apply computer policy on a fresh pilot client (for example, run gpupdate /target:computer /force in an elevated prompt). Use gpresult /r /scope computer to confirm the GPO applies, then inspect the local computer certificate stores and verify the fingerprints. A restart can be required for policy or applications to pick up changes. Confirm a computer outside the OU does not receive the pilot policy.
+4. Connect from the pilot client to the service using its normal hostname and TLS validation. If it fails, distinguish a missing or unapplied GPO from a missing CA, wrong hostname, or inaccessible/stale CRL or OCSP response. Check the full chain and the client's network access before changing trust. See [Verify the live service](./verify-live-service.md).
+5. Renewing a server certificate under the same trusted CA does not require distributing each new leaf certificate. For a CA rollover, deploy the new public chain first, migrate and verify services, then remove old trust from the pilot GPO only after its dependencies are gone. Confirm removal before expanding the change.
+
+See Microsoft's [Group Policy certificate distribution guidance](https://learn.microsoft.com/en-us/windows-server/identity/ad-cs/distribute-certificates-group-policy). For this trust workflow, import only public CA certificates.

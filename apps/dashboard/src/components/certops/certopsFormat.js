@@ -49,6 +49,158 @@ export function formatDateTime(value) {
   });
 }
 
+// Revocation is independent of the certificate lifecycle and location status.
+export function observedRevocationDescriptor(result, now = Date.now()) {
+  if (!result)
+    return {
+      label: 'Revocation not checked',
+      scheme: 'gray',
+      help: 'No revocation check has been reported. Configure monitoring and permitted responder origins on the agent.',
+    };
+  const previous = result.lastVerified;
+  const previousChecked = Date.parse(previous?.checkedAt);
+  const previousUntil = Date.parse(previous?.validUntil);
+  const previousAdverse =
+    ['revoked', 'issuer_revoked'].includes(previous?.verdict) &&
+    previous?.chainStatus === 'valid' &&
+    Number.isFinite(previousChecked) &&
+    Number.isFinite(previousUntil) &&
+    previousChecked <= now &&
+    previousUntil > previousChecked;
+  if (
+    ['not_configured', 'disabled', 'invalid_observation'].includes(
+      result.verdict
+    )
+  ) {
+    if (previousAdverse)
+      return {
+        label:
+          previous.verdict === 'revoked'
+            ? 'Last known revoked'
+            : 'Last known CA revoked',
+        scheme: 'red',
+        help:
+          result.verdict === 'disabled'
+            ? 'Revocation monitoring is disabled on the agent.'
+            : result.verdict === 'invalid_observation'
+              ? 'The latest revocation observation was invalid; check the agent clock and configuration.'
+              : 'Revocation is not currently checked: configure permitted responder origins on the agent.',
+      };
+    return {
+      label:
+        result.verdict === 'disabled'
+          ? 'Revocation disabled'
+          : result.verdict === 'invalid_observation'
+            ? 'Revocation unknown'
+            : 'Revocation not checked',
+      scheme: result.verdict === 'invalid_observation' ? 'orange' : 'gray',
+      help:
+        result.verdict === 'disabled'
+          ? 'Enable revocation monitoring on the agent to start checking.'
+          : result.verdict === 'invalid_observation'
+            ? 'The latest revocation observation was invalid; check the agent clock and configuration.'
+            : 'Configure permitted CRL/OCSP responder origins on the agent to start checking.',
+    };
+  }
+  const checkedAt = Date.parse(result.checkedAt);
+  const validUntil = Date.parse(result.validUntil);
+  const checked = Number.isFinite(checkedAt)
+    ? formatDateTime(result.checkedAt)
+    : 'unknown';
+  const issuerFingerprint =
+    result.verdict === 'issuer_revoked'
+      ? result.revokedIssuerFingerprintSha256
+      : previousAdverse && previous.verdict === 'issuer_revoked'
+        ? previous.revokedIssuerFingerprintSha256
+        : null;
+  const issuerDetail = /^[a-f0-9]{64}$/.test(issuerFingerprint || '')
+    ? ` Revoked CA certificate: ${issuerFingerprint}.`
+    : '';
+  const reason = `${result.detail ? ` ${result.detail}` : ''}${issuerDetail}${result.derivedFromIssuerChain ? ' Identified from a certificate chain observation.' : ''}`;
+  if (Number.isFinite(checkedAt) && checkedAt > now) {
+    const lastRevoked = previousAdverse ? previous.verdict : null;
+    if (['revoked', 'issuer_revoked'].includes(lastRevoked))
+      return {
+        label:
+          lastRevoked === 'revoked'
+            ? 'Last known revoked'
+            : 'Last known CA revoked',
+        scheme: 'red',
+        help: 'The verification time is in the future; check the agent clock.',
+      };
+    return {
+      label: 'Revocation unknown',
+      scheme: 'orange',
+      help: 'The verification time is in the future; check the agent clock.',
+    };
+  }
+  if (result.chainStatus === 'invalid' && previousAdverse)
+    return {
+      label:
+        previous.verdict === 'revoked'
+          ? 'Last known revoked'
+          : 'Last known CA revoked',
+      scheme: 'red',
+      help: 'The latest chain validation failed; the previous revocation remains unresolved.',
+    };
+  if (result.chainStatus === 'invalid')
+    return {
+      label: 'Chain untrusted',
+      scheme: 'red',
+      help: `Chain validation failed. Checked: ${checked}.${reason}`,
+    };
+  if (result.verdict === 'unknown') {
+    if (previousAdverse)
+      return {
+        label:
+          previous.verdict === 'revoked'
+            ? 'Last known revoked'
+            : 'Last known CA revoked',
+        scheme: 'red',
+        help: `Latest verification is unavailable. Last verified: ${formatDateTime(previous.checkedAt)}.${reason}`,
+      };
+    return {
+      label: 'Revocation unknown',
+      scheme: 'orange',
+      help: `Verification is unavailable. Checked: ${checked}.${reason}`,
+    };
+  }
+  const stale =
+    !Number.isFinite(checkedAt) ||
+    !Number.isFinite(validUntil) ||
+    validUntil <= checkedAt ||
+    now >= validUntil;
+  if (result.verdict === 'good' && stale && previousAdverse)
+    return {
+      label:
+        result.lastVerified.verdict === 'revoked'
+          ? 'Last known revoked'
+          : 'Last known CA revoked',
+      scheme: 'red',
+      help: 'The latest successful check is stale; a previous revocation remains unresolved.',
+    };
+  const help = `Checked: ${checked}. Valid until: ${formatDateTime(result.validUntil)}.${reason}`;
+  if (result.verdict === 'revoked')
+    return {
+      label: stale ? 'Revoked (stale)' : 'Revoked',
+      scheme: 'red',
+      help,
+    };
+  if (result.verdict === 'issuer_revoked')
+    return {
+      label: stale ? 'CA revoked (stale)' : 'CA revoked',
+      scheme: 'red',
+      help,
+    };
+  if (result.verdict === 'good' && result.chainStatus === 'valid' && !stale)
+    return { label: 'Revocation checked', scheme: 'green', help };
+  return {
+    label: stale ? 'Revocation check stale' : 'Revocation unknown',
+    scheme: 'orange',
+    help,
+  };
+}
+
 export function daysUntil(value) {
   if (!value) return null;
   const date = new Date(value);

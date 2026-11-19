@@ -10,10 +10,18 @@ import { ChakraProvider } from '@chakra-ui/react';
 import { MemoryRouter } from 'react-router';
 
 import CertificateDetailsModal from '../../src/components/certops/CertificateDetailsModal.jsx';
+import apiClient from '../../src/utils/apiClient';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 vi.mock('../../src/components/PagerDutyIncidentActions.jsx', () => ({
   default: () => null,
+}));
+
+vi.mock('../../src/components/certops/useCertOps.js', () => ({
+  useCertOpsCanManage: () => false,
+}));
+vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
+  useWorkspace: () => ({ workspaceId: 'workspace-1' }),
 }));
 
 const { updateTokenMock } = vi.hoisted(() => ({
@@ -137,6 +145,32 @@ function renderModal(overrides = {}) {
 describe('CertificateDetailsModal', () => {
   beforeEach(() => {
     updateTokenMock.mockReset();
+  });
+
+  it('shows observation history without current locations when history exists', async () => {
+    apiClient.get.mockImplementation(url =>
+      Promise.resolve({
+        data: {
+          items: url.endsWith('/observations')
+            ? [{ id: 'observation-1', metadata: {} }]
+            : [],
+        },
+      })
+    );
+    renderModal({
+      workspaceId: 'workspace-1',
+      certOps: { certificate, instances: [] },
+    });
+    expect(
+      await screen.findByRole('button', { name: 'Observation history' })
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('heading', { name: 'Observed locations' })
+    ).toBeTruthy();
+    apiClient.get.mockReset();
+    apiClient.get.mockResolvedValue({
+      data: { managed: false, configurations: [], items: [] },
+    });
   });
 
   it('associates each editable certificate field with its visible label', () => {
@@ -501,6 +535,36 @@ describe('CertificateDetailsModal', () => {
     expect(
       within(diagnostics).getByText('Managed certificate ID')
     ).toBeInTheDocument();
+  });
+
+  it('links a managed certificate ID to its workspace-scoped CertOps details', () => {
+    const linked = {
+      ...certificate,
+      id: '123e4567-e89b-42d3-a456-426614174000',
+    };
+    renderModal({
+      certOps: { certificate: linked },
+      workspaceId: 'workspace/a',
+    });
+    expect(
+      screen.getByRole('link', {
+        name: 'Open managed certificate',
+        hidden: true,
+      })
+    ).toHaveAttribute(
+      'href',
+      '/certops/certificates?certificateId=123e4567-e89b-42d3-a456-426614174000&workspace=workspace%2Fa'
+    );
+  });
+
+  it('does not offer a details link for an invalid managed certificate ID', () => {
+    renderModal();
+    expect(
+      screen.queryByRole('link', {
+        name: 'Open managed certificate',
+        hidden: true,
+      })
+    ).not.toBeInTheDocument();
   });
 
   it('does not render diagnostics outside the Certificate operations section', () => {

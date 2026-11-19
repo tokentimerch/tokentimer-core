@@ -25,6 +25,21 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
 const { X509Certificate } = require("node:crypto");
+const { checkReassociatedBinding } = require("./index");
+
+it("reassociation guard checks stable native IIS, HTTP.sys and machine-store state", async () => {
+  const thumb="a".repeat(40), fingerprint="b".repeat(64);
+  const binding={site:"Default Web Site",address:"192.0.2.10",port:443};
+  const snapshot={iis:[{site:binding.site,address:binding.address,port:443,hostname:"",flags:0}],
+    http:[{keyedBy:"ipport",ipPort:"192.0.2.10:443",thumbprint:thumb,storeName:"My"}],
+    certificates:[{thumbprint:thumb,fingerprintSha256:fingerprint,hasPrivateKey:true}]};
+  assert.equal(await checkReassociatedBinding({binding,thumbprint:thumb,read:async()=>snapshot}),true);
+  const shadowed={...snapshot,http:[...snapshot.http,{keyedBy:"ipport",ipPort:"0.0.0.0:443",thumbprint:thumb,storeName:"My"}]};
+  assert.equal(await checkReassociatedBinding({binding,thumbprint:thumb,read:async()=>shadowed}),false);
+  assert.equal(await checkReassociatedBinding({binding,thumbprint:thumb,fingerprintSha256:"c".repeat(64),read:async()=>snapshot}),false);
+  assert.equal(await checkReassociatedBinding({binding,thumbprint:thumb,permittedFingerprints:["c".repeat(64)],read:async()=>snapshot}),false);
+  assert.equal(await checkReassociatedBinding({binding,thumbprint:thumb,read:async()=>{throw new Error("access denied");}}),false);
+});
 
 const {
   THUMBPRINT_PATTERN,
@@ -214,6 +229,9 @@ describe("resolveVerificationTarget", () => {
     assert.equal(resolveVerificationTarget({ address: "*" }).host, "127.0.0.1");
     assert.equal(resolveVerificationTarget({ address: "0.0.0.0" }).host, "127.0.0.1");
     assert.equal(resolveVerificationTarget({ address: "[::]" }).host, "::1");
+    assert.equal(resolveVerificationTarget({ address: "::" }).host, "::1");
+    assert.equal(resolveVerificationTarget({ address: "0:0:0:0:0:0:0:0" }).host, "::1");
+    assert.equal(resolveVerificationTarget({ address: "[0:0:0:0:0:0:0:0]" }).host, "::1");
   });
 
   it("strips IPv6 brackets from a concrete IPv6 literal", () => {
@@ -242,6 +260,12 @@ describe("formatIpPort", () => {
   it("writes the IIS wildcard as 0.0.0.0 because netsh rejects an asterisk", () => {
     assert.equal(formatIpPort({ address: "*", port: 8443 }), "0.0.0.0:8443");
     assert.equal(formatBindingSelector({ address: "*", port: 8443 }), "ipport=0.0.0.0:8443");
+  });
+
+  it("brackets unbracketed IPv6 addresses for netsh", () => {
+    assert.equal(formatIpPort({ address: "2001:db8::1", port: 443 }), "[2001:db8::1]:443");
+    assert.equal(formatIpPort({ address: "[2001:db8::1]", port: 443 }), "[2001:db8::1]:443");
+    assert.equal(formatBindingSelector({ address: "::", port: 443 }), "ipport=[::]:443");
   });
 });
 
@@ -350,6 +374,11 @@ describe("queryCurrentBinding", () => {
       execFileImpl,
     });
     assert.equal(ipv6.thumbprint, FIXTURE_THUMBPRINT.toUpperCase());
+    const apiIpv6 = await queryCurrentBinding({
+      binding: { ...VALID_BINDING, address: "2001:DB8:0:0::1" },
+      execFileImpl,
+    });
+    assert.equal(apiIpv6.thumbprint, FIXTURE_THUMBPRINT.toUpperCase());
   });
 
   it("decodes the binding's settings into result.parameters (rebind-settings preservation)", async () => {
@@ -882,6 +911,106 @@ describe("bindCertificate", () => {
 // ---------------------------------------------------------------------------
 
 describe("deployIisBinding", () => {
+  it("deploys a reassociated binding when the signed destination and inventories match", async () => {
+    const execFileImpl=makeExecStub(key=>key === "query" ? boundAtValidBinding(OTHER_THUMBPRINT) : null);
+    let reads=0;
+    const snapshot=(after)=>({iis:[{site:VALID_BINDING.site,address:VALID_BINDING.address,port:443,hostname:"",flags:0}],
+      http:[{keyedBy:"ipport",ipPort:"10.0.0.5:443",thumbprint:after?FIXTURE_THUMBPRINT:OTHER_THUMBPRINT,storeName:"My"}],
+      certificates:[{thumbprint:after?FIXTURE_THUMBPRINT:OTHER_THUMBPRINT,fingerprintSha256:after?FIXTURE_FINGERPRINT_SHA256:"d".repeat(64),hasPrivateKey:true}]});
+    const result=await deployIisBinding({binding:VALID_BINDING,certificatePem:FIXTURE_CERT_PEM,execFileImpl,
+      reassociationGuard:{fingerprintSha256:"d".repeat(64),site:VALID_BINDING.site,port:443,address:VALID_BINDING.address,store:"My"},
+      reassociationRead:async()=>snapshot(++reads>2),connectImpl:makeConnectStub({peerDer:fixtureX509.raw})});
+    assert.equal(result.ok,true);
+    assert.equal(execFileImpl.calls.some(call=>call.args[1]==="add"),true);
+  });
+  it("stops reassociated deployment before mutation on a wildcard conflict", async () => {
+    const execFileImpl=makeExecStub(key=>key === "query" ? boundAtValidBinding(OTHER_THUMBPRINT) : null);
+    const snapshot={iis:[{site:VALID_BINDING.site,address:VALID_BINDING.address,port:443,hostname:"",flags:0}],
+      http:[{keyedBy:"ipport",ipPort:"10.0.0.5:443",thumbprint:OTHER_THUMBPRINT,storeName:"My"},{keyedBy:"ipport",ipPort:"0.0.0.0:443",thumbprint:OTHER_THUMBPRINT,storeName:"My"}],
+      certificates:[{thumbprint:OTHER_THUMBPRINT,fingerprintSha256:"d".repeat(64),hasPrivateKey:true}]};
+    const result=await deployIisBinding({binding:VALID_BINDING,certificatePem:FIXTURE_CERT_PEM,execFileImpl,
+      reassociationGuard:{fingerprintSha256:"d".repeat(64),site:VALID_BINDING.site,port:443,address:VALID_BINDING.address,store:"My"},reassociationRead:async()=>snapshot});
+    assert.equal(result.code,"REASSOCIATION_CONFLICT");
+    assert.match(result.detail,/already be in the Windows store/);
+    assert.equal(execFileImpl.calls.some(call=>["add","delete"].includes(call.args[1])),false);
+  });
+  it("reports uncertain effect if a wildcard appears after reassociated mutation", async () => {
+    const execFileImpl=makeExecStub(key=>key === "query" ? boundAtValidBinding(OTHER_THUMBPRINT) : null);
+    let reads=0;
+    const snapshot=(after)=>({iis:[{site:VALID_BINDING.site,address:VALID_BINDING.address,port:443,hostname:"",flags:0}],
+      http:[{keyedBy:"ipport",ipPort:"10.0.0.5:443",thumbprint:after?FIXTURE_THUMBPRINT:OTHER_THUMBPRINT,storeName:"My"},
+        ...(after?[{keyedBy:"ipport",ipPort:"0.0.0.0:443",thumbprint:FIXTURE_THUMBPRINT,storeName:"My"}]:[])],
+      certificates:[{thumbprint:after?FIXTURE_THUMBPRINT:OTHER_THUMBPRINT,fingerprintSha256:after?FIXTURE_FINGERPRINT_SHA256:"d".repeat(64),hasPrivateKey:true}]});
+    const result=await deployIisBinding({binding:VALID_BINDING,certificatePem:FIXTURE_CERT_PEM,execFileImpl,
+      reassociationGuard:{fingerprintSha256:"d".repeat(64),site:VALID_BINDING.site,port:443,address:VALID_BINDING.address,store:"My"},reassociationRead:async()=>snapshot(++reads>2),connectImpl:makeConnectStub({peerDer:fixtureX509.raw})});
+    assert.equal(result.code,"REASSOCIATION_CONFLICT_AFTER_MUTATION");
+    assert.match(result.detail,/may already have changed/);
+    assert.equal(execFileImpl.calls.some(call=>call.args[1]==="add"),true);
+  });
+  it("rejects a reassociation guard for a different IIS destination", async () => {
+    const guard={fingerprintSha256:"d".repeat(64),site:VALID_BINDING.site,port:443,address:VALID_BINDING.address,store:"My"};
+    for (const changed of [{site:"Other Site"},{port:444},{address:"10.0.0.6"},{store:"WebHosting"}]) {
+      const execFileImpl=makeExecStub(key=>key === "query" ? boundAtValidBinding(OTHER_THUMBPRINT) : null);
+      const result=await deployIisBinding({binding:VALID_BINDING,certificatePem:FIXTURE_CERT_PEM,execFileImpl,
+        reassociationGuard:{...guard,...changed},reassociationRead:async()=>assert.fail("mismatched destination must not be read")});
+      assert.equal(result.code,"REASSOCIATION_CONFLICT");
+      assert.equal(execFileImpl.calls.some(call=>["add","delete"].includes(call.args[1])),false);
+    }
+  });
+  it("rejects a malformed expected predecessor before querying or changing IIS", async () => {
+    const execFileImpl = makeExecStub(() => null);
+    await assert.rejects(deployIisBinding({ binding: VALID_BINDING, certificatePem: FIXTURE_CERT_PEM,
+      expectedExistingThumbprint: "invalid", execFileImpl }), /thumbprint/);
+    assert.equal(execFileImpl.calls.length, 0);
+  });
+
+  it("does not recreate a missing binding when a predecessor is required", async () => {
+    const execFileImpl = makeExecStub(() => ({ error: null, stdout: "" }));
+    const result = await deployIisBinding({ binding: VALID_BINDING, certificatePem: FIXTURE_CERT_PEM,
+      expectedExistingThumbprint: OTHER_THUMBPRINT, execFileImpl });
+    assert.equal(result.code, "EXPECTED_BINDING_MISSING");
+    assert.equal(execFileImpl.calls.length, 1);
+  });
+
+  it("does not replace a binding changed to another certificate", async () => {
+    const execFileImpl = makeExecStub(() => boundAtValidBinding(OTHER_THUMBPRINT));
+    const result = await deployIisBinding({ binding: VALID_BINDING, certificatePem: FIXTURE_CERT_PEM,
+      expectedExistingThumbprint: "BB".repeat(20), execFileImpl });
+    assert.equal(result.code, "EXPECTED_BINDING_CHANGED");
+    assert.equal(execFileImpl.calls.length, 1);
+  });
+
+  it("updates a binding still using its expected predecessor", async () => {
+    const execFileImpl = makeExecStub((key) => key === "query" ? boundAtValidBinding(OTHER_THUMBPRINT) : null);
+    const result = await deployIisBinding({ binding: VALID_BINDING, certificatePem: FIXTURE_CERT_PEM,
+      expectedExistingThumbprint: OTHER_THUMBPRINT.toLowerCase(), execFileImpl,
+      connectImpl: makeConnectStub({ peerDer: fixtureX509.raw }) });
+    assert.equal(result.ok, true);
+    assert.equal(result.boundThumbprint, FIXTURE_THUMBPRINT);
+  });
+
+  it("does not mutate a binding changed during capability probing", async () => {
+    let queries = 0;
+    const execFileImpl = makeExecStub((key) => {
+      if (key === "query") return boundAtValidBinding(++queries === 1 ? OTHER_THUMBPRINT : "BB".repeat(20));
+      return null;
+    });
+    const result = await deployIisBinding({ binding: VALID_BINDING, certificatePem: FIXTURE_CERT_PEM,
+      expectedExistingThumbprint: OTHER_THUMBPRINT, execFileImpl });
+    assert.equal(result.code, "EXPECTED_BINDING_CHANGED");
+    assert.equal(execFileImpl.calls.some((call) => ["add", "delete"].includes(call.args[1])), false);
+  });
+
+  it("verifies an already updated binding on retry", async () => {
+    const execFileImpl = makeExecStub(() => boundAtValidBinding(FIXTURE_THUMBPRINT));
+    const result = await deployIisBinding({ binding: VALID_BINDING, certificatePem: FIXTURE_CERT_PEM,
+      expectedExistingThumbprint: OTHER_THUMBPRINT, execFileImpl,
+      connectImpl: makeConnectStub({ peerDer: fixtureX509.raw }) });
+    assert.equal(result.ok, true);
+    assert.equal(result.skippedMutation, true);
+    assert.equal(execFileImpl.calls.length, 1);
+  });
+
   it("binds and verifies successfully, reporting outgoing/bound thumbprints", async () => {
     const execFileImpl = makeExecStub((key) => {
       if (key === "query") return boundAtValidBinding(OTHER_THUMBPRINT);
@@ -1466,11 +1595,127 @@ describe("deployIisBinding precedenceWarning wiring", () => {
   });
 });
 
+describe("wildcard DNS SAN matching", () => {
+  it("preserves the configured probe timeout within the total deadline", () => {
+    const { wildcardProbeTimeout } = require("./index");
+    assert.equal(wildcardProbeTimeout(10000, 30000, 0), 10000);
+    assert.equal(wildcardProbeTimeout(10000, 30000, 27000), 3000);
+    assert.equal(wildcardProbeTimeout(10000, 30000, 30001), 0);
+  });
+  it("accepts valid IDNA A-labels and rejects ambiguous or malformed names", () => {
+    const { isScopedDnsName } = require("./index");
+    assert.equal(isScopedDnsName("xn--bcher-kva.example"), true);
+    for (const name of ["bücher.example", "xn--.example", "a..example", "-bad.example", "foo.example."])
+      assert.equal(isScopedDnsName(name), false, name);
+  });
+  it("matches exactly one wildcard label and never sends a wildcard as SNI", () => {
+    const { dnsSanMatches } = require("./index");
+    assert.equal(dnsSanMatches("a.example.com", "*.example.com"), true);
+    assert.equal(dnsSanMatches("a.b.example.com", "*.example.com"), false);
+    assert.equal(dnsSanMatches("example.com", "*.example.com"), false);
+    assert.equal(dnsSanMatches("other.example.net", "*.example.com"), false);
+  });
+});
+
 describe("wildcard deployment and concrete HTTP.sys bindings", () => {
   const wildcard = { ...VALID_BINDING, address: "*" };
   const deploy = (execFileImpl, binding = wildcard) => deployIisBinding({
     binding, certificatePem: FIXTURE_CERT_PEM, execFileImpl,
     connectImpl: makeConnectStub({ peerDer: fixtureX509.raw }),
+  });
+  it("covers wildcard and IDNA SANs using the real certificate and concrete SNI probes", async () => {
+    const pem = fs.readFileSync(path.join(__dirname, "..", "verify", "fixtures", "wildcard-sni-test.crt.pem"), "utf8");
+    const cert = new X509Certificate(pem);
+    const thumbprint = cert.fingerprint.replace(/:/g, "");
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint },
+      { hostnamePort: "customer.example.test:443", thumbprint: OTHER_THUMBPRINT },
+    ) : {});
+    const blocked = await deployIisBinding({ binding: wildcard, certificatePem: pem, execFileImpl: exec });
+    assert.equal(blocked.code, "WILDCARD_PRECEDENCE_CONFLICT");
+    const safeExec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint },
+      { hostnamePort: "customer.example.test:443", thumbprint },
+      { hostnamePort: "nested.customer.example.test:443", thumbprint: OTHER_THUMBPRINT },
+    ) : {});
+    const connect = makeConnectStub({ peerDer: cert.raw });
+    const result = await deployIisBinding({ binding: wildcard, certificatePem: pem, execFileImpl: safeExec, connectImpl: connect });
+    assert.equal(result.ok, true);
+    assert.deepEqual(connect.seenOptions.map(item => item.servername), [undefined, "tokentimer-probe.example.test", "xn--bcher-kva.example", "customer.example.test"]);
+  });
+  it("fails closed on malformed same-port SNI selectors", async () => {
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT },
+      { hostnamePort: "bad..example:443", thumbprint: OTHER_THUMBPRINT },
+    ) : {});
+    assert.equal((await deploy(exec)).code, "QUERY_FAILED");
+  });
+  it("honors cancellation between TLS probes", async () => {
+    const controller = new AbortController();
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT },
+    ) : {});
+    const base = makeConnectStub({ peerDer: fixtureX509.raw });
+    const connect = options => { const socket = base(options); controller.abort(); return socket; };
+    const result = await deployIisBinding({ binding: wildcard, certificatePem: FIXTURE_CERT_PEM,
+      execFileImpl: exec, connectImpl: connect, signal: controller.signal });
+    assert.equal(result.code, "VERIFY_FAILED");
+    assert.match(result.detail, /cancelled/);
+    assert.equal(base.seenOptions.length, 1);
+  });
+  it("refuses a matching SNI selector on the wildcard port before mutation", async () => {
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT },
+      { hostnamePort: "WWW.Valid.Example.Com:443", thumbprint: OTHER_THUMBPRINT },
+    ) : {});
+    const result = await deploy(exec);
+    assert.equal(result.code, "WILDCARD_PRECEDENCE_CONFLICT");
+    assert.match(result.detail, /SNI binding/);
+    assert.match(result.detail, /IIS binding was not changed; the certificate may already be in the Windows store/);
+    assert.equal(exec.calls.some(call => ["add", "delete"].includes(call.args[1])), false);
+  });
+  it("permits unrelated SNI names and ports and probes every certificate name", async () => {
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT },
+      { hostnamePort: "other.example.com:443", thumbprint: OTHER_THUMBPRINT },
+      { hostnamePort: "valid.example.com:444", thumbprint: OTHER_THUMBPRINT },
+      { hostnamePort: "www.valid.example.com:443", thumbprint: FIXTURE_THUMBPRINT },
+    ) : {});
+    const connect = makeConnectStub({ peerDer: fixtureX509.raw });
+    const result = await deployIisBinding({ binding: wildcard, certificatePem: FIXTURE_CERT_PEM, execFileImpl: exec, connectImpl: connect });
+    assert.equal(result.ok, true);
+    assert.deepEqual(connect.seenOptions.map(item => item.servername), [undefined, "valid.example.com", "www.valid.example.com"]);
+  });
+  it("uses existing rollback when a named TLS probe serves a different certificate", async () => {
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "0.0.0.0:443", thumbprint: OTHER_THUMBPRINT },
+    ) : {});
+    const good = makeConnectStub({ peerDer: fixtureX509.raw });
+    const bad = makeConnectStub({ error: new Error("named handshake failed") });
+    const connect = options => options.servername ? bad(options) : good(options);
+    const result = await deployIisBinding({ binding: wildcard, certificatePem: FIXTURE_CERT_PEM, execFileImpl: exec, connectImpl: connect });
+    assert.equal(result.code, "VERIFY_FAILED");
+    assert.equal(result.rolledBack, true);
+    assert.match(result.detail, /named handshake failed/);
+  });
+  it("detects a matching SNI selector added during verification", async () => {
+    let queries = 0;
+    const exec = makeExecStub(key => key === "query" ? (++queries < 3
+      ? bindingsOutput({ ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT })
+      : bindingsOutput({ ipPort: "0.0.0.0:443", thumbprint: FIXTURE_THUMBPRINT },
+        { hostnamePort: "valid.example.com:443", thumbprint: OTHER_THUMBPRINT })) : {});
+    const result = await deploy(exec);
+    assert.equal(result.code, "WILDCARD_PRECEDENCE_CONFLICT");
+    assert.equal(result.rolledBack, false);
+    assert.match(result.detail, /may already have changed/);
+  });
+  it("refuses a certificate without DNS SANs before mutation", async () => {
+    const cert = fs.readFileSync(path.join(__dirname, "..", "verify", "fixtures", "ca.crt.pem"), "utf8");
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput({ ipPort: "0.0.0.0:443", thumbprint: OTHER_THUMBPRINT }) : {});
+    const result = await deployIisBinding({ binding: wildcard, certificatePem: cert, execFileImpl: exec });
+    assert.equal(result.code, "WILDCARD_DNS_SCOPE_UNAVAILABLE");
+    assert.match(result.detail, /IIS binding was not changed; the certificate may already be in the Windows store/);
+    assert.equal(exec.calls.some(call => ["add", "delete"].includes(call.args[1])), false);
   });
   it("refuses before mutation when an IP-specific certificate would mask the wildcard", async () => {
     const exec = makeExecStub(key => key === "query" ? bindingsOutput(
@@ -1527,12 +1772,29 @@ describe("wildcard deployment and concrete HTTP.sys bindings", () => {
     assert.equal(result.code,"WILDCARD_PRECEDENCE_CONFLICT");
     assert.equal(exec.calls.some(call => ["add","delete"].includes(call.args[1])),false);
   });
-  it("uses the bracketed HTTP.sys selector for an unbracketed IPv6 wildcard", async () => {
-    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
-      { ipPort: "[::]:443", thumbprint: FIXTURE_THUMBPRINT },
+  it("treats expanded IPv6 unspecified addresses as wildcard bindings", async () => {
+    for (const address of ["0:0:0:0:0:0:0:0", "[0:0:0:0:0:0:0:0]"]) {
+      const exec=makeExecStub(key => key === "query" ? bindingsOutput(
+        {ipPort:"[::]:443",thumbprint:OTHER_THUMBPRINT},
+        {ipPort:"[2001:db8::1]:443",thumbprint:OTHER_THUMBPRINT},
+      ) : {});
+      const result=await deploy(exec,{...wildcard,address});
+      assert.equal(result.code,"WILDCARD_PRECEDENCE_CONFLICT",address);
+      assert.equal(exec.calls.some(call => ["add","delete"].includes(call.args[1])),false);
+    }
+  });
+  it("does not mistake an expanded IPv6 unspecified inventory entry for a concrete address", async () => {
+    const exec=makeExecStub(key => key === "query" ? bindingsOutput(
+      {ipPort:"[0:0:0:0:0:0:0:0]:443",thumbprint:FIXTURE_THUMBPRINT},
     ) : {});
-    assert.equal((await deploy(exec, { ...wildcard, address: "::" })).ok, true);
-    assert.equal(formatBindingSelector({ ...wildcard, address: "::" }), "ipport=[::]:443");
+    assert.equal((await deploy(exec,{...wildcard,address:"::"})).ok,true);
+  });
+  it("conservatively rejects an IPv4-mapped IPv6 selector over an IPv4 wildcard", async () => {
+    const exec=makeExecStub(key => key === "query" ? bindingsOutput(
+      {ipPort:"0.0.0.0:443",thumbprint:OTHER_THUMBPRINT},
+      {ipPort:"[::ffff:192.0.2.10]:443",thumbprint:OTHER_THUMBPRINT},
+    ) : {});
+    assert.equal((await deploy(exec)).code,"WILDCARD_PRECEDENCE_CONFLICT");
   });
   it("does not confuse IPv6-specific bindings with an IPv4 wildcard", async () => {
     const exec = makeExecStub(key => key === "query" ? bindingsOutput(
@@ -1541,7 +1803,15 @@ describe("wildcard deployment and concrete HTTP.sys bindings", () => {
     ) : { error: null, stdout: "" });
     assert.equal((await deploy(exec)).ok, true);
   });
+  it("uses the bracketed HTTP.sys selector for an unbracketed IPv6 wildcard", async () => {
+    const exec = makeExecStub(key => key === "query" ? bindingsOutput(
+      { ipPort: "[::]:443", thumbprint: FIXTURE_THUMBPRINT },
+    ) : {});
+    assert.equal((await deploy(exec, { ...wildcard, address: "::" })).ok, true);
+    assert.equal(formatBindingSelector({ ...wildcard, address: "::" }), "ipport=[::]:443");
+  });
 });
+
 
 describe("IIS bind AbortSignal cancellation", () => {
   it("aborts an in-flight netsh delete and does not start add", async () => {

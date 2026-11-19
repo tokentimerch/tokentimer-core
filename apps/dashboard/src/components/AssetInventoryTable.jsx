@@ -1,4 +1,3 @@
-import { CertificateLifecycleBadge } from './certops/CertOpsBadge.jsx';
 import { useCallback } from 'react';
 import {
   formatContactGroupNames,
@@ -45,6 +44,7 @@ import {
   certificateLifecycleDescriptor,
   AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
 } from './certops/certopsFormat';
+import { CertificateLifecycleBadge } from './certops/CertOpsBadge.jsx';
 import DeploymentBadge from './certops/DeploymentBadge.jsx';
 import useDistributionSummaries from './certops/useDistributionSummaries.js';
 import { domainValueToUrl } from '../utils/domains.jsx';
@@ -411,18 +411,6 @@ const LIGHT_STATUS_STYLES = {
     color: '#15803d',
     dot: '#16a34a',
     border: '#bbf7d0',
-  },
-  revoked: {
-    bg: '#fef2f2',
-    color: '#b91c1c',
-    dot: '#dc2626',
-    border: '#fecaca',
-  },
-  decommissioned: {
-    bg: '#f1f5f9',
-    color: '#475569',
-    dot: '#64748b',
-    border: '#cbd5e1',
   },
 };
 

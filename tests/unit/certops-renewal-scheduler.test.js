@@ -385,6 +385,20 @@ describe("certops renewal scheduler", () => {
     assert.strictEqual(client.released, true);
   });
 
+  it("pins an explicit-IP IIS renewal to its owning agent", async () => {
+    const target = { type: "windows-iis", reference: "iis-01/default-web-site", store: "My",
+      binding: { site: "Default Web Site", port: 443, address: "192.0.2.10" } };
+    const pool = createSchedulerPool({ dueRows: [dueCertificate({ deployed_agent_id: "agent-owner",
+      renewalProfileOverrides: { keyRotationPolicy: { rotateOnRenew: true }, deploymentTargets: [target], target } })] });
+    let options;
+    const summary = await runRenewalSchedulerSweep({ dbPool: pool, env: {},
+      jobCreator: async value => { options = value; return { job: { id: "job-ip" }, created: true }; },
+      auditWriter: async () => {} });
+    assert.equal(summary.created, 1);
+    assert.equal(options.assignedAgentId, "agent-owner");
+    assert.equal(options.payload.target.binding.address, "192.0.2.10");
+  });
+
   it("names the store/binding on CERTOPS_JOB_CREATED_AUTOMATIC for a windows-iis renewal, not certPath", async () => {
     const windowsTarget = {
       type: "windows-iis",

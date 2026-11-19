@@ -904,6 +904,18 @@ describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
     return agentIndex;
   }
 
+  it("shows the owning agent's missing explicit-IP capability for AD CS", () => {
+    const profile = switchedAdcsProfile();
+    profile.target.binding.address = "192.0.2.10";
+    profile.deploymentTargets[0].binding.address = "192.0.2.10";
+    const index = adcsIndex({ declaredCapabilities: ["adcs-enroll-v1"] });
+    index.byRowId.get("agent-a").platform = "win32";
+    const result = resolveRenewalPathForRow({ certificateRow: switchedRow({ source: "agent_windows",
+      deployed_agent_id: "agent-a", profile_public_metadata: { renewalProfile: profile } }), agentIndex: index, now: NOW });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.match(result.renewalPathSummary, /explicit-IP IIS/);
+  });
+
   it("missing declaration -> Renewal path unavailable naming adcs-enroll-v1, not healthy", () => {
     const result = resolveRenewalPathForRow({
       certificateRow: switchedRow(),

@@ -39,6 +39,7 @@ const {
   listHttpSysBindings,
   listIisSites,
   findSitesForBinding,
+  canonicalIisAddress,
   parseNodeSubjectAltName,
 } = require("../windows-discovery");
 
@@ -90,7 +91,10 @@ function runPowerShellJson(assignOutScript, { spawn = spawnSync, onWarning = () 
     return [];
   }
   const stdout = String(result.stdout || "").trim();
-  if (!stdout) return [];
+  if (!stdout) {
+    onWarning("windows discovery (fingerprint completion): powershell returned no JSON output");
+    return [];
+  }
   let parsed;
   try {
     parsed = JSON.parse(stdout);
@@ -99,7 +103,10 @@ function runPowerShellJson(assignOutScript, { spawn = spawnSync, onWarning = () 
     return [];
   }
   const items = parsed && parsed.items;
-  if (items === null || items === undefined) return [];
+  if (items === null || items === undefined) {
+    onWarning("windows discovery (fingerprint completion): powershell response has no items field");
+    return [];
+  }
   return Array.isArray(items) ? items : [items];
 }
 
@@ -285,6 +292,7 @@ async function collectWindowsDiscoveryObservations({
   execFileImpl,
   spawn = spawnSync,
   onWarning = () => {},
+  includePublicCertificate = false,
 } = {}) {
   const storeLocation = "LocalMachine";
   const execOpts = execFileImpl ? { execFileImpl } : {};
@@ -380,6 +388,7 @@ async function collectWindowsDiscoveryObservations({
       thumbprint;
     observations.push({
       locationKind: "windows_store",
+      ...(includePublicCertificate ? { certificatePem: new X509Certificate(Buffer.from(rawCertificateBase64, "base64")).toString() } : {}),
       locationSlot: `${storeLocation}/${storeName}/${slotIdentity}`,
       fingerprintSha256,
       // Empty DN (SAN-only) is null, never "".
@@ -431,9 +440,18 @@ async function collectWindowsDiscoveryObservations({
 
     const parsed = splitIpPortLiteral(binding.ipPort);
     if (!parsed) continue;
+    // Existing HTTP.sys inventory identities use the native literal as
+    // reported, so do not silently create a new location on upgrade.
+    const originalAddress = parsed.address;
+    if (binding.keyedBy === "ipport") {
+      const address = canonicalIisAddress(parsed.address);
+      if (!address || address === "*") continue;
+      parsed.address = address;
+    }
 
     const subjectAltNames = resolveSubjectAltNames(cert, rawCertificateBase64, onWarning);
     const base = {
+      ...(includePublicCertificate ? { certificatePem: new X509Certificate(Buffer.from(rawCertificateBase64, "base64")).toString() } : {}),
       fingerprintSha256,
       subject: cert.subject || null,
       issuer: cert.issuer || null,
@@ -459,18 +477,21 @@ async function collectWindowsDiscoveryObservations({
         observations.push({
           ...base,
           locationKind: "iis_binding",
-          locationSlot: `${siteName}:${parsed.port}${sniHost ? `#${sniHost}` : `@${parsed.address}`}`,
+          // Keep the original identity of the common IPv4 wildcard binding so
+          // existing management registrations survive an agent upgrade.
+          locationSlot: `${siteName}:${parsed.port}${sniHost ? `#${sniHost}` : parsed.address === "0.0.0.0" ? "" : `@${originalAddress}`}`,
           siteName,
           port: parsed.port,
           sniHost,
+          ...(!sniHost ? { boundAddress: originalAddress } : {}),
         });
       }
     } else {
       observations.push({
         ...base,
         locationKind: "http_sys",
-        locationSlot: `${parsed.address}:${parsed.port}`,
-        boundAddress: parsed.address,
+        locationSlot: `${originalAddress}:${parsed.port}`,
+        boundAddress: originalAddress,
         port: parsed.port,
       });
     }

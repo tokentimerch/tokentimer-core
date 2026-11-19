@@ -26,9 +26,9 @@ test('Linux to Windows drops host-specific config and permits a new Windows conf
 
 test('Windows to Linux drops IIS configuration and Windows paths', () => {
   const result = chooseInfrastructure({ ...linux, infrastructure: 'windows',
-    iisSite: 'Default Web Site', iisPort: '443', sniHost: 'web.example.com',
+    iisSite: 'Default Web Site', iisPort: '443', iisAddress: '192.0.2.10', sniHost: 'web.example.com',
     acmeShellPath: 'C:\\Git\\bash.exe' }, 'automate', 'linux');
-  for (const key of ['iisSite', 'iisPort', 'sniHost', 'acmeShellPath', 'certPath']) assert.equal(result[key], undefined, key);
+  for (const key of ['iisSite', 'iisPort', 'iisAddress', 'sniHost', 'acmeShellPath', 'certPath']) assert.equal(result[key], undefined, key);
 });
 
 test('choosing the same platform retains reviewed configuration', () => {

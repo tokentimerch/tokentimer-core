@@ -340,6 +340,21 @@ describe('Dashboard page smoke tests', () => {
 
   it.each([
     [
+      'CERTOPS_MANAGEMENT_STOPPED',
+      { periodId: 'period-old', managedCertificateId: 'certificate-1' },
+      ['Management period ID: period-old', 'Certificate ID: certificate-1'],
+    ],
+    [
+      'CERTOPS_MANAGEMENT_STARTED',
+      { periodId: 'period-new', managedCertificateId: 'certificate-2', commonName: 'web.example.test', renewalProfileId: 'profile-1', automationEnabled: false },
+      ['Certificate: web.example.test', 'Certificate ID: certificate-2', 'Management period ID: period-new', 'Renewal profile ID: profile-1', 'Automatic renewal: disabled'],
+    ],
+    [
+      'CERTOPS_WINDOWS_STORE_REASSOCIATED',
+      { legacyId: 'old-1', currentId: 'new-1', legacyPeriodId: 'period-old', currentPeriodId: 'period-replaced', newPeriodId: 'period-new', agentId: 'agent-1', dnsName: 'web.example.test', profileId: 'profile-1', fingerprintSha256: 'fingerprint-1' },
+      ['Certificate: web.example.test', 'Previous registration ID: old-1', 'New registration ID: new-1', 'Previous period ID: period-old', 'Replaced period ID: period-replaced', 'New period ID: period-new', 'Renewal profile ID: profile-1', 'Agent ID: agent-1', 'Fingerprint: fingerprint-1'],
+    ],
+    [
       'CERTOPS_ISSUER_CREATED',
       { issuerId: 'issuer-1', kind: 'adcs' },
       ['Issuer: issuer-1', 'Kind: adcs'],

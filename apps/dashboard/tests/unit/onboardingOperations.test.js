@@ -259,7 +259,7 @@ describe('evaluateVerification', () => {
         agents: { live: 1, items: [] },
         certificates: { total: 3 },
         adcs: {
-          issuers: [{ id: 'i1', confirmed: true, safe: true }],
+          issuers: [{ id: 'i1', confirmed: true, safe: true, installedIisEnrollments: adcs.installedIisEnrollments || 0 }],
           profiles: 1,
           ...adcs,
         },
@@ -281,11 +281,32 @@ describe('evaluateVerification', () => {
       const result = evaluateVerification({
         goal: 'certops_adcs',
         token: routed,
-        summary: adcsSummary({ installedEnrollments: 1 }),
+        summary: adcsSummary({ installedIisEnrollments: 1 }),
       });
       const adcs = result.checks.find(c => c.id === 'adcs');
       expect(adcs.status).toBe('pass');
       expect(adcs.label).toMatch(/installed/);
+    });
+
+    it('distinguishes store installation from an HTTPS service and ignores stale selections', () => {
+      const storeIssue = { jobId: 'j', agentId: 'a', issuerId: 'i1', requested: true, installed: true };
+      const verify = (jobId, agentId, issuerId) => evaluateVerification({ goal: 'certops_adcs', token: routed,
+        storeIssueJobId: jobId, agentId, issuerId, summary: adcsSummary({ storeIssuance: storeIssue }) }).checks.find(c => c.id === 'adcs');
+      expect(verify('j', 'a', 'i1').status).toBe('pass');
+      expect(verify('j', 'a', 'i1').detail).toMatch(/Service activation is separate/);
+      expect(verify('j', 'b', 'i1').status).toBe('warn');
+      expect(verify('j', 'a', 'other').status).toBe('warn');
+      expect(verify('other', 'a', 'i1').status).toBe('warn');
+    });
+
+    it('does not count an IIS enrollment for a different issuer', () => {
+      const summary = adcsSummary({});
+      summary.certops.adcs.issuers = [
+        { id: 'i1', confirmed: true, safe: true, installedIisEnrollments: 0 },
+        { id: 'i2', confirmed: true, safe: true, installedIisEnrollments: 1 },
+      ];
+      const result = evaluateVerification({ goal: 'certops_adcs', token: routed, summary, issuerId: 'i1' });
+      expect(result.checks.find(c => c.id === 'adcs').status).toBe('warn');
     });
   });
 });

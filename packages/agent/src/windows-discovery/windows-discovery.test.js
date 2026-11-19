@@ -220,7 +220,8 @@ function makeExecRouter(responses) {
       : String(args.at(-1)).includes("SslBindingInfo")
       ? "httpsys"
       : ["powershell", "certutil", "appcmd"].find((tool) => name.includes(tool));
-    const response = responses[key] || { error: Object.assign(new Error("unexpected"), { code: 1 }) };
+    const fallbackFlags=key==="iisflags" ? {stdout:JSON.stringify({items:parseAppcmdSiteListOutput(responses.appcmd?.stdout||"").flatMap(site=>site.bindings.filter(b=>b.protocol.toLowerCase()==="https").map(b=>({site:site.name,bindingInformation:`${b.address}:${b.port}:${b.hostHeader}`,sslFlags:b.hostHeader?1:0})))})} : null;
+    const response = responses[key] || fallbackFlags || { error: Object.assign(new Error("unexpected"), { code: 1 }) };
     process.nextTick(() => callback(response.error || null, response.stdout || "", response.stderr || ""));
   }
   execFileStub.calls = calls;
@@ -731,6 +732,10 @@ describe("listHttpSysBindings", () => {
 // ---------------------------------------------------------------------------
 
 describe("parseAppcmdSiteListOutput", () => {
+  it("parses a native bracketed IPv6 IIS binding and rejects malformed addresses", () => {
+    const sites=parseAppcmdSiteListOutput('SITE "Default Web Site" (id:1,bindings:http/*:80:,https/[::1]:18450:,https/[::1:18451:,state:Started)\r\n');
+    assert.deepEqual(sites[0].bindings,[{protocol:"http",address:"*",port:"80",hostHeader:""},{protocol:"https",address:"[::1]",port:"18450",hostHeader:""}]);
+  });
   it("parses one record per SITE line with decoded bindings", () => {
     const sites = parseAppcmdSiteListOutput(APPCMD_LIST_SITE_OUTPUT);
     assert.equal(sites.length, 2);
@@ -755,6 +760,24 @@ describe("parseAppcmdSiteListOutput", () => {
 
 describe("findSitesForBinding", () => {
   const sites = parseAppcmdSiteListOutput(APPCMD_LIST_SITE_OUTPUT);
+  for(const site of sites)for(const binding of site.bindings)if(binding.protocol==="https")binding.sslFlags=0;
+  sites[1].bindings[1].sslFlags=1;
+
+  it("matches equivalent IPv6 literals without crossing SNI or unrelated addresses", () => {
+    const parsed=parseAppcmdSiteListOutput('SITE "IPv6" (id:1,bindings:https/[0:0:0:0:0:0:0:1]:18450:,state:Started)\nSITE "SNI" (id:2,bindings:https/*:18450:sni.example.test,state:Started)');
+    parsed[0].bindings[0].sslFlags=0;
+    parsed[1].bindings[0].sslFlags=1;
+    assert.deepEqual(findSitesForBinding(parsed,{ipPort:"[::1]:18450",keyedBy:"ipport"}),["IPv6"]);
+    assert.deepEqual(findSitesForBinding(parsed,{ipPort:"[::2]:18450",keyedBy:"ipport"}),[]);
+    assert.deepEqual(findSitesForBinding(parsed,{ipPort:"sni.example.test:18450",keyedBy:"hostnameport"}),["SNI"]);
+    assert.deepEqual(findSitesForBinding(parsed,{ipPort:"0.0.0.0:18450",keyedBy:"ipport"}),[]);
+    parsed[0].bindings[0].sslFlags=2;
+    assert.deepEqual(findSitesForBinding(parsed,{ipPort:"[::1]:18450",keyedBy:"ipport"}),[]);
+    parsed[0].bindings[0].sslFlags=1;
+    assert.deepEqual(findSitesForBinding(parsed,{ipPort:"[::1]:18450",keyedBy:"ipport"}),[]);
+    delete parsed[1].bindings[0].sslFlags;
+    assert.deepEqual(findSitesForBinding(parsed,{ipPort:"sni.example.test:18450",keyedBy:"hostnameport"}),[]);
+  });
 
   it("maps a shared IP-keyed certificate to only compatible non-SNI HTTPS host-header sites", () => {
     const binding = (protocol, address, port, hostHeader, sslFlags) => ({ protocol, address, port, hostHeader, sslFlags });
@@ -802,6 +825,14 @@ describe("findSitesForBinding", () => {
 });
 
 describe("listIisSites", () => {
+  it("associates sslFlags across equivalent IPv6 spellings without attributing SNI to an IP binding", async () => {
+    const appcmd='SITE "IPv6" (id:1,bindings:https/[::1]:18450:host.example.test,state:Started)';
+    const execFileImpl=makeExecRouter({appcmd:{stdout:appcmd},iisflags:{stdout:JSON.stringify({items:[{site:"IPv6",bindingInformation:"[0:0:0:0:0:0:0:1]:18450:host.example.test",sslFlags:1}]})}});
+    const {sites}=await listIisSites({execFileImpl,appcmdPath:"appcmd.exe"});
+    assert.equal(sites[0].bindings[0].sslFlags,1);
+    assert.deepEqual(findSitesForBinding(sites,{ipPort:"[::1]:18450",keyedBy:"ipport"}),[]);
+    assert.deepEqual(findSitesForBinding(sites,{ipPort:"host.example.test:18450",keyedBy:"hostnameport"}),["IPv6"]);
+  });
   it("loads SSL flags for matching HTTPS bindings and fails closed on conflicting metadata", async () => {
     const execFileImpl = makeExecRouter({
       appcmd: { stdout: APPCMD_LIST_SITE_OUTPUT },

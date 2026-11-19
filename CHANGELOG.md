@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Observed certificate revocation.** Agents report certificate and issuing-CA revocation using HTTP(S) CRLs or OCSP. **Operator action:** add approved responder origins to `observedRevocation.allowedOrigins`; new installations enable checking but an empty list makes no requests. Existing configurations without the block remain disabled. Trust roots and LDAP-only CRLs are not checked. Apply the composed migrations through 122 with matching API and workers. See [agent configuration](docs/certops/agent/configuration.md).
+
 ## [0.20.0] - 2026-11-19
 
 ### Added

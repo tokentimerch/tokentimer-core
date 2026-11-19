@@ -1,6 +1,7 @@
 "use strict";
 
 const { isIP } = require("node:net");
+const { createHash } = require("node:crypto");
 
 /**
  * Agent certificate discovery, generalized beyond filesystem paths to Windows
@@ -24,6 +25,7 @@ const {
   parsePublicCertificateMaterial,
   parseSubjectAltNames,
 } = require("./parser");
+const { normalizeObservedRevocation } = require("./observedRevocation");
 const {
   upsertManagedCertificateByMonitorSource,
   upsertAgentFilesystemTarget,
@@ -31,6 +33,7 @@ const {
   ensureManagedCertificateToken,
   findManagedCertificateBySourceRef,
   findManagedCertificateByDeployedPath,
+  acquireManagedCertificateImportLock,
 } = require("./inventory");
 const { createControllerObservationEvidence, createCertificateEvidence } = require("./evidence");
 const { recordCsrObservation } = require("./csrWorkflow");
@@ -186,6 +189,13 @@ function optionalWindowsBoundAddress(value, fieldName) {
   throw observationError(`${fieldName} is invalid`);
 }
 
+function canonicalObservationIp(value) {
+  if (typeof value !== "string" || value.includes("%")) return null;
+  if (isIP(value) === 4) return value;
+  if (isIP(value) !== 6) return null;
+  try { return new URL(`http://[${value}]/`).hostname.slice(1,-1); } catch { return null; }
+}
+
 function optionalTimestamp(value, fieldName) {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
@@ -324,6 +334,7 @@ function windowsLocationFieldsFor(locationKind, clientMeta) {
         255,
         WINDOWS_SNI_HOST_PATTERN,
       ),
+      boundAddress: optionalWindowsBoundAddress(clientMeta.boundAddress, "boundAddress"),
     };
   }
   if (locationKind === "http_sys") {
@@ -360,7 +371,10 @@ function defaultLocationRef(locationKind, { targetHost, windowsFields, locationS
     if (!windowsFields.siteName) return `iis://${locationSlot}`;
     const port = windowsFields.port ? `:${windowsFields.port}` : "";
     const sniHost = windowsFields.sniHost ? `#${windowsFields.sniHost}` : "";
-    return `iis://${windowsFields.siteName}${port}${sniHost}`;
+    const address = windowsFields.boundAddress;
+    const explicitAddress = !sniHost && address && address !== "0.0.0.0" && address !== "*"
+      ? `@${isIP(address) === 6 ? `[${address}]` : address}` : "";
+    return `iis://${windowsFields.siteName}${port}${sniHost}${explicitAddress}`;
   }
   if (locationKind === "http_sys") {
     if (!windowsFields.boundAddress || !windowsFields.port) {
@@ -486,6 +500,18 @@ function normalizeAgentFilesystemObservation({
       );
     }
     windowsFields = windowsLocationFieldsFor(locationKind, clientMeta);
+    if (locationKind === "iis_binding" && windowsFields.boundAddress) {
+      const address = windowsFields.boundAddress;
+      if (address.includes("%") || !isIP(address) || windowsFields.sniHost || !windowsFields.siteName || !windowsFields.port) {
+        throw observationError("IIS boundAddress requires an IP-keyed binding");
+      }
+      const prefix = `${windowsFields.siteName}:${windowsFields.port}`;
+      const slotAddress = locationSlot.startsWith(`${prefix}@`) ? locationSlot.slice(prefix.length+1) : null;
+      if (!(address === "0.0.0.0" && locationSlot === prefix) &&
+          !(slotAddress && canonicalObservationIp(slotAddress) === canonicalObservationIp(address))) {
+        throw observationError("IIS boundAddress does not match locationSlot");
+      }
+    }
     // Fact only, never material: whether the location's certificate has an
     // associated private key, exactly as Windows itself reports it
     // (`X509Certificate2.HasPrivateKey`) -- never a key path, export, or
@@ -567,6 +593,15 @@ function normalizeAgentFilesystemObservation({
     windowsFields,
     keyPresent,
     publicCertificate,
+    observedRevocation: normalizeObservedRevocation(clientMeta, serverObservedAt),
+    iisTopologyProof: locationKind === "iis_binding" && !windowsFields.sniHost && keyPresent === true &&
+      windowsFields.storeLocation === "LocalMachine" && String(windowsFields.storeName || "").toLowerCase() === "my" && windowsFields.thumbprint &&
+      canonicalObservationIp(windowsFields.boundAddress) &&
+      !["0.0.0.0", "::"].includes(canonicalObservationIp(windowsFields.boundAddress)) &&
+      !canonicalObservationIp(windowsFields.boundAddress).startsWith("::ffff:") &&
+      typeof evidenceItem.observedAt === "string" && Date.parse(serverObservedAt) - Date.parse(observedAt) >= 0 &&
+      Date.parse(serverObservedAt) - Date.parse(observedAt) <= 120000 &&
+      clientMeta.iisTopologyProof === "v1" ? "v1" : null,
     summary: optionalText(evidenceItem.summary || clientMeta.summary, "summary"),
     clientMetadata: clientMeta,
     observedAt,
@@ -589,12 +624,23 @@ function certSourceRefFor(observation) {
   if (observation.locationKind === "filesystem") {
     return `${observation.agentId}/${observation.targetHost}/${observation.filePath}`;
   }
+  if (observation.locationKind === "windows_store") {
+    // A machine store can contain several unrelated certificates with the same
+    // subject. A certificate, unlike a binding, has no stable location across
+    // renewals; fingerprint identifies the actual store entry for its lifetime.
+    const { storeLocation, storeName } = observation.windowsFields;
+    const hostHash = createHash("sha256").update(observation.targetHost.toLowerCase()).digest("hex");
+    return `${observation.agentId}/host-sha256-${hostHash}/windows_store_v2/${storeLocation}/${storeName}/sha256-${observation.fingerprintSha256}`;
+  }
   return `${observation.agentId}/${observation.targetHost}/${observation.locationKind}/${observation.locationSlot}`;
 }
 
 function targetSourceRefFor(observation) {
   if (observation.locationKind === "filesystem") {
     return `${observation.agentId}/${observation.targetHost}`;
+  }
+  if (observation.locationKind === "windows_store") {
+    return certSourceRefFor(observation);
   }
   // Store entries and bindings carry distinct topology. Including the stable
   // location slot prevents one IIS site's store/site/port fields from
@@ -658,6 +704,15 @@ async function findExistingEvidenceByClientId(client, observation) {
 async function upsertInventoryForObservation(client, observation) {
   const certificate = certificateFor(observation);
   const certSourceRef = certSourceRefFor(observation);
+  if (observation.locationKind === "windows_store") {
+    await acquireManagedCertificateImportLock(client, observation.workspaceId);
+    // Serialize lookup and refresh with claim-verified renewal reconciliation.
+    // The lock covers the complete store, not the changing fingerprint.
+    const storeRef = certSourceRef.slice(0, certSourceRef.lastIndexOf("/sha256-"));
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      `${observation.workspaceId}/${storeRef}`,
+    ]);
+  }
   const isFilesystem = observation.locationKind === "filesystem";
   const displayName =
     certificate.commonName || observation.filePath || observation.locationSlot;
@@ -765,6 +820,19 @@ async function upsertInventoryForObservation(client, observation) {
 
   const target = await upsertTargetForObservation(client, observation);
 
+  // Agent sequence/credential fencing serializes observations from this
+  // source. A delayed or equal-timestamp proof must not certify the capture
+  // retained by the instance trigger for a different observation.
+  let topologyProof = observation.iisTopologyProof;
+  if (topologyProof) {
+    const previous = await client.query(`SELECT captured_at FROM certificate_instances
+      WHERE workspace_id=$1 AND target_id=$2 AND managed_certificate_id=$3 AND observed_fingerprint_sha256=$4 FOR UPDATE`,
+    [observation.workspaceId, target.id, managedCertificate.id, observation.fingerprintSha256]);
+    const age = Date.now() - Date.parse(observation.observedAt);
+    if (age < 0 || age > 120000 || (previous.rows[0] && (!previous.rows[0].captured_at ||
+        Date.parse(observation.observedAt) <= new Date(previous.rows[0].captured_at).getTime()))) topologyProof = null;
+  }
+
   const instance = await upsertAgentFilesystemInstance(client, {
     workspaceId: observation.workspaceId,
     managedCertificateId: managedCertificate.id,
@@ -788,6 +856,8 @@ async function upsertInventoryForObservation(client, observation) {
       locationSlot: observation.locationSlot,
       evidenceId: observation.evidenceId,
       observedAtServer: observation.observedAtServer,
+      ...(topologyProof ? { iisTopologyProof: topologyProof, iisTopologyProofObservedAt: observation.observedAt } : {}),
+      ...(observation.observedRevocation ? { observedRevocation: observation.observedRevocation } : {}),
     },
   });
 
@@ -822,8 +892,11 @@ async function upsertTargetForObservation(client, observation) {
       agentId: observation.agentId,
       targetHost: observation.targetHost,
       locationKind: observation.locationKind,
+      ...(observation.locationKind === "iis_binding" && observation.windowsFields?.boundAddress
+        ? { boundAddress: observation.windowsFields.boundAddress, keyPresent: observation.keyPresent === true } : {}),
       observationOnly:
         observation.locationKind !== "iis_binding" ||
+        (observation.windowsFields?.boundAddress && observation.windowsFields.boundAddress !== "0.0.0.0" && observation.windowsFields.boundAddress !== "*") ||
         observation.keyPresent !== true,
     },
   });
@@ -863,16 +936,42 @@ async function retainUnmanagedObservation(client, observation) {
   await client.query(
     `INSERT INTO certops_slot_observations(
        workspace_id, target_id, fingerprint_sha256, location_ref,
-       source, location_kind, source_ref, captured_at)
-     VALUES ($1, $8, $2, $3, $4, $5, $6, $7)
+       source, location_kind, source_ref, captured_at, observed_revocation)
+     VALUES ($1, $8, $2, $3, $4, $5, $6, $7, $9::jsonb)
      ON CONFLICT (workspace_id, target_id, fingerprint_sha256, location_ref)
      DO UPDATE SET captured_at = GREATEST(certops_slot_observations.captured_at,
-                                EXCLUDED.captured_at)`,
+                                EXCLUDED.captured_at),
+       observed_revocation = CASE
+         WHEN EXCLUDED.observed_revocation IS NULL THEN certops_slot_observations.observed_revocation
+         WHEN certops_slot_observations.observed_revocation IS NULL THEN EXCLUDED.observed_revocation
+         WHEN (
+            ( certops_slot_observations.observed_revocation ? 'revision' AND EXCLUDED.observed_revocation ? 'revision'
+              AND (certops_slot_observations.observed_revocation->>'revision')::numeric >= (EXCLUDED.observed_revocation->>'revision')::numeric
+              AND EXCLUDED.observed_revocation->>'verdict' NOT IN ('disabled', 'not_configured', 'invalid_observation') )
+            OR ( certops_slot_observations.observed_revocation ? 'revision' AND NOT (EXCLUDED.observed_revocation ? 'revision')
+              AND EXCLUDED.observed_revocation->>'verdict' = 'good' )
+            OR ( NOT (certops_slot_observations.observed_revocation ? 'revision') AND NOT (EXCLUDED.observed_revocation ? 'revision')
+              AND EXCLUDED.observed_revocation->>'verdict' NOT IN ('disabled', 'not_configured', 'invalid_observation')
+              AND ( ( certops_slot_observations.observed_revocation->>'verdict' IN ('disabled', 'not_configured', 'invalid_observation') AND EXCLUDED.observed_revocation->>'verdict' = 'good' )
+                OR certops_slot_observations.observed_revocation->>'checkedAt' >= EXCLUDED.observed_revocation->>'checkedAt' ) )
+          )
+           THEN certops_slot_observations.observed_revocation
+         WHEN certops_slot_observations.observed_revocation ? 'revision' AND NOT (EXCLUDED.observed_revocation ? 'revision')
+          AND EXCLUDED.observed_revocation->>'verdict' IN ('revoked', 'issuer_revoked')
+           THEN EXCLUDED.observed_revocation || jsonb_build_object('revision', certops_slot_observations.observed_revocation->'revision')
+         WHEN EXCLUDED.observed_revocation->>'verdict' IN ('unknown', 'not_configured', 'disabled', 'invalid_observation') THEN EXCLUDED.observed_revocation || CASE
+           WHEN certops_slot_observations.observed_revocation->>'verdict' NOT IN ('unknown', 'not_configured', 'disabled', 'invalid_observation')
+             THEN jsonb_build_object('lastVerified', certops_slot_observations.observed_revocation - 'lastVerified')
+           WHEN certops_slot_observations.observed_revocation ? 'lastVerified'
+             THEN jsonb_build_object('lastVerified', certops_slot_observations.observed_revocation->'lastVerified')
+           ELSE '{}'::jsonb END || CASE WHEN certops_slot_observations.observed_revocation ? 'revision' AND (NOT (EXCLUDED.observed_revocation ? 'revision') OR (certops_slot_observations.observed_revocation->>'revision')::numeric > (EXCLUDED.observed_revocation->>'revision')::numeric) THEN jsonb_build_object('revision', certops_slot_observations.observed_revocation->'revision') ELSE '{}'::jsonb END
+         ELSE EXCLUDED.observed_revocation END`,
     [observation.workspaceId, observation.fingerprintSha256,
       observation.locationKind === "filesystem"
         ? `file://${observation.filePath}` : observation.locationRef,
       observation.source, observation.locationKind, certSourceRefFor(observation),
-      observation.observedAt, target.id],
+      observation.observedAt, target.id,
+      observation.observedRevocation ? JSON.stringify(observation.observedRevocation) : null],
   );
   return { unmanaged: true, certificateIdentityId: result.rows[0].id,
     managedCertificate: null, target, instance: null };
@@ -941,6 +1040,11 @@ async function persistOneObservation(client, observation) {
     targetId: inventory.target?.id || null,
     certificateInstanceId: inventory.instance?.id || null,
     observedAtServer: observation.observedAtServer,
+    // Captured by the controller, never from agent-provided metadata. This
+    // orders a delayed positive observation against an IIS absence proof.
+    agentSequence: observation.agentSequence ?? null,
+    observedWindowsPort: observation.windowsFields?.port ?? null,
+    observedWindowsAddress: observation.windowsFields?.boundAddress ?? null,
   };
 
   const evidence = await createControllerObservationEvidence({
@@ -997,6 +1101,7 @@ async function persistAgentDiscoveryEvidenceBatch({
   const client = await dbPool.connect();
   try {
     await client.query("BEGIN");
+    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
     await enforceSequence({
       client,
       agentRowId: agent.id,
@@ -1005,6 +1110,8 @@ async function persistAgentDiscoveryEvidenceBatch({
 
     const results = [];
     for (const observation of observations) {
+      observation.agentSequence = Number.isSafeInteger(envelope.sequence) && envelope.sequence > 0
+        ? envelope.sequence : null;
       results.push(await persistOneObservation(client, observation));
     }
 
@@ -1058,6 +1165,7 @@ async function persistAgentJobEvidenceBatch({
   const client = await dbPool.connect();
   try {
     await client.query("BEGIN");
+    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
     await enforceSequence({
       client,
       agentRowId: agent.id,
@@ -1085,6 +1193,27 @@ async function persistAgentJobEvidenceBatch({
       }
 
       const clientMeta = metadataMapFromItem(item);
+      if (clientMeta.step === "acme-store-receipt") {
+        if (item.eventType !== "validation.passed" || !binding?.claimId) {
+          throw observationError("ACME store receipt requires a verified claim");
+        }
+        // Reconstruct authenticated identity from the server context. The
+        // receipt and ordinary evidence commit together or neither does.
+        const receipt = {
+          agentId: String(agent.id), jobId, claimId: String(binding.claimId),
+          enrollmentId: clientMeta.enrollmentId, requestSha256: clientMeta.requestSha256,
+          containerName: clientMeta.containerName, state: clientMeta.state,
+        };
+        for (const field of ["csrSha256", "csrSpkiSha256", "leafSpkiSha256", "orderReferenceSha256", "store", "keyPossessionVerified", "machineKey", "nonExportable"]) {
+          if (clientMeta[field] !== undefined) receipt[field] = clientMeta[field];
+        }
+        if (item.fingerprintSha256 !== undefined && item.fingerprintSha256 !== null) receipt.fingerprintSha256 = item.fingerprintSha256;
+        await (deps.applyAcmeStoreReceiptTx || require("./acmeStorePersistence").applyAcmeStoreReceiptTx)({
+          client, workspaceId: agent.workspaceId, enrollmentId: clientMeta.enrollmentId,
+          authenticatedAgentRowId: String(agent.id), claimId: String(binding.claimId),
+          receiptId: clientMeta.receiptId, evidence: receipt,
+        });
+      }
       // Security-relevant invariant (B18): server-owned fields win.
       const metadata = {
         ...clientMeta,
@@ -1114,6 +1243,12 @@ async function persistAgentJobEvidenceBatch({
         claimId: binding?.claimId || null,
         attemptCount: binding?.attemptCount ?? null,
       });
+      if (clientMeta.step === "adcs.expected-identity") {
+        if (item.eventType !== "validation.passed" || !evidence?.id) throw observationError("AD CS expected identity requires persisted claim evidence");
+        await (deps.recordAdcsExpectedIdentityTx || require("./adcsProofRecovery").recordAdcsExpectedIdentityTx)({
+          client, agent, jobId, evidenceId: String(evidence.id),
+        });
+      }
       if (evidence) created.push(evidence);
     }
 

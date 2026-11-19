@@ -32,7 +32,8 @@ const {
 const { PREFLIGHT_PER_HOUR } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const { validateSignedJob } = require("../../packages/contracts/certops/validate-signed-job.cjs");
 const { migrations } = require("../../apps/api/migrations/migrate");
-const { claimJobs } = require("../../apps/api/services/certops/agentDispatch");
+const { claimJobs: claimJobsImpl } = require("../../apps/api/services/certops/agentDispatch");
+const claimJobs = options => claimJobsImpl({ ...options, deps: { assertCurrentAgentCredential: async () => {}, ...options.deps } });
 const Ajv = require("ajv");
 const addFormats = require("ajv-formats");
 const jobPayloadSchema = require("../../packages/contracts/certops/job-payload.schema.json");
@@ -60,6 +61,12 @@ function snapshotInput() {
 }
 
 describe("AD CS enrollment lifecycle", () => {
+  it("freezes the destination and exact predecessor, including null for first issue", () => {
+    const store = { destinationType: "windows-cert-store", destinationSha256: "cd".repeat(32), predecessorFingerprintSha256: null };
+    assert.equal(freezeSnapshot({ ...snapshotInput(), ...store }).snapshot.predecessorFingerprintSha256, null);
+    assert.equal(freezeSnapshot({ ...snapshotInput(), ...store, predecessorFingerprintSha256: "ef".repeat(32) }).snapshot.predecessorFingerprintSha256, "ef".repeat(32));
+    assert.throws(() => freezeSnapshot({ ...snapshotInput(), destinationType: "windows-cert-store", predecessorFingerprintSha256: null }));
+  });
   it("fails closed on an unknown issuer kind", () => {
     assert.equal(assertIssuerKind("acme"), "acme");
     assert.equal(assertIssuerKind("adcs"), "adcs");
@@ -760,6 +767,8 @@ describe("enrollment rows", () => {
         }
         if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: [claimRow] };
         if (sql.includes("SET status = 'claimed'")) return { rows: [claimRow] };
+        if (sql.includes("SELECT iis_reassociation_requires_absence,fingerprint_sha256,source_ref,key_mode,key_reference FROM managed_certificates"))
+          return { rows: [{ iis_reassociation_requires_absence:false, fingerprint_sha256:"a".repeat(64) }] };
         throw new Error(`unexpected claim query: ${sql}`);
       },
     };
@@ -1413,6 +1422,64 @@ describe("enrollment rows", () => {
       }),
       (error) => error.code === "CERTOPS_PREFLIGHT_RATE_LIMITED",
     );
+  });
+
+  it("deduplicates automatic preflight requests inside the workspace lock", async () => {
+    let created = false;
+    const queries = [];
+    const db = { async query(sql) {
+      queries.push(sql);
+      if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: false }] };
+      if (sql.includes("SELECT id FROM certificate_jobs")) return { rows: [{ id: JOB_ID }] };
+      return { rows: [] };
+    } };
+    const result = await dispatchPreflight({
+      client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
+      agentId: "22222222-2222-4222-8222-222222222222",
+      caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt: new Date(),
+      createJob: async () => { created = true; },
+    });
+    assert.equal(result, null);
+    assert.equal(created, false);
+    assert.ok(queries.some((sql) => sql.includes("pg_advisory_xact_lock")));
+    assert.ok(queries.some((sql) => sql.includes("FOR SHARE")));
+  });
+
+  it("does not schedule automatic preflight in a paused workspace", async () => {
+    const db = { async query(sql) {
+      if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: true }] };
+      return { rows: [] };
+    } };
+    await assert.rejects(dispatchPreflight({
+      client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
+      agentId: "22222222-2222-4222-8222-222222222222",
+      caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt: new Date(),
+    }), { code: "CERTOPS_WORKSPACE_PAUSED" });
+  });
+
+  it("schedules one automatic read-only preflight using the existing issuer path", async () => {
+    const db = { async query(sql) {
+      if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: false }] };
+      if (sql.includes("SELECT id FROM certificate_jobs")) return { rows: [] };
+      if (sql.includes("SELECT count(*)")) return { rows: [{ n: 0 }] };
+      if (sql.includes("RETURNING preflight_seq")) return { rows: [{ preflight_seq: 1 }] };
+      return { rows: [] };
+    } };
+    let request;
+    const job = await dispatchPreflight({
+      client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
+      agentId: "22222222-2222-4222-8222-222222222222",
+      caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt: new Date(), audit: async () => {},
+      createJob: async (options) => { request = options; return { id: JOB_ID }; },
+    });
+    assert.equal(job.id, JOB_ID);
+    assert.equal(request.source, "automation");
+    assert.equal(request.payload.action, "adcs-preflight");
+    assert.equal(request.payload.mode, "real");
+    assert.equal(request.assignedAgentId, "22222222-2222-4222-8222-222222222222");
   });
 
   it("stores a preflight result only for the succeeded job's CA and template", async () => {

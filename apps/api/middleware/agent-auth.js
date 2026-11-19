@@ -8,6 +8,7 @@ const {
   validateAgentCredential,
   validateBootstrapToken,
 } = require("../services/certops/agentCredentials");
+const { bindAuthenticatedCredential } = require("../services/certops/agentCredentialFence");
 
 const CERTOPS_AGENT_BOOTSTRAP_UNAUTHORIZED =
   "CERTOPS_AGENT_BOOTSTRAP_UNAUTHORIZED";
@@ -108,7 +109,7 @@ function createAgentCredentialAuth(options = {}) {
 
     // Retired agents authenticate successfully (frozen-retired rule); the
     // route inspects req.certopsAgent.status and answers 410 on heartbeat.
-    req.certopsAgent = validation.agent;
+    req.certopsAgent = bindAuthenticatedCredential(validation.agent, bearer.rawToken);
     return next();
   };
 }

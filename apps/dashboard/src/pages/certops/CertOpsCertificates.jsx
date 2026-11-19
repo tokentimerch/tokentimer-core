@@ -1,5 +1,7 @@
 import CertOpsBadge, {
   CertificateLifecycleBadge,
+  ObservedRevocationBadge,
+  hasObservedRevocationContext,
 } from '../../components/certops/CertOpsBadge.jsx';
 import { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
@@ -382,7 +384,8 @@ export default function CertOpsCertificates() {
       source: filters.source || undefined,
       excludeRetired,
       includeObservedRetired: retiredStatusSelected,
-      unmanaged: showUnmanaged ? undefined : false,
+      unmanaged:
+        showUnmanaged || filters.status === 'revoked' ? undefined : false,
       q: filters.q || undefined,
       sort: sort.key,
       direction: sort.direction,
@@ -392,6 +395,7 @@ export default function CertOpsCertificates() {
     if (!retiredStatusSelected && isRetiredCertificate(item)) return false;
     if (
       !showUnmanaged &&
+      filters.status !== 'revoked' &&
       item.managed === false &&
       !(isRetiredCertificate(item) && item.stillObserved)
     )
@@ -1025,6 +1029,12 @@ export default function CertOpsCertificates() {
                             certificate={certificate}
                           />
                         )}
+                        {hasObservedRevocationContext(certificate) ? (
+                          <ObservedRevocationBadge
+                            result={certificate.observedRevocation}
+                            ml={2}
+                          />
+                        ) : null}
                         {certificate.reconciliationReason ? (
                           <Tooltip
                             label={`Facts on this certificate may be stale: ${certificate.reconciliationReason}`}

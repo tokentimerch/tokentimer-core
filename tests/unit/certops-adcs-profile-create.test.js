@@ -42,6 +42,21 @@ const body = {
 };
 
 describe("createAdcsRenewalProfile", () => {
+  it("persists an explicit IIS address and rejects an ambiguous SNI binding", async () => {
+    let stored;
+    const db = poolFrom(async (sql, params) => {
+      if (sql.includes("FROM certificate_issuers i")) return { rows: [{ kind: "adcs", revalidation_required: false,
+        current_version: 1, ca_key_sha256: "ab".repeat(32) }] };
+      if (sql.includes("INSERT INTO certificate_profiles")) { stored = params[6]; return { rows: [{ id: "profile-1" }] }; }
+      if (sql.includes("WHERE cp.workspace_id")) return { rows: [{ id: "profile-1", name: "web auto", status: "active", public_metadata: stored }] };
+      return { rows: [] };
+    });
+    const target = { ...body.target, binding: { ...body.target.binding, address: "192.0.2.10" } };
+    await createAdcsRenewalProfile({ dbPool: db, workspaceId: WORKSPACE, body: { ...body, target }, auditWriter: async () => {} });
+    assert.equal(JSON.parse(stored).renewalProfile.target.binding.address, "192.0.2.10");
+    await assert.rejects(() => createAdcsRenewalProfile({ dbPool: db, workspaceId: WORKSPACE,
+      body: { ...body, target: { ...target, binding: { ...target.binding, sniHost: "www.example.com" } } }, auditWriter: async () => {} }), /cannot be combined with SNI/);
+  });
   it("refuses an issuer that is not a confirmed AD CS issuer", async () => {
     const db = poolFrom(async (sql) => {
       if (sql.includes("FROM certificate_issuers i")) {

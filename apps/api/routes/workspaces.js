@@ -1128,6 +1128,9 @@ const AUDIT_TOPOLOGY_FIELDS_BY_ACTION = Object.freeze({
     "dnsZone",
   ],
   CERTOPS_CERTIFICATE_ISSUED: ["deployedCertPath"],
+  CERTOPS_ISSUER_PREFLIGHT_DISPATCHED: ["caConfig"],
+  CERTOPS_ISSUER_KEY_CONFIRMED: ["caConfig"],
+  CERTOPS_WINDOWS_STORE_REASSOCIATED: ["agentId"],
 });
 
 function redactAuditTopologyForRole(row, role) {
