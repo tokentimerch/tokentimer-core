@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Initialize','Extract','Inventory','Seal')][string]$Operation,
+    [Parameter(Mandatory)][ValidateSet('Initialize','Extract','Inventory','SignInventory','Seal')][string]$Operation,
     [Parameter(Mandatory)][string]$Stage
 )
 
@@ -162,8 +162,39 @@ switch ($Operation) {
         if ($bound -cnotmatch '^[a-f0-9]{64}$' -or $bound -cne (Get-Sha $inventory)) {
             throw 'Independent pilot archive and inventory digest binding did not agree'
         }
-        "path=$inventory" >> $env:GITHUB_OUTPUT
         "sha256=$bound" >> $env:GITHUB_OUTPUT
+    }
+    'SignInventory' {
+        $expected = $env:PILOT_INVENTORY_SHA256
+        if ($expected -cnotmatch '^[a-f0-9]{64}$' -or
+            (Test-PilotBinding (Get-Sha $archive)) -cne $expected -or (Test-Path -LiteralPath $signature)) {
+            throw 'The exact validated inventory is required before CMS signing'
+        }
+
+        # Reuse the versioned tools installed by the pinned Authenticode action.
+        # Its PKCS #7 switch does not supply SignTool's required output directory.
+        $toolRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'ArtifactSigning'
+        $signTool = Join-Path $toolRoot 'Microsoft.Windows.SDK.BuildTools/Microsoft.Windows.SDK.BuildTools.10.0.26100.4188/bin/10.0.26100.0/x64/signtool.exe'
+        $dlib = Join-Path $toolRoot 'Microsoft.ArtifactSigning.Client/Microsoft.ArtifactSigning.Client.1.0.128/bin/x64/Azure.CodeSigning.Dlib.dll'
+        if ((Get-Sha $signTool) -cne '0e2896a643540cad3b7078c796c2135911d224f3e76a8284b71673d621220921' -or
+            (Get-Sha $dlib) -cne '2d4c1bbc87467b3ac25bbc49df58cc8b36a0f92b3e21aa98bbbad08a4d7c98ba') {
+            throw 'The pinned Microsoft signing tools are unavailable'
+        }
+        $metadata = Join-Path $Stage 'inventory-signing-metadata.json'
+        @{
+            Endpoint = $env:PILOT_ENDPOINT
+            CodeSigningAccountName = $env:PILOT_ACCOUNT
+            CertificateProfileName = $env:PILOT_PROFILE
+            ExcludeCredentials = @('EnvironmentCredential','ManagedIdentityCredential','WorkloadIdentityCredential',
+                'SharedTokenCacheCredential','VisualStudioCredential','VisualStudioCodeCredential',
+                'AzurePowerShellCredential','AzureDeveloperCliCredential','InteractiveBrowserCredential')
+        } | ConvertTo-Json -Compress | Set-Content -LiteralPath $metadata -Encoding utf8NoBOM
+        $arguments = @('sign','/fd','SHA256','/tr','http://timestamp.acs.microsoft.com','/td','SHA256',
+            '/dlib',$dlib,'/dmdf',$metadata,'/p7',$Stage,'/p7ce','Embedded','/p7co','1.2.840.113549.1.7.1',$inventory)
+        & $signTool @arguments
+        if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $signature -PathType Leaf)) {
+            throw 'SignTool did not produce the expected inventory CMS'
+        }
     }
     'Seal' {
         if ((Get-Sha $age) -cne $pinnedAge -or $env:PILOT_INVENTORY_SHA256 -cnotmatch '^[a-f0-9]{64}$') {
