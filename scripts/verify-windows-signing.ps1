@@ -17,6 +17,7 @@ for ($i = 0; $i -lt $paths.Count; $i++) {
 }
 $runtime = Join-Path $env:TT_SIGNING_PACKAGE_ROOT "runtime/$($env:TT_SIGNING_ARCHITECTURE)/node.exe"
 if ((Get-FileHash -LiteralPath $runtime -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:TT_SIGNING_NODE_EXPECTED) { throw 'Third-party runtime changed during signing' }
+$cacheMissFlags = [Security.Cryptography.X509Certificates.X509ChainStatusFlags]'OfflineRevocation,RevocationStatusUnknown,PartialChain'
 foreach ($file in $paths) {
     $signature = Get-AuthenticodeSignature -LiteralPath $file -ErrorAction Stop
     if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate -or -not $signature.TimeStamperCertificate) {
@@ -29,7 +30,23 @@ foreach ($file in $paths) {
         $chain.ChainPolicy.RevocationMode = [Security.Cryptography.X509Certificates.X509RevocationMode]::Offline
         $chain.ChainPolicy.RevocationFlag = [Security.Cryptography.X509Certificates.X509RevocationFlag]::ExcludeRoot
         $chain.ChainPolicy.VerificationFlags = [Security.Cryptography.X509Certificates.X509VerificationFlags]::NoFlag
-        if (-not $chain.Build($signature.SignerCertificate)) { throw 'Publisher chain or cached revocation unavailable' }
+        if (-not $chain.Build($signature.SignerCertificate)) {
+            $statuses = @($chain.ChainStatus | ForEach-Object Status)
+            if (!$statuses.Count -or @($statuses | Where-Object { [int]$_ -band (-bnot [int]$cacheMissFlags) }).Count) {
+                throw "Publisher chain rejected ($($statuses -join ', '))"
+            }
+            # Populate the Windows cache through a fully validated online chain.
+            # Then require the original offline verification before using the files.
+            $chain.ChainPolicy.RevocationMode = [Security.Cryptography.X509Certificates.X509RevocationMode]::Online
+            $chain.ChainPolicy.UrlRetrievalTimeout = [TimeSpan]::FromSeconds(25)
+            if (-not $chain.Build($signature.SignerCertificate)) {
+                throw "Publisher chain could not refresh its cache ($($chain.ChainStatus.Status -join ', '))"
+            }
+            $chain.ChainPolicy.RevocationMode = [Security.Cryptography.X509Certificates.X509RevocationMode]::Offline
+            if (-not $chain.Build($signature.SignerCertificate)) {
+                throw "Publisher cached chain still failed ($($chain.ChainStatus.Status -join ', '))"
+            }
+        }
         $matched = $false
         $sha = [Security.Cryptography.SHA256]::Create()
         try {
