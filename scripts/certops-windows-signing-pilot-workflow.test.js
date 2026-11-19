@@ -27,7 +27,12 @@ test("pilot requires one exact reviewed source and protected main workflow SHA",
   const checkout = build.steps.find(step => step.uses?.startsWith("actions/checkout@"));
   assert.deepEqual(checkout.with, { ref: "${{ env.PILOT_SOURCE }}", "persist-credentials": false });
   assert.match(build.steps[0].run, /\.commit\.verification\.verified == true/);
-  assert.match(build.steps.find(step => step.id === "package").run, /test "\$\(git rev-parse HEAD\)" = "\$PILOT_SOURCE"/);
+  const packageCommands = build.steps.find(step => step.id === "package").run;
+  assert.match(packageCommands, /test "\$\(git rev-parse HEAD\)" = "\$PILOT_SOURCE"/);
+  const restore = packageCommands.match(/^git restore --source="\$PILOT_SOURCE" --worktree -- \\\n  packages\/agent\/bin\/tokentimer-observed-revocation-linux-amd64 \\\n  packages\/agent\/bin\/tokentimer-observed-revocation-linux-arm64$/m);
+  assert.ok(restore);
+  assert.ok(packageCommands.indexOf("node packages/agent/scripts/pack-release.js") < restore.index);
+  assert.ok(restore.index < packageCommands.indexOf("node scripts/verify-agent-native-package.js"));
 });
 
 test("only the protected signer handles pinned main code and the exact same-run input", () => {
