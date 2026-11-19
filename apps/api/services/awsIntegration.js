@@ -1,8 +1,43 @@
 "use strict";
 
-const { formatDateYmd } = require("./integrationUtils");
+const { formatDateYmd, advanceListCursor } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
 const { normalizeAwsSweepRegions } = require("./awsScanPersist");
+
+function iamContinuation(page) {
+  if (page.IsTruncated === true && typeof page.Marker === "string" && page.Marker.trim()) return page.Marker;
+  if (page.IsTruncated === true || page.Marker ||
+      (page.IsTruncated != null && typeof page.IsTruncated !== "boolean")) {
+    throw new Error("AWS IAM returned inconsistent pagination metadata");
+  }
+  return undefined;
+}
+
+async function collectAwsList({ fetchPage, listField, identityField, maxItems, next = page => page.NextToken }) {
+  const items = [];
+  const seenCursors = new Set();
+  const seenItems = new Set();
+  let cursor;
+  for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+    const page = await fetchPage(cursor);
+    if (!page || typeof page !== "object" || Array.isArray(page) ||
+        (page[listField] !== undefined && !Array.isArray(page[listField]))) {
+      throw new Error(`Invalid AWS ${listField} list response`);
+    }
+    for (const item of page[listField] || []) {
+      const identity = item?.[identityField];
+      if (typeof identity !== "string" || !identity.trim() || seenItems.has(identity)) {
+        throw new Error(`AWS ${listField} returned an invalid or repeated item identity`);
+      }
+      seenItems.add(identity);
+      items.push(item);
+    }
+    cursor = advanceListCursor(next(page), seenCursors, "AWS");
+    if (!cursor || items.length >= maxItems)
+      return { items: items.slice(0, maxItems), truncated: Boolean(cursor) || items.length > maxItems };
+  }
+  return { items: items.slice(0, maxItems), truncated: true };
+}
 
 // AWS regions list (for region detection)
 const ALL_AWS_REGIONS = [
@@ -301,22 +336,10 @@ async function scanAWSSingleRegion({
       logger.info("Listing AWS Secrets Manager secrets", { region });
       // ListSecrets returns at most 100 entries per call; paginate with
       // NextToken or accounts with >100 secrets get silently truncated.
-      const secrets = [];
-      let secretsNextToken;
-      do {
-        const listResponse = await client.send(
-          new ListSecretsCommand({
-            MaxResults: 100,
-            NextToken: secretsNextToken,
-          }),
-        );
-        secrets.push(...(listResponse.SecretList || []));
-        secretsNextToken = listResponse.NextToken;
-      } while (secretsNextToken && secrets.length < maxItems);
-      // If a NextToken is still present when we stop, the account has more
-      // secrets than maxItems allowed us to enumerate -- this sub-scope did
-      // not see the whole region and must not be reported complete.
-      const secretsListTruncated = Boolean(secretsNextToken);
+      const { items: secrets, truncated: secretsListTruncated } = await collectAwsList({
+        fetchPage: NextToken => client.send(new ListSecretsCommand({ MaxResults: 100, NextToken })),
+        listField: "SecretList", identityField: "ARN", maxItems,
+      });
       logger.info("AWS Secrets Manager list response", {
         region,
         totalSecretsFound: secrets.length,
@@ -328,8 +351,8 @@ async function scanAWSSingleRegion({
       let failedCount = 0;
       const BATCH_SIZE = 10;
 
-      for (let i = 0; i < secrets.slice(0, maxItems).length; i += BATCH_SIZE) {
-        const batch = secrets.slice(i, Math.min(i + BATCH_SIZE, maxItems));
+      for (let i = 0; i < secrets.length; i += BATCH_SIZE) {
+        const batch = secrets.slice(i, i + BATCH_SIZE);
 
         await Promise.all(
           batch.map(async (secret) => {
@@ -378,11 +401,6 @@ async function scanAWSSingleRegion({
       const secretsCount = items.filter(
         (item) => item.source === "aws-secrets-manager",
       ).length;
-      // Truncated if: (a) NextToken remained (more secrets exist upstream
-      // than we listed), or (b) we found more secrets than maxItems allowed
-      // us to describe/import.
-      const secretsTruncated =
-        secretsListTruncated || secrets.length > maxItems;
       // A DescribeSecret failure means that secret's continued existence is
       // unconfirmed, not confirmed-deleted -- this region+service sub-scope
       // must be reported incomplete so cleanup never treats a describe
@@ -394,8 +412,8 @@ async function scanAWSSingleRegion({
         service: "secrets_manager",
         found: secretsCount,
         failedCount,
-        truncated: secretsTruncated,
-        complete: failedCount === 0 && !secretsTruncated,
+        truncated: secretsListTruncated,
+        complete: failedCount === 0 && !secretsListTruncated,
       });
       logger.info("AWS Secrets Manager scan completed", {
         found: secretsCount,
@@ -449,23 +467,12 @@ async function scanAWSSingleRegion({
         "EC_secp384r1",
         "EC_secp521r1",
       ];
-      const certificates = [];
-      let acmNextToken;
-      do {
-        const listResponse = await client.send(
-          new ListCertificatesCommand({
-            MaxItems: acmMaxItems,
-            Includes: { keyTypes: ACM_ALL_KEY_TYPES },
-            NextToken: acmNextToken,
-          }),
-        );
-        certificates.push(...(listResponse.CertificateSummaryList || []));
-        acmNextToken = listResponse.NextToken;
-      } while (acmNextToken && certificates.length < acmMaxItems);
-      // If a NextToken remains, the account has more certificates than
-      // acmMaxItems allowed us to enumerate -- this sub-scope did not see
-      // the whole region.
-      const certsListTruncated = Boolean(acmNextToken);
+      const { items: certificates, truncated: certsListTruncated } = await collectAwsList({
+        fetchPage: NextToken => client.send(new ListCertificatesCommand({
+          MaxItems: acmMaxItems, Includes: { keyTypes: ACM_ALL_KEY_TYPES }, NextToken,
+        })),
+        listField: "CertificateSummaryList", identityField: "CertificateArn", maxItems,
+      });
       logger.info("AWS ACM list response", {
         region,
         totalCertificatesFound: certificates.length,
@@ -476,12 +483,8 @@ async function scanAWSSingleRegion({
       let failedCount = 0;
       const BATCH_SIZE = 10;
 
-      for (
-        let i = 0;
-        i < certificates.slice(0, maxItems).length;
-        i += BATCH_SIZE
-      ) {
-        const batch = certificates.slice(i, Math.min(i + BATCH_SIZE, maxItems));
+      for (let i = 0; i < certificates.length; i += BATCH_SIZE) {
+        const batch = certificates.slice(i, i + BATCH_SIZE);
 
         await Promise.all(
           batch.map(async (cert) => {
@@ -550,8 +553,6 @@ async function scanAWSSingleRegion({
       const certsCount = items.filter(
         (item) => item.source === "aws-acm",
       ).length;
-      const certsTruncated =
-        certsListTruncated || certificates.length > maxItems;
       summary.push({
         type: "acm_certificates",
         sourceKind: "aws-acm",
@@ -559,8 +560,8 @@ async function scanAWSSingleRegion({
         service: "acm_certificates",
         found: certsCount,
         failedCount,
-        truncated: certsTruncated,
-        complete: failedCount === 0 && !certsTruncated,
+        truncated: certsListTruncated,
+        complete: failedCount === 0 && !certsListTruncated,
       });
       logger.info("AWS ACM scan completed", {
         found: certsCount,
@@ -603,23 +604,14 @@ async function scanAWSSingleRegion({
       });
       // ListUsers returns at most 100 users per call by default; paginate
       // with Marker or IAM keys past the first 100 users are never seen.
-      const users = [];
-      let usersMarker;
-      do {
-        const usersResponse = await client.send(
-          new ListUsersCommand({ MaxItems: 1000, Marker: usersMarker }),
-        );
-        users.push(...(usersResponse.Users || []));
-        usersMarker = usersResponse.IsTruncated
-          ? usersResponse.Marker
-          : undefined;
-      } while (usersMarker && users.length < maxItems);
-      // If a Marker remains, IAM has more users than maxItems allowed us to
-      // enumerate -- some users' keys were never even attempted.
-      const usersListTruncated = Boolean(usersMarker);
+      const { items: users, truncated: usersListTruncated } = await collectAwsList({
+        fetchPage: Marker => client.send(new ListUsersCommand({ MaxItems: 1000, Marker })),
+        listField: "Users", identityField: "UserName", maxItems, next: iamContinuation,
+      });
       let iamKeysCount = 0;
       let iamListFailedCount = 0;
       let usersSkippedByCap = 0;
+      let keysListTruncated = false;
       const BATCH_SIZE = 10;
 
       // Scan IAM keys independently of items from other services
@@ -635,10 +627,11 @@ async function scanAWSSingleRegion({
           batch.map(async (user) => {
             if (iamKeysCount >= maxItems) return;
             try {
-              const keysResponse = await client.send(
-                new ListAccessKeysCommand({ UserName: user.UserName }),
-              );
-              const keys = keysResponse.AccessKeyMetadata || [];
+              const { items: keys, truncated } = await collectAwsList({
+                fetchPage: Marker => client.send(new ListAccessKeysCommand({ UserName: user.UserName, Marker })),
+                listField: "AccessKeyMetadata", identityField: "AccessKeyId", maxItems, next: iamContinuation,
+              });
+              keysListTruncated ||= truncated;
 
               for (const key of keys) {
                 if (iamKeysCount >= maxItems) break;
@@ -666,6 +659,7 @@ async function scanAWSSingleRegion({
                   });
                 }
 
+                if (iamKeysCount >= maxItems) break;
                 items.push({
                   source: "aws-iam-key",
                   name: `${user.UserName}/${key.AccessKeyId}`,
@@ -699,7 +693,7 @@ async function scanAWSSingleRegion({
       // omit `region` entirely -- a token here is never partitioned by
       // which region happened to be selected for the rest of the scan.
       const iamTruncated =
-        usersListTruncated || usersSkippedByCap > 0 || iamKeysCount >= maxItems;
+        usersListTruncated || keysListTruncated || usersSkippedByCap > 0 || iamKeysCount >= maxItems;
       summary.push({
         type: "iam_keys",
         sourceKind: "aws-iam-key",

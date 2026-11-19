@@ -879,7 +879,8 @@ router.post(
         try {
           if (autoSyncRun) {
             if (errors.length === 0) autoCleanupResult = await reconcileAutoSyncRun(autoSyncRun, req.body?.auto_sync_scan_ids);
-          } else if (!req.isWorkerCall) {
+          } else if (!req.isWorkerCall && errors.length === 0) {
+            // Require a successful import before using its scan for manual cleanup.
             // Unfenced legacy workers may import before activation, but never delete inventory.
             const cleanupResult = await cleanupObsoleteTokens({
               workspaceId,
@@ -1241,7 +1242,7 @@ router.post(
       }
       if (
         maxItems !== undefined &&
-        (!Number.isFinite(maxItems) || maxItems < 1 || maxItems > 2000)
+        (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 2000)
       ) {
         return res
           .status(400)
@@ -1298,7 +1299,10 @@ router.post(
               sourceObjectId: item.sourceObjectId,
               dimensions: metricSourceDimensions(item),
             })),
-            subScopes: (result.summary || []).map((s) => ({
+            // The PAT note describes an unsupported feature, not a scanned scope.
+            subScopes: (result.summary || []).filter((s) =>
+              !(s?.type === "personal_access_tokens" && s.note && !s.sourceKind && !s.error),
+            ).map((s) => ({
               sourceKind: s.sourceKind,
               dimensions: {},
               complete: s.complete === true,
@@ -2864,7 +2868,8 @@ router.post(
         try {
           if (autoSyncRun) {
             if (errors.length === 0) autoCleanupResult = await reconcileAutoSyncRun(autoSyncRun, req.body?.auto_sync_scan_ids);
-          } else if (!req.isWorkerCall) {
+          } else if (!req.isWorkerCall && errors.length === 0) {
+            // Require a successful import before using its scan for manual cleanup.
             // Unfenced legacy workers may import before activation, but never delete inventory.
             const cleanupResult = await cleanupObsoleteTokens({
               workspaceId,

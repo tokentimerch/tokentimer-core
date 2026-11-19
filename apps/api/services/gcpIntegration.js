@@ -6,6 +6,7 @@ const {
   tryParseDate,
   formatDateYmd,
   normalizeProviderExpiry,
+  advanceListCursor,
   CREDENTIALED_AXIOS_REDIRECTS,
 } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
@@ -84,6 +85,7 @@ async function gcpRequest({ accessToken, method = "GET", path, body = null }) {
 
 async function listSecrets({ projectId, accessToken, maxItems = 500 }) {
   const secrets = [];
+  const seenCursors = new Set();
   let nextPageToken = null;
   let pageCount = 0;
   const maxPages = 50;
@@ -112,11 +114,15 @@ async function listSecrets({ projectId, accessToken, maxItems = 500 }) {
       });
 
       const data = response.data;
+      if (!data || typeof data !== "object" || Array.isArray(data) ||
+          (Object.hasOwn(data, "secrets") && !Array.isArray(data.secrets))) {
+        throw new Error("Invalid GCP Secret Manager list response");
+      }
       if (Array.isArray(data.secrets)) {
         secrets.push(...data.secrets);
       }
 
-      nextPageToken = data.nextPageToken || null;
+      nextPageToken = advanceListCursor(data.nextPageToken, seenCursors, "GCP Secret Manager");
       pageCount++;
 
       if (secrets.length >= maxItems || pageCount >= maxPages) {
@@ -124,11 +130,7 @@ async function listSecrets({ projectId, accessToken, maxItems = 500 }) {
         break;
       }
     } catch (e) {
-      // Axios errors have response.status, not status directly
-      const status = e.response?.status || e.status;
-      if (status === 404) break; // Not found is OK, return empty
-      // 403 and other errors should propagate to caller for proper handling
-      // Normalize error to include status for upstream handling
+      // A missing or unreadable project does not establish an empty scope.
       if (e.response && !e.status) {
         e.status = e.response.status;
       }
@@ -223,6 +225,7 @@ async function listCertificateManagerCertificates({
   maxItems = 500,
 }) {
   const certs = [];
+  const seenCursors = new Set();
   let nextPageToken = null;
   let pageCount = 0;
   const maxPages = 50;
@@ -262,7 +265,7 @@ async function listCertificateManagerCertificates({
         certs.push(...data.certificates);
       }
 
-      nextPageToken = data.nextPageToken || null;
+      nextPageToken = advanceListCursor(data.nextPageToken, seenCursors, "GCP Certificate Manager");
       pageCount++;
 
       if (certs.length >= maxItems || pageCount >= maxPages) {
@@ -298,6 +301,7 @@ async function listComputeSslCertificates({
   maxItems = 500,
 }) {
   const certs = [];
+  const seenCursors = new Set();
   let nextPageToken = null;
   let pageCount = 0;
   const maxPages = 50;
@@ -358,7 +362,7 @@ async function listComputeSslCertificates({
         for (const scope of data.unreachables) unreachable.add(scope);
       }
 
-      nextPageToken = data.nextPageToken || null;
+      nextPageToken = advanceListCursor(data.nextPageToken, seenCursors, "GCP Compute Engine");
       pageCount++;
 
       if (certs.length >= maxItems || pageCount >= maxPages) {

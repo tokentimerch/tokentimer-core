@@ -5,6 +5,7 @@ const { X509Certificate } = require("crypto");
 const {
   tryParseDate,
   formatDateYmd,
+  advanceListCursor,
   CREDENTIALED_AXIOS_REDIRECTS,
   assertSameOriginFollowUp,
   throwIfAllScopesFailed,
@@ -118,6 +119,7 @@ async function listCollection({
   maxItems = 500,
 }) {
   const collected = [];
+  const seenCursors = new Set();
   let nextLink = null;
   let pageCount = 0;
   const maxPages = 50;
@@ -131,13 +133,15 @@ async function listCollection({
       nextLink,
       defaultPath,
     });
-    if (Array.isArray(data.value)) {
+    if (Array.isArray(data?.value)) {
       collected.push(...data.value);
     } else if (Array.isArray(data)) {
       collected.push(...data);
+    } else {
+      throw new Error("Invalid Azure Key Vault list response");
     }
 
-    nextLink = data.nextLink || null;
+    nextLink = advanceListCursor(data.nextLink, seenCursors, "Azure Key Vault");
     pageCount++;
 
     if (collected.length >= maxItems || pageCount >= maxPages) {

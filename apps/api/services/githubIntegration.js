@@ -29,6 +29,7 @@ async function githubRequest({
   path,
   params = {},
   timeout = 120000, // Default 120s for regular requests (after initial connection)
+  includeResponse = false,
 }) {
   const url = joinIntegrationApiUrl(
     baseUrl,
@@ -52,7 +53,7 @@ async function githubRequest({
 
   try {
     const response = await axios(config);
-    return response.data;
+    return includeResponse ? response : response.data;
   } catch (error) {
     if (error.response) {
       const status = error.response.status;
@@ -148,93 +149,150 @@ async function githubRequest({
   }
 }
 
-// Returns `{ repos, truncated }`. `truncated` is true whenever the caller
-// cannot trust that every repository the token can see was actually listed
-// -- either the `maxItems` cap was hit while more pages likely remained, or
-// a page fetch failed partway through pagination. A truncated repo list
-// means every downstream per-repo scan (secrets, deploy keys) is scanning
-// less than the real scope, so those sub-scopes must never be reported
-// complete in that case (see scanGitHub below).
-async function listRepositories({ baseUrl, token, maxItems = 2000 }) {
-  const repos = [];
-  let page = 1;
-  const perPage = Math.min(100, maxItems);
-  let truncated = false;
+function githubPageLinks(headers) {
+  const link = headers?.get?.("link") ?? Object.entries(headers || {})
+    .find(([key]) => key.toLowerCase() === "link")?.[1];
+  if (!link) return {};
+  if (typeof link !== "string" || !link.trimStart().startsWith("<")) {
+    throw new Error("GitHub returned an invalid pagination link");
+  }
 
-  while (repos.length < maxItems) {
-    try {
-      const data = await githubRequest({
-        baseUrl,
-        token,
-        method: "GET",
-        path: "/user/repos",
-        params: { page, per_page: perPage, sort: "updated", direction: "desc" },
-      });
+  const links = [...link.trimStart().matchAll(/<([^<>]+)>([^<>]*)/g)];
+  if (links.map(([part]) => part).join("") !== link.trimStart()) {
+    throw new Error("GitHub returned an invalid pagination link");
+  }
+  const pages = {};
+  let recognized = false;
+  for (const [, target, attributes] of links) {
+    const relations = [...attributes.matchAll(/;\s*rel\s*=\s*(?:"([^"]+)"|([^\s;,]+))/gi)];
+    if (relations.length !== 1) throw new Error("GitHub returned an invalid pagination link");
+    const [, quoted, bare] = relations[0];
+    const rel = (quoted || bare).toLowerCase();
+    if (!["first", "prev", "next", "last"].includes(rel)) continue;
+    recognized = true;
+    if (rel === "first") continue;
 
-      if (!Array.isArray(data)) break;
-      if (data.length === 0) break;
-
-      repos.push(...data);
-      if (repos.length >= maxItems && data.length === perPage) {
-        // Hit the cap on a full page -- there may be more repos we never
-        // even requested.
-        truncated = true;
-        break;
-      }
-      if (data.length < perPage) break;
-      page++;
-    } catch (e) {
-      if (e.status === 404 || e.status === 403) {
-        // A 403/404 mid-pagination (rate limit, permission change) means
-        // the repo list itself is incomplete, not merely "no more pages".
-        truncated = true;
-        break;
-      }
-      throw e;
+    // GitHub may use a canonical repository-ID URL in Link. Retain only its
+    // offset, and request the original endpoint with the same host and filters.
+    const values = new URL(target, "https://github.invalid").searchParams.getAll("page");
+    const page = Number(values[0]);
+    if (values.length !== 1 || !/^[1-9]\d*$/.test(values[0]) || !Number.isSafeInteger(page) ||
+        (pages[rel] != null && pages[rel] !== page)) {
+      throw new Error("GitHub returned invalid or conflicting pagination links");
     }
+    pages[rel] = page;
   }
-
-  return { repos: repos.slice(0, maxItems), truncated };
+  if (!recognized) throw new Error("GitHub returned an invalid pagination link");
+  return pages;
 }
 
-async function listRepoSecrets({ baseUrl, token, owner, repo }) {
+function numericItemId(item) {
+  const id = item?.id;
+  return (typeof id === "string" || Number.isSafeInteger(id)) && /^[1-9]\d*$/.test(String(id))
+    ? String(id) : null;
+}
+
+function isRepositorySegment(value) {
+  return typeof value === "string" && value.trim() === value &&
+    !!value && value !== "." && value !== ".." && !/[/\\]/.test(value);
+}
+
+function repositoryId(repo) {
+  return isRepositorySegment(repo?.owner?.login) && isRepositorySegment(repo?.name)
+    ? numericItemId(repo) : null;
+}
+
+// GitHub supplies Link pagination on repository, key and secret lists. The
+// Actions secrets response also carries a total count. An absent Link on a
+// nonempty page alone is not proof of exhaustion when an intermediary strips
+// headers. Retain trustworthy rows and check another page within the budget.
+async function collectGitHubList({
+  baseUrl, token, path, params = {}, maxItems = 2000, getId = numericItemId, wrappedSecrets = false,
+}) {
+  const items = [];
+  const seen = new Set();
+  const perPage = Math.min(100, maxItems);
+  let expectedLast;
+  let expectedTotal;
+  let promisedThrough = 0;
   try {
-    const data = await githubRequest({
-      baseUrl,
-      token,
-      method: "GET",
-      path: `/repos/${owner}/${repo}/actions/secrets`,
-    });
-    return Array.isArray(data.secrets) ? data.secrets : [];
-  } catch (e) {
-    if (e.status === 404 || e.status === 403) return [];
-    throw e;
+    for (let page = 1; page <= 100; page++) {
+      const { data, headers } = await githubRequest({ baseUrl, token, path,
+        params: { ...params, page, per_page: perPage }, includeResponse: true });
+      const entries = wrappedSecrets ? data?.secrets : data;
+      if (!Array.isArray(entries)) throw new Error("GitHub listing returned an invalid page");
+
+      let invalidItems = false;
+      for (const entry of entries.slice(0, perPage)) {
+        const id = getId(entry);
+        if (!id || seen.has(id)) {
+          invalidItems = true;
+          continue;
+        }
+        seen.add(id);
+        if (items.length < maxItems) items.push(entry);
+      }
+
+      const { next, prev, last } = githubPageLinks(headers);
+      const total = wrappedSecrets ? data.total_count : undefined;
+      const inconsistentMetadata =
+        (last != null && expectedLast != null && expectedLast !== last) ||
+        (total !== undefined && (!Number.isSafeInteger(total) || total < 0 ||
+          (expectedTotal != null && expectedTotal !== total)));
+      expectedLast ??= last;
+      expectedTotal ??= total;
+      const hasNext = next != null || page < expectedLast || seen.size < expectedTotal;
+      const endConfirmed = page === expectedLast || seen.size === expectedTotal || (prev != null && !hasNext);
+      if (
+        invalidItems || inconsistentMetadata || entries.length > perPage ||
+        (next != null && next !== page + 1) || (prev != null && prev !== page - 1) ||
+        (hasNext && endConfirmed) ||
+        (!entries.length && (hasNext || page <= promisedThrough)) ||
+        (entries.length && page > expectedLast) || seen.size > expectedTotal
+      ) {
+        throw new Error("GitHub pagination did not advance reliably");
+      }
+      if (!hasNext && (endConfirmed || !entries.length)) {
+        return { items, truncated: seen.size > items.length };
+      }
+      if (hasNext) promisedThrough = page + 1;
+      if (items.length === maxItems) return { items, truncated: true };
+    }
+    return { items, truncated: true };
+  } catch (error) {
+    return { items, truncated: false, error };
   }
 }
 
-async function listRepoDeployKeys({ baseUrl, token, owner, repo }) {
-  try {
-    const data = await githubRequest({
-      baseUrl,
-      token,
-      method: "GET",
-      path: `/repos/${owner}/${repo}/keys`,
-    });
-    return Array.isArray(data) ? data : [];
-  } catch (e) {
-    if (e.status === 404 || e.status === 403) return [];
-    throw e;
-  }
-}
-
-async function listSSHKeys({ baseUrl, token }) {
-  const data = await githubRequest({
-    baseUrl,
-    token,
-    method: "GET",
-    path: "/user/keys",
+async function listRepositories({ baseUrl, token, maxItems = 2000 }) {
+  const { items: repos, ...coverage } = await collectGitHubList({
+    baseUrl, token, path: "/user/repos", maxItems, getId: repositoryId,
+    params: { sort: "updated", direction: "desc" },
   });
-  return Array.isArray(data) ? data : [];
+  return { repos, ...coverage };
+}
+
+function listRepoSecrets({ baseUrl, token, owner, repo, maxItems }) {
+  const path = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/secrets`;
+  return collectGitHubList({ baseUrl, token, path, maxItems, wrappedSecrets: true,
+    getId: (item) => typeof item?.name === "string" && item.name.trim() === item.name ? item.name : null });
+}
+
+function listRepoDeployKeys({ baseUrl, token, owner, repo, maxItems }) {
+  const path = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/keys`;
+  return collectGitHubList({ baseUrl, token, path, maxItems });
+}
+
+function listSSHKeys({ baseUrl, token, maxItems }) {
+  return collectGitHubList({ baseUrl, token, path: "/user/keys", maxItems });
+}
+
+function listWarning(error) {
+  if (!error) return {};
+  if ([401, 403, 404].includes(error.status)) {
+    return { note: `A GitHub list was unavailable or access was denied (HTTP ${error.status}).`, status: error.status };
+  }
+  return { error: error.message, status: error.status };
 }
 
 async function scanGitHub({
@@ -338,7 +396,7 @@ async function scanGitHub({
     // Scan SSH Keys (user's personal SSH keys)
     if (include.sshKeys) {
       try {
-        const sshKeys = await listSSHKeys({ baseUrl: apiBase, token });
+        const { items: sshKeys, truncated: keysListTruncated, error } = await listSSHKeys({ baseUrl: apiBase, token, maxItems });
         logger.info("GitHub SSH keys retrieved", { count: sshKeys.length });
         let sshKeysSkippedByCap = 0;
         for (const key of sshKeys) {
@@ -360,56 +418,39 @@ async function scanGitHub({
             last_used_at: key.last_used_at || null,
           });
         }
+        const truncated = keysListTruncated || sshKeysSkippedByCap > 0;
         summary.push({
           type: "ssh_keys",
           sourceKind: "github-ssh-key",
           found: sshKeys.length,
-          truncated: sshKeysSkippedByCap > 0,
-          complete: sshKeysSkippedByCap === 0,
+          truncated,
+          ...listWarning(error),
+          complete: !error && !truncated,
         });
       } catch (e) {
         logger.error("GitHub SSH keys scan failed", {
           error: e.message,
           status: e.status,
         });
-        // 404 on SSH keys endpoint usually means wrong API base URL - fail immediately
-        if (e.status === 404) {
-          const err = new Error(
-            "Invalid GitHub API URL: The SSH keys endpoint was not found. This usually means:\n• Wrong API base URL\n• Not a valid GitHub instance\n• URL points to GitHub website instead of API\n\nPlease ensure the URL is correct (e.g., https://api.github.com for GitHub.com or https://github.example.com/api/v3 for Enterprise).",
-          );
-          err.status = 404;
-          throw err;
-        }
-        if (e.status === 403) {
-          summary.push({
-            type: "ssh_keys",
-            sourceKind: "github-ssh-key",
-            error:
-              "Your PAT needs 'read:public_key' or 'admin:public_key' scope",
-            complete: false,
-          });
-        } else {
-          summary.push({
-            type: "ssh_keys",
-            sourceKind: "github-ssh-key",
-            error: e.message || "Unknown error",
-            complete: false,
-          });
-        }
+        summary.push({ type: "ssh_keys", sourceKind: "github-ssh-key",
+          ...listWarning(e), complete: false });
       }
     }
+
+    // Both per-repository scopes use the same enumeration, including any
+    // partial coverage from an interrupted repository list.
+    let repositoryList;
+    const getRepositories = () => repositoryList ??= listRepositories({ baseUrl: apiBase, token });
 
     // Scan Repository Secrets (Actions secrets)
     if (include.secrets) {
       try {
-        const { repos, truncated: reposListTruncated } =
-          await listRepositories({
-            baseUrl: apiBase,
-            token,
-          });
+        const { repos, truncated: reposListTruncated, error: reposListError } = await getRepositories();
         let secretsCount = 0;
         let reposFailed = 0;
         let reposSkippedByCap = 0;
+        let listsTruncated = false;
+        let listError = reposListError;
         const BATCH_SIZE = 10;
 
         for (let i = 0; i < repos.length; i += BATCH_SIZE) {
@@ -423,12 +464,18 @@ async function scanGitHub({
             batch.map(async (repo) => {
               if (items.length >= maxItems) return;
               try {
-                const secrets = await listRepoSecrets({
+                const { items: secrets, truncated, error } = await listRepoSecrets({
                   baseUrl: apiBase,
                   token,
                   owner: repo.owner.login,
                   repo: repo.name,
+                  maxItems,
                 });
+                if (error) {
+                  reposFailed++;
+                  listError ??= error;
+                }
+                listsTruncated ||= truncated;
                 for (const secret of secrets) {
                   if (items.length >= maxItems) break;
                   // GitHub secrets don't expose expiration dates in the API
@@ -448,11 +495,12 @@ async function scanGitHub({
                   });
                   secretsCount++;
                 }
-              } catch (_e) {
+              } catch (error) {
                 // Skip repos we can't access, but count them so a scan
                 // that couldn't see every repo's secrets is never reported
                 // complete for this sub-scope.
                 reposFailed++;
+                listError ??= error;
               }
             }),
           );
@@ -461,7 +509,7 @@ async function scanGitHub({
         // repo we did visit succeeded, and the shared item cap never cut
         // the scan short before every repo was visited.
         const truncated =
-          reposListTruncated || reposSkippedByCap > 0 || items.length >= maxItems;
+          reposListTruncated || listsTruncated || reposSkippedByCap > 0 || items.length >= maxItems;
         summary.push({
           type: "repository_secrets",
           sourceKind: "github-secret",
@@ -469,7 +517,8 @@ async function scanGitHub({
           reposFailed,
           reposSkippedByCap,
           truncated,
-          complete: reposFailed === 0 && !truncated,
+          ...listWarning(listError),
+          complete: !listError && !truncated,
         });
       } catch (e) {
         if (e.status === 403) {
@@ -493,14 +542,12 @@ async function scanGitHub({
     // Scan Deploy Keys (repository-scoped keys)
     if (include.deployKeys) {
       try {
-        const { repos, truncated: reposListTruncated } =
-          await listRepositories({
-            baseUrl: apiBase,
-            token,
-          });
+        const { repos, truncated: reposListTruncated, error: reposListError } = await getRepositories();
         let deployKeysCount = 0;
         let reposFailed = 0;
         let reposSkippedByCap = 0;
+        let listsTruncated = false;
+        let listError = reposListError;
         const BATCH_SIZE = 10;
 
         for (let i = 0; i < repos.length; i += BATCH_SIZE) {
@@ -514,12 +561,18 @@ async function scanGitHub({
             batch.map(async (repo) => {
               if (items.length >= maxItems) return;
               try {
-                const deployKeys = await listRepoDeployKeys({
+                const { items: deployKeys, truncated, error } = await listRepoDeployKeys({
                   baseUrl: apiBase,
                   token,
                   owner: repo.owner.login,
                   repo: repo.name,
+                  maxItems,
                 });
+                if (error) {
+                  reposFailed++;
+                  listError ??= error;
+                }
+                listsTruncated ||= truncated;
                 for (const key of deployKeys) {
                   if (items.length >= maxItems) break;
                   items.push({
@@ -537,14 +590,15 @@ async function scanGitHub({
                   });
                   deployKeysCount++;
                 }
-              } catch (_e) {
+              } catch (error) {
                 reposFailed++;
+                listError ??= error;
               }
             }),
           );
         }
         const truncated =
-          reposListTruncated || reposSkippedByCap > 0 || items.length >= maxItems;
+          reposListTruncated || listsTruncated || reposSkippedByCap > 0 || items.length >= maxItems;
         summary.push({
           type: "deploy_keys",
           sourceKind: "github-deploy-key",
@@ -552,7 +606,8 @@ async function scanGitHub({
           reposFailed,
           reposSkippedByCap,
           truncated,
-          complete: reposFailed === 0 && !truncated,
+          ...listWarning(listError),
+          complete: !listError && !truncated,
         });
       } catch (e) {
         summary.push({

@@ -15,7 +15,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **GitLab scans** read beyond the first page of tokens and SSH keys. When a page fails, auto-sync retains previously tracked inventory and reports a partial run.
+- **Integration discovery and cleanup.** GitLab and GitHub scans now follow additional pages, including GitHub Actions secrets. Scopes with failed or invalid list results are ineligible for cleanup. Auto-sync retains existing associations when a requested scope is incomplete, and one-time imports skip cleanup when an item fails to import.
 
 ## [0.20.0] - 2026-11-19
 

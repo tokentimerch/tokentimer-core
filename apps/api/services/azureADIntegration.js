@@ -4,6 +4,7 @@ const axios = require("axios");
 const {
   tryParseDate,
   formatDateYmd,
+  advanceListCursor,
   CREDENTIALED_AXIOS_REDIRECTS,
   assertSameOriginFollowUp,
   throwIfAllScopesFailed,
@@ -173,6 +174,7 @@ function decodeGraphTokenTid(token) {
 
 async function listApplications({ token, maxItems = 500, authProvider }) {
   const apps = [];
+  const seenCursors = new Set();
   let nextLink = null;
   let pageCount = 0;
   const maxPages = 50;
@@ -201,11 +203,10 @@ async function listApplications({ token, maxItems = 500, authProvider }) {
       });
     }
 
-    if (Array.isArray(data.value)) {
-      apps.push(...data.value);
-    }
+    if (!Array.isArray(data?.value)) throw new Error("Invalid Microsoft Graph applications list response");
+    apps.push(...data.value);
 
-    nextLink = data["@odata.nextLink"] || null;
+    nextLink = advanceListCursor(data["@odata.nextLink"], seenCursors, "Microsoft Graph");
     pageCount++;
 
     if (apps.length >= maxItems || pageCount >= maxPages) {
@@ -225,6 +226,7 @@ async function listServicePrincipals({
 }) {
   validateManagedIdentityMode(managedIdentityMode);
   const sps = [];
+  const seenCursors = new Set();
   let nextLink = null;
   let pageCount = 0;
   const maxPages = 50;
@@ -253,17 +255,16 @@ async function listServicePrincipals({
       });
     }
 
-    if (Array.isArray(data.value)) {
-      sps.push(
-        ...data.value.filter((sp) => {
-          if (managedIdentityMode === "only") return isManagedIdentity(sp);
-          if (managedIdentityMode === "exclude") return !isManagedIdentity(sp);
-          return true;
-        }),
-      );
-    }
+    if (!Array.isArray(data?.value)) throw new Error("Invalid Microsoft Graph service principal list response");
+    sps.push(
+      ...data.value.filter((sp) => {
+        if (managedIdentityMode === "only") return isManagedIdentity(sp);
+        if (managedIdentityMode === "exclude") return !isManagedIdentity(sp);
+        return true;
+      }),
+    );
 
-    nextLink = data["@odata.nextLink"] || null;
+    nextLink = advanceListCursor(data["@odata.nextLink"], seenCursors, "Microsoft Graph");
     pageCount++;
 
     if (sps.length >= maxItems || pageCount >= maxPages) {

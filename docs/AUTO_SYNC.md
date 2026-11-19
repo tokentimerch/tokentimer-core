@@ -118,7 +118,7 @@ Core exposes `expiration` for GitLab auto-sync. Enterprise also supports AWS ACM
 
 ## Cleanup and removal
 
-Destructive cleanup is explicit opt-in. Leave it off while changing filters or splitting configurations. If a GitLab page fails, auto-sync can import what it saw, marks the run partial, and retains existing associations. Partial or truncated scans do not prove that an asset disappeared. Complete scans reconcile only the scope actually covered. Another configuration's association prevents deletion, and manually owned inventory survives detachment.
+Destructive cleanup is opt-in. Leave it off while changing filters or splitting configurations. If any requested scope is incomplete, auto-sync can import the assets it found, marks the run partial, and keeps existing associations. One-time imports clean up only fully scanned scopes and only after all selected assets import successfully. Another configuration's association prevents deletion, and manually owned inventory survives detachment.
 
 **Disable auto-sync** deletes the selected configuration and detaches its associations; it does not blanket-delete inventory. Retained or manually adopted assets stay visible. Other configurations continue to protect their associated records. Inspect run/provenance history before deleting anything manually.
 

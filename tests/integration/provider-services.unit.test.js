@@ -231,10 +231,13 @@ describe("Provider service unit coverage", () => {
             return { Users: [{ UserName: "deploy-bot" }] };
           }
           if (command instanceof ListAccessKeysCommand) {
+            const next = command.input.Marker === "keys-page-two";
             return {
+              IsTruncated: !next,
+              ...(next ? {} : { Marker: "keys-page-two" }),
               AccessKeyMetadata: [
                 {
-                  AccessKeyId: "AKIA1234567890",
+                  AccessKeyId: next ? "AKIA9876543210" : "AKIA1234567890",
                   Status: "Active",
                   CreateDate: new Date("2025-02-01T00:00:00Z"),
                 },
@@ -326,6 +329,8 @@ describe("Provider service unit coverage", () => {
       expect(result.items.find((i) => i.source === "aws-iam-key"))
         .to.be.an("object")
         .and.not.have.property("metric_expiration");
+      expect(result.items.filter((i) => i.source === "aws-iam-key").map(i => i.sourceObjectId))
+        .to.deep.equal(["AKIA1234567890", "AKIA9876543210"]);
       expect(result.summary.some((s) => s.type === "secrets_manager")).to.equal(
         true,
       );
@@ -590,6 +595,24 @@ describe("Provider service unit coverage", () => {
       expect(requestedUrls[1]).to.match(/vault\.example\.com/);
       expect(requestedUrls[1]).to.match(/skiptoken=abc/);
     });
+
+    it("rejects malformed pages and repeated Key Vault continuations", async () => {
+      const nextLink = "https://vault.example.com/secrets?api-version=7.4&$skiptoken=abc";
+      for (const [data, message, expectedRequests] of [
+        [{}, /Invalid Azure Key Vault list response/, 1],
+        [{ value: [], nextLink }, /repeated.*pagination/i, 2],
+      ]) {
+        let requests = 0;
+        const azure = requireWithMocks(resolveServiceModule("azureIntegration"), {
+          axios: async () => { requests++; return { data }; },
+        });
+        await expectReject(
+          () => azure._test.listSecrets({ vaultUrl: "https://vault.example.com", token: "test-token" }),
+          message,
+        );
+        expect(requests).to.equal(expectedRequests);
+      }
+    });
   });
 
   describe("Azure AD integration", () => {
@@ -653,6 +676,24 @@ describe("Provider service unit coverage", () => {
         "https://graph.microsoft.com/v1.0/applications?$skiptoken=abc",
       );
       expect(requestedUrls[1]).to.not.match(/v1\.0\/v1\.0/);
+    });
+
+    it("rejects malformed pages and repeated Graph continuations", async () => {
+      const nextLink = "https://graph.microsoft.com/v1.0/applications?$skiptoken=abc";
+      for (const [data, message, expectedRequests] of [
+        [{}, /Invalid Microsoft Graph applications list response/, 1],
+        [{ value: [], "@odata.nextLink": nextLink }, /repeated.*pagination/i, 2],
+      ]) {
+        let requests = 0;
+        const azureAd = requireWithMocks(resolveServiceModule("azureADIntegration"), {
+          axios: async () => { requests++; return { data }; },
+        });
+        await expectReject(
+          () => azureAd._test.listApplications({ token: "header.payload.signature" }),
+          message,
+        );
+        expect(requests).to.equal(expectedRequests);
+      }
     });
 
     it("refuses Graph pagination URLs that leave graph.microsoft.com", async () => {
@@ -846,7 +887,7 @@ describe("Provider service unit coverage", () => {
       );
     });
 
-    it("returns empty list on 404 for listSecrets", async () => {
+    it("keeps missing GCP projects out of authoritative cleanup", async () => {
       const axiosMock = async () => {
         const err = new Error("missing");
         err.response = { status: 404, data: {} };
@@ -855,12 +896,23 @@ describe("Provider service unit coverage", () => {
       const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
         axios: axiosMock,
       });
-      const secrets = await gcp._test.listSecrets({
-        projectId: "proj",
-        accessToken: "token",
-        maxItems: 5,
-      });
-      expect(secrets.items).to.deep.equal([]);
+      await expectReject(() => gcp._test.listSecrets({
+        projectId: "proj", accessToken: "token", maxItems: 5,
+      }), /missing/);
+    });
+
+    it("rejects malformed secret list pages and repeated cursors", async () => {
+      for (const [data, pattern] of [
+        [{ secrets: {} }, /Invalid GCP Secret Manager list response/],
+        [{ secrets: [], nextPageToken: "repeat" }, /repeated pagination cursor/],
+      ]) {
+        let requests = 0;
+        const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+          axios: async () => { requests++; return { data }; },
+        });
+        await expectReject(() => gcp._test.listSecrets({ projectId: "proj", accessToken: "token" }), pattern);
+        expect(requests).to.equal(data.nextPageToken ? 2 : 1);
+      }
     });
 
     it("returns null on 404 for getSecretVersion", async () => {

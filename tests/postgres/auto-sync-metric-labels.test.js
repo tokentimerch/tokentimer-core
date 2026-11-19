@@ -852,6 +852,105 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     t.diagnostic("GitLab authoritative absence: cleanup_complete=true, deleted_count=1, linked_inventory=0");
   });
 
+  it("keeps GitHub page-two inventory on denied scans and reconciles complete absence", async (t) => {
+    const github = await gitlabPatFixture(t);
+    github.routes.set("/api/v3/user", () => ({ data: { id: 31, login: "fixture" } }));
+    github.routes.set("/api/v3/user/repos", url => ({
+      data: Number(url.searchParams.get("page") || 1) === 1
+        ? [{ id: 5, owner: { login: "fixture" }, name: "repo", full_name: "fixture/repo" }]
+        : [],
+    }));
+    const secretPath = "/api/v3/repos/fixture/repo/actions/secrets";
+    let mode = "healthy";
+    github.routes.set(secretPath, url => {
+      const page = Number(url.searchParams.get("page") || 1);
+      if (mode === "gone") return { data: { secrets: [{ name: "ONE" }], total_count: 1 } };
+      if (page === 1) return {
+        data: { secrets: [{ name: "ONE" }], total_count: 2 },
+        headers: { link: `<${github.baseUrl}${secretPath}?page=2>; rel="next"` },
+      };
+      if (mode === "denied") return { status: 403 };
+      return { data: { secrets: [{ name: "TWO" }], total_count: 2 } };
+    });
+    const config = await configuration("GitHub paginated", "github");
+    const workerPost = path => request(app).post(`${path}?workspace_id=${workspaceId}`)
+      .set("Authorization", "Bearer issue71-test-worker");
+    async function scanAndImport() {
+      github.calls.length = 0;
+      const run = await start(config);
+      const runContext = runs.runContext(run.config);
+      const scanned = await workerPost("/api/v1/integrations/github/scan").send({
+        baseUrl: `${github.baseUrl}/api/v3`, token: github.options.token, auto_sync_run: runContext,
+        include: { tokens: true, sshKeys: false, deployKeys: false, secrets: true },
+      });
+      assert.equal(scanned.status, 200, scanned.text);
+      const scanId = scanned.body.scan_id;
+      assert.ok(scanId);
+      assert.ok(scanned.body.summary.some(scope => scope.type === "personal_access_tokens" && scope.note));
+      const result = await workerPost("/api/v1/integrations/import").send({
+        scan_id: scanId, auto_sync_run: runContext, items: scanned.body.items,
+        cleanup: { enabled: true, provider: "github", scanId },
+      });
+      assert.equal(result.status, 201, result.text);
+      assert.equal(result.body.error_count, 0, result.text);
+      await finish(run);
+      return result.body;
+    }
+    const listedPages = () => github.calls.filter(url => url.pathname === secretPath)
+      .map(url => Number(url.searchParams.get("page") || 1));
+    const initial = await scanAndImport();
+    assert.deepEqual(listedPages(), [1, 2]);
+    assert.equal(initial.created_count, 2);
+    assert.equal(initial.scan_complete, true, "An informational PAT note is not a failed scope");
+    assert.equal(initial.cleanup_complete, true);
+    const { rows: [tracked] } = await pool.query(
+      "SELECT id FROM tokens WHERE workspace_id=$1 AND source_object_id='5:TWO'", [workspaceId],
+    );
+    assert.ok(tracked);
+    mode = "denied";
+    const partial = await scanAndImport();
+    assert.deepEqual(listedPages(), [1, 2]);
+    assert.equal(partial.scan_complete, false);
+    assert.equal(partial.cleanup_complete, false);
+    assert.equal(partial.updated_count, 1);
+    assert.equal(partial.deleted_count, 0);
+    assert.equal((await pool.query(
+      "SELECT 1 FROM tokens t JOIN auto_sync_token_links l ON l.token_id=t.id WHERE t.id=$1 AND l.config_id=$2",
+      [tracked.id, config.id],
+    )).rowCount, 1);
+    mode = "gone";
+    const complete = await scanAndImport();
+    assert.deepEqual(listedPages(), [1]);
+    assert.equal(complete.cleanup_complete, true);
+    assert.equal(complete.deleted_count, 1);
+    assert.equal((await pool.query("SELECT 1 FROM tokens WHERE id=$1", [tracked.id])).rowCount, 0);
+  });
+
+  it("defers manual cleanup when an import fails, including an otherwise complete scan", async () => {
+    const { token } = await imported(null, { name: "Manual candidate" }, true);
+    const scan = await persistScan({
+      workspaceId, provider: "gitlab", createdBy: userId,
+      identityContext: { host: source.source_instance, ownerKey: source.source_owner_key },
+      items: [], subScopes: [{ sourceKind: source.source_kind, complete: true }],
+    });
+    const url = `/api/v1/integrations/import?workspace_id=${workspaceId}`;
+    const body = { scan_id: scan.scanId, cleanup: { enabled: true, provider: "gitlab", scanId: scan.scanId } };
+    const failed = await request(app).post(url).send({
+      ...body, items: [{ source: "gitlab", name: "Bad credential", location: "fixture",
+        category: "key_secret", type: "api_key", expiresAt: "2032-02-29", key_size: 1 }],
+    });
+    assert.equal(failed.status, 201, failed.text);
+    assert.equal(failed.body.error_count, 1, failed.text);
+    assert.equal(failed.body.deleted_count, 0);
+    assert.equal((await pool.query("SELECT 1 FROM tokens WHERE id=$1", [token.id])).rowCount, 1);
+    assert.equal((await pool.query(
+      "SELECT cleanup_consumed_at FROM integration_scans WHERE id=$1", [scan.scanId],
+    )).rows[0].cleanup_consumed_at, null);
+    const complete = await request(app).post(url).send({ ...body, items: [] });
+    assert.equal(complete.status, 201, complete.text);
+    assert.equal(complete.body.deleted_count, 1);
+  });
+
   it("offers expiry to connections allowed by deployment without selecting it globally", async () => {
     const config = await configuration();
     process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "expiration";
