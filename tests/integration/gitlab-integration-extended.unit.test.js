@@ -171,7 +171,7 @@ describe("GitLab integration helper coverage", () => {
     );
   });
 
-  it("paginates listProjects and respects maxItems", async () => {
+  it("retains a limited project list without declaring it complete", async () => {
     let call = 0;
     const axiosMock = async () => {
       call += 1;
@@ -189,12 +189,14 @@ describe("GitLab integration helper coverage", () => {
     const gitlab = requireWithMocks(resolveGitlabModule(), {
       axios: axiosMock,
     });
-    const { projects } = await gitlab._test.listProjects({
+    const { projects, truncated } = await gitlab._test.listProjects({
       baseUrl: "https://gitlab.example.com",
       token: "token",
       maxItems: 3,
     });
     expect(projects.map((p) => p.id)).to.deep.equal([1, 2, 3]);
+    expect(truncated).to.equal(true);
+    expect(call).to.equal(1);
   });
 
   it("does not filter listProjects by owned, so group projects with Maintainer-only access are included", async () => {
@@ -227,13 +229,13 @@ describe("GitLab integration helper coverage", () => {
           headers: {},
         };
       }
-      if (page === 2) return { data: [{ id: 101 }], headers: {} };
+      if (page === 2) return { data: [{ id: 101 }], headers: { "x-next-page": "" } };
       return { data: [], headers: {} };
     };
     const gitlab = requireWithMocks(resolveGitlabModule(), {
       axios: axiosMock,
     });
-    const triggers = await gitlab._test.listPipelineTriggers({
+    const { items: triggers, truncated, error } = await gitlab._test.listPipelineTriggers({
       baseUrl: "https://gitlab.example.com",
       token: "token",
       projectId: 7,
@@ -242,9 +244,11 @@ describe("GitLab integration helper coverage", () => {
     expect(triggers).to.have.length(101);
     expect(triggers[0].id).to.equal(1);
     expect(triggers[100].id).to.equal(101);
+    expect(truncated).to.equal(false);
+    expect(error).to.equal(undefined);
   });
 
-  it("propagates 403 from listPipelineTriggers so callers can distinguish permission errors from empty results", async () => {
+  it("retains 403 status instead of treating a denied trigger list as empty", async () => {
     const axiosMock = async () => {
       const err = new Error("forbidden");
       err.response = { status: 403, data: {} };
@@ -253,18 +257,14 @@ describe("GitLab integration helper coverage", () => {
     const gitlab = requireWithMocks(resolveGitlabModule(), {
       axios: axiosMock,
     });
-    await expectReject(
-      () =>
-        gitlab._test.listPipelineTriggers({
-          baseUrl: "https://gitlab.example.com",
-          token: "token",
-          projectId: 7,
-        }),
-      /Permission denied|Forbidden|403/i,
-    );
+    const { items, error } = await gitlab._test.listPipelineTriggers({
+      baseUrl: "https://gitlab.example.com", token: "token", projectId: 7,
+    });
+    expect(items).to.deep.equal([]);
+    expect(error.status).to.equal(403);
   });
 
-  it("returns empty arrays for 404 token listing helpers", async () => {
+  it("retains 404 status for unavailable token lists", async () => {
     const axiosMock = async () => {
       const err = new Error("not found");
       err.response = { status: 404, data: {} };
@@ -286,11 +286,13 @@ describe("GitLab integration helper coverage", () => {
       projectId: 123,
     });
 
-    expect(projectTokens).to.deep.equal([]);
-    expect(deployTokens).to.deep.equal([]);
+    for (const result of [projectTokens, deployTokens]) {
+      expect(result.items).to.deep.equal([]);
+      expect(result.error.status).to.equal(404);
+    }
   });
 
-  it("returns empty list for SSH keys when endpoint is unsupported", async () => {
+  it("retains 403 status for an unavailable SSH key list", async () => {
     const axiosMock = async () => {
       const err = new Error("forbidden");
       err.response = { status: 403, data: {} };
@@ -299,12 +301,57 @@ describe("GitLab integration helper coverage", () => {
     const gitlab = requireWithMocks(resolveGitlabModule(), {
       axios: axiosMock,
     });
-    const keys = await gitlab._test.listSSHKeys({
+    const { items, error } = await gitlab._test.listSSHKeys({
       baseUrl: "https://gitlab.example.com",
       token: "token",
       userId: 42,
     });
-    expect(keys).to.deep.equal([]);
+    expect(items).to.deep.equal([]);
+    expect(error.status).to.equal(403);
+  });
+
+  for (const [method, scope, field] of [
+    ["listGroups", {}, "groups"],
+    ["listGroupAccessTokens", { groupId: 20 }, "items"],
+    ["listDeployTokens", { projectId: 10 }, "items"],
+    ["listPipelineTriggers", { projectId: 10 }, "items"],
+    ["listSSHKeys", {}, "items"],
+  ]) {
+    for (const laterPageFailed of [false, true]) {
+      it(`${method} ${laterPageFailed ? "retains prior results on denial" : "follows a short page with a continuation"}`, async () => {
+        const pages = [];
+        const gitlab = requireWithMocks(resolveGitlabModule(), { axios: async ({ params }) => {
+          pages.push(params.page);
+          if (params.page === 1) return { data: [{ id: 5 }], headers: { "X-Next-Page": "2" } };
+          if (!laterPageFailed) return { data: [{ id: 6 }], headers: { "X-Next-Page": "" } };
+          const error = new Error("later page unavailable");
+          error.response = { status: 404, data: {} };
+          throw error;
+        } });
+        const result = await gitlab._test[method]({ baseUrl: "https://gitlab.example.com", token: "token", ...scope });
+        expect(pages).to.deep.equal([1, 2]);
+        expect(result[field].map(item => item.id)).to.deep.equal(laterPageFailed ? [5] : [5, 6]);
+        expect(result.error?.status).to.equal(laterPageFailed ? 404 : undefined);
+        expect(result.truncated).to.equal(false);
+      });
+    }
+  }
+
+  it("retains earlier items and rejects conflicting next-page links", async () => {
+    const pages = [];
+    const gitlab = requireWithMocks(resolveGitlabModule(), { axios: async ({ params }) => {
+      pages.push(params.page);
+      return {
+        data: [{ id: 5 }],
+        headers: { link: '<?page=2>; rel="next", <?page=3>; rel="next"' },
+      };
+    } });
+    const { items, error } = await gitlab._test.listProjectAccessTokens({
+      baseUrl: "https://gitlab.example.com", token: "token", projectId: 10,
+    });
+    expect(pages).to.deep.equal([1]);
+    expect(items.map(item => item.id)).to.deep.equal([5]);
+    expect(error.message).to.match(/conflicting next-page links/);
   });
 
   it("carries GitLab's real description field through to scan items for PATs, project tokens, and group tokens (issue: filter rules on the 'description' field always fell back to name, because the scan never copied GitLab's own description into the item)", async () => {

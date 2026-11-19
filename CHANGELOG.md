@@ -13,6 +13,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Asset expiration in auto-sync metrics.** Detailed creation metrics can include verified expiry for new inventory. **Operator guidance:** allow and select `expiration` to include the date or time in creation alerts. See the [auto-sync metrics guide](docs/AUTO_SYNC.md#asset-expiration-labels).
 
+### Fixed
+
+- **GitLab scans** read beyond the first page of tokens and SSH keys. When a page fails, auto-sync retains previously tracked inventory and reports a partial run.
+
 ## [0.20.0] - 2026-11-19
 
 ### Added

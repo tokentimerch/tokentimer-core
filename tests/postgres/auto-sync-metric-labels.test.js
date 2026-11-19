@@ -10,6 +10,7 @@ const express = require("../../apps/api/node_modules/express");
 const { pool } = require("../../apps/api/db/database");
 const provenance = require("../../apps/api/services/autoSyncProvenance");
 const { persistScan } = require("../../apps/api/services/integrationScans");
+const { gitlabPatFixture } = require("../helpers/gitlab-pat-fixture");
 
 let runs, workerPool, userId, workspaceId, app;
 let sequence = 0;
@@ -690,6 +691,165 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     const restrictedSamples = restricted.text.split("\n").filter(line => families.some(family => line.startsWith(`${family}{`)));
     assert.equal(restrictedSamples.length, expected.length * families.length);
     assert.ok(restrictedSamples.every(line => line.includes('expiration=""')));
+  });
+
+  it("imports page-two GitLab expiry and retains its inventory link across failed later pages", async (t) => {
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "asset_name,expiration";
+    const gitlab = await gitlabPatFixture(t);
+    const tokenPath = "/api/v4/projects/7/access_tokens";
+    const expiry = "2032-02-29";
+    const projectToken = { id: 42, name: "page-two-token", active: true, expires_at: expiry };
+    const firstToken = { id: 41, name: "page-one-token", active: true };
+    gitlab.routes.set("/api/v4/projects", () => ({
+      data: [{ id: 7, name: "Project", path_with_namespace: "platform/project" }],
+      headers: { "x-next-page": "" },
+    }));
+    // Keep an independently complete sibling scope in each run.
+    gitlab.routes.set("/api/v4/user/keys", () => ({ data: [], headers: { "x-next-page": "" } }));
+    const config = await configuration();
+    await settings(config, ["kind", "asset_name", "expiration"]);
+
+    const workerPost = path => request(app).post(`${path}?workspace_id=${workspaceId}`)
+      .set("Authorization", "Bearer issue71-test-worker");
+    const fractionalLimit = await workerPost("/api/v1/integrations/gitlab/scan").send({
+      baseUrl: gitlab.baseUrl, token: gitlab.options.token, maxItems: 1.5,
+    });
+    assert.equal(fractionalLimit.status, 400, fractionalLimit.text);
+    assert.equal(gitlab.calls.length, 0, "An invalid limit must not query the provider");
+    async function scanAndImport() {
+      gitlab.calls.length = 0;
+      const run = await start(config);
+      const runContext = runs.runContext(run.config);
+      const scanned = await workerPost("/api/v1/integrations/gitlab/scan").send({
+        baseUrl: gitlab.baseUrl, token: gitlab.options.token, auto_sync_run: runContext,
+        include: { tokens: true, keys: true },
+        filters: {
+          includePATs: false, includeProjectTokens: true, includeGroupTokens: false,
+          includeDeployTokens: false, includeTriggerTokens: false, includeSSHKeys: true,
+        },
+      });
+      assert.equal(scanned.status, 200, scanned.text);
+      const scanId = scanned.body.scan_id;
+      assert.ok(scanId, "The worker scan must be persisted and fenced");
+      const result = await workerPost("/api/v1/integrations/import").send({
+        scan_id: scanId, auto_sync_run: runContext, items: scanned.body.items,
+        cleanup: { enabled: true, provider: "gitlab", scanId },
+      });
+      assert.equal(result.status, 201, result.text);
+      assert.equal(result.body.error_count, 0, result.text);
+      await finish(run);
+      return { scanned: scanned.body, imported: result.body };
+    }
+    const pageNumber = url => Number(url.searchParams.get("page") || 1);
+    const pages = () => gitlab.calls.filter(url => url.pathname === tokenPath).map(pageNumber);
+    const projectScope = scanned => scanned.summary.find(scope => scope.sourceKind === "gitlab-project-token");
+    const firstPage = { data: [firstToken], headers: { "x-next-page": "2" } };
+    const terminalPage = { data: [firstToken], headers: {
+      "x-next-page": "", "x-total-pages": "1", "x-total": "1",
+    } };
+    const linkTarget = new URL("/unused-link-path?page=2&state=all", gitlab.baseUrl);
+    linkTarget.hostname = "localhost";
+    const observedRequests = [];
+    gitlab.routes.set(tokenPath, (url, headers) => {
+      observedRequests.push({
+        host: headers.host, authenticated: headers["private-token"] === gitlab.options.token,
+        state: url.searchParams.get("state"),
+      });
+      return pageNumber(url) === 1
+        ? { data: firstPage.data, headers: { ...firstPage.headers, link: `<${linkTarget}>; rel="next"` } }
+        : { data: [projectToken], headers: {
+          "x-next-page": "", "x-total-pages": "2", "x-total": "2",
+        } };
+    });
+    const beforeCreation = Date.now() / 1000;
+    const initial = await scanAndImport();
+    assert.deepEqual(pages(), [1, 2]);
+    const originalRequest = { host: new URL(gitlab.baseUrl).host, authenticated: true, state: "active" };
+    assert.deepEqual(observedRequests, [originalRequest, originalRequest]);
+    assert.equal(initial.imported.created_count, 2);
+    assert.equal(projectScope(initial.scanned).complete, true);
+    assert.equal(initial.imported.cleanup_complete, true);
+    const discovered = initial.scanned.items.find(item => item.sourceObjectId === "7:42");
+    assert.equal(discovered.expiration, expiry);
+    assert.equal(Object.hasOwn(discovered, "metric_expiration"), false);
+    const { rows: [stored] } = await pool.query(
+      "SELECT source_dimensions FROM integration_scan_items WHERE scan_id=$1 AND source_object_id='7:42'",
+      [initial.scanned.scan_id],
+    );
+    assert.equal(stored.source_dimensions.expiration, expiry);
+    const { rows: [tracked] } = await pool.query(
+      "SELECT id FROM tokens WHERE workspace_id=$1 AND source_object_id='7:42' AND auto_sync_managed=TRUE",
+      [workspaceId],
+    );
+    assert.ok(tracked, "Page two token is auto-sync-managed inventory");
+
+    const initialScrape = await request(app).get("/metrics");
+    assert.equal(initialScrape.status, 200);
+    const trackedSeries = text => text.split("\n").filter(line => line.startsWith("auto_sync_") &&
+      line.includes(`configuration_id="${config.id}"`) && line.includes('asset_name="page-two-token"'));
+    const samples = trackedSeries(initialScrape.text);
+    assert.equal(samples.length, 2);
+    for (const metricName of ["auto_sync_items_created_detailed_total", "auto_sync_last_creation_timestamp_seconds"]) {
+      const sample = samples.find(line => line.startsWith(`${metricName}{`));
+      assert.ok(sample?.includes(`expiration="${expiry}"`), sample);
+      const value = Number(sample.split(" ").at(-1));
+      if (metricName.endsWith("_total")) assert.equal(value, 1);
+      else assert.ok(value >= beforeCreation - 1 && value <= Date.now() / 1000 + 1, sample);
+      t.diagnostic(sample);
+    }
+
+    const partialCases = [
+      ...[403, 404, 503].map(status => ({
+        label: `page two HTTP ${status}`, expectedPages: [1, 2],
+        respond: url => pageNumber(url) === 1 ? firstPage : { status },
+      })),
+      {
+        label: "page one HTTP 404", expectedPages: [1], expectedIds: [],
+        respond: () => ({ status: 404 }),
+      },
+      {
+        label: "conflicting continuation", expectedPages: [1],
+        respond: () => ({ ...firstPage, headers: { ...firstPage.headers, "x-total-pages": "1" } }),
+      },
+      {
+        label: "repeated item with headerless short pages", expectedPages: [1, 2],
+        respond: () => ({ data: [firstToken] }),
+      },
+      {
+        label: "headerless short page followed by failure", expectedPages: [1, 2],
+        respond: url => pageNumber(url) === 1 ? { data: [firstToken] } : { status: 503 },
+      },
+    ];
+    for (const { label, expectedPages, respond, expectedIds = ["7:41"] } of partialCases) {
+      gitlab.routes.set(tokenPath, respond);
+      const partial = await scanAndImport();
+      assert.deepEqual(pages(), expectedPages, label);
+      assert.deepEqual(partial.scanned.items.map(item => item.sourceObjectId), expectedIds, label);
+      assert.equal(projectScope(partial.scanned).complete, false, label);
+      assert.equal(partial.scanned.summary.find(scope => scope.sourceKind === "gitlab-ssh-key").complete, true);
+      assert.equal(partial.imported.scan_complete, false);
+      assert.equal(partial.imported.cleanup_complete, false);
+      assert.equal(partial.imported.created_count, 0);
+      assert.equal(partial.imported.updated_count, expectedIds.length);
+      assert.equal(partial.imported.deleted_count, 0);
+      assert.equal((await pool.query(
+        "SELECT 1 FROM tokens t JOIN auto_sync_token_links l ON l.token_id=t.id WHERE t.id=$1 AND l.config_id=$2",
+        [tracked.id, config.id],
+      )).rowCount, 1, `${label} must preserve linked inventory`);
+      t.diagnostic(`GitLab ${label}: scan_complete=false, deleted_count=0, linked_inventory=1`);
+    }
+    const partialScrape = await request(app).get("/metrics");
+    assert.equal(partialScrape.status, 200);
+    assert.deepEqual(trackedSeries(partialScrape.text), samples);
+
+    gitlab.routes.set(tokenPath, () => terminalPage);
+    const complete = await scanAndImport();
+    assert.deepEqual(pages(), [1]);
+    assert.equal(projectScope(complete.scanned).complete, true);
+    assert.equal(complete.imported.cleanup_complete, true);
+    assert.equal(complete.imported.deleted_count, 1);
+    assert.equal((await pool.query("SELECT 1 FROM tokens WHERE id=$1", [tracked.id])).rowCount, 0);
+    t.diagnostic("GitLab authoritative absence: cleanup_complete=true, deleted_count=1, linked_inventory=0");
   });
 
   it("offers expiry to connections allowed by deployment without selecting it globally", async () => {

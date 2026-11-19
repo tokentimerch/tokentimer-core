@@ -1020,7 +1020,7 @@ router.post(
       }
       if (
         maxItems !== undefined &&
-        (!Number.isFinite(maxItems) || maxItems < 1 || maxItems > 2000)
+        (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 2000)
       ) {
         return res
           .status(400)
