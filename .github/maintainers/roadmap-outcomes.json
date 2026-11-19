@@ -281,7 +281,8 @@
       "issue": 300,
       "edition": "core",
       "horizon": "later",
-      "inRoadmap": true
+      "inRoadmap": true,
+      "implementationPr": 787
     },
     {
       "id": "followup-235",
