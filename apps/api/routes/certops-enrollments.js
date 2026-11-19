@@ -4,6 +4,9 @@ const router = require("express").Router();
 const { getApiLimiter } = require("../middleware/rateLimit");
 const { requireCertOpsEnabled } = require("../middleware/require-certops-enabled");
 const { authorize } = require("../services/rbac");
+const { validateAcmeIssuerDirectory } = require("../services/certops/issuerValidation");
+const { OUTBOUND_POLICY_DENIED } = require("@tokentimer/config/network");
+const { BLOCKED_CODE } = require("../utils/integrationAddressGuard");
 const {
   abandonEnrollment,
   cancelEnrollment,
@@ -38,6 +41,15 @@ function fail(res, err) {
   }
   if (code === "CERTOPS_PREFLIGHT_RATE_LIMITED") {
     return res.status(429).json({ error: err.message, code });
+  }
+  if (code === OUTBOUND_POLICY_DENIED || code === BLOCKED_CODE) {
+    return res.status(403).json({ error: err.message, code });
+  }
+  if (code === "CERTOPS_ISSUER_DIRECTORY_TIMEOUT") {
+    return res.status(504).json({ error: err.message, code });
+  }
+  if (code === "CERTOPS_ISSUER_DIRECTORY_INVALID" || code === "CERTOPS_ISSUER_DIRECTORY_UNREACHABLE") {
+    return res.status(502).json({ error: err.message, code });
   }
   if (code === "CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED" || code === "CERTOPS_ENROLLMENT_OPEN") {
     return res.status(409).json({ error: err.message, code });
@@ -103,6 +115,36 @@ router.delete(
         issuerId: req.params.issuerId,
       });
       return res.status(204).send();
+    } catch (err) {
+      return fail(res, err);
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/issuers/:issuerId/validate",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  authorize("certops.issuer.manage"),
+  async (req, res) => {
+    if (req.isWorkerCall || !req.user?.id) {
+      return res.status(403).json({ error: "Session user required for issuer validation", code: "INSUFFICIENT_ROLE" });
+    }
+    if (!UUID.test(String(req.params.issuerId || ""))) {
+      return res.status(404).json({ error: "issuer not found", code: "CERTOPS_ISSUER_NOT_FOUND" });
+    }
+    if (!req.is("application/json") || !req.body || Array.isArray(req.body) ||
+        Object.keys(req.body).length !== 1 || !Object.hasOwn(req.body, "caEndpoint") ||
+        typeof req.body.caEndpoint !== "string") {
+      return res.status(400).json({ error: "Provide only caEndpoint", code: "CERTOPS_ISSUER_DIRECTORY_URL_INVALID" });
+    }
+    try {
+      const validation = await validateAcmeIssuerDirectory({
+        workspaceId: req.workspace.id,
+        issuerId: req.params.issuerId,
+        caEndpoint: req.body.caEndpoint,
+      });
+      return res.json({ validation });
     } catch (err) {
       return fail(res, err);
     }

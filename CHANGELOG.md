@@ -11,6 +11,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **ACME directory check.** Workspace managers can check API reachability and advertised capabilities before setting up issuance. See the [ACME configuration guide](docs/certops/agent/dns-and-acme.md#check-an-acme-directory).
+
 - **Shared outbound policy.** Set `OUTBOUND_ALLOWLIST` to restrict Core API and worker connections to approved hosts. Set `OFFLINE_MODE=true` to deny supported outbound connections when the list is empty. Both controls default to off. Domain discovery is unavailable while the policy is enabled. See [configuration](docs/CONFIGURATION.md).
 
 ## [0.20.0] - 2026-11-19
