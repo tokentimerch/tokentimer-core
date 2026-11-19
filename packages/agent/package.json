@@ -34,6 +34,10 @@
     "bin/tokentimer-adcs-chain-arm64.exe",
     "bin/tokentimer-adcs-cmc-amd64.exe",
     "bin/tokentimer-adcs-cmc-arm64.exe",
+    "bin/tokentimer-observed-revocation-windows-amd64.exe",
+    "bin/tokentimer-observed-revocation-windows-arm64.exe",
+    "bin/tokentimer-observed-revocation-linux-amd64",
+    "bin/tokentimer-observed-revocation-linux-arm64",
     "src",
     "!src/**/*.test.js",
     "!src/verify/fixtures/**",
@@ -47,6 +51,7 @@
     "scripts/check-shipped-sources.js",
     "scripts/sync-vendor.js",
     "scripts/pack-release.js",
+    "scripts/windows-runtime-package.js",
     "README.md",
     "LICENSE*",
     "package.json"

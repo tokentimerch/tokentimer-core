@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-19 (0.20.0 release, main 7512107c).
+Last reviewed: 2026-11-19 (Core 0.20.0, main 6ec5b110).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -124,6 +124,10 @@ does not promise a version or add a v1.0.0 gate.
   operations build on shipped Windows/IIS and AD CS support.
   Distribution provides consumer discovery and lifecycle groundwork. Other
   service connectors and unsupported activation methods remain separate work.
+- **Windows agent with a bundled runtime**
+  ([#542](https://github.com/tokentimerch/tokentimer-core/issues/542)):
+  qualify fresh amd64 installation first, using the exact publisher-signed
+  package. Existing-agent upgrades, rollback and ARM64 remain follow-up work.
 - **Workspace readiness and actionable recovery**
   ([#505](https://github.com/tokentimerch/tokentimer-core/issues/505)):
   persistent readiness, safe diagnostics, verified recipes and contributor

@@ -1,5 +1,8 @@
 "use strict";
 
+const { bindAuthenticatedAgent } = require("../../apps/api/services/certops/agentCredentialFence");
+const FIXTURE_CREDENTIAL_HASH = "a".repeat(64);
+
 /**
  * Audit coverage for the CertOps issuance and unattended-renewal lifecycle.
  *
@@ -714,6 +717,8 @@ function resultPool({ jobRow = {}, jobUpdate = {} } = {}) {
         return { rows: [] };
       }
       if (sql.includes("SET last_sequence")) return { rows: [{ id: "agent-row-1" }] };
+      if (sql.includes("to_regclass('certops_agent_credential_rotations')")) return { rows: [{ rotation_table: null }] };
+      if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
       if (sql.includes("FROM certops_agents")) return { rows: [{ id: "agent-row-1" }] };
       if (sql.includes("INSERT INTO certops_outbox")) {
         return { rows: [{ id: "outbox-1" }] };
@@ -766,13 +771,13 @@ function resultPool({ jobRow = {}, jobUpdate = {} } = {}) {
   };
 }
 
-const AGENT = {
+const AGENT = bindAuthenticatedAgent({
   id: "agent-row-1",
   workspaceId: WORKSPACE,
   agentId: "edge-01",
   status: "active",
   protocolVersion: "1.0.0",
-};
+}, FIXTURE_CREDENTIAL_HASH);
 
 describe("CERTOPS_JOB_FAILED", () => {
   it("records a terminal failure on the ingesting transaction", async () => {
@@ -988,6 +993,9 @@ describe("CERTOPS_AGENT_REGISTERED", () => {
         }
         if (sql.includes("FROM certops_agent_registration_replays")) {
           return { rows: replayRow ? [replayRow] : [] };
+        }
+        if (sql.includes("SELECT credential_hash, status") && sql.includes("workspace_id = $1")) {
+          return { rows: [{ credential_hash: require("node:crypto").createHash("sha256").update(`ttagent_0123456789abcdef_${"b".repeat(64)}`).digest("hex"), status: "active" }] };
         }
         if (sql.includes("INSERT INTO certops_agents")) {
           return {

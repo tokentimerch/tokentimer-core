@@ -24,6 +24,7 @@ const {
   resolveJobMode,
   isValidCertificateId,
   runDiscoveryScan,
+  runRevisionedDiscoveryScan,
   runWindowsDiscoveryScan,
   registerIfNeeded,
   createCandidateAgentId,
@@ -309,6 +310,22 @@ describe("runDiscoveryScan", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it("reports revocation facts without transmitting the public PEM", async () => {
+    fs.writeFileSync(path.join(dir, "server.crt"), TEST_CERT_PEM, "utf8");
+    const client = createRecordingClient();
+    let seen;
+    await runDiscoveryScan({ directories: [dir], client, checkRevocation: async (item) => {
+      seen = item;
+      return { verdict: "revoked", chainStatus: "valid", checkedAt: new Date(Date.now() - 1000).toISOString(), validUntil: new Date(Date.now() + 60000).toISOString() };
+    } });
+    assert.match(seen.certificatePem, /BEGIN CERTIFICATE/);
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    const metadata = Object.fromEntries(item.metadata.map(({ name, value }) => [name, value]));
+    assert.equal(metadata.observedRevocationVerdict, "revoked");
+    assert.equal(metadata.observedChainStatus, "valid");
+    assert.doesNotMatch(JSON.stringify(item), /BEGIN CERTIFICATE|PRIVATE KEY/);
+  });
+
   it("reports SAN-only certificates with an empty subject through the evidence contract", async () => {
     const pem = fs.readFileSync(path.join(__dirname, "verify/fixtures/san-only.crt.pem"), "utf8");
     const cert = new crypto.X509Certificate(pem);
@@ -427,6 +444,20 @@ describe("runDiscoveryScan", () => {
 
 describe("runWindowsDiscoveryScan", () => {
   const WINDOWS_THUMBPRINT = "DEADBEEF".repeat(5);
+
+  it("reports a checked Windows observation without exposing certificate bytes", async () => {
+    const client = createRecordingClient();
+    const cert = new crypto.X509Certificate(TEST_CERT_PEM);
+    const fingerprintSha256 = cert.fingerprint256.replace(/:/g, "").toLowerCase();
+    const collect = ({ includePublicCertificate }) => {
+      assert.equal(includePublicCertificate, true);
+      return [{ locationKind: "windows_store", locationSlot: "LocalMachine/My/test", fingerprintSha256, certificatePem: TEST_CERT_PEM, subject: "CN=test", issuer: "CN=test", thumbprint: WINDOWS_THUMBPRINT, storeLocation: "LocalMachine", storeName: "My" }];
+    };
+    await runWindowsDiscoveryScan({ client, collect, checkRevocation: async () => ({ verdict: "issuer_revoked", chainStatus: "valid", checkedAt: new Date(Date.now() - 1000).toISOString(), validUntil: new Date(Date.now() + 60000).toISOString() }) });
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    assert.equal(item.metadata.find((entry) => entry.name === "observedRevocationVerdict").value, "issuer_revoked");
+    assert.doesNotMatch(JSON.stringify(item), /BEGIN CERTIFICATE|PRIVATE KEY/);
+  });
 
   it("passes the configured store set to the canonical collector", async () => {
     const client = createRecordingClient();
@@ -693,6 +724,27 @@ describe("registerIfNeeded", () => {
     assert.equal(clearCalls[0].configDir, dir);
   });
 
+  it("reports an invalid service name when registry cleanup is refused", async () => {
+    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ serverUrl: "https://cp.example.com", agentId: "agent-existing" }), "utf8");
+    writeCredential(dir, "ttagent_agent-existing_0123456789abcdef");
+    const logs = [];
+    await registerIfNeeded({
+      client: createRecordingClient(),
+      config: loadConfigFrom(dir),
+      configDir: dir,
+      env: { TOKENTIMER_AGENT_SERVICE_NAME: "invalid" },
+      log: (line) => logs.push(line),
+      platformModule: {
+        isWindows: () => true,
+        clearWindowsServiceBootstrapToken: ({ serviceName }) => {
+          assert.equal(serviceName, "invalid");
+          return { attempted: false, cleared: false, reason: "invalid Windows service name" };
+        },
+      },
+    });
+    assert.equal(logs.some((line) => line.includes("invalid Windows service name")), true);
+  });
+
   it("fails loudly when a credential exists but agentId is missing (inconsistent dir)", async () => {
     fs.writeFileSync(
       path.join(dir, "config.json"),
@@ -819,12 +871,13 @@ describe("registerIfNeeded", () => {
       client,
       config: loadConfigFrom(dir),
       configDir: dir,
-      env: { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: "bootstrap-raw-token" },
+      env: { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: "bootstrap-raw-token", TOKENTIMER_AGENT_SERVICE_NAME: `TokenTimerAgent-${"a".repeat(64)}` },
       platformModule,
     });
 
     assert.equal(clearCalls.length, 1);
     assert.equal(clearCalls[0].configDir, dir);
+    assert.equal(clearCalls[0].serviceName, `TokenTimerAgent-${"a".repeat(64)}`);
   });
 
   it("logs, but does not throw, when the Windows registry scrub cannot confirm success", async () => {
@@ -6629,3 +6682,35 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
   });
 });
 
+
+
+describe("revocation scan ordering", () => {
+  it("reserves revisions before concurrent checks and keeps them across restart", async () => {
+    const { createSequenceAllocator } = require("./config");
+    const directory = makeTempConfigDir();
+    try {
+      const allocator = createSequenceAllocator(directory);
+      let finishFilesystem;
+      const gate = new Promise((resolve) => { finishFilesystem = resolve; });
+      const run = (name, checkerFactory) => runRevisionedDiscoveryScan({
+        sequenceAllocator: allocator,
+        config: {},
+        checkerFactory,
+        scan: async ({ observationRevision }) => ({ name, observationRevision }),
+      });
+      const filesystem = run("filesystem", async () => { await gate; return () => {}; });
+      const windows = await run("windows", async () => () => {});
+      // The same allocator is used for message envelopes between scans.
+      const outboundMessageRevision = allocator.next();
+      finishFilesystem();
+      const earlier = await filesystem;
+      assert.ok(earlier.observationRevision < windows.observationRevision);
+      assert.ok(windows.observationRevision < outboundMessageRevision);
+      const restarted = createSequenceAllocator(directory);
+      assert.ok(restarted.next() > outboundMessageRevision);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+});

@@ -593,11 +593,9 @@ function assertRestrictivePermissions(
   return { mechanism: "posix-mode" };
 }
 
-/** Must exactly match install-agent.ps1's $ServiceName; a mismatch here
- * would mean the scrub below silently touches nothing while the real
- * spent token sits untouched in the registry. */
+/** Default service name for installations made before generation isolation. */
 const SERVICE_NAME = "TokenTimerAgent";
-const SERVICE_ENVIRONMENT_REGISTRY_KEY = `HKLM\\SYSTEM\\CurrentControlSet\\Services\\${SERVICE_NAME}`;
+const GENERATION_SERVICE_NAME = /^TokenTimerAgent-[a-f0-9]{64}$/;
 
 /**
  * Rewrites the Windows service's registry `Environment` value (written by
@@ -628,17 +626,24 @@ const SERVICE_ENVIRONMENT_REGISTRY_KEY = `HKLM\\SYSTEM\\CurrentControlSet\\Servi
  * failure mode here is reported back to the caller for logging, never
  * thrown.
  *
- * @param {{ configDir: string, spawn?: Function, platform?: string }} options
+ * @param {{ configDir: string, serviceName?: string, spawn?: Function, platform?: string }} options
  * @returns {{ attempted: boolean, cleared: boolean, reason?: string }}
  */
 function clearWindowsServiceBootstrapToken({
   configDir,
+  serviceName = SERVICE_NAME,
   spawn = spawnSync,
   platform = process.platform,
 } = {}) {
   if (!isWindows(platform)) {
     return { attempted: false, cleared: false, reason: "not running on Windows" };
   }
+
+  if (serviceName !== SERVICE_NAME && (typeof serviceName !== "string" ||
+      serviceName.length !== SERVICE_NAME.length + 65 || !GENERATION_SERVICE_NAME.test(serviceName))) {
+    return { attempted: false, cleared: false, reason: "invalid Windows service name" };
+  }
+  const serviceRegistryKey = `HKLM\\SYSTEM\\CurrentControlSet\\Services\\${serviceName}`;
 
   const normalizeOwnedPath = (value) => {
     if (typeof value !== "string" || /[\0\r\n]/.test(value) ||
@@ -656,7 +661,7 @@ function clearWindowsServiceBootstrapToken({
 
   // Two explicit separators make ambiguous native rendering fail closed:
   // neither literal "\\0" nor an embedded separator may corrupt an entry.
-  const queryArgs = (separator) => ["query", SERVICE_ENVIRONMENT_REGISTRY_KEY, "/v", "Environment", "/se", separator];
+  const queryArgs = (separator) => ["query", serviceRegistryKey, "/v", "Environment", "/se", separator];
   const parseEnvironment = (result, separator) => {
     if (!result || result.error || result.status !== 0) return null;
     const matches = String(result.stdout || "").split(/\r?\n/).map((line) => /^[ \t]*Environment[ \t]+REG_MULTI_SZ[ \t]+(.*)$/i.exec(line)).filter(Boolean);
@@ -699,7 +704,7 @@ function clearWindowsServiceBootstrapToken({
 
   const addResult = runRegExe([
     "add",
-    SERVICE_ENVIRONMENT_REGISTRY_KEY,
+    serviceRegistryKey,
     "/v",
     "Environment",
     "/t",

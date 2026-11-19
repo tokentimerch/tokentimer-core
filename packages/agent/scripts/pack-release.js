@@ -6,7 +6,7 @@
  * see README.md). This does not sign the artifact — signing infrastructure is
  * not present in this repository yet.
  *
- *   node scripts/pack-release.js [--out-dir DIR] [--linux-only]
+ *   node scripts/pack-release.js [--out-dir DIR] [--windows-runtime-dir DIR | --linux-only]
  */
 
 const fs = require("node:fs");
@@ -14,10 +14,17 @@ const assert = require("node:assert/strict");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const zlib = require("node:zlib");
 const { spawnSync } = require("node:child_process");
 const { main: buildWindowsServiceHost } = require("./build-windows-service-host.js");
 const { main: buildWindowsChainHelper } = require("./build-windows-chain-helper.js");
+const {
+  main: buildObservedRevocationHelper,
+  buildOne: buildObservedRevocationTarget,
+  targets: observedRevocationTargets,
+} = require("./build-observed-revocation-helper.js");
 const { buildOne: buildWindowsHelper, TARGET_ARCHES } = require("./build-windows-chain-helper.js");
+const { buildWindowsArchives } = require("./windows-runtime-package.js");
 
 const packageRoot = path.resolve(__dirname, "..");
 const pkg = JSON.parse(
@@ -125,7 +132,38 @@ function assertNoPrivateKeyMaterial(tarballPath) {
 /** Entries operators run directly after extracting the tarball. */
 const EXECUTABLE_TARBALL_ENTRIES = Object.freeze([
   "package/scripts/install-agent.sh",
+  "package/bin/tokentimer-observed-revocation-linux-amd64",
+  "package/bin/tokentimer-observed-revocation-linux-arm64",
 ]);
+
+function setArchiveExecutableEntries(tarballPath) {
+  const tar = zlib.gunzipSync(fs.readFileSync(tarballPath));
+  const remaining = new Set(EXECUTABLE_TARBALL_ENTRIES);
+  let offset = 0;
+  while (offset + 512 <= tar.length) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const field = (start, length) => header.subarray(start, start + length).toString("utf8").replace(/\0.*$/, "");
+    const name = field(0, 100);
+    const prefix = field(345, 155);
+    const entry = prefix ? `${prefix}/${name}` : name;
+    const rawSize = field(124, 12).trim();
+    if (!/^[0-7]+$/.test(rawSize)) throw new Error("pack-release: invalid tar entry size");
+    const size = Number.parseInt(rawSize, 8);
+    if (!Number.isSafeInteger(size) || offset + 512 + size > tar.length) throw new Error("pack-release: truncated tar entry");
+    if (remaining.has(entry)) {
+      if (header[156] !== 0 && header[156] !== 48) throw new Error(`pack-release: executable is not a regular file: ${entry}`);
+      header.write("0000755\0", 100, 8, "ascii");
+      header.fill(32, 148, 156);
+      const checksum = header.reduce((sum, byte) => sum + byte, 0).toString(8).padStart(6, "0");
+      header.write(`${checksum}\0 `, 148, 8, "ascii");
+      remaining.delete(entry);
+    }
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+  if (remaining.size) throw new Error(`pack-release: executable archive entries missing: ${[...remaining].join(", ")}`);
+  fs.writeFileSync(tarballPath, zlib.gzipSync(tar, { level: 9, mtime: 0 }));
+}
 
 /**
  * Fails when an operator-run script lost its executable bit. npm pack keeps
@@ -164,23 +202,39 @@ function assertExecutableEntries(tarballPath, { platform = process.platform } = 
 
 function parseArgs(argv) {
   let outDir = path.join(packageRoot, "dist");
+  let windowsRuntimeDir;
   let linuxOnly = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--out-dir") {
-      outDir = path.resolve(argv[++i] || "");
+      if (!argv[i + 1] || argv[i + 1].startsWith("--")) {
+        throw new Error("--out-dir requires a directory");
+      }
+      outDir = path.resolve(argv[++i]);
     } else if (arg.startsWith("--out-dir=")) {
       outDir = path.resolve(arg.slice("--out-dir=".length));
+    } else if (arg === "--windows-runtime-dir") {
+      if (!argv[i + 1] || argv[i + 1].startsWith("--")) {
+        throw new Error("--windows-runtime-dir requires a directory");
+      }
+      windowsRuntimeDir = path.resolve(argv[++i]);
+    } else if (arg.startsWith("--windows-runtime-dir=")) {
+      const value = arg.slice("--windows-runtime-dir=".length);
+      if (!value) throw new Error("--windows-runtime-dir requires a directory");
+      windowsRuntimeDir = path.resolve(value);
     } else if (arg === "--linux-only") {
       linuxOnly = true;
     } else if (arg === "-h" || arg === "--help") {
-      process.stdout.write("Usage: node scripts/pack-release.js [--out-dir DIR] [--linux-only]\n");
+      process.stdout.write("Usage: node scripts/pack-release.js [--out-dir DIR] [--windows-runtime-dir DIR | --linux-only]\n");
       process.exit(0);
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
-  return { outDir, linuxOnly };
+  if (linuxOnly && windowsRuntimeDir) {
+    throw new Error("--linux-only and --windows-runtime-dir cannot be combined");
+  }
+  return { outDir, windowsRuntimeDir, linuxOnly };
 }
 
 function sha256File(filePath) {
@@ -197,7 +251,7 @@ function main(argv = process.argv.slice(2)) {
     );
   }
 
-  const { outDir, linuxOnly } = parseArgs(argv);
+  const { outDir, windowsRuntimeDir, linuxOnly } = parseArgs(argv);
   if (linuxOnly) {
     assert.equal(process.platform, "linux");
     assert.deepEqual(pkg.os, ["linux"]);
@@ -213,12 +267,18 @@ function main(argv = process.argv.slice(2)) {
   // process.argv --out-dir (agent-dist/), which would write the host exes
   // next to the tarball instead of packages/agent/bin/ and leave the
   // packed tarball without the Windows service host.
-  if (!linuxOnly) {
+  const binDir = path.join(packageRoot, "bin");
+  if (linuxOnly) {
+    for (const target of observedRevocationTargets.filter(({ os }) => os === "linux")) {
+      buildObservedRevocationTarget(target, binDir);
+    }
+  } else {
     buildWindowsServiceHost([]);
     // Rebuild the chain/store-survivor helper for each shipped architecture too.
     // Source-tree reference/dist executables are never distribution inputs.
     buildWindowsChainHelper([]);
-    for (const arch of TARGET_ARCHES) buildWindowsHelper(arch, path.join(packageRoot, "bin"), {
+    buildObservedRevocationHelper([]);
+    for (const arch of TARGET_ARCHES) buildWindowsHelper(arch, binDir, {
       sourceDir: path.join(packageRoot, "reference/adcs-cmc"),
       outputName: `tokentimer-adcs-cmc-${arch}.exe`,
     });
@@ -258,6 +318,7 @@ function main(argv = process.argv.slice(2)) {
     throw new Error(`packed tarball missing: ${tarballPath}`);
   }
 
+  setArchiveExecutableEntries(tarballPath);
   assertNoPrivateKeyMaterial(tarballPath);
   assertExecutableEntries(tarballPath);
 
@@ -267,18 +328,27 @@ function main(argv = process.argv.slice(2)) {
   // Coreutils `sha256sum -c` friendly format: "<hash>  <filename>"
   fs.writeFileSync(checksumPath, `${digest}  ${tarballName}\n`, "utf8");
 
+  const windowsArchives = windowsRuntimeDir
+    ? buildWindowsArchives(tarballPath, windowsRuntimeDir, outDir, pkg.version)
+    : [];
+  for (const artifact of windowsArchives) {
+    assertNoPrivateKeyMaterial(artifact.archive);
+    assertExecutableEntries(artifact.archive);
+  }
+
   process.stdout.write(
     [
       `Packed ${tarballName}`,
       `Version ${pkg.version}`,
       `SHA256 ${digest}`,
       `Checksum file ${checksumName}`,
+      ...windowsArchives.map((artifact) => `Windows ${artifact.architecture}: ${path.basename(artifact.archive)} SHA256 ${artifact.sha256}`),
       "Signing: not available in this repository (document checksum out-of-band).",
       "",
     ].join("\n"),
   );
 
-  return { tarballPath, checksumPath, digest, version: pkg.version };
+  return { tarballPath, checksumPath, digest, version: pkg.version, windowsArchives };
 }
 
 module.exports = {
@@ -286,6 +356,7 @@ module.exports = {
   sha256File,
   assertNoPrivateKeyMaterial,
   assertExecutableEntries,
+  setArchiveExecutableEntries,
   tarInspectionDiagnostic,
 };
 

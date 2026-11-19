@@ -1,4 +1,8 @@
-import CertOpsBadge, { CertificateLifecycleBadge } from './CertOpsBadge.jsx';
+import CertOpsBadge, {
+  CertificateLifecycleBadge,
+  ObservedRevocationBadge,
+  hasObservedRevocationContext,
+} from './CertOpsBadge.jsx';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
@@ -24,6 +28,7 @@ import { MapPin, Settings } from 'lucide-react';
 import DashboardDetailsSection from '../DashboardDetailsSection.jsx';
 import CopyableId from '../CopyableId.jsx';
 import CertificateDetailsModal from './CertificateDetailsModal.jsx';
+import CertificateObservationHistory from './CertificateObservationHistory.jsx';
 import {
   getCertificate,
   getCertificateIdentity,
@@ -548,6 +553,9 @@ function IdentityDetailSession({
         {detail.lifecycleDisplay ? (
           <CertificateLifecycleBadge certificate={detail} />
         ) : null}
+        {hasObservedRevocationContext(detail) ? (
+          <ObservedRevocationBadge result={detail.observedRevocation} />
+        ) : null}
       </HStack>
       {detail.visibilityUnknown ? (
         <Text fontSize='sm' color='orange.400'>
@@ -574,6 +582,14 @@ function IdentityDetailSession({
       ) : null}
       <DashboardDetailsSection
         title='Observed locations'
+        headerAction={
+          <CertificateObservationHistory
+            workspaceId={workspaceId}
+            certificateId={managedCertificateId}
+            fingerprintSha256={detail.fingerprintSha256}
+            enabled={isOpen}
+          />
+        }
         description='Where this certificate has been seen, with the latest observation at each location and previous observations in history.'
         icon={MapPin}
         enclosed
