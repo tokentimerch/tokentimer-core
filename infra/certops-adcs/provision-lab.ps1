@@ -22,15 +22,18 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [ValidateSet('none','keygen_intent','prepared','submitting','issued','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',
   [ValidateSet('root','subordinate')][string]$HierarchyRole='root',
   [ValidateSet('all','issuance','renewals','pending-and-ca','templates-and-uncertain','uncertain-recovery')][string]$Shard='all',
+  [ValidateSet('0','1')][string]$BundledWindowsRuntime='0',
   [ValidateSet('Standard_D2s_v5','Standard_D2as_v5')][string]$VmSize = 'Standard_D2s_v5',
   [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]{1,49}$')][string]$Location)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'arm-operation.ps1')
+. (Join-Path $PSScriptRoot 'report-error.ps1')
 if($QualificationScope -eq 'operator-acceptance' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Operator acceptance cannot include fault experiments'}
 # A diagnostic shard runs a subset of the plain comprehensive journeys in its own lab. It is never release evidence.
 if($Shard -ne 'all' -and ($QualificationScope -ne 'comprehensive' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $IssuerReassignment -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0')){throw 'A diagnostic shard only applies to the plain comprehensive scope'}
+if($BundledWindowsRuntime -eq '1' -and ($Shard -ne 'renewals' -or $QualificationScope -ne 'comprehensive' -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US')){throw 'Bundled runtime fixture requires the diagnostic Server 2022 en-US renewals shard'}
 # Production worker and package acceptance are scope-independent; exactly one shard (issuance) carries them.
-$runAcceptance=($Shard -in @('all','issuance'))
+$runAcceptance=($Shard -in @('all','issuance') -or $BundledWindowsRuntime -eq '1')
 if($IssuerReassignment -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Issuer reassignment requires its isolated four-hour two-CA Server2022 en-US profile'}
 if($RetentionCadencePrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $RetentionCadenceNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Installed retention cadence requires its isolated four-hour Server2022 en-US preparation'}
 if($HierarchyRole -eq 'subordinate' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Hierarchy and experimental fault profiles cannot be combined'}
@@ -221,7 +224,7 @@ try {
   Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'domain-verify.ps1') 'CERTOPS_STAGE=domain-member-ca-rpc-verified' $verifyParameters
   foreach($node in @('domain-ca','windows-agent')){Invoke-Stage $node (Join-Path $PSScriptRoot 'language-verify.ps1') 'CERTOPS_STAGE=installed-language-verified' @("Language=$Language")}
   $apiPublic=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $env:RUNNER_TEMP 'certops-api-public.pem')))
-  Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'windows-tools.ps1') 'CERTOPS_STAGE=isolated-candidate-windows-tools-built' @("CandidateSha=$candidateSha","ApiPublicPemBase64=$apiPublic","WindowsVersion=$WindowsVersion")
+  Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'windows-tools.ps1') 'CERTOPS_STAGE=isolated-candidate-windows-tools-built' @("CandidateSha=$candidateSha","ApiPublicPemBase64=$apiPublic","WindowsVersion=$WindowsVersion","BundledWindowsRuntime=$BundledWindowsRuntime")
   if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'browser-windows-tools.ps1') 'CERTOPS_STAGE=locked-domain-browser-ready' @("CandidateSha=$candidateSha")}
   if($RetentionCadencePrepare -eq '1'){
     # This producer leaves the original service running. Its separate immutable
@@ -250,13 +253,13 @@ try {
     try {
       Invoke-Stage 'control-plane' (Join-Path $PSScriptRoot 'acceptance-worker.sh') 'CERTOPS_STAGE=acceptance-worker-started' @('action=start')
       # Package acceptance always runs without fault injection.
-      Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=operator-package-acceptance-passed' @("DomainPassword=$password","Language=$Language",'Scope=acceptance')
+      Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=operator-package-acceptance-passed' @("DomainPassword=$password","Language=$Language",'Scope=acceptance',"BundledWindowsRuntime=$BundledWindowsRuntime")
     } catch {
       $workerExecutionFailure=$_
       throw
     } finally {
       try { Invoke-Stage 'control-plane' (Join-Path $PSScriptRoot 'acceptance-worker.sh') 'CERTOPS_STAGE=acceptance-worker-stopped' @('action=stop') }
-      catch { if($workerExecutionFailure){Write-Warning 'Production acceptance worker teardown also failed; preserve the original execution failure'}else{throw} }
+      catch { if($workerExecutionFailure){Write-Warning 'Production acceptance worker teardown also failed; preserve the original execution failure' -WarningAction Continue}else{throw} }
     }
     }
   } catch {
@@ -269,12 +272,12 @@ try {
       if($IssuerReassignment -eq '0' -and $PendingElapsedQualification -eq '0' -and $HierarchyRole -eq 'root' -and $Shard -eq 'all' -and $WindowsVersion -eq '2022' -and $Language -eq 'en-US' -and $ResponseLossExperiment -eq '0' -and $JournalPhaseExperiment -eq 'none'){$kinds+='browser-enrollment';$kinds+='uncertain-abandon'}
     }
     if($runAcceptance){$kinds+=@('acceptance-worker','package-acceptance')}
-    foreach($kind in $kinds){try{& (Join-Path $PSScriptRoot 'read-report.ps1') -ResourceGroup $ResourceGroup -ReportKind $kind}catch{$reportErrors+=$kind}}
+    foreach($kind in $kinds){try{& (Join-Path $PSScriptRoot 'read-report.ps1') -ResourceGroup $ResourceGroup -ReportKind $kind}catch{$code=Get-CertOpsReportFailureCode $_;Write-Warning ("CERTOPS_REPORT_RETRIEVAL_FAILURE={0}:{1}" -f $kind,$code) -WarningAction Continue;$reportErrors+=$kind}}
     if($reportErrors.Count){
       # Missing reports are expected when an earlier mandatory stage never ran.
       # Keep that original failure, while still attempting every bounded report.
       $reportFailure="Guest execution report retrieval failed for: $($reportErrors -join ', ')"
-      if($nativeExecutionFailure){Write-Warning $reportFailure}else{throw $reportFailure}
+      if($nativeExecutionFailure){Write-Warning $reportFailure -WarningAction Continue}else{throw $reportFailure}
     }
   }
   $reportStatus = 'provisioned-and-native-scenarios-completed'

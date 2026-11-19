@@ -693,6 +693,27 @@ describe("registerIfNeeded", () => {
     assert.equal(clearCalls[0].configDir, dir);
   });
 
+  it("reports an invalid service name when registry cleanup is refused", async () => {
+    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ serverUrl: "https://cp.example.com", agentId: "agent-existing" }), "utf8");
+    writeCredential(dir, "ttagent_agent-existing_0123456789abcdef");
+    const logs = [];
+    await registerIfNeeded({
+      client: createRecordingClient(),
+      config: loadConfigFrom(dir),
+      configDir: dir,
+      env: { TOKENTIMER_AGENT_SERVICE_NAME: "invalid" },
+      log: (line) => logs.push(line),
+      platformModule: {
+        isWindows: () => true,
+        clearWindowsServiceBootstrapToken: ({ serviceName }) => {
+          assert.equal(serviceName, "invalid");
+          return { attempted: false, cleared: false, reason: "invalid Windows service name" };
+        },
+      },
+    });
+    assert.equal(logs.some((line) => line.includes("invalid Windows service name")), true);
+  });
+
   it("fails loudly when a credential exists but agentId is missing (inconsistent dir)", async () => {
     fs.writeFileSync(
       path.join(dir, "config.json"),
@@ -819,12 +840,13 @@ describe("registerIfNeeded", () => {
       client,
       config: loadConfigFrom(dir),
       configDir: dir,
-      env: { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: "bootstrap-raw-token" },
+      env: { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: "bootstrap-raw-token", TOKENTIMER_AGENT_SERVICE_NAME: `TokenTimerAgent-${"a".repeat(64)}` },
       platformModule,
     });
 
     assert.equal(clearCalls.length, 1);
     assert.equal(clearCalls[0].configDir, dir);
+    assert.equal(clearCalls[0].serviceName, `TokenTimerAgent-${"a".repeat(64)}`);
   });
 
   it("logs, but does not throw, when the Windows registry scrub cannot confirm success", async () => {

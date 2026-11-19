@@ -124,6 +124,10 @@ does not promise a version or add a v1.0.0 gate.
   operations build on shipped Windows/IIS and AD CS support.
   Distribution provides consumer discovery and lifecycle groundwork. Other
   service connectors and unsupported activation methods remain separate work.
+- **Windows agent with a bundled runtime**
+  ([#542](https://github.com/tokentimerch/tokentimer-core/issues/542)):
+  qualify fresh amd64 installation first, using the exact publisher-signed
+  package. Existing-agent upgrades, rollback and ARM64 remain follow-up work.
 - **Workspace readiness and actionable recovery**
   ([#505](https://github.com/tokentimerch/tokentimer-core/issues/505)):
   persistent readiness, safe diagnostics, verified recipes and contributor

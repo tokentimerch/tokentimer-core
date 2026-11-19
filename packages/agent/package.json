@@ -47,6 +47,7 @@
     "scripts/check-shipped-sources.js",
     "scripts/sync-vendor.js",
     "scripts/pack-release.js",
+    "scripts/windows-runtime-package.js",
     "README.md",
     "LICENSE*",
     "package.json"

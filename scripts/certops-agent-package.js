@@ -6,6 +6,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const assert = require("node:assert/strict");
+const { RUNTIMES, VERSION: BUNDLED_NODE_VERSION } = require("../packages/agent/scripts/windows-runtime-package");
 const linuxCase = () => require("./certops-linux-cleanup-case.cjs");
 const digest = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const ADCS_ACCEPTANCE_SCENARIOS = Object.freeze([
@@ -30,7 +31,7 @@ function verifyNativeEnvironment(native) {
   if(expectedLanguage)assert.equal(native.language,expectedLanguage);
   return true;
 }
-function verifyAdcsAcceptance(report, artifact, expectedSha) {
+function verifyAdcsAcceptance(report, artifact, expectedSha, requireBundled = false) {
   assert.match(expectedSha || "", /^[a-f0-9]{40}$/);
   assert.equal(report.suite, "adcs-package-operator-acceptance");
   assert.equal(report.status, "passed"); assert.equal(report.strict, true);
@@ -39,6 +40,7 @@ function verifyAdcsAcceptance(report, artifact, expectedSha) {
   assert.equal(report.buildMode, artifact.buildMode);
   assert.match(artifact.sha256, /^[a-f0-9]{64}$/); assert.equal(report.packageSha256, artifact.sha256);
   assert.equal(report.qualificationStatus, "not-qualified"); assert.equal(report.publishedReleaseQualified, false);
+  if (requireBundled || artifact.archiveKind !== undefined) verifyBundledRuntimeEvidence(report.bundledRuntime, artifact);
   assert.equal(report.certificateDatabaseInjection, false); assert.equal(report.workerDriven, true);
   assert.equal(report.cleanup?.status, "passed");
   verifyNativeEnvironment(report.nativeEnvironment);
@@ -51,6 +53,26 @@ function verifyAdcsAcceptance(report, artifact, expectedSha) {
     assert.equal(rows.length, 1); assert.equal(rows[0].status, "passed");
   }
   assert.ok(report.scenarios.every(row => row.status === "passed"));
+  return true;
+}
+function verifyBundledRuntimeEvidence(evidence, artifact) {
+  assert.equal(artifact.archiveKind, "windows-bundled-amd64");
+  assert.equal(artifact.runtimeNodeSha256, RUNTIMES.amd64.sha256);
+  assert.equal(evidence?.serviceAccount, "LocalSystem");
+  assert.equal(evidence?.childCount, 1);
+  assert.equal(evidence?.childPath?.toLowerCase(), "c:\\programdata\\tokentimeragent\\app\\runtime\\amd64\\node.exe");
+  assert.equal(evidence?.childSha256?.toLowerCase(), artifact.runtimeNodeSha256);
+  return true;
+}
+function verifyBundledArchive(root, files, artifact) {
+  assert.equal(artifact.archiveKind, "windows-bundled-amd64");
+  assert.equal(artifact.runtimeNodeSha256, RUNTIMES.amd64.sha256);
+  const metadata = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "runtime", "manifest.json"), "utf8"));
+  assert.equal(metadata.windowsBundledRuntime, true);
+  assert.deepEqual(manifest, { version: BUNDLED_NODE_VERSION, architecture: "amd64", path: "runtime/amd64/node.exe", sha256: RUNTIMES.amd64.sha256 });
+  assert.equal(files["runtime/amd64/node.exe"], RUNTIMES.amd64.sha256);
+  assert.ok(files["runtime/LICENSE"]);
   return true;
 }
 function verifyOperatorScope(infrastructure,report) {
@@ -131,8 +153,20 @@ function verifyInstalled(files, installedRoot) {
   assert.ok(stat.isDirectory() && !stat.isSymbolicLink(), "Installed package root must be a real directory");
   assert.deepEqual(inventory(installedRoot), files, "Installed files differ from the verified package");
 }
-function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha, linuxCleanup = null }) {
+function verifyCandidateArchives(directory, expected) {
+  const names = fs.readdirSync(directory).filter(name => name.endsWith(".tgz"));
+  assert.deepEqual(names.sort(), [...expected].sort(), "Unexpected candidate archive set");
+  const checksums = {};
+  for (const name of expected) {
+    const sha256 = digest(path.join(directory, name));
+    assert.equal(fs.readFileSync(path.join(directory, name + ".sha256"), "utf8").trim(), `${sha256}  ${name}`);
+    checksums[name] = sha256;
+  }
+  return checksums;
+}
+function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha, windowsRuntimeDir, linuxCleanup = null }) {
   assert.match(candidateSha || "", /^[a-f0-9]{40}$/);
+  if (windowsRuntimeDir && linuxCleanup) throw new Error("Linux qualification mode and Windows runtime cannot be combined");
   const distribution = !!linuxCleanup && linuxCleanup === linuxCase().distribution;
   const linuxOnly = linuxCleanup && !distribution;
   fs.mkdirSync(outputRoot); // Never reuse an artifact from another run.
@@ -156,13 +190,21 @@ function buildCandidate({ sourcePackage, outputRoot, capabilities, candidateSha,
   }
   fs.writeFileSync(input, JSON.stringify({ qualified: selected }));
   run(process.execPath, [path.join(staging, "scripts/build-qualified-capabilities.js")]);
-  run(process.execPath, [path.join(staging, "scripts/pack-release.js"), "--out-dir", artifacts,
-    ...(linuxOnly ? ["--linux-only"] : [])]);
-  const names = fs.readdirSync(artifacts).filter(name => name.endsWith(".tgz"));
-  assert.equal(names.length, 1, "Expected one candidate agent archive");
-  const archive = names[0], sha256 = digest(path.join(artifacts, archive));
-  assert.equal(fs.readFileSync(path.join(artifacts, archive + ".sha256"), "utf8").trim(), `${sha256}  ${archive}`);
+  const args = [path.join(staging, "scripts/pack-release.js"), "--out-dir", artifacts];
+  if (windowsRuntimeDir) args.push("--windows-runtime-dir", path.resolve(windowsRuntimeDir));
+  if (linuxOnly) args.push("--linux-only");
+  run(process.execPath, args);
+  const version = JSON.parse(fs.readFileSync(path.join(staging, "package.json"), "utf8")).version;
+  const archive = linuxOnly ? `tokentimer-agent-linux-${version}.tgz`
+    : windowsRuntimeDir ? `tokentimer-agent-${version}-windows-amd64.tgz`
+    : `tokentimer-agent-${version}.tgz`;
+  const expected = windowsRuntimeDir
+    ? [`tokentimer-agent-${version}.tgz`, archive, `tokentimer-agent-${version}-windows-arm64.tgz`]
+    : [archive];
+  const checksums = verifyCandidateArchives(artifacts, expected);
+  const sha256 = checksums[archive];
   const receipt = { candidateSha, archive, sha256, sourceKind: process.env.GITHUB_ACTIONS === "true" ? "workflow-checkout" : "local-worktree", buildMode: linuxCleanup?.buildMode ?? "qualification-only-not-release", capabilities: selected, packagerSha256: digest(path.join(sourcePackage, "scripts/pack-release.js")) };
+  if (windowsRuntimeDir) Object.assign(receipt, { archiveKind: "windows-bundled-amd64", runtimeNodeSha256: RUNTIMES.amd64.sha256 });
   if (linuxCleanup) {
     receipt.schemaVersion = 1;
     receipt.version = require(path.join(staging, "package.json")).version;
@@ -190,7 +232,6 @@ function buildLinuxCandidate(outputRoot, linuxCleanup) {
   return buildCandidate({ sourcePackage: path.join(root, "packages/agent"), outputRoot: expectedOutput,
     capabilities: linuxCleanup.capabilities ?? [linuxCleanup.capability], candidateSha, linuxCleanup });
 }
-
 function verifyReleaseDistributionCandidate(directory, expectedSha256, { nodeVersion, npmVersion, goVersion }) {
   assert.match(expectedSha256 || "", /^[a-f0-9]{64}$/, "An exact expected package SHA-256 is required");
   const receipt = JSON.parse(fs.readFileSync(path.join(directory, "artifact.json"), "utf8"));
@@ -208,12 +249,13 @@ function verifyReleaseDistributionCandidate(directory, expectedSha256, { nodeVer
   assert.equal(actualSha256, expectedSha256, "Candidate tarball bytes differ from the expected SHA-256");
   return actualSha256;
 }
-module.exports = { buildCandidate, extractVerified, verifyInstalled, inventory, digest, verifyAdcsAcceptance, verifyOperatorScope,
+module.exports = { buildCandidate, extractVerified, verifyInstalled, verifyBundledArchive, verifyBundledRuntimeEvidence,
+  verifyCandidateArchives, inventory, digest, verifyAdcsAcceptance, verifyOperatorScope,
   verifyReleaseDistributionCandidate, ADCS_ACCEPTANCE_SCENARIOS };
 if (require.main === module) {
   try {
-    const [sourcePackage, outputRoot, candidateSha, capabilityList] = process.argv.slice(2);
-    if (sourcePackage === "verify-adcs") verifyAdcsAcceptance(JSON.parse(fs.readFileSync(outputRoot, "utf8")), JSON.parse(fs.readFileSync(candidateSha, "utf8")), capabilityList);
+    const [sourcePackage, outputRoot, candidateSha, capabilityList, windowsRuntimeDir] = process.argv.slice(2);
+    if (sourcePackage === "verify-adcs") verifyAdcsAcceptance(JSON.parse(fs.readFileSync(outputRoot, "utf8")), JSON.parse(fs.readFileSync(candidateSha, "utf8")), capabilityList, windowsRuntimeDir === "bundled");
     else if(sourcePackage === "verify-operator-scope")verifyOperatorScope(JSON.parse(fs.readFileSync(outputRoot,"utf8")),JSON.parse(fs.readFileSync(candidateSha,"utf8")));
     else if (sourcePackage === "build-linux-vault-cleanup") buildLinuxCandidate(outputRoot, linuxCase()("vault-kv2"));
     else if (sourcePackage === "build-linux-openbao-cleanup") buildLinuxCandidate(outputRoot, linuxCase()("openbao-kv2"));
@@ -225,6 +267,6 @@ if (require.main === module) {
       });
       process.stdout.write(`sha256=${sha256}\n`);
     }
-    else buildCandidate({ sourcePackage, outputRoot, candidateSha, capabilities: capabilityList.split(",") });
+    else buildCandidate({ sourcePackage, outputRoot, candidateSha, capabilities: capabilityList.split(","), windowsRuntimeDir });
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

@@ -38,7 +38,18 @@ const mcpAppendNames = [
   "certops_issuance_identity_transfer",
 ];
 
+function assertUnambiguousRotationHistory(recorded = [], registry = []) {
+  const canonical = new Map(registry.map(({ version, name }) => [version, name]));
+  const earlierPreview = recorded.some((row) => row.version >= 70 && row.version < 109 &&
+    canonical.has(row.version) && canonical.get(row.version) !== row.name);
+  if (!earlierPreview && recorded.some((row) => [109, 110].includes(row.version) &&
+      ["agent_credential_rotations", "agent_credential_rotation_ack"].includes(row.name))) {
+    throw new Error("Unsupported ambiguous agent credential rotation preview history");
+  }
+}
+
 function composeMigrations(migrations, recorded = []) {
+  assertUnambiguousRotationHistory(recorded, migrations);
   for (const [offset, name] of canonical.entries()) {
     const matches = migrations.filter((entry) => entry.name === name);
     if (matches.length !== 1 || matches[0].version !== 70 + offset)
@@ -91,16 +102,43 @@ function composeMigrations(migrations, recorded = []) {
   const hasRetirementPreview = byName.get("certops_retirement_dossiers")?.version !== 109 &&
     rows.some((row) => row.version === 109 && row.name === "certops_retirement_dossiers");
   let recognizedRetirementPreview = false;
+  let retirementOrder = null;
   if (hasRetirementPreview) {
     const oldRegistry = migrations.filter((entry) => !["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username"].includes(entry.name))
       .map((entry) => entry.name === "certops_retirement_dossiers" ? { ...entry, version: 109 } : entry);
     const oldRows = recorded.filter((row) => row.version <= 109);
     const oldComposed = composeMigrations(oldRegistry, oldRows);
     const oldIdentity = new Map(oldComposed.map((entry) => [entry.name, entry.version]));
-    const appended = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation", "distribution_pagerduty_recovery"];
+    const baseAppend = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation"]
+      .filter((name) => byName.has(name));
+    const rotations = ["agent_credential_rotations", "agent_credential_rotation_ack"].filter((name) => byName.has(name));
+    const store = ["store_issuance_explicit_renewal_consent", "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts", "certops_adcs_receipt_deadline"]
+      .filter((name) => byName.has(name));
+    const recovery = byName.has("distribution_pagerduty_recovery") ? ["distribution_pagerduty_recovery"] : [];
+    const canonicalTail = extensions.filter((entry) => entry.version >= 114).map((entry) => entry.name);
+    const otherTail = canonicalTail.filter((name) => ![...store, ...recovery, ...rotations].includes(name));
+    // Keep the canonical default. Recognize only ordered Store prefixes and
+    // the intact rotation pair around recovery, then append newer definitions.
+    const appendOrders = [[...baseAppend, ...canonicalTail]];
+    for (let count = 0; count <= store.length; count++) {
+      const tail = [...store.slice(0, count), ...recovery, ...store.slice(count)];
+      for (let cut = 0; cut <= tail.length; cut++) {
+        appendOrders.push([...baseAppend, ...tail.slice(0, cut), ...rotations, ...tail.slice(cut), ...otherTail]);
+      }
+    }
+    appendOrders.sort((left, right) => {
+      for (let index = 0; index < left.length; index++) {
+        const difference = byName.get(left[index]).version - byName.get(right[index]).version;
+        if (difference) return difference;
+      }
+      return 0;
+    });
+    const appended = appendOrders.find((names) => rows.filter((row) => row.version > 109)
+      .every((row, index) => row.version === 110 + index && row.name === names[index]));
     recognizedRetirementPreview = oldRows.every((row) => row.version < 70 || oldIdentity.get(row.name) === row.version) &&
-      rows.filter((row) => row.version > 109).every((row, index) => row.version === 110 + index && row.name === appended[index]);
+      Boolean(appended);
     if (!recognizedRetirementPreview) throw new Error("Unsupported Core retirement preview migration history");
+    retirementOrder = [...extensions.map((entry) => entry.name).filter((name) => !appended.includes(name)), ...appended];
   }
   // This reviewed preview predates main's PagerDuty migrations at 94/95.
   // Keep its applied identities and finish any partial MCP tail before appending.
@@ -130,8 +168,13 @@ function composeMigrations(migrations, recorded = []) {
         // migration has been applied, but recognize either historical ordering.
         const independent = remaining.filter((name) => !lifecycle.has(name));
         const companions = remaining.filter((name) => lifecycle.has(name));
-        const historicalOrders = Array.from({ length: independent.length + 1 }, (_entry, cut) =>
-          [...independent.slice(0, cut), ...companions, ...independent.slice(cut)],
+        // A prior MCP preview could have applied agent rotation before the
+        // retirement features existed. Preserve that reviewed append order.
+        const laterRetirement = new Set(["certops_retirement_dossiers", "certops_material_reconciliation", "distribution_pagerduty_recovery"]);
+        const beforeRetirement = [...independent.filter((name) => !laterRetirement.has(name)), ...independent.filter((name) => laterRetirement.has(name))];
+        const historicalOrders = [independent, beforeRetirement].flatMap((ordered) =>
+          Array.from({ length: ordered.length + 1 }, (_entry, cut) =>
+            [...ordered.slice(0, cut), ...companions, ...ordered.slice(cut)]),
         );
         for (const tail of [[...independent, ...companions], remaining, ...historicalOrders]) {
           const names = [...priorMcpNames, ...appliedAppend, ...tail];
@@ -155,6 +198,36 @@ function composeMigrations(migrations, recorded = []) {
     if (rows.every((row, index) => row.name === names[index] && row.version === versions[index])) priorOrder = names;
   }
   const recognizedPriorMcp = priorOrder !== null;
+  // An earlier preview applied both credential-rotation migrations before
+  // later reservations were integrated. Accept only its complete ledger and
+  // prefixes of the exact append order produced when upgrading it.
+  const previewVersions = [...Array.from({ length: 16 }, (_, i) => 70 + i),
+    92, 93, 94, 95, ...Array.from({ length: 14 }, (_, i) => 98 + i)];
+  const previewPrefix = previewVersions.map((version) => migrations.find((entry) => entry.version === version));
+  const previewComplete = previewPrefix.every(Boolean);
+  const oldRotation = [
+    { version: 112, name: "agent_credential_rotations" },
+    { version: 113, name: "agent_credential_rotation_ack" },
+  ];
+  const legacy = [...previewPrefix.filter(Boolean), ...oldRotation];
+  const legacyNames = new Set(legacy.map((entry) => entry.name));
+  const append = extensions.filter((entry) => !legacyNames.has(entry.name))
+    .map((entry, index) => ({ version: 114 + index, name: entry.name }));
+  const expected = [...legacy, ...append];
+  const recognizedRotationPreview = previewComplete && tail.length >= legacy.length &&
+    tail.length <= expected.length && tail.every((row, index) =>
+      row.version === expected[index].version && row.name === expected[index].name);
+  // The initial rotation preview used version 99 before the MCP tail existed.
+  // Preserve that identity and accept only the deterministic upgrade prefixes.
+  const rotation99Versions = [...Array.from({ length: 16 }, (_, i) => 70 + i), 92, 93, 94, 95, 98];
+  const rotation99Base = rotation99Versions.map((version) => migrations.find((entry) => entry.version === version));
+  const rotation99Prefix = [...rotation99Base, { version: 99, name: "agent_credential_rotations" }];
+  const rotation99Names = new Set(rotation99Prefix.filter(Boolean).map((entry) => entry.name));
+  const rotation99Pending = extensions.filter((entry) => !rotation99Names.has(entry.name));
+  const recognizedRotation99 = rotation99Base.every(Boolean) && tail.length >= rotation99Prefix.length &&
+    rotation99Prefix.every((entry, index) => tail[index].version === entry.version && tail[index].name === entry.name) &&
+    tail.slice(rotation99Prefix.length).every((row, index) =>
+      row.version === 100 + index && row.name === rotation99Pending[index]?.name);
   const unknown = rows.find((row) => !byName.has(row.name));
   if (unknown)
     throw new Error(
@@ -183,13 +256,40 @@ function composeMigrations(migrations, recorded = []) {
       !base.every((name, index) =>
         rows.some((row) => row.version === 78 + index && row.name === name),
       ) ||
-      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp && !recognizedRetirementPreview)
+      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp && !recognizedRetirementPreview && !recognizedRotationPreview && !recognizedRotation99)
     )
       throw new Error("Unsupported Core migration history: noncanonical gap");
   }
 
+  // Reviewed candidates applied rotation at 114/115 before recovery, or at
+  // 115/116 after recovery. Rebuild those exact plans before adding reservations.
   let contiguousOrder = null;
-  if (contiguous && rows.length && !recognizedRetirementPreview) {
+  const oldRotationRow = rows.find((row) => [114, 115].includes(row.version) && row.name === "agent_credential_rotations");
+  const newIndependentNames = new Set([
+    "certops_observed_revocation", "store_issuance_explicit_renewal_consent",
+    "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts",
+    "certops_windows_iis_consent", "certops_material_adcs_operation_union",
+    "certops_iis_absence_proofs", "certops_enrollment_jobs_index", "distribution_pagerduty_recovery",
+  ]);
+  if (contiguous && !recognizedRetirementPreview && oldRotationRow && migrations.some((entry) => newIndependentNames.has(entry.name))) {
+    const rotationVersion = oldRotationRow.version;
+    const excluded = new Set(newIndependentNames);
+    if (rotationVersion === 115) excluded.delete("distribution_pagerduty_recovery");
+    const legacyRegistry = migrations.filter((entry) => !excluded.has(entry.name))
+      .map((entry) => entry.name === "agent_credential_rotations" ? { ...entry, version: rotationVersion }
+        : entry.name === "agent_credential_rotation_ack" ? { ...entry, version: rotationVersion + 1 } : entry);
+    const legacyPlan = composeMigrations(legacyRegistry, featureHistory.filter((row) => row.version < rotationVersion));
+    const oldTail = legacyPlan.filter((entry) => entry.version >= 78);
+    const oldNames = new Set(legacyPlan.map((entry) => entry.name));
+    const appended = extensions.filter((entry) => !oldNames.has(entry.name))
+      .map((entry, index) => ({ ...entry, version: rotationVersion + 2 + index }));
+    const expected = [...oldTail, ...appended];
+    if (rows.length <= expected.length && rows.every((row, index) =>
+      row.version === expected[index].version && row.name === expected[index].name)) {
+      contiguousOrder = expected.map((entry) => entry.name);
+    }
+  }
+  if (contiguous && rows.length && !recognizedRetirementPreview && !contiguousOrder) {
     const I = "certops_installed_file_distribution",
       S = "auto_sync_provider_stats",
       R = "auto_sync_run_metrics",
@@ -228,6 +328,8 @@ function composeMigrations(migrations, recorded = []) {
       // lifecycle is integrated. Its committed append order remains immutable.
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason"],
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup"],
+      [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup", "agent_credential_rotations"],
+      [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup", "agent_credential_rotations", "agent_credential_rotation_ack"],
     ];
     const laterCompanions = new Set([...lifecycle, Z, "certops_consumer_staging", "certops_review_authority_epochs"]);
     const integratedSeeds = seeds.flatMap((seed) =>
@@ -267,6 +369,7 @@ function composeMigrations(migrations, recorded = []) {
       );
   }
   const dependencies = {
+    agent_credential_rotation_ack: ["agent_credential_rotations"],
     recipient_member_verification: ["recipient_channel_verification"],
     certops_issuance_identity_transfer: ["certops_issuance_job_identity"],
     certops_issuance_job_identity: ["operator_issuance"],
@@ -313,7 +416,7 @@ function composeMigrations(migrations, recorded = []) {
           ...extensions.map((entry) => entry.version),
           ...rows.map((row) => row.version),
         )) + 1;
-  const reviewedOrder = recognizedPriorMcp ? priorOrder : contiguousOrder;
+  const reviewedOrder = recognizedPriorMcp ? priorOrder : retirementOrder || contiguousOrder;
   const executionOrder = reviewedOrder ? [...extensions].sort((a, b) => reviewedOrder.indexOf(a.name) - reviewedOrder.indexOf(b.name)) : extensions;
   for (const entry of executionOrder) {
     if (assigned.has(entry.name)) continue;
@@ -359,4 +462,4 @@ function composeMigrations(migrations, recorded = []) {
     )
     .sort((a, b) => a.version - b.version);
 }
-module.exports = { composeMigrations };
+module.exports = { composeMigrations, assertUnambiguousRotationHistory };
