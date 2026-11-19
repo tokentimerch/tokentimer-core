@@ -47,20 +47,41 @@ function Assert-TrustedDirectory([string]$LiteralPath, [bool]$Private) {
     }
 }
 
+function Assert-TrustedAncestors([IO.DirectoryInfo]$Directory) {
+    for ($cursor = $Directory; $null -ne $cursor; $cursor = $cursor.Parent) {
+        Assert-TrustedDirectory $cursor.FullName $false
+    }
+}
+
 if (![IO.Path]::IsPathFullyQualified($RunnerTemp)) { throw 'Runner temp directory must be absolute' }
 $runner = [IO.DirectoryInfo]::new([IO.Path]::GetFullPath($RunnerTemp))
-for ($cursor = $runner; $null -ne $cursor; $cursor = $cursor.Parent) {
-    Assert-TrustedDirectory $cursor.FullName $false
+$localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+$alternateParent = $null
+if ($localAppData -and [IO.Path]::IsPathFullyQualified($localAppData)) {
+    $alternateParent = [IO.DirectoryInfo]::new([IO.Path]::GetFullPath($localAppData))
 }
 
 if ($PSCmdlet.ParameterSetName -eq 'Verify') {
     if (![IO.Path]::IsPathFullyQualified($VerifyStage)) { throw 'Signing stage must be absolute' }
     $stage = [IO.DirectoryInfo]::new([IO.Path]::GetFullPath($VerifyStage))
-    if ($stage.Parent.FullName -ine $runner.FullName -or $stage.Name -cnotmatch '^windows-signing-pilot-[a-f0-9]{32}$') {
-        throw 'Signing stage must be the generated direct child of runner temp'
+    if ($stage.Parent.FullName -ine $runner.FullName -and
+        (!$alternateParent -or $stage.Parent.FullName -ine $alternateParent.FullName)) {
+        throw 'Signing stage is outside the two approved parent directories'
     }
+    if ($stage.Name -cnotmatch '^windows-signing-pilot-[a-f0-9]{32}$') { throw 'Invalid signing stage name' }
+    Assert-TrustedAncestors $stage.Parent
     Assert-TrustedDirectory $stage.FullName $true
     return
+}
+
+# The hosted work volume can have an unexpected owner. The current user's
+# local app data is eligible only after the same owner, ACL and reparse checks.
+try {
+    Assert-TrustedAncestors $runner
+} catch {
+    if (!$alternateParent -or $alternateParent.FullName -ieq $runner.FullName) { throw }
+    Assert-TrustedAncestors $alternateParent
+    $runner = $alternateParent
 }
 
 $name = 'windows-signing-pilot-' + [Guid]::NewGuid().ToString('N')
