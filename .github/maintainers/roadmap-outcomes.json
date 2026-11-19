@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reviewedAt": "2026-11-17",
+  "reviewedAt": "2026-11-19",
   "repository": "tokentimerch/tokentimer-core",
   "outcomes": [
     {
@@ -110,19 +110,10 @@
       "title": "MCP operator interface",
       "issue": 502,
       "edition": "core",
-      "horizon": "alongside-0.x",
-      "inRoadmap": true,
+      "horizon": "shipped",
+      "inRoadmap": false,
       "implementationPr": 406,
-      "planningStatus": "In Progress",
-      "feedback": [
-        {
-          "slug": "mcp-server-to-interact-with-tokentimer",
-          "status": "In Progress",
-          "implementationPrs": [
-            406
-          ]
-        }
-      ]
+      "release": "v0.19.0"
     },
     {
       "id": "incident",
