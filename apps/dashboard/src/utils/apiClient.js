@@ -2,6 +2,7 @@ import axios from 'axios';
 import {
   showError as showGlobalError,
   showSuccess as showGlobalSuccess,
+  showWarning as showGlobalWarning,
 } from './toast.js';
 import { logger, redactLogValue } from './logger.js';
 import { resetIdentity } from './analytics.js';
@@ -28,6 +29,21 @@ function attachContactGroupImportDefaults(payload, defaults = {}) {
     payload.contact_group_id = defaults.contact_group_id || null;
   }
   return payload;
+}
+
+function showImportErrors(result, cleanup) {
+  const failed = result?.error_count ?? 0;
+  if (failed === 0) return false;
+
+  const created = result.created_count ?? 0;
+  const updated = result.updated_count ?? 0;
+  const cleanupMessage =
+    cleanup?.enabled === true ? ' Obsolete-item cleanup was skipped.' : '';
+  showGlobalWarning(
+    `${failed} item${failed === 1 ? '' : 's'} failed to import`,
+    `Created ${created}. Updated ${updated}.${cleanupMessage}`
+  );
+  return true;
 }
 
 // Debug: Log environment variables only in development or on local/staging hosts
@@ -1344,6 +1360,7 @@ export const vaultAPI = {
         API_ENDPOINTS.VAULT_IMPORT(workspaceId),
         payload
       );
+      if (showImportErrors(res.data, cleanup)) return res.data;
       const createdCount = res?.data?.created_count || 0;
       const updatedCount = res?.data?.updated_count || 0;
       const deletedCount = res?.data?.deleted_count || 0;
@@ -1714,6 +1731,7 @@ export const integrationAPI = {
         API_ENDPOINTS.INTEGRATION_IMPORT(workspaceId),
         payload
       );
+      if (showImportErrors(res.data, cleanup)) return res.data;
       const createdCount = res?.data?.created_count || 0;
       const updatedCount = res?.data?.updated_count || 0;
       const deletedCount = res?.data?.deleted_count || 0;
