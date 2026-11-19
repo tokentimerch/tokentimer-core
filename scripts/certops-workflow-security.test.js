@@ -66,6 +66,31 @@ test("only CodeQL permits automatic pull-request analysis",()=>{
 });
 test("trusted read-only qualification with failure cleanup passes",()=>assert.deepEqual(validateWorkflow(baseline()),[]));
 test("untrusted PR triggers, refs and write credentials fail",()=>{for(const alter of [w=>w.on={pull_request:{}},w=>w.jobs.qualify.if="always()",w=>w.permissions.contents="write",w=>w.jobs.qualify.steps[0].with["persist-credentials"]=true]){const w=baseline();alter(w);assert.ok(validateWorkflow(w).length);}});
+test("IIS access isolates the protected verifier and backup operations and their receipt", () => {
+  const fs = require("node:fs");
+  const yaml = require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+  const name = "certops-iis-lab-access.yml";
+  const workflow = yaml.load(fs.readFileSync(require("node:path").join(__dirname, "../.github/workflows", name), "utf8"));
+  assert.deepEqual(validateWorkflow(workflow, name), []);
+  assert.ok(validateWorkflow(workflow, "certops-other.yml").some(error => error.includes("lifecycle inventory")));
+  for (const alter of [
+    w => { w.on.push = { branches: ["main"] }; },
+    w => { w.on.workflow_dispatch.inputs.operation.default = "delete-owned-group"; },
+    w => { w.jobs.verifier.if = "github.ref == 'refs/heads/main'"; },
+    w => { w.jobs.verifier.environment = w.jobs.cleanup.environment; },
+    w => { w.jobs.cleanup.env.TT_IIS_CLIENT_ID = "${{ vars.AZURE_CLIENT_ID }}"; },
+    w => { w.jobs.cleanup.steps[0].with.ref = "untrusted"; },
+    w => { w.jobs.cleanup.steps[3].if = "inputs.operation == 'check-cleanup'"; },
+    w => { delete w.jobs.cleanup.steps[3].env; },
+    w => { delete w.jobs.cleanup.steps[3].env.TT_IIS_EXPIRES_AT; },
+    w => { w.jobs.cleanup.steps[4].if = "always()"; },
+    w => { w.jobs.verifier.steps[3].with.path = "qualification-results/"; },
+  ]) {
+    const altered = structuredClone(workflow);
+    alter(altered);
+    assert.ok(validateWorkflow(altered, name).length);
+  }
+});
 test("mutable actions, input injection and broad artifact paths fail",()=>{for(const alter of [w=>w.jobs.qualify.steps[0].uses="actions/checkout@main",w=>w.jobs.qualify.steps[1].run="echo ${{ inputs.payload }}",w=>w.jobs.qualify.steps[3].with.path=".",w=>w.jobs.qualify.steps[3].with.path="qualification-results/../../secret"]){const w=baseline();alter(w);assert.ok(validateWorkflow(w).length);}});
 test("missing interruption cleanup and unprotected OIDC fail",()=>{for(const alter of [w=>w.jobs.qualify.steps[2].if="success()",w=>w.permissions["id-token"]="write",w=>w.jobs.qualify["timeout-minutes"]=0]){const w=baseline();alter(w);assert.ok(validateWorkflow(w).length);}});
 test("independent AD CS expiry cleanup cannot share approval-gated lab environment",()=>{
