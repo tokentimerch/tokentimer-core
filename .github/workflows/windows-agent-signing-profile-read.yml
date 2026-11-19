@@ -51,16 +51,28 @@ jobs:
           resource="$SIGNING_ENDPOINT/codesigningaccounts/$SIGNING_ACCOUNT/certificateprofiles/$SIGNING_PROFILE/sign"
           # Match the Windows signing SDK's two read operations and service audience.
           az rest --method get --url "$resource/certchain?api-version=2022-06-15-preview" \
+            --headers 'Accept=application/pkcs7-mime' \
             --resource 'https://codesigning.azure.net' --only-show-errors --output none \
-            --output-file "$output/chain.der" >/dev/null 2>&1 ||
+            --output-file "$RUNNER_TEMP/chain-response" >/dev/null 2>&1 ||
             { echo '::error::The protected principal could not read the certificate chain.'; exit 1; }
           az rest --method get --url "$resource/eku?api-version=2022-06-15-preview" \
+            --headers 'Accept=application/json' \
             --resource 'https://codesigning.azure.net' --only-show-errors --output none \
-            --output-file "$output/eku.json" >/dev/null 2>&1 ||
+            --output-file "$RUNNER_TEMP/eku-response" >/dev/null 2>&1 ||
             { echo '::error::The protected principal could not read the profile EKUs.'; exit 1; }
 
-          openssl pkcs7 -inform DER -in "$output/chain.der" -print_certs -noout >/dev/null
-          jq -e 'type == "array" and length > 0 and all(.[]; type == "string" and test("^[0-9]+(\\.[0-9]+)+$"))' "$output/eku.json" >/dev/null
+          if openssl pkcs7 -inform DER -in "$RUNNER_TEMP/chain-response" -noout 2>/dev/null; then
+            cp "$RUNNER_TEMP/chain-response" "$output/chain.der"
+          else
+            # Azure can serialize the PKCS #7 bytes as a base64 JSON string.
+            jq -er 'select(type == "string" and test("^[A-Za-z0-9+/]+={0,2}$"))' \
+              "$RUNNER_TEMP/chain-response" | base64 --decode > "$output/chain.der"
+          fi
+          openssl pkcs7 -inform DER -in "$output/chain.der" -print_certs -out "$RUNNER_TEMP/chain-certs.pem"
+          grep -q '^-----BEGIN CERTIFICATE-----$' "$RUNNER_TEMP/chain-certs.pem"
+          jq -ec 'if type == "string" then [.] else . end |
+            select(type == "array" and length > 0 and all(.[]; type == "string" and test("^[0-9]+(\\.[0-9]+)+$")))' \
+            "$RUNNER_TEMP/eku-response" > "$output/eku.json"
           chain_sha=$(sha256sum "$output/chain.der" | cut -d ' ' -f 1)
           eku_sha=$(sha256sum "$output/eku.json" | cut -d ' ' -f 1)
           jq -n --arg source "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
