@@ -437,7 +437,7 @@ test("uninstall refuses an existing recovery barrier even without launcher marke
 $ErrorActionPreference='Stop'
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
-$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if ($script:Uninstall)')},$true))
+$f=@($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.StartsWith('if ($script:Uninstall)') })
 if ($errors.Count -or $f.Count -ne 1) { throw 'missing uninstall branch' }
 $script:Uninstall=$true; $script:DryRun=$false; $StateDir=$env:TT542_ROOT
 function Test-IsAdministrator { return $true }
@@ -468,7 +468,7 @@ $ErrorActionPreference='Stop'
 Import-Module Microsoft.PowerShell.Management -ErrorAction Stop
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
-$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if ($script:Uninstall)')},$true))
+$f=@($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.StartsWith('if ($script:Uninstall)') })
 if ($errors.Count -or $f.Count -ne 1) { throw 'missing uninstall branch' }
 $script:Uninstall=$true; $script:DryRun=$false; $StateDir=$env:TEMP; $ServiceName='TokenTimerAgent-fixture-no-service'
 function Test-IsAdministrator { return $true }
