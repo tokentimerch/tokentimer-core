@@ -294,6 +294,15 @@ function deriveRenewalProfileFromIssuedCertificate({
       verification: { host: null, port: null, requireMatch: false } });
   }
 
+  if (targetType === "windows-cert-store") {
+    return validateRenewalProfile({
+      ...sharedProfileFields,
+      deploymentTargets: [],
+      target: { type: "windows-cert-store", reference: targetReference, store: "My" },
+      verification: { host: null, port: null, requireMatch: false },
+    });
+  }
+
   // A Windows (os-store-managed) issuance deploys to a machine certificate
   // store plus an IIS site binding, keyed on thumbprint, not to a filesystem
   // path (ADR-0012 decisions 1 and 10). Branching here, on the same
@@ -413,6 +422,8 @@ async function ensureDerivedRenewalProfile({
   client,
   workspaceId,
   certificateId,
+  jobId = null,
+  enrollmentId = null,
   payload,
   certificate,
   operation = null,
@@ -452,6 +463,78 @@ async function ensureDerivedRenewalProfile({
       created: false,
       reason: DERIVATION_REASON_ALREADY_LINKED,
     };
+  }
+
+  if (payload?.target?.type === "windows-cert-store" && enrollmentId) {
+    // Derive from the frozen enrollment, never from caller-supplied issuer data.
+    const enrollment = await client.query(
+      `SELECT issuer_id, snapshot_bytes, snapshot_sha256, deploy_target
+         FROM certificate_enrollments WHERE workspace_id=$1 AND certificate_id=$2::uuid
+          AND deploy_target=$3::jsonb AND id=$4::uuid LIMIT 1`,
+      [workspaceId, certificateId, JSON.stringify(payload.target), enrollmentId],
+    );
+    const row = enrollment.rows[0];
+    if (!row) return { profileId: null, created: false, reason: DERIVATION_REASON_DERIVATION_FAILED };
+    const bytes = Buffer.from(row.snapshot_bytes);
+    const sha256 = require("crypto").createHash("sha256").update(bytes).digest("hex");
+    if (sha256 !== row.snapshot_sha256) return { profileId: null, created: false, reason: DERIVATION_REASON_DERIVATION_FAILED };
+    let snapshot;
+    try { snapshot = JSON.parse(bytes.toString("utf8")); } catch { return { profileId: null, created: false, reason: DERIVATION_REASON_DERIVATION_FAILED }; }
+    const validate = require("ajv");
+    const ajv = new validate({ strict: false });
+    require("ajv-formats")(ajv);
+    if (!ajv.validate(require("../../../../packages/contracts/certops/enrollment-snapshot.schema.json"), snapshot) ||
+        snapshot.destinationType !== "windows-cert-store" || String(snapshot.issuerId) !== String(row.issuer_id) ||
+        snapshot.predecessorFingerprintSha256 !== null) {
+      return { profileId: null, created: false, reason: DERIVATION_REASON_DERIVATION_FAILED };
+    }
+    const target = row.deploy_target;
+    const destinationSha256 = require("crypto").createHash("sha256").update(JSON.stringify({ type: "windows-cert-store", reference: target.reference, store: "My" })).digest("hex");
+    if (target.store !== "My" || snapshot.destinationSha256 !== destinationSha256) return { profileId: null, created: false, reason: DERIVATION_REASON_DERIVATION_FAILED };
+    const profile = { target, sanPolicy: { sans: snapshot.authorizedDnsNames }, keyAlgorithm: snapshot.keyAlgorithm, keySize: snapshot.keySize };
+    const name = `${DERIVED_PROFILE_PREFIX}: ${target.reference} (${certificateId})`;
+    const inserted = await client.query(
+      `INSERT INTO certificate_profiles(workspace_id,name,description,status,source,source_ref,issuer_id,renew_before_days,key_mode,public_metadata)
+       VALUES ($1,$2,$3,'active',$4,$5,$6,$7,'os-store-managed',$8::jsonb)
+       ON CONFLICT (workspace_id, LOWER(name)) DO NOTHING RETURNING id`,
+      [workspaceId, name, "Renewal configuration derived from the installed certificate.", DERIVED_PROFILE_SOURCE,
+        `certops-issuance:${certificateId}`, row.issuer_id, renewBeforeDays ?? 30,
+        JSON.stringify({ renewalProfile: profile, derivedFrom: { certificateId: String(certificateId), derivedAt: new Date().toISOString() } })],
+    );
+    if (!inserted.rows[0]) return { profileId: null, created: false, reason: DERIVATION_REASON_LINK_CONFLICT };
+    const profileId = String(inserted.rows[0].id);
+    const linkedProfile = await client.query(`UPDATE managed_certificates SET profile_id=$3::uuid,updated_at=NOW() WHERE workspace_id=$1 AND id=$2::uuid AND profile_id IS NULL`, [workspaceId, certificateId, profileId]);
+    if (!linkedProfile.rowCount) return { profileId: null, created: false, reason: DERIVATION_REASON_LINK_CONFLICT };
+    await auditWriter({ client, actorUserId: null, subjectUserId: null, action: "CERTOPS_RENEWAL_PROFILE_DERIVED", targetType: "certificate_profile", targetId: null, workspaceId, metadata: { profileId, managedCertificateId: String(certificateId) } });
+    return { profileId, created: true, reason: null };
+  }
+
+  if (payload?.target?.type === "windows-cert-store") {
+    // ACME profiles derive from the exact enrolled request, never a later
+    // edit to the mutable job payload. Reconciliation already verified the
+    // installed leaf against this enrollment before calling us.
+    const result = await client.query(`SELECT e.agent_id,e.original_job_id,e.current_job_id,e.request_bytes,e.request_sha256
+      FROM certops_acme_store_enrollments e JOIN managed_certificates mc
+        ON mc.workspace_id=e.workspace_id AND mc.id=e.certificate_id AND mc.deployed_agent_id=e.agent_id
+      WHERE e.workspace_id=$1 AND e.certificate_id=$2::uuid AND e.current_job_id=$3::uuid AND e.state='installed'`,
+    [workspaceId, certificateId, jobId]);
+    const row = result.rows[0];
+    if (!row) return { profileId: null, created: false, reason: DERIVATION_REASON_DERIVATION_FAILED };
+    const bytes = Buffer.from(row.request_bytes);
+    if (require("node:crypto").createHash("sha256").update(bytes).digest("hex") !== row.request_sha256) return { profileId: null, created: false, reason: DERIVATION_REASON_DERIVATION_FAILED };
+    let frozen;
+    try { frozen = JSON.parse(bytes.toString("utf8")); } catch { return { profileId: null, created: false, reason: DERIVATION_REASON_DERIVATION_FAILED }; }
+    if (frozen.workspaceId !== workspaceId || frozen.certificateId !== String(certificateId) ||
+        frozen.agentId !== String(row.agent_id) || frozen.jobId !== String(row.original_job_id) ||
+        frozen.issuanceMode !== "issue" || frozen.predecessorFingerprintSha256 !== null ||
+        frozen.target?.type !== "windows-cert-store" || frozen.target.store !== "My" ||
+        frozen.target.reference !== payload.target.reference) return { profileId: null, created: false, reason: DERIVATION_REASON_DERIVATION_FAILED };
+    const key = /^(rsa)-(2048|3072|4096)$|^(ec)-p(256|384)$/.exec(frozen.keyAlgorithm || "");
+    if (!key) return { profileId: null, created: false, reason: DERIVATION_REASON_DERIVATION_FAILED };
+    payload = { target: frozen.target, sans: frozen.dnsNames, caEndpoint: frozen.caEndpoint,
+      commandRef: frozen.commandRef, dnsProvider: frozen.dnsProvider, dnsZone: frozen.dnsZone,
+      keyAlgorithm: key[1] ? "rsa" : "ecdsa", keySize: Number(key[2] || key[4]),
+      acmeKind: frozen.acmeKind, preferredChain: frozen.preferredChain, accountRef: frozen.eabAccountRef };
   }
 
   let profile;
@@ -526,7 +609,7 @@ async function ensureDerivedRenewalProfile({
         },
       }),
       OPERATOR_OWNED_METADATA_KEY,
-      payload.publication ? "vault-managed" : "agent-local",
+      payload.publication ? "vault-managed" : payload.target?.type === "windows-cert-store" ? "os-store-managed" : "agent-local",
     ],
   );
   // RETURNING yields nothing when the DO UPDATE's WHERE filters the row out, so

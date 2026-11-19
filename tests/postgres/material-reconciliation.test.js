@@ -13,6 +13,15 @@ const reconciliation = require("../../apps/api/services/certops/materialReconcil
   { approveJob } = require("../../apps/api/services/certops/jobApprovals");
 const { fixture } = require("../helpers/distribution-lifecycle-fixture.cjs");
 after(() => pool.end());
+async function authenticatedFixtureAgent(f, row) {
+  const credential = require("../../apps/api/services/certops/agentCredentials").generateAgentCredential();
+  await pool.query("UPDATE certops_agents SET credential_prefix=$2,credential_hash=$3 WHERE id=$1",
+    [row.id, credential.credentialPrefix, credential.credentialHash]);
+  return require("../../apps/api/services/certops/agentCredentialFence").bindAuthenticatedCredential({
+    id: row.id, workspaceId: f.workspaceId, agentId: row.agent_id,
+    agentVersion: row.agent_version, protocolVersion: row.protocol_version,
+  }, credential.plaintextCredential);
+}
 async function setup(options = {}) {
   const f = await fixture(options);
   if (options.installedOnly)
@@ -391,7 +400,7 @@ test("a stale approved inspection is terminated and permits new reconciliation",
   await pool.query("UPDATE workspaces SET certops_distribution_authorization_revision=certops_distribution_authorization_revision+1 WHERE id=$1", [f.workspaceId]);
   await pool.query("UPDATE certops_agents SET declared_target_selectors=$2::jsonb,platform='linux' WHERE id=$1", [f.consumer, JSON.stringify([f.bindingId])]);
   const row = (await pool.query("SELECT * FROM certops_agents WHERE id=$1", [f.consumer])).rows[0];
-  const agent = { id: row.id, workspaceId: f.workspaceId, agentId: row.agent_id, agentVersion: row.agent_version, protocolVersion: row.protocol_version };
+  const agent = await authenticatedFixtureAgent(f, row);
   await require("../../apps/api/services/certops/jobSigning").ensureActiveSigningKey();
   const dispatch = require("../../apps/api/services/certops/agentDispatch");
   const next = await dispatch.claimJobs({ agent, body: { supportedActions: ["reconcile-from-store", "renew"], maxJobs: 1 } });
@@ -410,7 +419,7 @@ test("a temporarily locked inspection stays retryable without blocking later wor
     VALUES($1,'renew','pending','api',$2::jsonb,NULL,$3) RETURNING id`,[f.workspaceId,JSON.stringify({domain:'example.test'}),f.consumer])).rows[0];
   await pool.query("UPDATE certops_agents SET declared_target_selectors=$2::jsonb,platform='linux' WHERE id=$1",[f.consumer,JSON.stringify([f.bindingId])]);
   const row=(await pool.query("SELECT * FROM certops_agents WHERE id=$1",[f.consumer])).rows[0];
-  const agent={id:row.id,workspaceId:f.workspaceId,agentId:row.agent_id,agentVersion:row.agent_version,protocolVersion:row.protocol_version};
+  const agent=await authenticatedFixtureAgent(f, row);
   await require("../../apps/api/services/certops/jobSigning").ensureActiveSigningKey();
   const dispatch=require("../../apps/api/services/certops/agentDispatch"),blocker=await pool.connect();
   try {
@@ -506,13 +515,7 @@ test("a real claim and nonce-bound result settle only the approved original obli
   const row = (
     await pool.query("SELECT * FROM certops_agents WHERE id=$1", [f.consumer])
   ).rows[0];
-  const agent = {
-    id: row.id,
-    workspaceId: f.workspaceId,
-    agentId: row.agent_id,
-    agentVersion: row.agent_version,
-    protocolVersion: row.protocol_version,
-  };
+  const agent = await authenticatedFixtureAgent(f, row);
   const dispatch = require("../../apps/api/services/certops/agentDispatch");
   const key =
     await require("../../apps/api/services/certops/jobSigning").ensureActiveSigningKey();

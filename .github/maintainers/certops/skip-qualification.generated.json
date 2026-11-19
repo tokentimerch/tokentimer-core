@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "description": "Static skip ownership and candidate execution environments. Classification is a review aid, never execution evidence. No entry claims qualified execution.",
   "environments": {
+    "windows-ca-process-watch": {
+      "capabilities": [
+        "windows",
+        "powershell",
+        "cim",
+        "owned-benign-process"
+      ],
+      "owner": "CA process watcher regression",
+      "workflow": ".github/workflows/ci.yml",
+      "status": "candidate-environment-not-qualified"
+    },
     "core-material-reconciliation": {
       "capabilities": [
         "linux",
@@ -307,6 +318,26 @@
       "workflowJob": "backend_quality"
     },
     {
+      "id": "52904a60aabf8a8417be",
+      "file": "packages/agent/scripts/windows-service-ca-scm.test.js",
+      "line": 50,
+      "name": "SCM CA policy admission",
+      "kind": "describe(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "43e3cc3f8e5a6fb861a2",
+      "file": "packages/agent/scripts/windows-service-ca.test.js",
+      "line": 70,
+      "name": "Windows service CA policy",
+      "kind": "describe(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
       "id": "9dd82ec990cd4e0a09af",
       "file": "packages/agent/src/acme/acme.test.js",
       "line": 250,
@@ -597,7 +628,7 @@
     {
       "id": "b45f65881e8f3ba572b1",
       "file": "packages/agent/src/index.test.js",
-      "line": 4223,
+      "line": 4285,
       "name": "refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",
@@ -1442,6 +1473,26 @@
       "workflow": ".github/workflows/certops-qualification.yml"
     },
     {
+      "id": "507c27d7f28020c5dc58",
+      "file": "tests/e2e/helpers/certops-acme-ca-watch.test.js",
+      "line": 31,
+      "name": "real Windows process exit aborts the dedicated watcher without claiming coverage",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-ca-process-watch",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
+      "id": "7e8ea4a24104384339eb",
+      "file": "tests/e2e/helpers/certops-acme-ca-watch.test.js",
+      "line": 46,
+      "name": "real watcher interruption aborts the run while its target stays alive",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-ca-process-watch",
+      "workflowJob": "windows_agent_quality"
+    },
+    {
       "id": "4f780fdb59305998ec03",
       "file": "tests/e2e/material-providers-real.test.js",
       "line": 80,
@@ -1603,7 +1654,7 @@
     {
       "id": "22201f4e045161486b0e",
       "file": "tests/postgres/material-reconciliation.test.js",
-      "line": 768,
+      "line": 771,
       "name": "real login approval and Linux agent inspect installed legacy evidence through lost-ack recovery",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",

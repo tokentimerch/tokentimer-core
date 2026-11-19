@@ -33,6 +33,19 @@ const reservations = Object.freeze({
   111: "auto_sync_owner_username",
   112: "certops_retirement_dossiers",
   113: "certops_material_reconciliation",
+  114: "distribution_pagerduty_recovery",
+  115: "store_issuance_explicit_renewal_consent",
+  116: "certops_acme_store_enrollment_identity",
+  117: "certops_adcs_expected_identity_receipts",
+  118: "certops_windows_iis_consent",
+  119: "certops_material_adcs_operation_union",
+  120: "certops_iis_absence_proofs",
+  121: "certops_enrollment_jobs_index",
+  122: "certops_observed_revocation",
+  123: "agent_credential_rotations",
+  124: "agent_credential_rotation_ack",
+  125: "certops_adcs_preflight_lookup_index",
+  126: "certops_adcs_receipt_deadline",
 });
 
 function validateMigrationReservations(migrations) {

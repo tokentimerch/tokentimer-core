@@ -194,6 +194,19 @@ test("native benign containment prerequisite routes to its actual Windows regres
   assert.equal(result.workflowStatus, "file-selected-not-qualified");
   assert.equal(result.executionStatus, "not-qualified");
 });
+test("CA watcher platform fixtures select their benign Windows process regression step", () => {
+  const sites = generate().sites.filter(site => site.file === "tests/e2e/helpers/certops-acme-ca-watch.test.js");
+  assert.equal(sites.length, 2);
+  for (const site of sites) {
+    assert.equal(site.reason, "platform");
+    assert.equal(site.environment, "windows-ca-process-watch");
+    assert.equal(site.workflow, ".github/workflows/ci.yml");
+    assert.equal(site.workflowJob, "windows_agent_quality");
+    assert.equal(site.workflowStatus, "file-selected-not-qualified");
+    assert.equal(site.executionStatus, "not-qualified");
+  }
+});
+
 test("stored skip defaults preserve all facts and cannot conceal routing or qualification drift", () => {
   const {compact, expand} = require("./certops-skip-qualification");
   const current = generate(); const stored = compact(current);

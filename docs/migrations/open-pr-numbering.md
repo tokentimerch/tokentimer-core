@@ -38,6 +38,19 @@ are reservations, not no-op migrations. They do not install another feature.
 | 106 | operator_issuance | MCP certificate issuance (#406) |
 | 109 | certops_period_creator_delete | Main; unchanged |
 | 110 | recipient_member_verification | Reuse exact verified workspace-member email proof |
+| 114 | distribution_pagerduty_recovery | Main; destination-bound incident delivery recovery |
+| 115 | store_issuance_explicit_renewal_consent | Explicit Windows Store renewal consent |
+| 116 | certops_acme_store_enrollment_identity | Agent-bound ACME Store enrollment identity |
+| 117 | certops_adcs_expected_identity_receipts | Claim-bound AD CS expected identity |
+| 118 | certops_windows_iis_consent | IIS binding consent |
+| 119 | certops_material_adcs_operation_union | AD CS operation union |
+| 120 | certops_iis_absence_proofs | IIS absence proofs |
+| 121 | certops_enrollment_jobs_index | Enrollment job lookup |
+| 122 | certops_observed_revocation | Observed revocation |
+| 123 | agent_credential_rotations | Agent credential rotation |
+| 124 | agent_credential_rotation_ack | Agent credential rotation acknowledgement |
+| 125 | certops_adcs_preflight_lookup_index | AD CS preflight lookup |
+| 126 | certops_adcs_receipt_deadline | Immutable AD CS receipt admission deadline |
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.
@@ -68,6 +81,12 @@ SQL or customer records to make the ledger look canonical. The upgrade tests
 run historical SQL through the executor, preserve retained material and counter
 evidence, and replay concurrent/restarted runners.
 
+The retirement preview at 109 also preserves either recovery-first or Store-first
+append histories after 110–113, including partial Store prefixes. Missing definitions
+are appended without changing applied rows. The receipt deadline uses canonical
+126 on fresh main installations; these recognized previews record it at 117 or
+118. Do not manually relabel them.
+
 The MCP preview with mainline schemas through 82 and operator schemas at
 83–85 keeps those applied rows. The runner appends missing provider, recipient
 and PagerDuty schemas without reapplying MCP SQL. The later preview with MCP at
@@ -77,6 +96,8 @@ applied identities and appends missing authority work. Fresh installs use MCP 99
 renumber an existing preview database.
 
 A ledger containing another PR's former 81 is not a provider alias. Unknown or conflicting histories fail before migration DDL. Do not manually edit them.
+
+An unrecognized Windows Store preview with Store migrations at 109–111 conflicts with released identities and is rejected before DDL. Preserve its ledger and use a separately reviewed recovery; do not manually relabel it.
 In particular #496's earlier PagerDuty-at-79 preview requires its explicit
 backup/check/apply recovery procedure, using its independent reservation 92; this build
 does not silently relabel it. Any deployed #461/#498 preview needs a separately

@@ -20,6 +20,7 @@ import {
   buildCaConfig,
   issuerNeedsRecheck,
   scopeAdcs,
+  scopeStoreIssuance,
 } from './adcsModel.js';
 import {
   WORKER_NOTE,
@@ -30,6 +31,7 @@ import { JobTimelineList } from './JobActivity.jsx';
 import { Callout, StatusPanel, StatusTag, StepCard } from './panels.jsx';
 import AdcsIssuerWizard from '../certops/AdcsIssuerWizard.jsx';
 import AdcsProfileWizard from '../certops/AdcsProfileWizard.jsx';
+import AdcsStoreIssueDialog from '../certops/AdcsStoreIssueDialog.jsx';
 import { listIssuers } from '../certops/certopsEnrollmentsApi.js';
 import { getWorkspaceCertOpsPauseState } from '../certops/certopsApi.js';
 import { listAllIssuers } from '../certops/certopsFormat.js';
@@ -249,6 +251,7 @@ export default function AdcsStep({ ctx }) {
   const [checking, setChecking] = useState(false);
   const [issuerOpen, setIssuerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [storeIssueOpen, setStoreIssueOpen] = useState(false);
   const [issuers, setIssuers] = useState([]);
   const [paused, setPaused] = useState(false);
   const ca = buildCaConfig(saved.caHost, saved.caName);
@@ -279,7 +282,8 @@ export default function AdcsStep({ ctx }) {
   // The profile dialog picks from the pinned issuers; load them before it
   // opens so it never flashes "no issuer".
   useEffect(() => {
-    if (!(status.issuer || profileOpen) || !ctx.workspaceId) return undefined;
+    if (!(status.issuer || profileOpen || storeIssueOpen) || !ctx.workspaceId)
+      return undefined;
     let cancelled = false;
     listAllIssuers(listIssuers, ctx.workspaceId, { includeUnconfigured: false })
       .then(items => {
@@ -291,7 +295,7 @@ export default function AdcsStep({ ctx }) {
     return () => {
       cancelled = true;
     };
-  }, [status.issuer, profileOpen, ctx.workspaceId]);
+  }, [status.issuer, profileOpen, storeIssueOpen, ctx.workspaceId]);
 
   // The setup summary only carries each agent's last check-in.
   const agentEvents = agents
@@ -312,6 +316,7 @@ export default function AdcsStep({ ctx }) {
     ctx.refresh,
     !issuerOpen &&
       !profileOpen &&
+      !storeIssueOpen &&
       (!(status.agent && status.issuer && status.profile) ||
         status.attached === false),
     WAIT_POLL_MS
@@ -352,6 +357,7 @@ export default function AdcsStep({ ctx }) {
   const confirmed =
     Boolean(chosenIssuerId) && saved.chosenIssuerConfirmed === chosenIssuerId;
   const scopedIds = new Set((adcs?.issuers || []).map(i => i.id));
+  const storeIssuance = scopeStoreIssuance(adcs, saved);
   const certificatesPath = `/certops/certificates${ctx.workspaceId ? `?workspace=${encodeURIComponent(ctx.workspaceId)}` : ''}`;
 
   const issuerDisabled = blocker
@@ -400,10 +406,10 @@ export default function AdcsStep({ ctx }) {
     >
       <VStack align='stretch' spacing={3}>
         <StatusPanel status='info' title='What this guide can see'>
-          Add the issuer and the renewal profile below; this guide watches the
-          results and checks again every 10 seconds. It cannot verify enrollment
-          against your CA: start the first enrollment from Certificate
-          Management.
+          Prepare the issuer below. For IIS, attach a renewal profile to the
+          existing site certificate. A qualified agent can instead request a
+          certificate for the Windows store. Follow the job to confirm the
+          result; installation does not activate a service.
         </StatusPanel>
         {overdueMessage ? (
           <WorkerWarning testId='adcs-overdue-warning'>
@@ -468,8 +474,41 @@ export default function AdcsStep({ ctx }) {
           n={3}
           done={status.profile}
           label='AD CS renewal profile created'
-          hint='Pick the confirmed issuer, the HTTPS binding (IIS site) and the certificate name. The last step of the dialog attaches it to the site certificate.'
+          hint='For IIS, choose the confirmed issuer, site binding and certificate name. A qualified agent can instead request a Windows-store certificate.'
         >
+          {storeIssuance?.requested ? (
+            <StatusPanel
+              status={storeIssuance.installed ? 'success' : 'info'}
+              title={
+                storeIssuance.installed
+                  ? 'Installed in Windows store'
+                  : 'Issuance requested'
+              }
+            >
+              {storeIssuance.installed
+                ? 'The certificate and key were verified in LocalMachine\\My. Service activation and automatic renewal are separate steps.'
+                : `Job status: ${storeIssuance.jobStatus}. Follow the job for its result.`}
+              <PageLink
+                to={`/certops/jobs?workspace=${encodeURIComponent(ctx.workspaceId)}&job=${encodeURIComponent(storeIssuance.jobId)}`}
+              >
+                Open issuance job
+              </PageLink>
+            </StatusPanel>
+          ) : null}
+          {agents.some(
+            a =>
+              a.livenessState === 'live' &&
+              (a.declaredCapabilities || []).includes(
+                'windows-store-only-adcs-v1'
+              )
+          ) ? (
+            <PrimaryButton
+              onClick={() => setStoreIssueOpen(true)}
+              isDisabled={!status.issuer || Boolean(profileDisabled)}
+            >
+              Issue into Windows store
+            </PrimaryButton>
+          ) : null}
           {status.profile ? null : (
             <HStack justify='flex-end' flexWrap='wrap'>
               {!status.issuer || profileDisabled ? (
@@ -495,8 +534,8 @@ export default function AdcsStep({ ctx }) {
           <Row
             n={4}
             done={status.attached}
-            label='Profile attached to the site certificate'
-            hint='The profile dialog attaches it in its last step. If it could not, open the certificate in Certificate Management and attach the profile there. Then watch the first enrollment on that page.'
+            label='Profile attached to a certificate'
+            hint='For IIS, attach the profile to the site certificate. For store issuance, follow the job until installation is verified. Renewal must be enabled explicitly.'
           >
             {status.attached ? (
               <Text fontSize='sm' data-testid='adcs-attached'>
@@ -572,6 +611,26 @@ export default function AdcsStep({ ctx }) {
           workspaceId={ctx.workspaceId}
           issuers={issuers.filter(i => scopedIds.has(i.id))}
           onCreated={ctx.refresh}
+        />
+      ) : null}
+      {storeIssueOpen ? (
+        <AdcsStoreIssueDialog
+          isOpen
+          onClose={() => {
+            setStoreIssueOpen(false);
+            refreshQuietly();
+          }}
+          workspaceId={ctx.workspaceId}
+          issuers={issuers.filter(i => scopedIds.has(i.id))}
+          onCreated={async ({ job, agentId, issuerId }) => {
+            await saveCertops(ctx, {
+              storeIssueJobId: job.id,
+              chosenAgentId: agentId,
+              chosenAgentConfirmed: agentId,
+              chosenIssuerId: issuerId,
+              chosenIssuerConfirmed: issuerId,
+            });
+          }}
         />
       ) : null}
     </StepFrame>

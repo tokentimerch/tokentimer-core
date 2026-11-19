@@ -125,6 +125,7 @@ describe("CertOps agent job logs (real database)", function () {
       body: { supportedActions: ["renew"], maxJobs },
       env,
       deps: {
+        assertCurrentAgentCredential: async () => {},
         enforceAgentSequence: async () => ({ sequence: 1 }),
         // Signing has its own tests and needs provisioned keys.
         signJobForDispatch: async ({ job, envelopeVersion }) => ({ ...job, envelopeVersion }),
@@ -165,7 +166,7 @@ describe("CertOps agent job logs (real database)", function () {
   }
 
   function ingest(agent, jobId, body, { env = LOG_ENV, quotaLimitBytes } = {}) {
-    return ingestAgentJobLogs({ dbPool: pool, agent, jobId, body, env, quotaLimitBytes });
+    return ingestAgentJobLogs({ dbPool: pool, agent, jobId, body, env, quotaLimitBytes, deps: { assertCurrentAgentCredential: async () => {} } });
   }
 
   async function streamRows(workspaceId, jobId) {

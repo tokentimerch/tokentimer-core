@@ -97,9 +97,18 @@ function composeMigrations(migrations, recorded = []) {
     const oldRows = recorded.filter((row) => row.version <= 109);
     const oldComposed = composeMigrations(oldRegistry, oldRows);
     const oldIdentity = new Map(oldComposed.map((entry) => [entry.name, entry.version]));
-    const appended = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation", "distribution_pagerduty_recovery"];
+    const baseAppend = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation"];
+    const storeAppend = ["store_issuance_explicit_renewal_consent", "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts", "certops_adcs_receipt_deadline"]
+      .filter((name) => byName.has(name));
+    const recoveryAppend = byName.has("distribution_pagerduty_recovery") ? ["distribution_pagerduty_recovery"] : [];
+    // Recovery can arrive after any already-applied Store prefix. Recognize
+    // those exact continuations without moving their recorded identities.
+    const appendOrders = Array.from({ length: storeAppend.length + 1 }, (_, count) => [
+      ...baseAppend, ...storeAppend.slice(0, count), ...recoveryAppend, ...storeAppend.slice(count),
+    ]);
     recognizedRetirementPreview = oldRows.every((row) => row.version < 70 || oldIdentity.get(row.name) === row.version) &&
-      rows.filter((row) => row.version > 109).every((row, index) => row.version === 110 + index && row.name === appended[index]);
+      appendOrders.some((appended) => rows.filter((row) => row.version > 109)
+        .every((row, index) => row.version === 110 + index && row.name === appended[index]));
     if (!recognizedRetirementPreview) throw new Error("Unsupported Core retirement preview migration history");
   }
   // This reviewed preview predates main's PagerDuty migrations at 94/95.
@@ -228,6 +237,8 @@ function composeMigrations(migrations, recorded = []) {
       // lifecycle is integrated. Its committed append order remains immutable.
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason"],
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup"],
+      [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup",
+        "certops_manual_rollout_authority", "store_issuance_explicit_renewal_consent", "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts"],
     ];
     const laterCompanions = new Set([...lifecycle, Z, "certops_consumer_staging", "certops_review_authority_epochs"]);
     const integratedSeeds = seeds.flatMap((seed) =>
@@ -267,6 +278,7 @@ function composeMigrations(migrations, recorded = []) {
       );
   }
   const dependencies = {
+    certops_adcs_receipt_deadline: ["certops_adcs_expected_identity_receipts"],
     recipient_member_verification: ["recipient_channel_verification"],
     certops_issuance_identity_transfer: ["certops_issuance_job_identity"],
     certops_issuance_job_identity: ["operator_issuance"],

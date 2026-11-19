@@ -9,7 +9,7 @@ the certificate and management period IDs for a registration that was resumed
 or stopped.
 
 - `CERTOPS_ISSUER_CREATED`: `{ issuerId, kind }` records issuer creation.
-- `CERTOPS_ISSUER_PREFLIGHT_DISPATCHED`: `{ issuerId, jobId, agentId }` records a CA preflight request.
+- `CERTOPS_ISSUER_PREFLIGHT_DISPATCHED`: `{ issuerId, issuerName, jobId, agentId, caConfig, template }` records a manual or automatically requested CA check. Older entries may contain only IDs.
 - `CERTOPS_ISSUER_KEY_CONFIRMED`: `{ issuerId, version, caKeySha256 }` records confirmation of a CA public-key pin.
 - `CERTOPS_ENROLLMENT_CREATED`: `{ enrollmentId, issuerId, jobId }` records a new enrollment request.
 - `CERTOPS_ENROLLMENT_RECONCILE_PROPOSED`: `{ enrollmentId, requestId }` records an operator-provided CA request ID for reconciliation.

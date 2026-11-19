@@ -68,6 +68,7 @@
         "revoke",
         "noop",
         "continue-enrollment",
+        "adcs-installation-proof",
         "deploy-from-store",
         "cleanup-from-store",
         "reconcile-from-store"
@@ -81,6 +82,34 @@
         "adcs"
       ],
       "description": "Issuer kind the job runs against (ADR-0014 decision 1). Absent means acme, so jobs that predate issuer kinds validate unchanged. Not named issuer because job payloads and results already use issuer for a certificate's issuer name. The adcs configuration (CA, template, transport) travels only inside the signed enrollment snapshot, never as separate fields that could disagree with it. Attached by the control plane at signed dispatch; a job request that supplies it is refused."
+    },
+    "adcsProof": {
+      "type": "object", "additionalProperties": false,
+      "required": ["receiptId", "enrollmentId", "agentId", "originalJobId", "originalClaimId", "originalAttempt", "snapshotSha256", "destinationSha256", "fingerprintSha256", "csrSpkiSha256"],
+      "properties": {
+        "receiptId": { "$ref": "#/definitions/enrollmentId" },
+        "enrollmentId": { "$ref": "#/definitions/enrollmentId" },
+        "agentId": { "$ref": "#/definitions/enrollmentId" },
+        "originalJobId": { "$ref": "#/definitions/enrollmentId" },
+        "originalClaimId": { "$ref": "#/definitions/enrollmentId" },
+        "originalAttempt": { "type": "integer", "minimum": 1 },
+        "snapshotSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "destinationSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "fingerprintSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "csrSpkiSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "acmeStoreEnrollment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enrollmentId", "originalJobId", "requestB64", "requestSha256"],
+      "description": "Server-owned ACME store binding. Verify the decoded request bytes against their digest and this signed job before use.",
+      "properties": {
+        "enrollmentId": { "$ref": "#/definitions/enrollmentId" },
+        "originalJobId": { "$ref": "#/definitions/enrollmentId" },
+        "requestB64": { "type": "string", "minLength": 4, "maxLength": 43692, "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$" },
+        "requestSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
     },
     "enrollment": {
       "type": "object",
@@ -186,7 +215,8 @@
             "appliance",
             "load-balancer",
             "external",
-            "windows-iis"
+            "windows-iis",
+            "windows-cert-store"
           ]
         },
         "reference": {
@@ -243,6 +273,28 @@
               "store",
               "binding"
             ]
+          }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "windows-cert-store" } }
+          },
+          "then": {
+            "required": ["store"],
+            "properties": {
+              "store": { "const": "My" },
+              "reference": { "maxLength": 253, "pattern": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$" }
+            },
+            "not": {
+              "anyOf": [
+                { "required": ["binding"] },
+                { "required": ["thumbprintSha1"] },
+                { "required": ["managedCertificateId"] },
+                { "required": ["certificateInstanceId"] },
+                { "required": ["fingerprintSha256"] }
+              ]
+            }
           }
         }
       ]
@@ -633,6 +685,63 @@
   },
   "allOf": [
     {
+      "if": { "required": ["action"], "properties": { "action": { "const": "adcs-installation-proof" } } },
+      "then": {
+        "required": ["adcsProof", "enrollment", "issuerKind", "target", "keyMode"],
+        "properties": { "issuerKind": { "const": "adcs" }, "keyMode": { "const": "os-store-managed" },
+          "target": { "properties": { "type": { "const": "windows-cert-store" } } } },
+        "not": { "anyOf": [ { "required": ["caEndpoint"] }, { "required": ["commandRef"] },
+          { "required": ["dnsProvider"] }, { "required": ["keyAlgorithm"] }, { "required": ["keySize"] },
+          { "required": ["acmeStoreEnrollment"] } ] }
+      },
+      "else": { "not": { "required": ["adcsProof"] } }
+    },
+    {
+      "if": { "required": ["acmeStoreEnrollment"] },
+      "then": {
+        "required": ["issuerKind", "target", "keyMode", "action"],
+        "properties": {
+          "issuerKind": { "const": "acme" },
+          "target": { "properties": { "type": { "const": "windows-cert-store" } } },
+          "keyMode": { "const": "os-store-managed" },
+          "action": { "enum": ["renew", "continue-enrollment"] }
+        },
+        "not": { "required": ["enrollment"] }
+      }
+    },
+    {
+      "if": {
+        "required": ["target"],
+        "properties": {
+          "target": {
+            "required": ["type"],
+            "properties": { "type": { "const": "windows-cert-store" } }
+          }
+        }
+      },
+      "then": {
+        "required": ["keyMode"],
+        "properties": {
+          "keyMode": { "const": "os-store-managed" },
+          "action": { "enum": ["renew", "continue-enrollment", "adcs-installation-proof"] }
+        },
+        "not": {
+          "anyOf": [
+            { "required": ["deploymentTargets"] },
+            { "required": ["certPath"] },
+            { "required": ["keyPath"] },
+            { "required": ["chainPath"] },
+            { "required": ["reloadService"] },
+            { "required": ["verifyHost"] },
+            { "required": ["verifyPort"] },
+            { "required": ["publication"] },
+            { "required": ["materialDeployment"] },
+            { "required": ["certificatePem"] }
+          ]
+        }
+      }
+    },
+    {
       "description": "Windows CNG renewal cannot reuse an existing private key; omission retains fresh-key behavior.",
       "if": {
         "required": [
@@ -653,7 +762,7 @@
             ],
             "properties": {
               "type": {
-                "const": "windows-iis"
+                "enum": ["windows-iis", "windows-cert-store"]
               }
             }
           }
@@ -734,9 +843,10 @@
         }
       },
       "then": {
-        "required": [
-          "issuerKind",
-          "enrollment"
+        "required": ["issuerKind"],
+        "anyOf": [
+          { "required": ["enrollment"], "properties": { "issuerKind": { "const": "adcs" } } },
+          { "required": ["acmeStoreEnrollment"], "properties": { "issuerKind": { "const": "acme" } } }
         ]
       }
     },
@@ -758,7 +868,7 @@
       }
     },
     {
-      "description": "An adcs job runs only as the first step or a continuation of an enrollment, against one windows-iis target on the Windows CNG path. It carries none of the fields the snapshot supersedes (ACME, DNS-01, key and SAN selection, the ACME-shaped renewal profile, attached PEM) and no multi-target list.",
+      "description": "An AD CS job runs as the first step or continuation of one enrollment against a Windows CNG destination. It carries none of the fields superseded by the snapshot and no multi-target list.",
       "if": {
         "required": [
           "issuerKind"
@@ -777,7 +887,8 @@
           "action": {
             "enum": [
               "renew",
-              "continue-enrollment"
+              "continue-enrollment",
+              "adcs-installation-proof"
             ]
           },
           "keyMode": {
@@ -786,7 +897,7 @@
           "target": {
             "properties": {
               "type": {
-                "const": "windows-iis"
+                "enum": ["windows-iis", "windows-cert-store"]
               }
             }
           }

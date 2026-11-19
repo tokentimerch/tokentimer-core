@@ -1156,11 +1156,11 @@ describe("continue-enrollment recovery executor", () => {
       const written = await writeIssuedCertificateArtifacts({
         stateDir,
         enrollmentId,
-        leafPem,
+        leafPem: states === "installed" ? fs.readFileSync(path.join(__dirname, "verify", "fixtures", "leaf.crt.pem"), "utf8") : leafPem,
       });
       leafSha256 = written.leafSha256;
     }
-    if (states === "issued" || states === "installing" || states === "validation_deferred") {
+    if (states === "issued" || states === "installing" || states === "installed" || states === "validation_deferred") {
       await writeEnrollmentJournal(stateDir, enrollmentId, {
         state: "issued",
         ...journalBase,
@@ -1168,13 +1168,18 @@ describe("continue-enrollment recovery executor", () => {
         requestId: 40,
       });
     }
-    if (states === "installing") {
+    if (states === "installing" || states === "installed") {
       await writeEnrollmentJournal(stateDir, enrollmentId, {
         state: "installing",
         ...journalBase,
         leafSha256,
         requestId: 40,
         installStep: "accept",
+      });
+    }
+    if (states === "installed") {
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "installed", ...journalBase, leafSha256, requestId: 40, installStep: "complete",
       });
     }
     if (states === "validation_deferred") {
@@ -1253,6 +1258,89 @@ describe("continue-enrollment recovery executor", () => {
       await fsp.rm(stateDir, { recursive: true, force: true });
     }
   }
+
+  it("does not accept a store certificate before the expected identity is acknowledged", async () => {
+    const enrollmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5";
+    await withState(enrollmentId, async (stateDir) => {
+      const target = { type: "windows-cert-store", reference: "app.example.com", store: "My" };
+      const destinationSha256 = crypto.createHash("sha256").update(JSON.stringify(target)).digest("hex");
+      const seed = await seedEnrollment(stateDir, enrollmentId, "issued", "c".repeat(64), {
+        destinationType: "windows-cert-store", destinationSha256, predecessorFingerprintSha256: null,
+      });
+      seed.job.target = target;
+      let reports = 0;
+      let installs = 0;
+      const executors = executorsFor(stateDir, {
+        reportAdcsExpectedIdentity: async () => { reports++; throw new Error("identity acknowledgement unavailable"); },
+        runWindowsIisDeployTail: async () => { installs++; return { status: "succeeded" }; },
+      });
+      const result = await executors.executeWindowsIisContinueEnrollmentJob({ job: seed.job,
+        jobId: seed.journalBase.jobId, client: {}, log: () => {},
+        executionContext: contextFor(seed, { adcsRunDecision6ValidationImpl: async () => ({ ok: true }) }) });
+      assert.equal(result.status, "orphaned_unknown_effect");
+      assert.match(result.errorMessage, /needsOperatorReconciliation=true/);
+      assert.equal(reports, 1);
+      assert.equal(installs, 0);
+      assert.equal(readEnrollmentJournal(stateDir, enrollmentId).journal.state, "issued");
+    });
+  });
+
+  it("re-proves installed store state for the new claim and never repeats acceptance", async () => {
+    const enrollmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4";
+    await withState(enrollmentId, async (stateDir) => {
+      const target = { type: "windows-cert-store", reference: "app.example.com", store: "My" };
+      const destinationSha256 = crypto.createHash("sha256").update(JSON.stringify(target)).digest("hex");
+      const installedPem = fs.readFileSync(path.join(__dirname, "verify", "fixtures", "leaf.crt.pem"), "utf8");
+      const seed = await seedEnrollment(stateDir, enrollmentId, "installed", computeSpkiSha256Hex(installedPem), {
+        destinationType: "windows-cert-store", destinationSha256, predecessorFingerprintSha256: null,
+      });
+      seed.job.target = target;
+      for (const status of ["succeeded", "failed"]) {
+        let called = 0;
+        const executors = executorsFor(stateDir, { runWindowsIisDeployTail: async options => {
+          called++;
+          assert.equal(options.storeRecovery, true);
+          assert.equal(options.storeEnrollmentId, enrollmentId);
+          assert.equal(options.storeDestinationSha256, destinationSha256);
+          await assert.rejects(options.onInstallStep("accept"), /cannot repeat/);
+          return { status, ...(status === "failed" ? { errorMessage: "certificate or protected key mismatch" } : {}) };
+        } });
+        const missingHelpers = contextFor(seed, { adcsHelperPath: path.join(stateDir, "missing-helper.exe"), adcsCaCertPath: path.join(stateDir, "missing-ca.cer") });
+        const result = await executors.executeWindowsIisContinueEnrollmentJob({ job: seed.job, jobId: "recovery-job",
+          client: {}, executionContext: missingHelpers, log: () => {}, onBeforeMutation: () => {} });
+        assert.equal(result.status, status);
+        assert.equal(called, 1);
+        const original = await executors.executeWindowsIisAdcsRenewJob({ job: seed.job, jobId: seed.journalBase.jobId,
+          client: {}, executionContext: missingHelpers, log: () => {}, onBeforeMutation: () => {} });
+        assert.equal(original.status, status);
+        assert.equal(called, 2);
+        const substituted = await executors.executeWindowsIisContinueEnrollmentJob({ job: { ...seed.job, target: { ...target, reference: "other.example.com" } }, jobId: "recovery-job",
+          client: {}, executionContext: missingHelpers, log: () => {}, onBeforeMutation: () => {} });
+        assert.equal(substituted.status, "failed");
+        assert.equal(called, 2);
+        const wrongJob = await executors.executeWindowsIisAdcsRenewJob({ job: seed.job, jobId: "other-job", client: {},
+          executionContext: missingHelpers, log: () => {}, onBeforeMutation: () => {} });
+        assert.notEqual(wrongJob.status, "succeeded");
+        assert.equal(called, 2);
+        const wrongSnapshot = await executors.executeWindowsIisContinueEnrollmentJob({ job: { ...seed.job, enrollment: { ...seed.job.enrollment, snapshotSha256: "f".repeat(64) } },
+          jobId: "recovery-job", client: {}, executionContext: missingHelpers, log: () => {}, onBeforeMutation: () => {} });
+        assert.notEqual(wrongSnapshot.status, "succeeded");
+        assert.equal(called, 2);
+      }
+      const badJournalId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3";
+      const bad = await seedEnrollment(stateDir, badJournalId, "installed", "c".repeat(64), {
+        destinationType: "windows-cert-store", destinationSha256, predecessorFingerprintSha256: null,
+      });
+      bad.job.target = target;
+      let badTailCalled = false;
+      const badExecutor = executorsFor(stateDir, { runWindowsIisDeployTail: async () => { badTailCalled = true; return { status: "succeeded" }; } });
+      const mismatched = await badExecutor.executeWindowsIisContinueEnrollmentJob({ job: bad.job, jobId: "recovery-job", client: {},
+        executionContext: contextFor(bad, { adcsHelperPath: path.join(stateDir, "missing-helper"), adcsCaCertPath: path.join(stateDir, "missing-ca") }),
+        log: () => {}, onBeforeMutation: () => {} });
+      assert.equal(mismatched.status, "failed");
+      assert.equal(badTailCalled, false);
+    });
+  });
 
   it("signed operator proposal rejects a foreign key before validation then validates the matching candidate", async () => {
     const enrollmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5";

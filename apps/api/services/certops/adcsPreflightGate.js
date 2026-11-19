@@ -11,6 +11,8 @@
 const {
   ADCS_PREFLIGHT_MAX_AGE_MS,
 } = require("../../../../packages/contracts/certops/adcs-preflight-freshness.cjs");
+const { ADCS_ENROLL_CAPABILITY, hasFreshCapability } = require("./agentJobEligibility");
+const { computeAgentCompatibility } = require("./agentRegistry");
 
 // Surfaced as renewalPathReason while the scheduler is waiting on an agent.
 const ADCS_PREFLIGHT_WAITING_REASON = "waiting_for_fresh_preflight";
@@ -36,18 +38,75 @@ const QUALIFYING_AGENTS_SQL = `
      AND a.declared_target_selectors @> jsonb_build_array($2::text)
    ORDER BY a.last_seen_at DESC NULLS LAST`;
 
-async function loadCurrentAdcsIssuerVersion({ db, workspaceId, issuerId }) {
+async function loadCurrentAdcsIssuerVersion({ db, workspaceId, issuerId, lockIssuer = false }) {
   const result = await db.query(
-    `SELECT v.ca_config, v.template, v.ca_key_sha256, v.confirmed_at
+    `SELECT v.ca_config, v.template, v.ca_key_sha256, v.confirmed_at,
+            v.version, i.revalidation_required
        FROM certificate_issuers i
        JOIN certificate_issuer_versions v
          ON v.workspace_id = i.workspace_id
         AND v.issuer_id = i.id
         AND v.version = i.current_version
-      WHERE i.workspace_id = $1 AND i.id = $2`,
+      WHERE i.workspace_id = $1 AND i.id = $2 AND i.kind = 'adcs'
+      ${lockIssuer ? "FOR NO KEY UPDATE OF i" : ""}`,
     [workspaceId, issuerId],
   );
   return result.rows[0] || null;
+}
+
+async function findEligibleAdcsPreflightAgent({ db, workspaceId, reference, agentId = null, env }) {
+  // Heartbeats can change the sort key while pages are read. Pool callers use
+  // one snapshot; transaction clients retain the caller's transaction.
+  if (typeof db.connect === "function" && typeof db.idleCount === "number") {
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const result = await findEligibleAdcsPreflightAgent({
+        db: client, workspaceId, reference, agentId, env,
+      });
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  let cursor = null;
+  for (;;) {
+    const { rows } = await db.query(
+      `SELECT id, agent_version, protocol_version, declared_capabilities, capabilities_updated_at,
+            last_seen_at::text AS cursor_seen_at
+       FROM certops_agents
+      WHERE workspace_id = $1 AND status = 'active' AND platform = 'win32'
+        AND agent_kind = 'normal'
+        AND declared_target_selectors @> jsonb_build_array($2::text)
+        AND supported_operations @> '["adcs-preflight","renew"]'::jsonb
+        AND ($3::uuid IS NULL OR id = $3::uuid)
+        AND ($6::boolean OR ($4::timestamptz IS NOT NULL AND
+          (last_seen_at < $4 OR last_seen_at IS NULL OR (last_seen_at = $4 AND id > $5::uuid)))
+          OR ($4::timestamptz IS NULL AND last_seen_at IS NULL AND id > $5::uuid))
+      ORDER BY last_seen_at DESC NULLS LAST, id LIMIT 100`,
+      [workspaceId, reference, agentId, cursor?.cursor_seen_at || null, cursor?.id || null, !cursor],
+    );
+    const candidate = rows.find((row) => {
+      const compatibility = computeAgentCompatibility({
+        agentVersion: row.agent_version,
+        protocolVersion: row.protocol_version,
+      }, env);
+      return compatibility.compatibilityState !== "blocked" &&
+        hasFreshCapability({
+          declaredCapabilities: row.declared_capabilities,
+          capabilitiesUpdatedAt: row.capabilities_updated_at,
+          capability: ADCS_ENROLL_CAPABILITY,
+          env,
+        });
+    });
+    if (candidate) return candidate;
+    if (rows.length < 100) return null;
+    cursor = rows[rows.length - 1];
+  }
 }
 
 function timeMs(value) {
@@ -105,6 +164,7 @@ module.exports = {
   ADCS_PREFLIGHT_MAX_AGE_MS,
   ADCS_PREFLIGHT_WAITING_REASON,
   loadCurrentAdcsIssuerVersion,
+  findEligibleAdcsPreflightAgent,
   loadQualifyingAdcsAgents,
   qualifiesAdcsPreflight,
 };

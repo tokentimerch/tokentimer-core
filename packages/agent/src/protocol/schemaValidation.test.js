@@ -27,4 +27,11 @@ describe("agent protocol schemaValidation fixtures", () => {
       assert.equal(problems.length === 0, fixture.expectValid, problems.join("; "));
     });
   }
+
+  it("accepts a qualified agent's proof-only claim request", () => {
+    const claim = structuredClone(FIXTURES.find(fixture => fixture.id === "claim-valid").message);
+    claim.body.supportedActions = ["adcs-installation-proof"];
+    assert.equal(validateAgentProtocolMessage(claim).valid, true);
+    assert.deepEqual(validateEnvelopeShape(claim), []);
+  });
 });

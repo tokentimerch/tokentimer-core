@@ -12,7 +12,7 @@ const {
   claimJobs,
   recordHeartbeat,
   _test: dispatchInternals,
-} = require("../../apps/api/services/certops/agentDispatch");
+} = require("./helpers/authenticated-agent-dispatch");
 const {
   ENVELOPE_VERSION_1,
   ENVELOPE_VERSION_2,

@@ -17,6 +17,7 @@ const { EventEmitter } = require("node:events");
 
 const {
   handleClaimedJob,
+  completedJobLeaseLossOutcome,
   UNVERIFIED_JOB_ID_PLACEHOLDER,
   buildExecutionContext,
   buildJobPolicyDescriptor,
@@ -54,6 +55,25 @@ const {
   AGENT_TRUST_STORE_PREREQUISITES,
   AGENT_CANDIDATE_CAPABILITIES,
 } = require("./index.js");
+
+it("preserves recovery after a completed AD CS or ACME store job loses its lease", () => {
+  const abort = { status: "blocked", errorMessage: "lease lost" };
+  for (const issuerKind of ["adcs", "acme"]) {
+    for (const action of ["renew", "continue-enrollment"]) {
+      const outcome = completedJobLeaseLossOutcome({ issuerKind, action, target: { type: "windows-cert-store" } }, { status: "succeeded" }, abort);
+      assert.equal(outcome.status, "orphaned_unknown_effect");
+      assert.match(outcome.errorMessage, /needsOperatorReconciliation=true/);
+      const { FIXTURES } = require("../../contracts/certops/agent-protocol-parity-fixtures.cjs");
+      const message = structuredClone(FIXTURES.find(f => f.id === "result-orphaned_unknown_effect-valid").message);
+      Object.assign(message.body, outcome);
+      const validation = require("./protocol/schemaValidation").validateAgentProtocolMessage(message);
+      assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+    }
+  }
+  assert.strictEqual(completedJobLeaseLossOutcome({ action: "adcs-installation-proof", target: { type: "windows-cert-store" } }, { status: "succeeded" }, abort), abort);
+  assert.strictEqual(completedJobLeaseLossOutcome({ action: "renew", target: { type: "windows-cert-store" } }, { status: "dry_run_complete" }, abort), abort);
+  assert.strictEqual(completedJobLeaseLossOutcome({ action: "renew", target: { type: "windows-iis" } }, { status: "succeeded" }, abort), abort);
+});
 const {
   markSideEffectReached,
   recordWindowsCngContainer,
@@ -187,6 +207,48 @@ function claimedJob(overrides = {}) {
     ...overrides,
   };
 }
+
+describe("store-only qualification boundary", () => {
+  it("selects the Windows AD CS executor for the future store target without enabling it", () => {
+    const { isAdcsWindowsTarget } = require("./index");
+    assert.equal(isAdcsWindowsTarget({ keyMode: "os-store-managed", target: { type: "windows-cert-store" } }), true);
+    assert.equal(isAdcsWindowsTarget({ keyMode: "os-store-managed", target: { type: "windows-iis" } }), true);
+    assert.equal(isAdcsWindowsTarget({ keyMode: "agent-local", target: { type: "windows-cert-store" } }), false);
+    assert.equal(isAdcsWindowsTarget({ keyMode: "os-store-managed", target: { type: "file" } }), false);
+  });
+  it("requires the issuer-specific embedded Windows qualification", () => {
+    const { isStoreOnlyQualified } = require("./index");
+    const job = { issuerKind: "adcs" };
+    const present = items => items;
+    const absent = () => [];
+    assert.equal(isStoreOnlyQualified(job, { windows: true, filter: absent }), false);
+    assert.equal(isStoreOnlyQualified(job, { windows: true, filter: present }), true);
+    assert.equal(isStoreOnlyQualified(job, { windows: false, filter: present }), false);
+    assert.equal(isStoreOnlyQualified({ issuerKind: "acme" }, { windows: true, filter: absent }), false);
+    assert.equal(isStoreOnlyQualified({ issuerKind: "acme" }, { windows: true, filter: present }), true);
+  });
+  it("does not advertise a proof-only action in the current unqualified build", () => {
+    const { resolveClaimSupportedActions, AGENT_DECLARED_CAPABILITIES } = require("./index");
+    assert.equal(AGENT_DECLARED_CAPABILITIES.includes("adcs-store-proof-only-v1"), false);
+    assert.equal(resolveClaimSupportedActions({ enabled: true }).includes("adcs-installation-proof"), false);
+  });
+  it("blocks store-only execution before invoking an issuer or store mutation", async () => {
+    for (const issuerKind of ["adcs", "acme"]) {
+      const result = await executeJob({
+        job: {
+          action: "renew",
+          issuerKind,
+          target: { type: "windows-cert-store", reference: "app.example.com", store: "My" },
+        },
+        jobId: "store-only-test",
+        executionContext: { execution: {} },
+        client: {},
+      });
+      assert.equal(result.status, "blocked");
+      assert.match(result.errorMessage, /not qualified/);
+    }
+  });
+});
 
 describe("buildJobPolicyDescriptor", () => {
   it("maps validated metadata policy dimensions and target reference", () => {
@@ -4204,7 +4266,7 @@ describe("renew chain deployment", () => {
     assert.match(
       outcome.errorMessage,
       process.platform === "win32"
-        ? /AD CS renew requires keyMode os-store-managed and a windows-iis target/
+        ? /AD CS renew requires keyMode os-store-managed and a Windows certificate target/
         : /has not qualified adcs-enroll-v1/,
     );
     assert.equal(acmeExecFileImpl.calls.length, 0);

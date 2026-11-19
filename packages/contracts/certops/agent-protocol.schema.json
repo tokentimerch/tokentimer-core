@@ -415,6 +415,7 @@
               "revoke",
               "noop",
               "continue-enrollment",
+              "adcs-installation-proof",
               "protocol_smoke",
               "distribute-trust",
               "revoke-trust",

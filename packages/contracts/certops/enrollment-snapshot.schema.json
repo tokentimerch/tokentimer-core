@@ -116,9 +116,24 @@
     "requireLaterNotAfter": {
       "type": "boolean",
       "description": "When true, an issued certificate whose notAfter is not later than the installed certificate's fails validation."
+    },
+    "destinationType": {
+      "type": "string",
+      "const": "windows-cert-store"
+    },
+    "destinationSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "predecessorFingerprintSha256": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Frozen managed predecessor fingerprint, or null for first issuance."
     }
   },
   "allOf": [
+    {
+      "if": { "required": ["destinationType"] },
+      "then": { "required": ["predecessorFingerprintSha256", "destinationSha256"] },
+      "else": { "not": { "anyOf": [{ "required": ["predecessorFingerprintSha256"] }, { "required": ["destinationSha256"] }] } }
+    },
     {
       "if": { "properties": { "keyAlgorithm": { "const": "rsa" } } },
       "then": { "properties": { "keySize": { "enum": [2048, 3072, 4096] } } }

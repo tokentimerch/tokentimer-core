@@ -8,6 +8,9 @@ const { expect, TestUtils } = require("./setup");
 const { requireMigrateModule } = require("./variant-paths");
 const { runMigrations } = requireMigrateModule();
 const { pool } = require("../../apps/api/db/database");
+const { approveJob } = require("../../apps/api/services/certops/jobApprovals");
+const { dispatchPreflight } = require("../../apps/api/services/certops/certificateEnrollments");
+const { loadCurrentAdcsIssuerVersion } = require("../../apps/api/services/certops/adcsPreflightGate");
 const {
   CERTOPS_ADCS_AGENT_NOT_PREPARED,
   createAutomaticAdcsRenewal,
@@ -77,8 +80,10 @@ describe("AD CS automatic renewal readiness (real database)", function () {
     const agent = await TestUtils.execQuery(
       `INSERT INTO certops_agents (
          workspace_id, agent_id, name, agent_version, protocol_version,
-         credential_prefix, credential_hash, status, declared_target_selectors
-       ) VALUES ($1, $2, 'adcs-agent', '0.1.0', '1.0.0', $3, $4, 'active', $5::jsonb)
+         credential_prefix, credential_hash, status, platform, declared_target_selectors, supported_operations,
+         declared_capabilities, capabilities_updated_at
+       ) VALUES ($1, $2, 'adcs-agent', '0.19.1', '1.0.0', $3, $4, 'active', 'win32', $5::jsonb,
+         '["adcs-preflight","renew"]'::jsonb, '["adcs-enroll-v1"]'::jsonb, NOW())
        RETURNING id`,
       [
         workspaceId,
@@ -133,7 +138,7 @@ describe("AD CS automatic renewal readiness (real database)", function () {
   }
 
   // Runs the real gate against the database and reports the scheduler outcome.
-  async function runGate(issuerId) {
+  async function runGate(issuerId, { automaticPreflight = false } = {}) {
     const certificate = {
       id: crypto.randomUUID(),
       workspace_id: workspaceId,
@@ -159,11 +164,85 @@ describe("AD CS automatic renewal readiness (real database)", function () {
       dbPool: pool,
       certificate,
       mode: "real",
-      env: {},
+      env: { CERTOPS_ENABLED: "true" },
       auditWriter: async () => {},
+      ...(automaticPreflight ? {} : { preflightDispatcher: async () => {} }),
     }).catch((caught) => caught);
     return { error };
   }
+
+  it("queues one approvable and audited preflight for concurrent due renewals", async () => {
+    const { issuerId, agentId } = await scenario();
+    await TestUtils.execQuery(
+      "UPDATE workspaces SET certops_require_approval_always = true WHERE id = $1", [workspaceId],
+    );
+    try {
+      const attempts = await Promise.all([
+        runGate(issuerId, { automaticPreflight: true }),
+        runGate(issuerId, { automaticPreflight: true }),
+      ]);
+      for (const { error } of attempts) expect(error?.code).to.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
+      const { rows: jobs } = await TestUtils.execQuery(
+        `SELECT id, operation, source, status, assigned_agent_id, required_target_selector, preflight_seq
+           FROM certificate_jobs WHERE workspace_id = $1 AND subject_id = $2`,
+        [workspaceId, issuerId],
+      );
+      expect(jobs).to.have.length(1);
+      const [job] = jobs;
+      expect(job).to.include({
+        operation: "adcs-preflight", source: "automation", status: "pending_approval",
+        assigned_agent_id: agentId, required_target_selector: REFERENCE,
+      });
+      expect(Number(job.preflight_seq)).to.equal(1);
+      const { rows: audits } = await TestUtils.execQuery(
+        `SELECT metadata FROM audit_events
+          WHERE workspace_id = $1 AND action = 'CERTOPS_ISSUER_PREFLIGHT_DISPATCHED'
+            AND metadata->>'issuerId' = $2`,
+        [workspaceId, issuerId],
+      );
+      expect(audits).to.have.length(1);
+      expect(audits[0].metadata).to.include({ jobId: job.id, agentId, caConfig: CA, template: TEMPLATE });
+      await approveJob({ workspaceId, jobId: job.id, approverUserId: ownerId });
+      const { rows: approved } = await TestUtils.execQuery(
+        "SELECT status, approved_payload_hash FROM certificate_jobs WHERE id = $1", [job.id],
+      );
+      expect(approved[0].status).to.equal("pending");
+      expect(approved[0].approved_payload_hash).to.match(/^[a-f0-9]{64}$/);
+    } finally {
+      await TestUtils.execQuery(
+        "UPDATE workspaces SET certops_require_approval_always = false WHERE id = $1", [workspaceId],
+      );
+    }
+  });
+
+  it("rechecks issuer and agent authority and rolls back a failed audit", async () => {
+    const { issuerId, agentId } = await scenario();
+    const confirmedVersion = await loadCurrentAdcsIssuerVersion({ db: pool, workspaceId, issuerId });
+    const input = {
+      client: pool, workspaceId, issuerId, agentId, confirmedVersion,
+      caConfig: CA, template: TEMPLATE, targetReference: REFERENCE,
+      automatic: true, env: { CERTOPS_ENABLED: "true" },
+    };
+    await TestUtils.execQuery("UPDATE certificate_issuers SET revalidation_required = true WHERE id = $1", [issuerId]);
+    const refusal = await dispatchPreflight(input).catch((error) => error);
+    expect(refusal?.code).to.equal("CERTOPS_ISSUER_REVALIDATION_REQUIRED");
+    await TestUtils.execQuery("UPDATE certificate_issuers SET revalidation_required = false WHERE id = $1", [issuerId]);
+    await TestUtils.execQuery("UPDATE certops_agents SET status = 'offline' WHERE id = $1", [agentId]);
+    expect(await dispatchPreflight(input)).to.equal(null);
+    await TestUtils.execQuery("UPDATE certops_agents SET status = 'active' WHERE id = $1", [agentId]);
+    const failure = new Error("injected preflight audit failure");
+    const rolledBack = await dispatchPreflight({ ...input, audit: async () => { throw failure; } })
+      .catch((error) => error);
+    expect(rolledBack).to.equal(failure);
+    const { rows: jobs } = await TestUtils.execQuery(
+      "SELECT id FROM certificate_jobs WHERE workspace_id = $1 AND subject_id = $2", [workspaceId, issuerId],
+    );
+    expect(jobs).to.have.length(0);
+    const job = await dispatchPreflight(input);
+    expect(job.id).to.be.a("string");
+    const { rows: issuer } = await TestUtils.execQuery("SELECT preflight_seq FROM certificate_issuers WHERE id = $1", [issuerId]);
+    expect(Number(issuer[0].preflight_seq)).to.equal(1);
+  });
 
   it("qualifies an agent whose safe preflight matches the confirmed CA, template, and key", async () => {
     const { issuerId, agentId } = await scenario();

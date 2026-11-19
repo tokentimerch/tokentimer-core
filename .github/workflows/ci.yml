@@ -1096,6 +1096,9 @@ jobs:
         working-directory: packages/agent
         run: node --test --test-concurrency=2 "src/**/*.test.js" "scripts/**/*.test.js"
 
+      - name: Verify CA watcher with owned benign Windows processes
+        run: node --test tests/e2e/helpers/certops-acme-ca-watch.test.js
+
       - name: Dry-run install-agent.ps1
         shell: pwsh
         run: |

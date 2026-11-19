@@ -317,8 +317,8 @@ export function ConfigStep({ ctx }) {
     reloadService: saved.reloadService || '',
     acmeClientPath: saved.acmeClientPath || '',
     acmeShellPath: saved.acmeShellPath ?? DEFAULT_WINDOWS_SHELL,
-    iisSite: saved.iisSite || 'Default Web Site',
-    iisPort: saved.iisPort || '443',
+    iisSite: saved.iisSite || (objective === 'adcs' ? '' : 'Default Web Site'),
+    iisPort: saved.iisPort || (objective === 'adcs' ? '' : '443'),
     sniHost: saved.sniHost || '',
     caHost: saved.caHost || '',
     caName: saved.caName || '',
@@ -554,8 +554,9 @@ export function ConfigStep({ ctx }) {
               stores CA credentials: the agent authenticates as the computer
               account.
             </Text>
-            <Text fontSize='xs'>
-              Choose the IIS binding when creating the renewal profile.
+            <Text fontSize='xs' data-testid='adcs-preparation-note'>
+              This prepares access to the CA. Choose the certificate destination
+              later when configuring issuance.
             </Text>
           </>
         ) : (

@@ -8,7 +8,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `prerequisite`: needs the fixture or privilege supplied by its owning CI job
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 157
+Total skips found: 161
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -20,6 +20,8 @@ Total skips found: 157
 | `packages/agent/scripts/installer-smoke.test.js` | 373 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/scripts/pack-release.test.js` | 208 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/scripts/pack-release.test.js` | 217 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `platform` |
+| `packages/agent/scripts/windows-service-ca-scm.test.js` | 50 | SCM CA policy admission | describe(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-service-ca.test.js` | 70 | Windows service CA policy | describe(..., { skip }) option-object | `platform` |
 | `packages/agent/src/acme/acme.test.js` | 250 | POSIX hook executes non-executable archive bytes with spaces and quotes in the path | test(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 121 | sets 0700 permissions on non-win32 platforms | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/config/config.test.js` | 129 | re-asserts 0700 on every call even if the mode was loosened | it(..., { skip }) option-object | `platform` |
@@ -50,7 +52,7 @@ Total skips found: 157
 | `packages/agent/src/discovery/windows.test.js` | 498 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 551 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `prerequisite` |
 | `packages/agent/src/discovery/windows.test.js` | 639 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `prerequisite` |
-| `packages/agent/src/index.test.js` | 4223 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
+| `packages/agent/src/index.test.js` | 4285 | refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities | it(..., { skip }) option-object | `platform` |
 | `packages/agent/src/issuers/adcs-enrollment-reconcile.test.js` | 420 | skips E_ACCESSDENIED and denied probes so a later unique match can attach | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/issuers/adcs-enrollment.test.js` | 170 | pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `platform` |
@@ -149,6 +151,8 @@ Total skips found: 157
 | `tests/e2e/certops-trust-api-e2e.test.js` | 20 | trust approval and workspace pause through real API | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-trust-multiple-e2e.test.js` | 13 | independent public trust anchors remain scoped through concurrent approval and retirement | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/e2e/certops-unmanaged-discovery-e2e.test.js` | 30 | quota-blocked real filesystem discovery preserves unmanaged visibility | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `tests/e2e/helpers/certops-acme-ca-watch.test.js` | 31 | real Windows process exit aborts the dedicated watcher without claiming coverage | test(..., { skip }) option-object | `platform` |
+| `tests/e2e/helpers/certops-acme-ca-watch.test.js` | 46 | real watcher interruption aborts the run while its target stays alive | test(..., { skip }) option-object | `platform` |
 | `tests/e2e/material-providers-real.test.js` | 80 | real KV v2: AppRole, ACLs, rotation, exact versions, CAS and uncertain writes | test(..., { skip }) option-object | `prerequisite` |
 | `tests/e2e/material-providers-real.test.js` | 244 | real Azure Key Vault Secrets: publication, recovery and exact immutable retrieval | test(..., { skip }) option-object | `prerequisite` |
 | `tests/e2e/windows-material-custody-real.test.js` | 10 | native Windows existing-key custody and association reject unsafe reuse without mutation | test(..., { skip }) option-object | `platform` |
@@ -168,4 +172,4 @@ Total skips found: 157
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 672 | keeps a same-request idempotent manual-job replay to one audit | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 774 | keeps machine event and evidence ingestion available for pre-existing work while paused | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 904 | serializes real PostgreSQL pause and manual-job races in both commit orders | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/postgres/material-reconciliation.test.js` | 768 | real login approval and Linux agent inspect installed legacy evidence through lost-ack recovery | test(..., { skip }) option-object | `platform` |
+| `tests/postgres/material-reconciliation.test.js` | 771 | real login approval and Linux agent inspect installed legacy evidence through lost-ack recovery | test(..., { skip }) option-object | `platform` |

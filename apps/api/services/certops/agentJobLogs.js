@@ -619,21 +619,25 @@ async function ingestAgentJobLogs({
   env = process.env,
   reservedNames = new Set(),
   quotaLimitBytes,
+  deps = {},
 } = {}) {
   const started = process.hrtime.bigint();
   try {
     if (!isUuid(jobId) || !isUuid(body?.claimId)) {
       return { httpStatus: 409, body: { error: "Claim is not valid", code: CERTOPS_AGENT_LOG_CLAIM_INVALID } };
     }
-    const result = await withTransaction(dbPool, (client) => applyIngest(client, {
-      workspaceId: agent.workspaceId,
-      agentRowId: agent.id,
-      jobId,
-      body,
-      env,
-      reservedNames,
-      quotaLimitBytes,
-    }));
+    const result = await withTransaction(dbPool, async (client) => {
+      await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
+      return applyIngest(client, {
+        workspaceId: agent.workspaceId,
+        agentRowId: agent.id,
+        jobId,
+        body,
+        env,
+        reservedNames,
+        quotaLimitBytes,
+      });
+    });
     noteMetric(() => batchesTotal.inc({ outcome: result.outcome || "ok" }));
     return result;
   } finally {
