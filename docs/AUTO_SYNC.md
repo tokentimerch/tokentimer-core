@@ -116,7 +116,8 @@ no single asset owner. These metrics retain their low-cardinality labels.
 
 - For one connection, allow **Asset expiration** in **System Settings → Auto-sync** with **Override integration metrics** off. Then enable additional metrics and select it on the connection. For all connections, select it in the system override. Helm can allow it through `monitoring.metrics.extraLabels`.
 - The label records a date or UTC timestamp for newly created assets with a verified source expiry. Core supports GitLab. Enterprise adds AWS ACM, Azure Key Vault, Entra ID, GCP and Vault.
-- After a new creation, verify `expiration` on `auto_sync_last_creation_timestamp_seconds` in Grafana. Use an instant query, retain `expiration` in `max by (...)`, and use a query or threshold alert condition. Preview `{{ $labels.expiration }}` in the rule annotation. [Grafana annotation templates](https://grafana.com/docs/grafana/latest/alerting/alerting-rules/templates/reference/#labels).
+- After a new creation, verify `expiration` on `auto_sync_last_creation_timestamp_seconds` in Grafana. Allow and select `asset_name` to show names. The bundled critical rule also requires `monitoring_group=critical`.
+- Use an instant query, retain `expiration` in `max by (...)`, and use a query or threshold alert condition. Preview `{{ $labels.expiration }}` in the rule annotation. [Grafana annotation templates](https://grafana.com/docs/grafana/latest/alerting/alerting-rules/templates/reference/#labels).
 
 ## Cleanup and removal
 
