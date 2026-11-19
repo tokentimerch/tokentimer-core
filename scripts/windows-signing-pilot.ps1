@@ -222,10 +222,46 @@ switch ($Operation) {
         if ((Get-Sha $age) -cne $pinnedAge -or $env:PILOT_INVENTORY_SHA256 -cnotmatch '^[a-f0-9]{64}$') {
             throw 'Pilot encryption tool or exact inventory digest unavailable'
         }
-        Import-Module (Join-Path $PSScriptRoot 'windows-inventory-cms.psm1')
-        $proof = Confirm-WindowsInventoryCms -InventoryPath $inventory -SignaturePath $signature `
-            -ExpectedInventorySha256 $env:PILOT_INVENTORY_SHA256 -PublisherProfileEku $env:PILOT_PROFILE_EKU `
-            -PublisherIssuerSha256 $env:PILOT_ISSUER_SHA256
+        $verification = Import-Module (Join-Path $PSScriptRoot 'windows-inventory-cms.psm1') -PassThru
+        $cmsArguments = @{
+            InventoryPath = $inventory
+            SignaturePath = $signature
+            ExpectedInventorySha256 = $env:PILOT_INVENTORY_SHA256
+            PublisherProfileEku = $env:PILOT_PROFILE_EKU
+            PublisherIssuerSha256 = $env:PILOT_ISSUER_SHA256
+        }
+        try {
+            $proof = Confirm-WindowsInventoryCms @cmsArguments
+        } catch {
+            if ($_.Exception.Message -notmatch '\(0x(?:01000040|01000000|00000040)\)') { throw }
+            . (Join-Path $PSScriptRoot 'windows-signing-chain-cache.ps1')
+            $candidate = & $verification {
+                param($InventoryPath, $SignaturePath, $ExpectedDigest)
+                $content = Read-InventoryVerificationFile $InventoryPath 16MB
+                $signed = Read-InventoryVerificationFile $SignaturePath 17MB
+                Read-WindowsInventoryCms $content $signed $ExpectedDigest
+            } $inventory $signature $env:PILOT_INVENTORY_SHA256
+            $signers = @(
+                @{ Certificate = $candidate.TimestampSigner; Others = $candidate.TimestampCertificates; Usage = '1.3.6.1.5.5.7.3.8' }
+                @{ Certificate = $candidate.Publisher; Others = $candidate.PublisherCertificates; Usage = '1.3.6.1.5.5.7.3.3' }
+            )
+            foreach ($signer in $signers) {
+                $chain = [Security.Cryptography.X509Certificates.X509Chain]::new()
+                try {
+                    $chain.ChainPolicy.ExtraStore.AddRange($signer.Others)
+                    $chain.ChainPolicy.ApplicationPolicy.Add([Security.Cryptography.Oid]::new($signer.Usage)) | Out-Null
+                    $chain.ChainPolicy.VerificationTime = $candidate.Timestamp.UtcDateTime
+                    # Establish locally trusted paths before allowing revocation retrieval.
+                    $chain.ChainPolicy.DisableCertificateDownloads = $true
+                    $chain.ChainPolicy.RevocationMode = 'NoCheck'
+                    if (!$chain.Build($signer.Certificate)) { throw 'CMS path was not trusted before cache refresh' }
+                    Assert-WindowsSigningChain -Chain $chain -Certificate $signer.Certificate
+                } finally {
+                    $chain.Dispose()
+                }
+            }
+            $proof = Confirm-WindowsInventoryCms @cmsArguments
+        }
         $digest = Get-Sha $archive
         $bound = Test-PilotBinding $digest
         if ($bound -cne $proof.InventorySha256 -or (Get-Content -LiteralPath $checksum -Raw).Trim() -cne "$digest  $archiveName") {
