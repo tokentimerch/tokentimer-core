@@ -52,6 +52,7 @@ test("only the protected signer handles pinned main code and the exact same-run 
   const pilotScript = fs.readFileSync(path.join(__dirname, "windows-signing-pilot.ps1"), "utf8");
   assert.match(pilotScript, /& \$dotnet \(Join-Path \$build 'InventoryCmsSigner\.dll'\) \$publisherPins\[0\]/);
   assert.match(pilotScript, /restore \.\/InventoryCmsSigner\.csproj --configfile \.\/NuGet\.Config --locked-mode/);
+  assert.match(pilotScript, /Confirm-WindowsInventoryCms @cmsArguments[\s\S]*Assert-WindowsSigningChain[\s\S]*Confirm-WindowsInventoryCms @cmsArguments/);
 });
 
 test("signed output leaves the Windows worker only as the encrypted handoff", () => {
