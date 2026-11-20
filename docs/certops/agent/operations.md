@@ -254,7 +254,7 @@ Retire the agent in the fleet panel after its jobs finish. `install-agent.sh --u
 
 ### Unattended Windows upgrades
 
-For the classic Windows agent that uses a separately installed Node.js runtime, stage the checksum-verified package and run the installer elevated with the enrolled API URL and workspace ID. When the enrolled credential is present, set `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_unused` for the installer process. Start with a small batch. Advance once each installer exits with `0` and the original fleet row shows the expected version, compatibility, and a fresh heartbeat. If an upgrade is interrupted or a check fails, pause the rollout and preserve the protected state and package directories. [Reconcile uncertain jobs](#9-troubleshooting) before retrying.
+Stage the checksum-verified classic package separately. Run the installer elevated and noninteractively with the enrolled API URL and workspace ID. With the enrolled credential present, set `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_unused` for the installer process. Advance from a small batch after exit `0` and a fresh, compatible heartbeat from each original fleet row at the target version. After a nonzero exit or interruption, pause and record the service status and installed version. Preserve state and recovery directories, confirm which version is running, and [reconcile uncertain jobs](#9-troubleshooting) before retrying.
 
 ### Linux removal behavior
 

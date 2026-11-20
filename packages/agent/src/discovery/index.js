@@ -360,7 +360,7 @@ function detectCoLocatedKey(dirPath, certFileName, dirEntryNames, onWarning) {
  * @returns {object} certificate result entry (without coLocatedKeyDetected,
  *   which the caller attaches separately)
  */
-function parseCertificateFile(filePath, fileBuffer) {
+function parseCertificateFile(filePath, fileBuffer, includePublicCertificate = false) {
   try {
     const cert = new X509Certificate(fileBuffer);
     // SAN-only certificates have an empty Distinguished Name; Node may
@@ -373,6 +373,12 @@ function parseCertificateFile(filePath, fileBuffer) {
       typeof cert.issuer === "string" && cert.issuer.length > 0
         ? cert.issuer
         : null;
+    let intermediateCertificates = [];
+    if (includePublicCertificate) {
+      const blocks = fileBuffer.toString("utf8").match(/-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\r\n\s]+-----END CERTIFICATE-----/g) || [];
+      if (blocks.length > 65) throw new Error("certificate chain exceeds supported limit");
+      intermediateCertificates = blocks.slice(1).map((block) => new X509Certificate(block).toString());
+    }
     return {
       path: filePath,
       parsed: true,
@@ -390,6 +396,7 @@ function parseCertificateFile(filePath, fileBuffer) {
       fingerprint256: cert.fingerprint256,
       fingerprintSha256: normalizeFingerprint(cert.fingerprint256),
       subjectAltName: cert.subjectAltName ?? null,
+      ...(includePublicCertificate ? { certificatePem: cert.toString(), intermediateCertificates } : {}),
     };
   } catch (err) {
     return {
@@ -423,6 +430,7 @@ function discoverCertificatesInDirectory(
     maxFiles = 5000,
     extensions = [".pem", ".crt", ".cer", ".cert"],
     onWarning = () => {},
+    includePublicCertificate = false,
   } = {},
 ) {
   const warnings = [];
@@ -501,7 +509,7 @@ function discoverCertificatesInDirectory(
       const fileBuffer = readSafeCertificateFile(fullPath, scan.size, warn);
       if (fileBuffer === null) continue;
 
-      const certResult = parseCertificateFile(fullPath, fileBuffer);
+      const certResult = parseCertificateFile(fullPath, fileBuffer, includePublicCertificate);
       certResult.coLocatedKeyDetected = detectCoLocatedKey(
         currentDir,
         entry.name,

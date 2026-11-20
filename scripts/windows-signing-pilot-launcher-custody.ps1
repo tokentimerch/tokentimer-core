@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'windows-signing-chain-cache.ps1')
 & (Join-Path $PSScriptRoot 'windows-signing-pilot-stage.ps1') -RunnerTemp $env:RUNNER_TEMP -VerifyStage $Stage
 
 $hashPattern = '^[a-f0-9]{64}$'
@@ -196,9 +197,8 @@ switch ($Operation) {
         }
         $chain = [Security.Cryptography.X509Certificates.X509Chain]::new()
         try {
-            $chain.ChainPolicy.RevocationMode = 'Offline'
-            $chain.ChainPolicy.RevocationFlag = 'ExcludeRoot'
-            if (!$chain.Build($leaf) -or $chain.ChainElements.Count -lt 2 -or
+            Assert-WindowsSigningChain -Chain $chain -Certificate $leaf
+            if ($chain.ChainElements.Count -lt 2 -or
                 [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($chain.ChainElements[1].Certificate.RawData)).ToLowerInvariant() -cne $env:PILOT_ISSUER_SHA256) {
                 throw 'Launcher publisher chain or exact immediate issuer is unverified'
             }

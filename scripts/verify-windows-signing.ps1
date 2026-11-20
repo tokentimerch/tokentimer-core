@@ -1,5 +1,6 @@
 # CI preflight only: this does not qualify an archive or authorize publication.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'windows-signing-chain-cache.ps1')
 $profile = $env:TT_SIGNING_PROFILE_EKU
 $issuerPin = $env:TT_SIGNING_ISSUER_SHA256
 if ($profile -notmatch '^1\.3\.6\.1\.4\.1\.311\.97\.(?:[0-9]+\.){2,}[0-9]+$' -or
@@ -26,10 +27,7 @@ foreach ($file in $paths) {
     if ($usages -cnotcontains '1.3.6.1.5.5.7.3.3' -or $usages -cnotcontains $profile) { throw 'Wrong publisher profile' }
     $chain = New-Object Security.Cryptography.X509Certificates.X509Chain
     try {
-        $chain.ChainPolicy.RevocationMode = [Security.Cryptography.X509Certificates.X509RevocationMode]::Offline
-        $chain.ChainPolicy.RevocationFlag = [Security.Cryptography.X509Certificates.X509RevocationFlag]::ExcludeRoot
-        $chain.ChainPolicy.VerificationFlags = [Security.Cryptography.X509Certificates.X509VerificationFlags]::NoFlag
-        if (-not $chain.Build($signature.SignerCertificate)) { throw 'Publisher chain or cached revocation unavailable' }
+        Assert-WindowsSigningChain -Chain $chain -Certificate $signature.SignerCertificate
         $matched = $false
         $sha = [Security.Cryptography.SHA256]::Create()
         try {

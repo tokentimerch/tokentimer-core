@@ -1,5 +1,7 @@
 "use strict";
 
+const { observedRevocationPrioritySql, issuerEvidenceSql } = require("./certificateSecurity");
+
 const { pool } = require("../../db/database");
 const { Client } = require("pg");
 const {
@@ -113,6 +115,8 @@ function identityRecord(row) {
     locations: row.locations || [],
     sourceCount: Number(row.source_count || 0),
     activeSourceCount: Number(row.active_source_count || 0),
+    revocationObservable: Boolean(row.revocation_observable),
+    observedRevocation: row.observed_revocation || null,
     locationCount: Number(row.location_count || 0),
     stillObserved: Boolean(row.still_observed),
     visibilityUnknown:
@@ -438,6 +442,62 @@ async function listCertificateIdentities({
     const ids = rows
       .filter((row) => row.kind === "identity")
       .map((row) => row.id);
+    // Aggregate only public status facts, even for users who cannot view topology.
+    // A missing check is more concerning than a good result at another location.
+    const revocations = await client.query(
+      `WITH observations AS (
+         SELECT identity.id AS identity_id, observed.public_metadata->'observedRevocation' AS result,
+                observed.observed_at AS captured_at, observed.id
+         FROM certops_certificate_identities identity
+         JOIN certificate_instances observed ON observed.workspace_id = identity.workspace_id
+           AND certops_normalize_fingerprint(observed.observed_fingerprint_sha256) = identity.fingerprint_sha256
+         WHERE identity.workspace_id = $2 AND identity.id = ANY($1::uuid[])
+           AND observed.source IN ('agent_filesystem', 'agent_windows')
+           AND observed.presence_state IS DISTINCT FROM 'confirmed_absent'
+         UNION ALL
+         SELECT identity.id, observed.observed_revocation, observed.captured_at, observed.id
+         FROM certops_certificate_identities identity
+         JOIN certops_slot_observations observed ON observed.workspace_id = identity.workspace_id
+           AND observed.fingerprint_sha256 = identity.fingerprint_sha256
+         WHERE identity.workspace_id = $2 AND identity.id = ANY($1::uuid[])
+           AND observed.source IN ('agent_filesystem', 'agent_windows')
+           AND NOT EXISTS (SELECT 1 FROM certificate_instances instance
+             WHERE instance.workspace_id = observed.workspace_id AND instance.target_id = observed.target_id
+               AND instance.source = observed.source AND instance.source_ref = observed.source_ref
+               AND certops_normalize_fingerprint(instance.observed_fingerprint_sha256) = observed.fingerprint_sha256
+               AND instance.presence_state IS DISTINCT FROM 'confirmed_absent')
+         UNION ALL
+         SELECT identity.id, ${issuerEvidenceSql("observed.public_metadata->'observedRevocation'", "identity.fingerprint_sha256")}, observed.observed_at, observed.id
+         FROM certops_certificate_identities identity
+         JOIN certificate_instances observed ON observed.workspace_id=identity.workspace_id
+           AND (observed.public_metadata->'observedRevocation'->>'revokedIssuerFingerprintSha256'=identity.fingerprint_sha256
+             OR observed.public_metadata->'observedRevocation'->'lastVerified'->>'revokedIssuerFingerprintSha256'=identity.fingerprint_sha256)
+         WHERE identity.workspace_id=$2 AND identity.id=ANY($1::uuid[])
+           AND observed.source IN ('agent_filesystem','agent_windows') AND observed.presence_state IS DISTINCT FROM 'confirmed_absent'
+         UNION ALL
+         SELECT identity.id, ${issuerEvidenceSql("observed.observed_revocation", "identity.fingerprint_sha256")}, observed.captured_at, observed.id
+         FROM certops_certificate_identities identity
+         JOIN certops_slot_observations observed ON observed.workspace_id=identity.workspace_id
+           AND (observed.observed_revocation->>'revokedIssuerFingerprintSha256'=identity.fingerprint_sha256
+             OR observed.observed_revocation->'lastVerified'->>'revokedIssuerFingerprintSha256'=identity.fingerprint_sha256)
+         WHERE identity.workspace_id=$2 AND identity.id=ANY($1::uuid[])
+           AND observed.source IN ('agent_filesystem','agent_windows')
+           AND NOT EXISTS (SELECT 1 FROM certificate_instances instance
+             WHERE instance.workspace_id=observed.workspace_id AND instance.target_id=observed.target_id
+               AND instance.source=observed.source AND instance.source_ref=observed.source_ref
+               AND certops_normalize_fingerprint(instance.observed_fingerprint_sha256)=observed.fingerprint_sha256
+               AND instance.presence_state IS DISTINCT FROM 'confirmed_absent')
+       )
+       SELECT DISTINCT ON (identity_id) identity_id, result FROM observations
+       ORDER BY identity_id, ${observedRevocationPrioritySql("result")},
+         result->>'validUntil' ASC NULLS FIRST, captured_at DESC NULLS LAST, id`,
+      [ids, workspaceId],
+    );
+    const revocationMap = new Map(revocations.rows.map((result) => [result.identity_id, result.result]));
+    for (const row of rows) {
+      row.revocation_observable = revocationMap.has(row.id);
+      row.observed_revocation = revocationMap.get(row.id) || null;
+    }
     const sources = await client.query(
       `SELECT * FROM (SELECT a.identity_id, p.id AS period_id,
               p.managed_certificate_id, p.ended_at AS period_ended_at,
@@ -1223,11 +1283,12 @@ async function stopManagingSource({
         AND status IN ('claimed', 'running')`,
       [workspaceId, periodId],
     );
+    const runningJobs = Number(running.rows[0]?.c || 0);
     if (period.ended_at)
       return {
         periodId,
         endedAt: period.ended_at,
-        runningJobs: Number(running.rows[0]?.c || 0),
+        runningJobs,
       };
     await tx.query(
       `INSERT INTO audit_events(actor_user_id, subject_user_id, action,
@@ -1239,6 +1300,10 @@ async function stopManagingSource({
         JSON.stringify({
           periodId,
           managedCertificateId: period.managed_certificate_id,
+          identityId: period.current_identity_id,
+          renewalProfileId: period.renewal_profile_id,
+          automationEnabled: period.automation_enabled,
+          runningJobs,
         }),
         workspaceId,
       ],
@@ -1246,7 +1311,7 @@ async function stopManagingSource({
     return {
       periodId,
       endedAt: closed.rows[0].ended_at,
-      runningJobs: Number(running.rows[0]?.c || 0),
+      runningJobs,
     };
   });
 }
@@ -1358,7 +1423,13 @@ async function readdManagingSource({
         $2::jsonb, $3)`,
       [
         actorUserId,
-        JSON.stringify({ periodId: inserted.rows[0].id, managedCertificateId }),
+        JSON.stringify({
+          periodId: inserted.rows[0].id,
+          managedCertificateId,
+          identityId: inserted.rows[0].current_identity_id,
+          renewalProfileId: inserted.rows[0].renewal_profile_id,
+          automationEnabled: inserted.rows[0].automation_enabled,
+        }),
         workspaceId,
       ],
     );

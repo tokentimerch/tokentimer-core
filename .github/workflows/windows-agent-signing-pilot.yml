@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PILOT_SOURCE: '097efce0423c48a2264943009b62fb7bf402e84d'
+  PILOT_SOURCE: '54d13375c9f8f4b60f183ec1da450700e9c0bd55'
   PILOT_VERSION: '0.20.0'
   PILOT_NODE_VERSION: '24.22.3'
   PILOT_GO_VERSION: '1.26.11'
@@ -29,7 +29,7 @@ env:
 
 jobs:
   build:
-    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == '097efce0423c48a2264943009b62fb7bf402e84d'
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == '54d13375c9f8f4b60f183ec1da450700e9c0bd55'
     permissions:
       contents: read
     runs-on: ubuntu-24.04
@@ -120,7 +120,7 @@ jobs:
           retention-days: 1
 
   sign-amd64:
-    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == '097efce0423c48a2264943009b62fb7bf402e84d'
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == '54d13375c9f8f4b60f183ec1da450700e9c0bd55'
     needs: build
     environment: windows-agent-signing
     permissions:
@@ -196,29 +196,10 @@ jobs:
         run: ./scripts/windows-signing-pilot.ps1 -Operation Inventory -Stage $env:PILOT_STAGE
 
       - name: Sign the exact bound pilot inventory
-        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
-        with:
-          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
-          files: ${{ steps.inventory.outputs.path }}
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-          generate-pkcs7: true
-          pkcs7-options: Embedded
-          pkcs7-oid: 1.2.840.113549.1.7.1
-          exclude-environment-credential: true
-          exclude-workload-identity-credential: true
-          exclude-managed-identity-credential: true
-          exclude-shared-token-cache-credential: true
-          exclude-visual-studio-credential: true
-          exclude-visual-studio-code-credential: true
-          exclude-azure-cli-credential: false
-          exclude-azure-powershell-credential: true
-          exclude-azure-developer-cli-credential: true
-          exclude-interactive-browser-credential: true
-          cache-dependencies: false
+        shell: pwsh
+        env:
+          PILOT_INVENTORY_SHA256: ${{ steps.inventory.outputs.sha256 }}
+        run: ./scripts/windows-signing-pilot.ps1 -Operation SignInventory -Stage $env:PILOT_STAGE
 
       - name: Verify CMS and seal all lab files to the protected recipient key
         shell: pwsh

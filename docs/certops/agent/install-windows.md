@@ -25,7 +25,7 @@ The installer prompts privately for the bootstrap token. The service runs as Loc
 
 For a private API CA, set `caBundlePath` in any prewritten configuration. `--ca-bundle` copies the CA into the state directory but only adds that setting when creating a new config. API, material-store and issued-certificate trust are separate.
 
-Write your policy first, then run the installer: it keeps an existing `config.json` and only creates one when absent. Command profile names and target selectors are read when the agent starts, so prepare them before the first registration. With a loopback `http` API address, pass `--allow-insecure-local-http` and also add `"allowInsecureLocalHttp": true` to a hand-written `config.json`. On an upgrade the installer still asks for a token; a registered agent keeps its credential and does not use it, so paste any value that starts with `ttboot_` or set `$env:TOKENTIMER_AGENT_BOOTSTRAP_TOKEN = 'ttboot_unused'`.
+Write your policy first, then run the installer: it keeps an existing `config.json` and only creates one when absent. Command profile names and target selectors are read when the agent starts, so prepare them before the first registration. With a loopback `http` API address, pass `--allow-insecure-local-http` and also add `"allowInsecureLocalHttp": true` to a hand-written `config.json`. For an already enrolled agent, follow [unattended Windows upgrades](operations.md#unattended-windows-upgrades).
 
 Save `config.json` and any DNS credentials file as UTF-8 without a byte order mark. Windows PowerShell 5.1 `Set-Content -Encoding utf8` adds one and the agent refuses the file. Use Notepad, or `[IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false)))`.
 
@@ -35,13 +35,13 @@ For a protected config that even an elevated editor cannot change, follow [Windo
 
 ### Unattended classic installation
 
-Verify the classic archive against its published checksum before extracting it. From the extracted directory, run an elevated RMM job or a Group Policy startup script scoped to the target computers. Inject a distinct, unexpired, single-use token per host into the installer process as `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN`. Restrict any host-local token file to SYSTEM and Administrators. Keep tokens out of SYSVOL, command arguments and logs.
+Verify the classic archive against its published checksum before extracting it. From the extracted directory, run an elevated RMM job or a Group Policy startup script scoped to the target computers. Supply the API URL and workspace ID from the deployment job. Inject a distinct, unexpired, single-use token per host as `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN` and stop if the token is missing or expired. Restrict any local token file to SYSTEM and Administrators before writing it. Keep tokens out of SYSVOL, command arguments and logs.
 
 ```powershell
 powershell.exe -NoProfile -NonInteractive -File .\scripts\install-agent.ps1 --api-url $ApiUrl --workspace-id $WorkspaceId
 ```
 
-Clear the environment variable and remove any staged token file after the installer exits. Pause the rollout on any nonzero exit. Advance after exit `0`, a running service and a fresh, compatible heartbeat in the intended workspace.
+Clear the environment variable and remove any staged token file after the installer exits. Pause on any nonzero exit. Advance after exit `0`, a running service and a fresh, compatible heartbeat in the intended workspace.
 
 ## Verify
 
@@ -51,6 +51,10 @@ The bundled ACME path uses DNS-01, including Windows/IIS targets. See [DNS and A
 
 For an API-created no-op smoke test, list `GET /api/v1/workspaces/{workspaceId}/certops/agents`, match `items[].agentId` to the local configuration's `agentId`, and use that row's `items[].id` as `assignedAgentId`. Send `POST /api/v1/workspaces/{workspaceId}/certops/jobs` with `{"operation":"noop","mode":"dry_run","assignedAgentId":"REPLACE_WITH_FLEET_AGENT_ROW_UUID"}`; approve it if required by workspace policy, then poll its job endpoint for `dry_run_complete`.
 
+If registration or heartbeat fails, check `Get-Service TokenTimerAgent`, the Windows Application log, and the configured URL and workspace. For a private CA or an approved TLS-inspecting proxy, update `caBundlePath` in the existing configuration using [Windows maintenance](../windows-maintenance.md#edit-configuration-without-losing-identity). Restart and check the original fleet row for an enrolled agent. For a rejected or expired token on a new host, obtain a new one-use token. Redact bootstrap tokens, credentials and keys from support logs.
+
 ## Continue
 
 [Windows runtime details](windows-runtime.md) · [Upgrades and retirement](operations.md) · [Agent overview](../agent.md)
+
+Follow the [bundled runtime](https://github.com/tokentimerch/tokentimer-core/issues/542) and [release signatures and SBOM](https://github.com/tokentimerch/tokentimer-core/issues/537) issues for packaging updates.

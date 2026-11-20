@@ -118,6 +118,7 @@ async function repairPublicationRenewalProfile({
       targetType: "managed_certificate",
       targetId: certificateId,
       metadata: {
+        managedCertificateId: certificateId,
         profileId: result.profileId,
         publishingJobId: proof.id,
         groupId: group.id,

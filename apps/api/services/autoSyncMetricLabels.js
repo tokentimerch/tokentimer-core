@@ -1,8 +1,10 @@
 "use strict";
 
 const { createHash } = require("node:crypto");
+const { normalizeProviderExpiry: metricExpiration } = require("./integrationUtils");
 
-const OPTIONAL_LABELS = ["configuration_name", "monitoring_group", "kind", "asset_name", "project", "group", "owner_username"];
+const EXPLICIT_SELECTION_LABELS = ["owner_username", "expiration"];
+const OPTIONAL_LABELS = ["configuration_name", "monitoring_group", "kind", "asset_name", "project", "group", ...EXPLICIT_SELECTION_LABELS];
 const systemSettings = require("./systemSettings");
 systemSettings.registerJsonColumn("auto_sync_metrics", {
   envMap: { enabled: "AUTO_SYNC_METRICS_ENABLED", labels: "AUTO_SYNC_METRICS_LABELS", override_metrics: null,
@@ -10,7 +12,7 @@ systemSettings.registerJsonColumn("auto_sync_metrics", {
   validate: systemMetricSettingsError,
 });
 const DEFAULT_SYSTEM_LABELS = ["configuration_name", "monitoring_group", "kind"];
-const HIGH_CARDINALITY_LABELS = ["asset_name", "project", "group", "owner_username"];
+const HIGH_CARDINALITY_LABELS = ["asset_name", "project", "group", ...EXPLICIT_SELECTION_LABELS];
 function deploymentMetricLabels(env = process.env) {
   const raw = String(env.AUTO_SYNC_METRICS_LABELS || "").trim();
   if (!raw) return null;
@@ -75,12 +77,13 @@ function systemMetricPolicy(stored = {}, env = process.env) {
   const labelsLocked = deploymentLabels !== null;
   const configured = deploymentLabels ?? (Array.isArray(stored?.labels) ? OPTIONAL_LABELS.filter(label => stored.labels.includes(label)) : DEFAULT_SYSTEM_LABELS);
   const permitted = permittedExtraLabels(env, stored);
-  // Owner permission is not selection; retain the older asset-label defaults.
+  // Only the original asset labels are implicitly selected by the deployment allowlist.
   const labels = !labelsLocked && String(env.AUTO_SYNC_METRICS_EXTRA_LABELS || "").trim()
     ? [...configured.filter(label => !HIGH_CARDINALITY_LABELS.includes(label)),
-      ...permitted.filter(label => label !== "owner_username" || configured.includes(label))] : configured;
+      ...permitted.filter(label => !EXPLICIT_SELECTION_LABELS.includes(label) || configured.includes(label))] : configured;
   const group = typeof env.AUTO_SYNC_METRICS_MONITORING_GROUP === "string" ? env.AUTO_SYNC_METRICS_MONITORING_GROUP.trim() : "";
   return { enabled, labels: labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label) || permitted.includes(label)),
+    extra_labels: permitted,
     override_metrics: Boolean(raw) || (stored?.override_metrics ?? typeof stored?.enabled === "boolean"),
     override_monitoring_group: Boolean(group) || stored?.override_monitoring_group === true,
     monitoring_group: group || (stored?.monitoring_group || "").trim(),
@@ -114,14 +117,44 @@ function effectiveMetricSettings(value, env = process.env, storedPolicy) {
     settings.labels = policy.labels;
   }
   if (policy.override_monitoring_group) settings.monitoring_group = policy.monitoring_group;
-  const permitted = permittedExtraLabels(env, storedPolicy);
-  settings.labels = settings.labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label) || permitted.includes(label));
+  settings.labels = settings.labels.filter(label => !HIGH_CARDINALITY_LABELS.includes(label) || policy.extra_labels.includes(label));
   return settings;
 }
 function metadata(value) { return typeof value === "string" && value.length <= 512 ? value : ""; }
-function metricSourceDimensions(item) {
-  return { project: metadata(item.project_path || item.project_name || item.repository || item.projectId),
-    group: metadata(item.group_path || item.group_name),
+// Only scanners with an authoritative expiry emit metric_expiration.
+const EXPIRING_ASSET_PROVIDERS = new Map([
+  ["gitlab-pat", "gitlab"],
+  ["gitlab-project-token", "gitlab"],
+  ["gitlab-group-token", "gitlab"],
+  ["gitlab-deploy-token", "gitlab"],
+  ["gitlab-ssh-key", "gitlab"],
+  ["aws-acm", "aws"],
+  ["azure-key-vault-secret", "azure"],
+  ["azure-key-vault-key", "azure"],
+  ["azure-key-vault-certificate", "azure"],
+  ["azure-ad-client-secret", "azure-ad"],
+  ["azure-ad-certificate", "azure-ad"],
+  ["azure-ad-sp-secret", "azure-ad"],
+  ["azure-ad-sp-certificate", "azure-ad"],
+  ["gcp-secret-manager", "gcp"],
+  ["gcp-certificate-manager-cert", "gcp"],
+  ["gcp-compute-ssl-cert", "gcp"],
+  ["vault-pki", "vault"],
+  ["vault-kv", "vault"],
+]);
+
+function supportsMetricExpiration(provider, sourceKind) {
+  return EXPIRING_ASSET_PROVIDERS.has(sourceKind) && EXPIRING_ASSET_PROVIDERS.get(sourceKind) === provider;
+}
+
+function metricSourceDimensions(item, dimensions = {
+  project: metadata(item.project_path || item.project_name || item.repository || item.projectId),
+  group: metadata(item.group_path || item.group_name),
+}) {
+  const { expiration: _expiration, ...sourceDimensions } = dimensions;
+  const expiration = EXPIRING_ASSET_PROVIDERS.has(item.sourceKind) ? metricExpiration(item.metric_expiration) : "";
+  return { ...sourceDimensions,
+    ...(expiration ? { expiration } : {}),
     ...(item.sourceKind === "gitlab-pat" && metadata(item.owner_username)
       ? { owner_username: metadata(item.owner_username) } : {}) };
 }
@@ -130,12 +163,15 @@ function creationDimensions(payload, settings, env = process.env, policy) {
   const exposes = label => selected.enabled && selected.labels.includes(label);
   const owner = payload.source_provider === "gitlab" && payload.source_kind === "gitlab-pat" &&
     exposes("owner_username") ? metadata(payload.source_dimensions?.owner_username) : "";
+  const expiration = supportsMetricExpiration(payload.source_provider, payload.source_kind) &&
+    exposes("expiration") ? metricExpiration(payload.source_dimensions?.expiration) : "";
   return { kind: KNOWN_KINDS.has(payload.source_kind) ? payload.source_kind : "other",
     asset_name: exposes("asset_name") ? metadata(payload.name) : "",
     project: exposes("project") ? metadata(payload.source_dimensions?.project) : "",
     group: exposes("group") ? metadata(payload.source_dimensions?.group) : "",
-    // Omit unknown owners to preserve the serialized key and hash of historical rows.
-    ...(owner ? { owner_username: owner } : {}) };
+    // Omit missing opt-in dimensions to preserve the hashes of historical rows.
+    ...(owner ? { owner_username: owner } : {}),
+    ...(expiration ? { expiration } : {}) };
 }
 async function recordCreationMetrics(client, context, payload, settings, policy) {
   const dimensions = creationDimensions(payload, settings, process.env, policy);
@@ -143,11 +179,11 @@ async function recordCreationMetrics(client, context, payload, settings, policy)
     VALUES ($1, $2, 1) ON CONFLICT (provider, kind) DO UPDATE
     SET items_created_total = auto_sync_kind_stats.items_created_total + 1`, [context.provider, dimensions.kind]);
   await client.query(`INSERT INTO auto_sync_creation_stats
-    (config_id, kind, asset_name, project, group_name, dimension_key, owner_username, items_created_total, last_created_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 1, NOW())
+    (config_id, kind, asset_name, project, group_name, dimension_key, owner_username, expiration, items_created_total, last_created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, NOW())
     ON CONFLICT (config_id, dimension_key) DO UPDATE
     SET items_created_total = auto_sync_creation_stats.items_created_total + 1, last_created_at = NOW()`,
   [context.configId, dimensions.kind, dimensions.asset_name, dimensions.project, dimensions.group,
-    createHash("sha256").update(JSON.stringify(dimensions)).digest("hex"), dimensions.owner_username || ""]);
+    createHash("sha256").update(JSON.stringify(dimensions)).digest("hex"), dimensions.owner_username || "", dimensions.expiration || ""]);
 }
-module.exports = { deploymentMetricLabels, deploymentMetricLabelOptions, systemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, readSystemMetricPolicy, DEFAULT_SYSTEM_LABELS, permittedExtraLabels, HIGH_CARDINALITY_LABELS, effectiveMetricSettings, KNOWN_KINDS, OPTIONAL_LABELS, metricSettingsError, normalizeMetricSettings, metricSourceDimensions, creationDimensions, recordCreationMetrics };
+module.exports = { deploymentMetricLabels, deploymentMetricLabelOptions, systemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, readSystemMetricPolicy, DEFAULT_SYSTEM_LABELS, permittedExtraLabels, HIGH_CARDINALITY_LABELS, EXPLICIT_SELECTION_LABELS, effectiveMetricSettings, KNOWN_KINDS, OPTIONAL_LABELS, supportsMetricExpiration, metricSettingsError, normalizeMetricSettings, metricSourceDimensions, metricExpiration, creationDimensions, recordCreationMetrics };

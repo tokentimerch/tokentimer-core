@@ -1,4 +1,5 @@
 const { expect } = require("chai");
+const { readFileSync } = require("node:fs");
 const Module = require("module");
 const path = require("path");
 
@@ -230,10 +231,13 @@ describe("Provider service unit coverage", () => {
             return { Users: [{ UserName: "deploy-bot" }] };
           }
           if (command instanceof ListAccessKeysCommand) {
+            const next = command.input.Marker === "keys-page-two";
             return {
+              IsTruncated: !next,
+              ...(next ? {} : { Marker: "keys-page-two" }),
               AccessKeyMetadata: [
                 {
-                  AccessKeyId: "AKIA1234567890",
+                  AccessKeyId: next ? "AKIA9876543210" : "AKIA1234567890",
                   Status: "Active",
                   CreateDate: new Date("2025-02-01T00:00:00Z"),
                 },
@@ -268,7 +272,7 @@ describe("Provider service unit coverage", () => {
           if (command instanceof DescribeCertificateCommand) {
             return {
               Certificate: {
-                NotAfter: new Date("2026-06-01T00:00:00Z"),
+                NotAfter: new Date("2026-06-01T08:19:23Z"),
                 Issuer: "LetsEncrypt",
                 Serial: "serial-123",
                 InUseBy: ["alb-1"],
@@ -310,25 +314,31 @@ describe("Provider service unit coverage", () => {
           secretAccessKey: "super-secret-key",
           region: "us-east-1",
           include: { secrets: true, iam: true, certificates: true },
-          maxItems: 10,
+          maxItems: 2,
         }),
       );
 
       expect(result.items).to.be.an("array").with.length.greaterThan(0);
-      expect(
-        result.items.some((i) => i.source === "aws-secrets-manager"),
-      ).to.equal(true);
-      expect(result.items.some((i) => i.source === "aws-acm")).to.equal(true);
-      expect(result.items.some((i) => i.source === "aws-iam-key")).to.equal(
-        true,
-      );
+      expect(result.items.find((i) => i.source === "aws-secrets-manager"))
+        .to.include({ expiration: "2026-01-01" })
+        .and.not.have.property("metric_expiration");
+      expect(result.items.find((i) => i.source === "aws-acm")).to.include({
+        expiration: "2026-06-01",
+        metric_expiration: "2026-06-01T08:19:23.000Z",
+      });
+      expect(result.items.find((i) => i.source === "aws-iam-key"))
+        .to.be.an("object")
+        .and.not.have.property("metric_expiration");
+      expect(result.items.filter((i) => i.source === "aws-iam-key").map(i => i.sourceObjectId))
+        .to.deep.equal(["AKIA1234567890", "AKIA9876543210"]);
       expect(result.summary.some((s) => s.type === "secrets_manager")).to.equal(
         true,
       );
       expect(
         result.summary.some((s) => s.type === "acm_certificates"),
       ).to.equal(true);
-      expect(result.summary.some((s) => s.type === "iam_keys")).to.equal(true);
+      expect(result.summary.find((s) => s.type === "iam_keys"))
+        .to.include({ found: 2, truncated: false, complete: true });
     });
 
     // Regression guard: ACM ListCertificates defaults to server-side
@@ -530,6 +540,66 @@ describe("Provider service unit coverage", () => {
       expect(keys[0].expiration).to.be.a("string");
     });
 
+    for (const collection of ["secrets", "certificates", "keys"]) {
+      for (const issue of ["missing identifier", "duplicate across pages"]) {
+        it(`marks ${collection} incomplete after a ${issue} while retaining observed assets`, async () => {
+          const vaultUrl = "https://vault.example.com";
+          const field = collection === "keys" ? "kid" : "id";
+          const azure = requireWithMocks(resolveServiceModule("azureIntegration"), {
+            axios: async ({ url }) => {
+              const request = new URL(url);
+              if (request.pathname.endsWith("/Asset")) return { data: {} };
+              if (request.searchParams.has("$skiptoken")) {
+                return { data: { value: [issue === "missing identifier"
+                  ? { attributes: { enabled: true } }
+                  : { [field]: `${vaultUrl}/${collection}/ASSET` }] } };
+              }
+              return { data: {
+                value: [
+                  { [field]: `${vaultUrl}/${collection}/Asset`, attributes: { exp: 1893456000 } },
+                  { [field]: `${vaultUrl}/${collection}/Disabled`, attributes: { enabled: false } },
+                  ...(collection === "keys" ? [{ id: `${vaultUrl}/keys/Legacy` }] : []),
+                ],
+                nextLink: `${vaultUrl}/${collection}?$skiptoken=page-2`,
+              } };
+            },
+          });
+          const result = await azure.scanAzure({ vaultUrl, token: "test-token", include: { [collection]: true } });
+          expect(result.items.map(item => item.name)).to.deep.equal(collection === "keys" ? ["Asset", "Legacy"] : ["Asset"]);
+          expect(result.items[0].metric_expiration).to.equal("2030-01-01T00:00:00.000Z");
+          expect(result.summary[0]).to.include({ complete: false, truncated: false });
+          expect(result.summary[0].error).to.match(/invalid or repeated object identifier/);
+        });
+      }
+    }
+
+    it("enforces the shared limit when concurrent certificate details finish", async () => {
+      const vaultUrl = "https://vault.example.com";
+      let certificateNames = ["First", "Second"];
+      const azure = requireWithMocks(resolveServiceModule("azureIntegration"), {
+        axios: async ({ url }) => {
+          const path = new URL(url).pathname;
+          if (path === "/secrets") return { data: { value: [{ id: `${vaultUrl}/secrets/Credential` }] } };
+          if (path === "/certificates") return { data: {
+            value: certificateNames.map(name => ({ id: `${vaultUrl}/certificates/${name}` })),
+          } };
+          await new Promise(resolve => setImmediate(resolve));
+          return { data: { attributes: { exp: 1893456000 } } };
+        },
+      });
+      const scan = () => azure.scanAzure({ vaultUrl, token: "test-token",
+        include: { secrets: true, certificates: true }, maxItems: 2 });
+      const capped = await scan();
+      expect(capped.items).to.have.length(2);
+      expect(capped.summary.find(scope => scope.type === "certificates"))
+        .to.include({ found: 1, truncated: true, complete: false });
+      certificateNames = ["First"];
+      const exact = await scan();
+      expect(exact.items).to.have.length(2);
+      expect(exact.summary.find(scope => scope.type === "certificates"))
+        .to.include({ found: 1, truncated: false, complete: true });
+    });
+
     it("refuses Key Vault pagination URLs that leave the vault host", async () => {
       const requestedUrls = [];
       const axiosMock = async (config) => {
@@ -585,6 +655,24 @@ describe("Provider service unit coverage", () => {
       expect(secrets.items.map((s) => s.id)).to.deep.equal(["s1", "s2"]);
       expect(requestedUrls[1]).to.match(/vault\.example\.com/);
       expect(requestedUrls[1]).to.match(/skiptoken=abc/);
+    });
+
+    it("rejects malformed pages and repeated Key Vault continuations", async () => {
+      const nextLink = "https://vault.example.com/secrets?api-version=7.4&$skiptoken=abc";
+      for (const [data, message, expectedRequests] of [
+        [{}, /Invalid Azure Key Vault list response/, 1],
+        [{ value: [], nextLink }, /repeated.*pagination/i, 2],
+      ]) {
+        let requests = 0;
+        const azure = requireWithMocks(resolveServiceModule("azureIntegration"), {
+          axios: async () => { requests++; return { data }; },
+        });
+        await expectReject(
+          () => azure._test.listSecrets({ vaultUrl: "https://vault.example.com", token: "test-token" }),
+          message,
+        );
+        expect(requests).to.equal(expectedRequests);
+      }
     });
   });
 
@@ -649,6 +737,24 @@ describe("Provider service unit coverage", () => {
         "https://graph.microsoft.com/v1.0/applications?$skiptoken=abc",
       );
       expect(requestedUrls[1]).to.not.match(/v1\.0\/v1\.0/);
+    });
+
+    it("rejects malformed pages and repeated Graph continuations", async () => {
+      const nextLink = "https://graph.microsoft.com/v1.0/applications?$skiptoken=abc";
+      for (const [data, message, expectedRequests] of [
+        [{}, /Invalid Microsoft Graph applications list response/, 1],
+        [{ value: [], "@odata.nextLink": nextLink }, /repeated.*pagination/i, 2],
+      ]) {
+        let requests = 0;
+        const azureAd = requireWithMocks(resolveServiceModule("azureADIntegration"), {
+          axios: async () => { requests++; return { data }; },
+        });
+        await expectReject(
+          () => azureAd._test.listApplications({ token: "header.payload.signature" }),
+          message,
+        );
+        expect(requests).to.equal(expectedRequests);
+      }
     });
 
     it("refuses Graph pagination URLs that leave graph.microsoft.com", async () => {
@@ -780,6 +886,9 @@ describe("Provider service unit coverage", () => {
       });
 
       expect(result.items).to.have.length(6);
+      expect(result.items.map((item) => item.metric_expiration)).to.deep.equal(
+        Array(6).fill(end),
+      );
       const byKind = Object.fromEntries(
         result.summary.map((s) => [s.sourceKind, s]),
       );
@@ -839,7 +948,7 @@ describe("Provider service unit coverage", () => {
       );
     });
 
-    it("returns empty list on 404 for listSecrets", async () => {
+    it("keeps missing GCP projects out of authoritative cleanup", async () => {
       const axiosMock = async () => {
         const err = new Error("missing");
         err.response = { status: 404, data: {} };
@@ -848,12 +957,23 @@ describe("Provider service unit coverage", () => {
       const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
         axios: axiosMock,
       });
-      const secrets = await gcp._test.listSecrets({
-        projectId: "proj",
-        accessToken: "token",
-        maxItems: 5,
-      });
-      expect(secrets.items).to.deep.equal([]);
+      await expectReject(() => gcp._test.listSecrets({
+        projectId: "proj", accessToken: "token", maxItems: 5,
+      }), /missing/);
+    });
+
+    it("rejects malformed secret list pages and repeated cursors", async () => {
+      for (const [data, pattern] of [
+        [{ secrets: {} }, /Invalid GCP Secret Manager list response/],
+        [{ secrets: [], nextPageToken: "repeat" }, /repeated pagination cursor/],
+      ]) {
+        let requests = 0;
+        const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+          axios: async () => { requests++; return { data }; },
+        });
+        await expectReject(() => gcp._test.listSecrets({ projectId: "proj", accessToken: "token" }), pattern);
+        expect(requests).to.equal(data.nextPageToken ? 2 : 1);
+      }
     });
 
     it("returns null on 404 for getSecretVersion", async () => {
@@ -888,6 +1008,7 @@ describe("Provider service unit coverage", () => {
                 {
                   name: "projects/proj/secrets/ok/versions/1",
                   state: "ENABLED",
+                  expireTime: "2030-07-01T12:30:00Z",
                 },
               ],
             },
@@ -897,7 +1018,10 @@ describe("Provider service unit coverage", () => {
           data: {
             secrets: [
               { name: "projects/proj/secrets/ok" },
-              { name: "projects/proj/secrets/blocked" },
+              {
+                name: "projects/proj/secrets/blocked",
+                expireTime: "2030-08-01T16:45:00Z",
+              },
             ],
           },
         };
@@ -916,8 +1040,15 @@ describe("Provider service unit coverage", () => {
         "ok",
       ]);
       expect(result.items.find((i) => i.sourceObjectId === "blocked")).to.include(
-        { expiration: null },
+        {
+          expiration: null,
+          metric_expiration: "2030-08-01T16:45:00Z",
+        },
       );
+      expect(result.items.find((i) => i.sourceObjectId === "ok")).to.include({
+        expiration: "2030-07-01",
+        metric_expiration: undefined,
+      });
       expect(result.summary).to.have.length(1);
       expect(result.summary[0]).to.include({
         sourceKind: "gcp-secret-manager",
@@ -983,6 +1114,7 @@ describe("Provider service unit coverage", () => {
         category: "cert",
         type: "ssl_cert",
         expiration: "2030-01-01",
+        metric_expiration: "2030-01-01T00:00:00Z",
       });
       expect(cmItem.dimensions).to.deep.equal({ location: "global" });
 
@@ -996,6 +1128,7 @@ describe("Provider service unit coverage", () => {
         category: "cert",
         type: "ssl_cert",
         expiration: "2031-02-02",
+        metric_expiration: "2031-02-02T00:00:00Z",
       });
       expect(computeItem.dimensions).to.deep.equal({ location: "global" });
 
@@ -1010,6 +1143,44 @@ describe("Provider service unit coverage", () => {
         found: 1,
         complete: true,
       });
+    });
+
+    it("uses the leaf certificate expiry when GCP certificate time metadata is unavailable", async () => {
+      const chain = readFileSync(path.resolve(
+        __dirname, "../../packages/agent/src/verify/fixtures/chain-leaf-fullchain.crt.pem",
+      ), "utf8");
+      const reversedChain = chain.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g)
+        .reverse().join("\n");
+      const explicitExpiry = "2030-08-01T16:45:00Z";
+      const axiosMock = async ({ url }) => {
+        if (String(url).includes("certificatemanager.googleapis.com")) {
+          return { data: { certificates: [
+            { name: "projects/proj/locations/global/certificates/cm-pem", pemCertificate: chain },
+            { name: "projects/proj/locations/global/certificates/cm-explicit", pemCertificate: chain, expireTime: explicitExpiry },
+          ] } };
+        }
+        return { data: { items: { global: { sslCertificates: [
+          { name: "compute-pem", certificate: chain },
+          { name: "compute-self-managed", expireTime: "invalid", selfManaged: { certificate: reversedChain } },
+          { name: "compute-bad-pem", certificate: "malformed" },
+        ] } } } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const { items } = await gcp.scanGCP({
+        projectId: "proj", accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+      const byName = Object.fromEntries(items.map((item) => [item.name, item]));
+      for (const name of ["cm-pem", "compute-pem", "compute-self-managed"]) {
+        expect(byName[name]).to.include({
+          expiration: null,
+          metric_expiration: "2028-10-26T08:57:15.000Z",
+        });
+      }
+      expect(byName["cm-explicit"].metric_expiration).to.equal(explicitExpiry);
+      expect(byName["compute-bad-pem"].metric_expiration).to.equal("");
     });
 
     it("reports an empty complete sub-scope for both cert kinds when the project has none", async () => {

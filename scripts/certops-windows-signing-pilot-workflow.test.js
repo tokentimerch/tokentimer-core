@@ -47,9 +47,12 @@ test("only the protected signer handles pinned main code and the exact same-run 
   const packageSign = sign.steps.find(step => step.uses === "./.github/actions/windows-agent-sign");
   assert.equal(packageSign.with.architecture, "amd64");
   assert.ok(sign.steps.indexOf(download) < sign.steps.indexOf(packageSign));
-  const inventorySign = sign.steps.find(step => step.uses?.startsWith("azure/artifact-signing-action@"));
-  assert.equal(inventorySign.with.files, "${{ steps.inventory.outputs.path }}");
-  assert.equal(inventorySign.with["pkcs7-options"], "Embedded");
+  const inventorySign = sign.steps.find(step => step.run?.includes("-Operation SignInventory"));
+  assert.equal(inventorySign.env.PILOT_INVENTORY_SHA256, "${{ steps.inventory.outputs.sha256 }}");
+  const pilotScript = fs.readFileSync(path.join(__dirname, "windows-signing-pilot.ps1"), "utf8");
+  assert.match(pilotScript, /& \$dotnet \(Join-Path \$build 'InventoryCmsSigner\.dll'\) \$publisherPins\[0\]/);
+  assert.match(pilotScript, /restore \.\/InventoryCmsSigner\.csproj --configfile \.\/NuGet\.Config --locked-mode/);
+  assert.match(pilotScript, /Confirm-WindowsInventoryCms @cmsArguments[\s\S]*Assert-WindowsSigningChain[\s\S]*Confirm-WindowsInventoryCms @cmsArguments/);
 });
 
 test("signed output leaves the Windows worker only as the encrypted handoff", () => {

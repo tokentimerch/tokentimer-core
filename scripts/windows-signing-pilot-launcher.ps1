@@ -12,7 +12,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$sourceCommit = '097efce0423c48a2264943009b62fb7bf402e84d'
+$sourceCommit = '54d13375c9f8f4b60f183ec1da450700e9c0bd55'
 $goVersion = 'go1.26.11'
 $goArchiveSha256 = '71ae086f0137e665f855a811cc119152b6a783e0bbc1b906e709f46d80141eb0'
 $modulePath = 'packages/agent/reference/verified-extraction'
