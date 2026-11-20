@@ -603,13 +603,14 @@ describe("CertOps identity invariants on PostgreSQL", function () {
             .get("/api/account/export-audit")
             .query({ ...query, format: "csv" })
             .expect(200);
-          assert(csv.text.includes(action));
-          const metadataCell = csv.text.match(/,"((?:[^"]|"")*)"$/);
-          assert(metadataCell, "CSV metadata column must be quoted");
-          assert.deepEqual(
-            JSON.parse(metadataCell[1].replaceAll('""', '"')),
-            metadata,
-          );
+          const [header, auditRow] = csv.text.split("\n");
+          assert(header.endsWith(",metadata,actor_user_id,subject_user_id"));
+          assert(auditRow.includes(action));
+          const columns = auditRow.match(/,"((?:[^"]|"")*)","(\d+)","(\d+)"$/);
+          assert(columns, "CSV must retain quoted metadata and both user IDs");
+          assert.deepEqual(JSON.parse(columns[1].replaceAll('""', '"')), metadata);
+          assert.equal(columns[2], String(userId), "CSV actor ID");
+          assert.equal(columns[3], String(userId), "CSV subject ID");
         }
       }
       // Historical dotted actions remain immutable, but their public action,

@@ -7308,6 +7308,30 @@ paths:
                     code: CERTOPS_CERTIFICATE_NOT_FOUND
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/certificates/{certId}/observations:
+    get:
+      tags: [CertOps]
+      operationId: listCertOpsCertificateObservations
+      summary: List observation history for the current certificate fingerprint
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - { in: path, name: certId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: fingerprint, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0 } }
+        - { in: query, name: sortBy, schema: { type: string, enum: [source, observedAt, location] } }
+        - { in: query, name: sortDirection, schema: { type: string, enum: [asc, desc] } }
+        - { in: query, name: revocationStatus, schema: { type: string, enum: [good, revoked, issuer_revoked, unknown, not_configured, disabled, invalid_observation, unavailable] } }
+        - { in: query, name: location, description: Case-insensitive literal location search; manager access required., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { in: query, name: since, description: Inclusive observed timestamp lower bound with explicit timezone., schema: { type: string, format: date-time } }
+        - { in: query, name: until, description: Inclusive observed timestamp upper bound with explicit timezone., schema: { type: string, format: date-time } }
+      responses:
+        "200": { description: Paginated certificate observations }
+        "400": { description: Invalid observation history query }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Certificate fingerprint changed }
   /api/v1/workspaces/{id}/certops/certificates/{certId}/instances:
     get:
       tags: [CertOps]
@@ -14608,6 +14632,37 @@ components:
         - createdAt
         - updatedAt
       properties:
+        revocationObservable:
+          type: boolean
+          description: A current agent observation exists; this does not establish a successful revocation check.
+        observedRevocation: &observedRevocationSchema
+          type: object
+          nullable: true
+          additionalProperties: false
+          description: Latest observed revocation and local chain verification, separate from lifecycle status.
+          required: [verdict, chainStatus, checkedAt, validUntil, detail]
+          properties:
+            verdict: { type: string, enum: [good, revoked, issuer_revoked, unknown, not_configured, disabled, invalid_observation] }
+            chainStatus: { type: string, enum: [valid, invalid, unknown] }
+            checkedAt: { type: string, format: date-time, nullable: true }
+            reportedAt: { type: string, format: date-time, description: Server observation time for a configuration state; not a check time. }
+            revision: { type: integer, minimum: 1, maximum: 9007199254740991, description: Agent scan ordering revision. }
+            validUntil: { type: string, format: date-time, nullable: true }
+            detail: { type: string, nullable: true, maxLength: 256 }
+            revokedIssuerFingerprintSha256: { type: string, pattern: '^[a-f0-9]{64}$', description: 'Exact revoked intermediate certificate, when supplied by a qualified agent.' }
+            derivedFromIssuerChain: { type: boolean, description: This CA status was derived from an observed certificate chain. }
+            lastVerified:
+              type: object
+              additionalProperties: false
+              required: [verdict, chainStatus, checkedAt, validUntil, detail]
+              properties:
+                verdict: { type: string, enum: [good, revoked, issuer_revoked] }
+                chainStatus: { type: string, enum: [valid] }
+                checkedAt: { type: string, format: date-time }
+                validUntil: { type: string, format: date-time }
+                detail: { type: string, nullable: true, maxLength: 256 }
+                revision: { type: integer, minimum: 1, maximum: 9007199254740991 }
+                revokedIssuerFingerprintSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
         schemaVersion:
           type: integer
           enum: [1]
@@ -14795,6 +14850,7 @@ components:
         - source
         - target
       properties:
+        observedRevocation: *observedRevocationSchema
         id:
           type: string
           format: uuid
