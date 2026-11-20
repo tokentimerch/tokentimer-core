@@ -79,6 +79,7 @@ test("upgrades a real main database with migrations through 114 and repeats safe
       [117, "certops_adcs_expected_identity_receipts"],
       [122, "certops_observed_revocation"],
       [126, "certops_adcs_receipt_deadline"],
+      [127, "auto_sync_creation_expiration"],
     ]);
     const preserved = await client.query("SELECT version,name,executed_at FROM migrations WHERE version=98");
     assert.deepEqual(preserved.rows[0], before.rows[0]);
@@ -129,7 +130,7 @@ for (const [history, applied, remaining] of [
       migrate(database);
       const after = (await client.query("SELECT version,name,executed_at FROM migrations ORDER BY version")).rows;
       assert.deepEqual(after.slice(0, before.length), before);
-      const expected = [...oldAppend, ...remaining];
+      const expected = [...oldAppend, ...remaining, "auto_sync_creation_expiration"];
       assert.deepEqual(after.filter(row => row.version >= 110).map(({ version, name }) => [version, name]),
         expected.map((name, index) => [110 + index, name]));
       const columns = (await client.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='certops_adcs_expected_identity_receipts'")).rows;

@@ -55,7 +55,12 @@ function ordersPreservingPriorFeatureTails(names, rows) {
 
   // A recognized preview could have added Store or observed revocation before
   // the other definitions existed. Once committed, that exact prefix comes first.
-  for (const omitted of [[OBSERVED_REVOCATION], storeMigrationNames]) {
+  const omittedOrders = [[OBSERVED_REVOCATION], storeMigrationNames];
+  if (rows.some((row) => row.name === "certops_adcs_receipt_deadline")) {
+    // Store with observed revocation may already have finished its receipt and metric tail.
+    omittedOrders.push([...independentFeatureNames].filter((name) => !storeMigrationNames.includes(name)));
+  }
+  for (const omitted of omittedOrders) {
     const previous = names.filter((name) => !omitted.includes(name));
     const mismatch = rows.findIndex((row, index) => row.name !== previous[index]);
     const applied = previous.slice(0, mismatch === -1 ? rows.length : mismatch);
