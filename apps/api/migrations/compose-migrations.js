@@ -80,6 +80,7 @@ function reviewedFeatureOrders(names, rows) {
     // Earlier Store previews applied the receipt deadline before these independent definitions.
     previousOrders.push(
       names.filter((name) => name !== OBSERVED_REVOCATION && name !== ADCS_PREFLIGHT_INDEX && !iisPreviewMigrations.includes(name)),
+      names.filter((name) => name !== "agent_credential_rotations" && name !== "agent_credential_rotation_ack"),
       names.filter((name) => name !== ADCS_PREFLIGHT_INDEX && name !== "agent_credential_rotations" && name !== "agent_credential_rotation_ack"),
     );
   }
