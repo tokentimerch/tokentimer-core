@@ -338,7 +338,12 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     { version: 112, name: "certops_retirement_dossiers" },
     { version:113,name:"certops_material_reconciliation" },
     { version:114,name:"distribution_pagerduty_recovery" },
-    { version:122,name:"certops_observed_revocation" },
+    { version: 115, name: "store_issuance_explicit_renewal_consent" },
+    { version: 116, name: "certops_acme_store_enrollment_identity" },
+    { version: 117, name: "certops_adcs_expected_identity_receipts" },
+    { version: 122, name: "certops_observed_revocation" },
+    { version: 126, name: "certops_adcs_receipt_deadline" },
+    { version: 127, name: "auto_sync_creation_expiration" },
   ]);
   assert.equal(
     (

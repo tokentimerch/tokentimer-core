@@ -11,9 +11,9 @@ test("observed revocation appends after the unchanged main migrations", () => {
   for (const history of histories) {
     const plan = composeMigrations(migrations, history.map(({ version, name }) => ({ version, name })));
     assert.deepEqual(plan.slice(0, base.length), base);
-    assert.equal(plan.at(-1).version, 122);
-    assert.equal(plan.at(-1).name, "certops_observed_revocation");
+    assert.equal(plan.find((item) => item.name === "certops_observed_revocation").version, 122);
+    assert.equal(plan.at(-1).name, "auto_sync_creation_expiration");
     assert.equal(plan.find((item) => item.version === 112).name, "certops_retirement_dossiers");
-    assert.equal(plan.filter((item) => item.name.startsWith("store_issuance")).length, 0);
+    assert.equal(plan.find((item) => item.name === "store_issuance_explicit_renewal_consent").version, 115);
   }
 });

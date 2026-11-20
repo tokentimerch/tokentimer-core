@@ -29,8 +29,13 @@ test("an applied retirement preview upgrades and replays without rewriting its l
       { version: 111, name: "recipient_member_verification" },
       { version: 112, name: "auto_sync_owner_username" },
       {version:113,name:"certops_material_reconciliation"},
-      {version:114,name:"distribution_pagerduty_recovery"},
-      {version:115,name:"certops_observed_revocation"},
+      { version: 114, name: "distribution_pagerduty_recovery" },
+      { version: 115, name: "store_issuance_explicit_renewal_consent" },
+      { version: 116, name: "certops_acme_store_enrollment_identity" },
+      { version: 117, name: "certops_adcs_expected_identity_receipts" },
+      { version: 118, name: "certops_observed_revocation" },
+      { version: 119, name: "certops_adcs_receipt_deadline" },
+      { version: 120, name: "auto_sync_creation_expiration" },
     ]);
     await runMigrations();
     assert.deepEqual((await pool.query("SELECT * FROM migrations ORDER BY version")).rows, upgraded);

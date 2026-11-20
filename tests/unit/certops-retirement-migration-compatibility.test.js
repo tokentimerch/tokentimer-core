@@ -9,7 +9,8 @@ const baseNames = ["certops_period_creator_delete", "recipient_member_verificati
 const storeNames = ["store_issuance_explicit_renewal_consent", "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts", "certops_adcs_receipt_deadline"];
 const recovery = "distribution_pagerduty_recovery";
 const revocation = "certops_observed_revocation";
-const appended = [...baseNames, recovery, ...storeNames.slice(0, 3), revocation, storeNames[3]].map((name, index) => ({ version: 110 + index, name }));
+const expiration = "auto_sync_creation_expiration";
+const appended = [...baseNames, recovery, ...storeNames.slice(0, 3), revocation, storeNames[3], expiration].map((name, index) => ({ version: 110 + index, name }));
 test("retirement preview preserves identities through partial released-main upgrades", () => {
   for (let count = 0; count <= appended.length; count++) {
     const rows = [...preview, ...appended.slice(0, count)];
@@ -42,7 +43,7 @@ for (let count = 1; count <= storeNames.length; count++) {
 test("retirement preview preserves observed revocation already recorded before Store", () => {
   const recorded = [...preview, ...baseNames.map((name, index) => ({ version: 110 + index, name })),
     { version: 114, name: recovery }, { version: 115, name: revocation }];
-  const expected = [...recorded, ...storeNames.map((name, index) => ({ version: 116 + index, name }))];
+  const expected = [...recorded, ...[...storeNames, expiration].map((name, index) => ({ version: 116 + index, name }))];
   validateMigrationHistory(recorded);
   assert.deepEqual(composeMigrations(migrations, recorded).map(({ version, name }) => ({ version, name })), expected);
   validateMigrationHistory(expected);
@@ -52,7 +53,7 @@ test("retirement preview preserves observed revocation already recorded before S
 test("retirement preview preserves a Store receipt deadline already recorded before revocation", () => {
   const recorded = [...preview, ...[...baseNames, recovery, ...storeNames]
     .map((name, index) => ({ version: 110 + index, name }))];
-  const expected = [...recorded, { version: 119, name: revocation }];
+  const expected = [...recorded, { version: 119, name: revocation }, { version: 120, name: expiration }];
   validateMigrationHistory(recorded);
   assert.deepEqual(composeMigrations(migrations, recorded).map(({ version, name }) => ({ version, name })), expected);
   validateMigrationHistory(expected);
@@ -67,6 +68,25 @@ test("canonical Store-first history leaves its existing identities unchanged whe
   validateMigrationHistory(first);
   assert.deepEqual(composeMigrations(migrations, first).map(({ version, name }) => ({ version, name })), first);
 });
+
+test("an applied expiration preview keeps its migration identity while adding observed revocation", () => {
+  const originalExpiration = { version: 115, name: "auto_sync_creation_expiration" };
+  const observedRevocation = { version: 116, name: "certops_observed_revocation" };
+  const priorTails = [ledger.filter((row) => row.version <= 114), [...preview, ...appended.slice(0, 5)]];
+  for (const prior of priorTails) {
+    for (const applied of [[originalExpiration], [originalExpiration, observedRevocation]]) {
+      const recorded = [...prior, ...applied];
+      validateMigrationHistory(recorded);
+      const plan = composeMigrations(migrations, recorded).map(({ version, name }) => ({ version, name }));
+      assert.deepEqual(plan.slice(0, recorded.length), recorded);
+      assert.deepEqual(plan.map(({ name }) => name).sort(), migrations.map(({ name }) => name).sort());
+      validateMigrationHistory(plan);
+      assert.deepEqual(composeMigrations(migrations, plan).map(({ version, name }) => ({ version, name })), plan);
+    }
+  }
+  assert.throws(() => validateMigrationHistory([...ledger.filter((row) => row.version <= 113), originalExpiration]),
+    /Unsupported Core migration history/);
+});
 test("released main retains identities before appending retirement", () => {
   const rows = ledger.filter((row) => row.version <= 111);
   validateMigrationHistory(rows);
@@ -74,9 +94,9 @@ test("released main retains identities before appending retirement", () => {
 });
 test("retirement preview rejects forged or non-prefix appended identity", () => {
   for (const rows of [[...preview, {version:110,name:"recipient_member_verification"}], [...preview, {version:111,name:"recipient_member_verification"}],
-    [...preview, ...appended, {version:120,name:"unrecognized_feature"}],
+    [...preview, ...appended, {version:121,name:"unrecognized_feature"}],
     [...preview, ...appended.filter(row => row.version !== 116)],
-    [...preview, ...appended.slice(0, -1), {version:126,name:"certops_adcs_receipt_deadline"}]]) {
+    [...preview, ...appended.slice(0, -2), {version:126,name:"certops_adcs_receipt_deadline"}]]) {
     assert.throws(() => validateMigrationHistory(rows), /Unsupported Core retirement preview migration history/);
   }
 });

@@ -51,6 +51,7 @@ are reservations, not no-op migrations. They do not install another feature.
 | 124 | agent_credential_rotation_ack | Agent credential rotation acknowledgement |
 | 125 | certops_adcs_preflight_lookup_index | AD CS preflight lookup |
 | 126 | certops_adcs_receipt_deadline | Immutable AD CS receipt admission deadline |
+| 127 | auto_sync_creation_expiration | Auto-sync creation metric expiration (#780) |
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.
@@ -59,6 +60,9 @@ Only missing definitions are assigned; duplicate feature definitions must be
 removed when composing branches. Unknown, conflicting or unrecognized histories
 fail before DDL and require reviewed recovery. Database compatibility does not
 qualify the corresponding runtime feature or production artifact.
+
+A recognized #780 preview keeps its previously applied expiration row, including
+version 115 on a standard preview database. New installs use version 127.
 
 ## Applied history and supported previews
 

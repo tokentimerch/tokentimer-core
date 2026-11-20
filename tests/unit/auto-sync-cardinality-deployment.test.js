@@ -21,16 +21,16 @@ it("Helm defaults the extra-label allowlist empty and restricts supported values
   assert.equal(schema.type, "array"); assert.deepEqual(schema.default, []);
   assert.match(read("deploy/helm/templates/_helpers.tpl"), /AUTO_SYNC_METRICS_EXTRA_LABELS:.*extraLabels/);
 });
-it("Helm accepts owner allowlisting and selection without weakening label validation", () => {
+it("Helm accepts owner and expiration allowlisting and selection", () => {
   const metrics = JSON.parse(read("deploy/helm/values.schema.json")).properties.monitoring.properties.metrics;
   const validate = new Ajv({ strict: false }).compile(metrics);
-  for (const extraLabels of [[], ["owner_username"], ["asset_name", "project", "group", "owner_username"], ["none"]]) {
-    assert.equal(validate({ autoSyncEnabled: true, autoSyncLabels: ["owner_username"], extraLabels }), true);
+  for (const extraLabels of [[], ["owner_username", "expiration"], ["asset_name", "project", "group", "owner_username", "expiration"], ["none"]]) {
+    assert.equal(validate({ autoSyncEnabled: true, autoSyncLabels: ["owner_username", "expiration"], extraLabels }), true);
   }
   assert.equal(validate({
     autoSyncEnabled: true,
-    autoSyncLabels: ["configuration_name", "monitoring_group", "kind", "asset_name", "project", "group", "owner_username"],
-    extraLabels: ["owner_username"],
+    autoSyncLabels: ["configuration_name", "monitoring_group", "kind", "asset_name", "project", "group", "owner_username", "expiration"],
+    extraLabels: ["owner_username", "expiration"],
   }), true);
   for (const extraLabels of [["unknown"], ["owner_username", "owner_username"], ["none", "owner_username"]]) {
     assert.equal(validate({ extraLabels }), false);
@@ -40,7 +40,7 @@ it("Helm accepts owner allowlisting and selection without weakening label valida
 });
 it("operator switches carry an adjacent warning about series growth and metadata", () => {
   for (const file of ["deploy/helm/values.yaml", "deploy/compose/docker-compose.yml", "deploy/compose/docker-compose.dev.yml", "deploy/compose/.env.example", ".env.example"]) {
-    assert.match(read(file), /# Extra labels: asset_name, project, group, owner_username; none disables them\.[^\n]*\n(?:\s*#[^\n]*\n){3}\s*# Each distinct label combination creates a series in both metrics; combining labels can greatly increase cardinality and expose asset metadata\.\n\s*(?:- )?(?:AUTO_SYNC_METRICS_EXTRA_LABELS|extraLabels)/, file);
-    assert.match(read(file), /Empty uses saved System Settings permissions; a nonempty list restricts them\. Owner permission never selects owner_username\./, file);
+    assert.match(read(file), /# Extra labels: asset_name, project, group, owner_username, expiration; none disables them\.[^\n]*\n(?:\s*#[^\n]*\n){3}\s*# Each distinct label combination creates a series in both metrics; combining labels can greatly increase cardinality and expose asset metadata\.\n\s*(?:- )?(?:AUTO_SYNC_METRICS_EXTRA_LABELS|extraLabels)/, file);
+    assert.match(read(file), /Empty uses saved System Settings permissions; a nonempty list restricts them\. Owner and expiration labels must also be selected\./, file);
   }
 });
