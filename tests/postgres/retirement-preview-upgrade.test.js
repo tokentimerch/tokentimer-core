@@ -18,7 +18,15 @@ test("retirement preview upgrades through PagerDuty recovery and survives restar
     await runMigrations();
     const upgraded=(await pool.query("SELECT version,name FROM migrations ORDER BY version")).rows;
     assert.deepEqual(upgraded.slice(0,before.length),before);
-    assert.deepEqual(upgraded.slice(-5).map(row=>row.name),["certops_period_creator_delete","recipient_member_verification","auto_sync_owner_username","certops_material_reconciliation","distribution_pagerduty_recovery"]);
+    assert.deepEqual(upgraded.slice(before.length).map(row=>row.name),[
+      "certops_period_creator_delete",
+      "recipient_member_verification",
+      "auto_sync_owner_username",
+      "certops_material_reconciliation",
+      "distribution_pagerduty_recovery",
+      "certops_observed_revocation",
+      "auto_sync_creation_expiration",
+    ]);
     await runMigrations();
     assert.deepEqual((await pool.query("SELECT version,name FROM migrations ORDER BY version")).rows,upgraded);
   } finally { migrations.splice(0,migrations.length,...registry); }

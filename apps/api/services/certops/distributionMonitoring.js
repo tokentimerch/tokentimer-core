@@ -341,7 +341,7 @@ async function recordIncident(
         : "CERTOPS_DISTRIBUTION_INCIDENT_OPENED",
       targetType: "certops_distribution_incident",
       targetId: incident.id,
-      metadata: { groupId: group.id, code, evidence },
+      metadata: { incidentId: incident.id, groupId: group.id, code, evidence },
     });
   return key;
 }
@@ -526,7 +526,7 @@ async function monitorGroup({
       action: "CERTOPS_DISTRIBUTION_INCIDENT_RESOLVED",
       targetType: "certops_distribution_incident",
       targetId: incident.id,
-      metadata: { groupId, code: incident.code },
+      metadata: { incidentId: incident.id, groupId, code: incident.code },
     });
   }
   await queuePendingResolutions(client, workspaceId, group, policy);

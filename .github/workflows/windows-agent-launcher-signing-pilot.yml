@@ -1,0 +1,245 @@
+name: Qualify the Windows agent launcher signing pilot
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Exact reviewed Core main workflow commit
+        required: true
+        type: string
+      package_workflow_sha:
+        description: Exact main commit from the verified package pilot
+        required: true
+        type: string
+      package_run_id:
+        description: Verified package pilot run ID
+        required: true
+        type: string
+      package_run_attempt:
+        description: Verified package pilot run attempt
+        required: true
+        type: string
+      package_artifact_id:
+        description: Verified encrypted package artifact ID
+        required: true
+        type: string
+      launcher_policy_sha256:
+        description: Launcher policy SHA-256 from the verified package receipt
+        required: true
+        type: string
+      launcher_policy_base64:
+        description: Exact base64 policy bytes containing only the approved launcher metadata
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: windows-agent-launcher-signing-pilot
+  cancel-in-progress: false
+
+env:
+  PILOT_SOURCE: '54d13375c9f8f4b60f183ec1da450700e9c0bd55'
+  PACKAGE_WORKFLOW_SHA: ${{ inputs.package_workflow_sha }}
+  PACKAGE_RUN_ID: ${{ inputs.package_run_id }}
+  PACKAGE_RUN_ATTEMPT: ${{ inputs.package_run_attempt }}
+  PACKAGE_ARTIFACT_ID: ${{ inputs.package_artifact_id }}
+  LAUNCHER_POLICY_SHA256: ${{ inputs.launcher_policy_sha256 }}
+  LAUNCHER_POLICY_BASE64: ${{ inputs.launcher_policy_base64 }}
+
+jobs:
+  build:
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha
+    permissions:
+      actions: read
+      contents: read
+    runs-on: windows-2025
+    timeout-minutes: 30
+    outputs:
+      unsigned_sha256: ${{ steps.build.outputs.sha256 }}
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: reviewed
+          persist-credentials: false
+
+      - name: Require the exact signed source and successful package attempt
+        id: stage
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git -C reviewed rev-parse HEAD) -cne $env:GITHUB_SHA -or
+              $env:PACKAGE_WORKFLOW_SHA -cnotmatch '^[a-f0-9]{40}$' -or
+              $env:PACKAGE_RUN_ID -cnotmatch '^[1-9][0-9]{0,18}$' -or
+              $env:PACKAGE_RUN_ATTEMPT -cnotmatch '^[1-9][0-9]{0,18}$' -or
+              $env:PACKAGE_ARTIFACT_ID -cnotmatch '^[1-9][0-9]{0,18}$') {
+              throw 'Invalid reviewed main checkout or package run coordinates'
+          }
+          function Read-GitHub([string]$Path) {
+              $json = & gh api --method GET "repos/$env:GITHUB_REPOSITORY/$Path"
+              if ($LASTEXITCODE -ne 0) { throw 'Could not verify GitHub custody metadata' }
+              $json | ConvertFrom-Json
+          }
+          $source = Read-GitHub "commits/$env:PILOT_SOURCE"
+          if ($source.sha -cne $env:PILOT_SOURCE -or $source.commit.verification.verified -ne $true) {
+              throw 'Exact launcher source is not a verified GitHub commit'
+          }
+          $run = Read-GitHub "actions/runs/$env:PACKAGE_RUN_ID/attempts/$env:PACKAGE_RUN_ATTEMPT"
+          if ([string]$run.id -cne $env:PACKAGE_RUN_ID -or [string]$run.run_attempt -cne $env:PACKAGE_RUN_ATTEMPT -or
+              $run.head_repository.full_name -cne $env:GITHUB_REPOSITORY -or $run.head_sha -cne $env:PACKAGE_WORKFLOW_SHA -or
+              $run.head_branch -cne 'main' -or $run.event -cne 'workflow_dispatch' -or
+              $run.status -cne 'completed' -or $run.conclusion -cne 'success' -or
+              $run.path -cnotmatch '^\.github/workflows/windows-agent-signing-pilot\.yml(?:@refs/heads/main)?$') {
+              throw 'Expected a successful exact main package pilot attempt'
+          }
+          $artifact = Read-GitHub "actions/artifacts/$env:PACKAGE_ARTIFACT_ID"
+          if ([string]$artifact.id -cne $env:PACKAGE_ARTIFACT_ID -or $artifact.expired -ne $false -or
+              [string]$artifact.workflow_run.id -cne $env:PACKAGE_RUN_ID -or
+              $artifact.name -cne "windows-amd64-pilot-sealed-$env:PACKAGE_RUN_ATTEMPT" -or
+              $artifact.digest -cnotmatch '^sha256:[a-f0-9]{64}$') {
+              throw 'Artifact is not the exact immutable encrypted package handoff'
+          }
+          $stage = & ./reviewed/scripts/windows-signing-pilot-stage.ps1 -RunnerTemp $env:RUNNER_TEMP
+          "path=$stage" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ inputs.package_artifact_id }}
+          run-id: ${{ inputs.package_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ steps.stage.outputs.path }}/package
+          merge-multiple: true
+          digest-mismatch: error
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.PILOT_SOURCE }}
+          path: source
+          persist-credentials: false
+
+      - name: Compile the exact unsigned launcher without OIDC
+        id: build
+        shell: pwsh
+        env:
+          PREPARE_STAGE: ${{ steps.stage.outputs.path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git -C source rev-parse HEAD) -cne $env:PILOT_SOURCE) { throw 'Wrong immutable source checkout' }
+          & ./reviewed/scripts/windows-signing-pilot-launcher-custody.ps1 -Operation PrepareBuild -Stage $env:PREPARE_STAGE
+          $goArchive = Join-Path $env:PREPARE_STAGE 'go1.26.11.windows-amd64.zip'
+          Invoke-WebRequest -Uri 'https://go.dev/dl/go1.26.11.windows-amd64.zip' -OutFile $goArchive -MaximumRedirection 2 -TimeoutSec 120
+          $moduleCache = Join-Path $env:PREPARE_STAGE 'module-cache'
+          $module = Join-Path $moduleCache 'cache/download/golang.org/x/sys/@v'
+          [IO.Directory]::CreateDirectory($module) | Out-Null
+          foreach ($extension in @('info','mod','zip')) {
+              $file = "v0.28.0.$extension"
+              Invoke-WebRequest -Uri "https://proxy.golang.org/golang.org/x/sys/@v/$file" -OutFile (Join-Path $module $file) -MaximumRedirection 2 -TimeoutSec 120
+          }
+          $stage = & ./reviewed/scripts/windows-signing-pilot-launcher.ps1 -PolicyPath (Join-Path $env:PREPARE_STAGE 'launcher-policy.json') -ExpectedPolicySha256 $env:LAUNCHER_POLICY_SHA256 -SourceCheckout ./source -SourceSigningPolicy ./reviewed/scripts/windows-signing-pilot-source.allowed-signers -GoArchive $goArchive -OfflineModuleCache $moduleCache -StageParent $env:RUNNER_TEMP
+          & ./reviewed/scripts/windows-signing-pilot-launcher-custody.ps1 -Operation RecordBuild -Stage $stage
+          "path=$stage" >> $env:GITHUB_OUTPUT
+
+      - name: Transfer the derived unsigned launcher and exact same-run receipt
+        id: artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-amd64-launcher-unsigned-${{ github.run_attempt }}
+          path: |
+            ${{ steps.build.outputs.path }}/tokentimer-agent-launcher.exe
+            ${{ steps.build.outputs.path }}/unsigned-launcher-receipt.json
+          if-no-files-found: error
+          retention-days: 1
+
+  sign-launcher:
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha
+    needs: build
+    environment: windows-agent-signing
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: windows-2025
+    timeout-minutes: 20
+    env:
+      LAUNCHER_UNSIGNED_SHA256: ${{ needs.build.outputs.unsigned_sha256 }}
+      LAUNCHER_UNSIGNED_ARTIFACT: ${{ needs.build.outputs.artifact_id }}
+      PILOT_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+      PILOT_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      PILOT_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+      PILOT_PROFILE_EKU: ${{ vars.AZURE_SIGNING_PROFILE_EKU }}
+      PILOT_ISSUER_SHA256: ${{ vars.AZURE_SIGNING_ISSUER_SHA256 }}
+      PILOT_LAB_RECIPIENT: ${{ vars.WINDOWS_SIGNING_LAB_RECIPIENT }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Prepare trusted stage and verify the protected recipient
+        id: stage
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git rev-parse HEAD) -cne $env:GITHUB_SHA) { throw 'Wrong reviewed workflow checkout' }
+          $stage = & ./scripts/windows-signing-pilot-stage.ps1 -RunnerTemp $env:RUNNER_TEMP
+          & ./scripts/windows-signing-pilot-launcher-custody.ps1 -Operation PrepareSign -Stage $stage
+          "path=$stage" >> $env:GITHUB_OUTPUT
+          "LAUNCHER_STAGE=$stage" >> $env:GITHUB_ENV
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: ${{ steps.stage.outputs.path }}/unsigned
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Bind the exact same-run unsigned PE and reviewed policy
+        id: bind
+        shell: pwsh
+        run: ./scripts/windows-signing-pilot-launcher-custody.ps1 -Operation Bind -Stage $env:LAUNCHER_STAGE
+
+      - name: Authenticate the protected main job
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ vars.AZURE_SIGNING_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_SIGNING_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SIGNING_SUBSCRIPTION_ID }}
+
+      - name: Authenticode sign the single bound launcher
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files: ${{ steps.bind.outputs.path }}
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+          cache-dependencies: false
+
+      - name: Verify the same CMS publisher leaf and seal the signed launcher
+        shell: pwsh
+        run: ./scripts/windows-signing-pilot-launcher-custody.ps1 -Operation Seal -Stage $env:LAUNCHER_STAGE
+
+      - name: Upload only the encrypted launcher handoff and its receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-amd64-launcher-sealed-${{ github.run_attempt }}
+          path: |
+            ${{ steps.stage.outputs.path }}/sealed/windows-amd64-launcher.zip.age
+            ${{ steps.stage.outputs.path }}/sealed/receipt.json
+          if-no-files-found: error
+          retention-days: 1

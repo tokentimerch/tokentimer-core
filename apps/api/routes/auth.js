@@ -615,7 +615,7 @@ router.post(
             targetId: user.id,
             channel: null,
             workspaceId: null,
-            metadata: {},
+            metadata: { method: "local", factor: "totp" },
           }).catch((_err) => {
             logger.warn("Audit write failed", { error: _err.message });
           });
@@ -715,7 +715,7 @@ router.post(
           targetId: req.user.id,
           channel: null,
           workspaceId: null,
-          metadata: {},
+          metadata: { factor: "totp", via: "account_settings" },
         });
       } catch (_err) {
         logger.warn("Audit write failed (TWO_FACTOR_ENABLED)", {
@@ -804,7 +804,7 @@ router.post(
           targetId: req.user.id,
           channel: null,
           workspaceId: null,
-          metadata: {},
+          metadata: { factor: "totp", via: "account_settings" },
         });
       } catch (_err) {
         logger.warn("Audit write failed (TWO_FACTOR_DISABLED)", {
@@ -873,7 +873,7 @@ router.get(
           targetId: user.id,
           channel: null,
           workspaceId: null,
-          metadata: {},
+          metadata: { method: "email_link" },
         });
       } catch (err) {
         logger.error("Audit insert failed", {
@@ -999,7 +999,7 @@ router.post(
           targetId: user.id,
           channel: null,
           workspaceId: null,
-          metadata: {},
+          metadata: { method: "email_link" },
         });
       } catch (err) {
         logger.error("Audit insert failed", {
@@ -1107,7 +1107,7 @@ router.post(
             targetId: user.id,
             channel: null,
             workspaceId: null,
-            metadata: {},
+            metadata: { method: "email_link" },
           });
         }
       } catch (err) {
@@ -1225,7 +1225,7 @@ router.post(
             targetId: user.id,
             channel: null,
             workspaceId: null,
-            metadata: { via: "password_reset" },
+            metadata: { factor: "totp", via: "password_reset" },
           });
         } catch (err) {
           logger.error("Audit insert failed", {
@@ -1268,7 +1268,7 @@ router.post(
           targetId: user.id,
           channel: null,
           workspaceId: null,
-          metadata: {},
+          metadata: { method: "email_link", two_factor_reset: twoFactorReset },
         });
       } catch (err) {
         logger.error("Audit insert failed", {
@@ -1362,7 +1362,7 @@ router.post(
           targetId: req.user.id,
           channel: null,
           workspaceId: null,
-          metadata: {},
+          metadata: { via: "account_settings" },
         });
       } catch (_err) {
         logger.warn("Audit write failed (PASSWORD_CHANGED)", {
@@ -1447,7 +1447,7 @@ router.post("/api/logout", getApiLimiter(), (req, res) => {
             targetId: uid,
             channel: null,
             workspaceId: null,
-            metadata: {},
+            metadata: { via: "session" },
           }).catch((_err) => {
             logger.warn("Audit write failed", { error: _err.message });
           });

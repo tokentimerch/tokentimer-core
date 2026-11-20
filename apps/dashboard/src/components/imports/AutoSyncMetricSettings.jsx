@@ -35,15 +35,22 @@ export const METRIC_LABEL_CHOICES = [
   ['project', 'Project / repository'],
   ['group', 'Source group'],
   ['owner_username', 'GitLab PAT owner username'],
+  ['expiration', 'Asset expiration'],
 ];
 export const HIGH_CARDINALITY_METRIC_LABELS = [
   'asset_name',
   'project',
   'group',
   'owner_username',
+  'expiration',
+];
+export const EXPLICIT_SELECTION_METRIC_LABELS = [
+  'owner_username',
+  'expiration',
 ];
 const EXTRA = HIGH_CARDINALITY_METRIC_LABELS;
 export default function AutoSyncMetricSettings({
+  provider,
   value = DEFAULT_METRIC_SETTINGS,
   onChange,
   allowedExtraLabels = [],
@@ -75,6 +82,14 @@ export default function AutoSyncMetricSettings({
     .join(' ');
   const enabled = managed ? systemPolicy.enabled === true : settings.enabled;
   const selected = managed ? systemPolicy.labels : settings.labels;
+  const expirationHint =
+    provider === 'github'
+      ? 'GitHub does not provide expiry for these asset types.'
+      : !allowedExtraLabels.includes('expiration')
+        ? labelsRestricted || systemPolicy.labels_locked
+          ? 'Deployment settings restrict Asset expiration.'
+          : 'Allow Asset expiration in System Settings → Auto-sync first.'
+        : 'Asset expiration appears on new assets with provider-reported expiry.';
   const change = patch => onChange({ ...settings, ...patch });
   return (
     <Accordion allowToggle w='full'>
@@ -154,7 +169,9 @@ export default function AutoSyncMetricSettings({
               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={2}>
                 {METRIC_LABEL_CHOICES.map(([key, title]) => {
                   const permitted =
-                    !EXTRA.includes(key) || allowedExtraLabels.includes(key);
+                    (!EXTRA.includes(key) ||
+                      allowedExtraLabels.includes(key)) &&
+                    (key !== 'expiration' || provider !== 'github');
                   return (
                     <Checkbox
                       key={key}
@@ -175,6 +192,9 @@ export default function AutoSyncMetricSettings({
               </SimpleGrid>
               <Text fontSize='xs' color={muted} mt={2}>
                 Configuration ID is always included.
+              </Text>
+              <Text fontSize='xs' color={muted} mt={1}>
+                {expirationHint}
               </Text>
             </Box>
             <FormControl>
@@ -244,10 +264,10 @@ export default function AutoSyncMetricSettings({
               </Text>
             </Alert>
             <Text fontSize='xs' color={muted}>
-              Asset metadata covers future inventory creations only, not expiry.
-              GitLab PAT owner usernames are best effort, not the importing
-              user. Existing inventory is not enriched retroactively. Previous
-              samples remain until Prometheus retention expires.
+              Asset metadata is captured when auto-sync creates an inventory
+              item. Asset expiration appears when the scanner can verify it.
+              GitLab PAT owner usernames are best effort. Previous samples
+              remain until Prometheus retention expires.
             </Text>
           </VStack>
         </AccordionPanel>

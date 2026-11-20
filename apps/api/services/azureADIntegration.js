@@ -5,6 +5,7 @@ const axios = require("axios");
 const {
   tryParseDate,
   formatDateYmd,
+  advanceListCursor,
   CREDENTIALED_AXIOS_REDIRECTS,
   assertSameOriginFollowUp,
   throwIfAllScopesFailed,
@@ -175,6 +176,7 @@ function decodeGraphTokenTid(token) {
 
 async function listApplications({ token, maxItems = 500, authProvider }) {
   const apps = [];
+  const seenCursors = new Set();
   let nextLink = null;
   let pageCount = 0;
   const maxPages = 50;
@@ -203,11 +205,10 @@ async function listApplications({ token, maxItems = 500, authProvider }) {
       });
     }
 
-    if (Array.isArray(data.value)) {
-      apps.push(...data.value);
-    }
+    if (!Array.isArray(data?.value)) throw new Error("Invalid Microsoft Graph applications list response");
+    apps.push(...data.value);
 
-    nextLink = data["@odata.nextLink"] || null;
+    nextLink = advanceListCursor(data["@odata.nextLink"], seenCursors, "Microsoft Graph");
     pageCount++;
 
     if (apps.length >= maxItems || pageCount >= maxPages) {
@@ -227,6 +228,7 @@ async function listServicePrincipals({
 }) {
   validateManagedIdentityMode(managedIdentityMode);
   const sps = [];
+  const seenCursors = new Set();
   let nextLink = null;
   let pageCount = 0;
   const maxPages = 50;
@@ -255,17 +257,16 @@ async function listServicePrincipals({
       });
     }
 
-    if (Array.isArray(data.value)) {
-      sps.push(
-        ...data.value.filter((sp) => {
-          if (managedIdentityMode === "only") return isManagedIdentity(sp);
-          if (managedIdentityMode === "exclude") return !isManagedIdentity(sp);
-          return true;
-        }),
-      );
-    }
+    if (!Array.isArray(data?.value)) throw new Error("Invalid Microsoft Graph service principal list response");
+    sps.push(
+      ...data.value.filter((sp) => {
+        if (managedIdentityMode === "only") return isManagedIdentity(sp);
+        if (managedIdentityMode === "exclude") return !isManagedIdentity(sp);
+        return true;
+      }),
+    );
 
-    nextLink = data["@odata.nextLink"] || null;
+    nextLink = advanceListCursor(data["@odata.nextLink"], seenCursors, "Microsoft Graph");
     pageCount++;
 
     if (sps.length >= maxItems || pageCount >= maxPages) {
@@ -361,6 +362,7 @@ async function scanAzureAD({
               category: "key_secret",
               type: "api_key",
               expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+              metric_expiration: cred.endDateTime,
               location: `azure-ad:applications/${app.appId}/secrets/${cred.keyId}`,
               description: `App ID: ${app.appId}\nKey ID: ${cred.keyId}\nCreated: ${startAt ? startAt.toISOString().split("T")[0] : "N/A"}`,
               app_id: app.appId,
@@ -393,6 +395,7 @@ async function scanAzureAD({
               category: "cert",
               type: "ssl_cert",
               expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+              metric_expiration: cert.endDateTime,
               location: `azure-ad:applications/${app.appId}/certificates/${cert.keyId}`,
               description: `App ID: ${app.appId}\nKey ID: ${cert.keyId}\nType: ${cert.type || "N/A"}\nUsage: ${cert.usage || "N/A"}\nCreated: ${startAt ? startAt.toISOString().split("T")[0] : "N/A"}`,
               app_id: app.appId,
@@ -487,6 +490,7 @@ async function scanAzureAD({
               category: "key_secret",
               type: "api_key",
               expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+              metric_expiration: cred.endDateTime,
               location: `azure-ad:${locationType}/${sp.appId}/secrets/${cred.keyId}`,
               ...identityMetadata,
               ...(managedIdentity
@@ -525,6 +529,7 @@ async function scanAzureAD({
               category: "cert",
               type: "ssl_cert",
               expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+              metric_expiration: cert.endDateTime,
               location: `azure-ad:${locationType}/${sp.appId}/certificates/${cert.keyId}`,
               ...identityMetadata,
               ...(managedIdentity

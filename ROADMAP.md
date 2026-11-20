@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-19 (main ed2134c8, Core 0.20.0).
+Last reviewed: 2026-11-20 (Core 0.20.0, main 9deb2fc5).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -44,7 +44,7 @@ called stable while they are open.
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   API and worker egress, including webhook delivery, honor the configured
   policy. Release qualification remains open. The issuer work in #246
-  reuses the shared policy.
+  must reuse the shared policy.
 - **CLM issuer connectors and revocation jobs**
   ([#246](https://github.com/tokentimerch/tokentimer-core/issues/246)).
   Core ACME, step-ca, and webhook issuers. CA-backed revoke,

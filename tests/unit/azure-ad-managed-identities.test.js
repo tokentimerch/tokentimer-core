@@ -188,6 +188,7 @@ describe("Entra managed identity scan modes", () => {
         assert.equal(Object.hasOwn(item, "legacyLocation"), false);
       }
       assert.equal(item.expiration, "2027-01-02");
+      assert.equal(item.metric_expiration, "2027-01-02T00:00:00Z");
     }
   });
 

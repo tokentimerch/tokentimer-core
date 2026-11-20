@@ -272,7 +272,7 @@ describe("Key Vault inventory from list attributes", () => {
                   id: "https://vault.example.com/secrets/db-password",
                   attributes: {
                     enabled: true,
-                    exp: 1893456000,
+                    exp: 1893456001,
                     created: 1704067200,
                     updated: 1704153600,
                   },
@@ -292,6 +292,7 @@ describe("Key Vault inventory from list attributes", () => {
     assert.equal(result.items.length, 1);
     assert.equal(result.items[0].name, "db-password");
     assert.ok(result.items[0].expiration);
+    assert.equal(result.items[0].metric_expiration, "2030-01-01T00:00:01.000Z");
     assert.ok(result.items[0].created_at);
     assert.ok(result.items[0].updated_at);
     assert.equal(result.summary[0].complete, true);
@@ -333,6 +334,7 @@ describe("Key Vault inventory from list attributes", () => {
     assert.equal(result.items.length, 1);
     assert.equal(result.items[0].name, "web");
     assert.ok(result.items[0].expiration);
+    assert.equal(result.items[0].metric_expiration, "2030-01-01T00:00:00.000Z");
     assert.ok(result.items[0].created_at);
     assert.equal(result.summary[0].complete, true);
   });
@@ -371,6 +373,7 @@ describe("Key Vault inventory from list attributes", () => {
     assert.equal(byType.certificates.complete, true);
     assert.equal(byType.keys.complete, true);
     assert.equal(result.items.length, 1);
+    assert.equal(result.items[0].metric_expiration, "2030-01-01T00:00:00.000Z");
   });
 
   it("all collection 403 throws 403, not 401", async () => {
@@ -583,14 +586,14 @@ describe("secret redaction", () => {
 });
 
 describe("auto-sync audit rows", () => {
-  it("AUTO_SYNC_CREATED metadata is only the provider, never credentials", () => {
+  it("AUTO_SYNC_CREATED records the config and schedule context without credentials", () => {
     const adminSrc = fs.readFileSync(
       path.resolve(__dirname, "../../apps/api/routes/admin.js"),
       "utf8",
     );
     assert.match(
       adminSrc,
-      /action: "AUTO_SYNC_CREATED"[\s\S]{0,500}metadata: \{ provider \}/,
+      /action: "AUTO_SYNC_CREATED"[\s\S]{0,500}metadata:\s*\{\s*config_id: result\.rows\[0\]\.id,\s*provider,\s*enabled: result\.rows\[0\]\.enabled,\s*frequency: result\.rows\[0\]\.frequency,\s*\}/,
     );
     assert.doesNotMatch(adminSrc, /tokenPrefix/);
     assert.doesNotMatch(
