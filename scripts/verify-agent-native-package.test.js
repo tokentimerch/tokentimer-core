@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { parseArgs, assertBinaryEntries, assertPackageFlavor, assertInstallerFlavor, assertPeArchitecture, parseBuildInfo, EXPECTED_BINARIES, MODULE_PATHS } = require("./verify-agent-native-package");
+const { parseArgs, assertBinaryEntries, assertPackageFlavor, assertInstallerFlavor, assertPeArchitecture, parseBuildInfo, expectsRevocationHelpers, EXPECTED_BINARIES, REVOCATION_BINARIES, MODULE_PATHS } = require("./verify-agent-native-package");
 const HOST_MODULE = MODULE_PATHS["tokentimer-agent-host"];
 
 const buildInfo = (version = "1.26.10", arch = "amd64", goos = "windows") =>
@@ -44,6 +44,21 @@ test("Windows and generic artifacts declare distinct runtime flavors", () => {
   assert.throws(() => assertPackageFlavor({ name: "agent" }, "amd64"), /must declare/);
   assert.throws(() => assertPackageFlavor({ windowsBundledRuntime: false }, "amd64"), /must declare/);
   assert.throws(() => assertPackageFlavor({ windowsBundledRuntime: true }), /legacy runtime behavior/);
+});
+
+test("revocation helpers must match the producer declaration and module identity", () => {
+  const files = REVOCATION_BINARIES.map(name => name.slice("package/".length));
+  assert.equal(expectsRevocationHelpers({ files: [] }), false);
+  assert.equal(expectsRevocationHelpers({ files }), true);
+  assert.throws(() => expectsRevocationHelpers({ files: files.slice(0, 1) }), /both Windows revocation architectures/);
+  const bundled = [...EXPECTED_BINARIES, "package/runtime/amd64/node.exe"];
+  assertBinaryEntries([...bundled, ...REVOCATION_BINARIES], "amd64", true);
+  assert.throws(() => assertBinaryEntries(bundled, "amd64", true), /required revocation helpers/);
+  assert.throws(() => assertBinaryEntries([...bundled, ...REVOCATION_BINARIES], "amd64"), /required revocation helpers/);
+  const modulePath = MODULE_PATHS["tokentimer-observed-revocation-windows"];
+  const valid = buildInfo().replace(HOST_MODULE, "tokentimer-observed-revocation/cmd/observed-revocation");
+  parseBuildInfo(valid, "1.26.10", "amd64", modulePath);
+  assert.throws(() => parseBuildInfo(buildInfo(), "1.26.10", "amd64", modulePath), /expected executable family/);
 });
 
 test("packaged installer marker must match the selected archive flavor", () => {

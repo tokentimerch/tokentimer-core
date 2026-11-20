@@ -1,7 +1,7 @@
 "use strict";
 
 // Inspect the actual release archive, not unshipped working-tree binaries.
-// This gate binds six Windows PE hashes/build settings to the package checksum
+// This gate binds the Windows PE hashes/build settings to the package checksum
 // and observed source checkout; the separate Grype gate evaluates advisories.
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
@@ -16,10 +16,19 @@ const MODULE_PATHS = {
   "tokentimer-agent-host": "github.com/tokentimerch/tokentimer-core/packages/agent/windows-service-host",
   "tokentimer-adcs-chain": "tokentimer-adcs-chain",
   "tokentimer-adcs-cmc": "tokentimer-adcs-cmc",
+  "tokentimer-observed-revocation-windows": "tokentimer-observed-revocation/cmd/observed-revocation",
 };
-const EXPECTED_BINARIES = Object.keys(MODULE_PATHS)
+const REVOCATION_FAMILY = "tokentimer-observed-revocation-windows";
+const EXPECTED_BINARIES = Object.keys(MODULE_PATHS).filter(name => name !== REVOCATION_FAMILY)
   .flatMap((name) => Object.keys(ARCHITECTURES).map((arch) => "package/bin/" + name + "-" + arch + ".exe"))
   .sort();
+const REVOCATION_BINARIES = Object.keys(ARCHITECTURES).map(arch => `package/bin/${REVOCATION_FAMILY}-${arch}.exe`);
+
+function expectsRevocationHelpers(sourcePackage) {
+  const declared = REVOCATION_BINARIES.map(name => sourcePackage.files?.includes(name.slice("package/".length)) === true);
+  assert.equal(declared[0], declared[1], "Source must declare both Windows revocation architectures together");
+  return declared[0];
+}
 
 function parseArgs(argv) {
   const options = {};
@@ -35,17 +44,17 @@ function parseArgs(argv) {
   return options;
 }
 
-function assertBinaryEntries(entries, runtimeArch = null) {
+function assertBinaryEntries(entries, runtimeArch = null, includeRevocationHelpers = false) {
   for (const name of entries) {
     assert.ok(name.startsWith("package/") && !name.includes("\\") && !name.split("/").includes(".."), "Unsafe archive path: " + name);
   }
   const binaries = entries.filter((name) => /\.exe$/i.test(name)).sort();
-  const expected = [...EXPECTED_BINARIES];
+  const expected = includeRevocationHelpers ? [...EXPECTED_BINARIES, ...REVOCATION_BINARIES] : [...EXPECTED_BINARIES];
   if (runtimeArch) {
     assert.ok(Object.hasOwn(RUNTIMES, runtimeArch), "Unsupported packaged Node architecture");
     expected.push(`package/runtime/${runtimeArch}/node.exe`);
   }
-  assert.deepEqual(binaries, expected.sort(), "Archive must contain exactly the six expected Windows binaries and approved runtime, with no duplicates");
+  assert.deepEqual(binaries, expected.sort(), "Archive must contain exactly the six expected Windows binaries, any required revocation helpers and approved runtime, with no duplicates");
   return binaries;
 }
 
@@ -119,7 +128,8 @@ function main(argv = process.argv.slice(2)) {
   const runtimeMatch = /-windows-(amd64|arm64)\.tgz$/.exec(archive);
   const runtimeArch = runtimeMatch?.[1] || null;
   const entries = run("tar", ["-tzf", archive]).trim().split(/\r?\n/);
-  const binaries = assertBinaryEntries(entries, runtimeArch);
+  const sourcePackage = JSON.parse(run("git", ["show", "HEAD:packages/agent/package.json"]));
+  const binaries = assertBinaryEntries(entries, runtimeArch, expectsRevocationHelpers(sourcePackage));
   assertPackageFlavor(JSON.parse(run("tar", ["-xOzf", archive, "package/package.json"])), runtimeArch);
   const installer = run("tar", ["-xOzf", archive, "package/scripts/install-agent.ps1"]);
   // The retained 0.20.0 producer predates the marker. Only an exact match to
@@ -155,7 +165,7 @@ function main(argv = process.argv.slice(2)) {
     }
     fs.mkdirSync(path.dirname(path.resolve(options.out)), { recursive: true });
     fs.writeFileSync(options.out, JSON.stringify(receipt, null, 2) + "\n");
-    process.stdout.write("Verified six packaged Windows binaries: " + receipt.goVersion + ", archive sha256:" + receipt.archiveSha256 + "\n");
+    process.stdout.write("Verified " + binaries.length + " packaged Windows binaries: " + receipt.goVersion + ", archive sha256:" + receipt.archiveSha256 + "\n");
     return receipt;
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
@@ -165,4 +175,4 @@ function main(argv = process.argv.slice(2)) {
 if (require.main === module) {
   try { main(); } catch (error) { process.stderr.write(error.message + "\n"); process.exitCode = 1; }
 }
-module.exports = { parseArgs, assertBinaryEntries, assertPackageFlavor, assertInstallerFlavor, assertPeArchitecture, parseBuildInfo, EXPECTED_BINARIES, MODULE_PATHS };
+module.exports = { parseArgs, assertBinaryEntries, assertPackageFlavor, assertInstallerFlavor, assertPeArchitecture, parseBuildInfo, expectsRevocationHelpers, EXPECTED_BINARIES, REVOCATION_BINARIES, MODULE_PATHS };
