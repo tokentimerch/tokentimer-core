@@ -21,14 +21,17 @@ test("cross-store proof refuses missing, coerced and unbounded native facts", ()
 });
 test("clean Windows host lanes build the current metadata helper before any host cleanup case", () => {
   const yaml = require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
-  for (const file of ["certops-qualification.yml"]) {
-    const steps = yaml.load(fs.readFileSync(path.join(root, ".github/workflows", file), "utf8")).jobs.windows.steps;
-    const setup = steps.findIndex(step => step.uses === "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e");
-    const build = steps.findIndex(step => step.run === "node packages/agent/scripts/build-windows-chain-helper.js");
-    const host = steps.findIndex(step => typeof step.run === "string" && step.run.split(/\r?\n/).some(line => line.trim() === "node --test packages/agent/scripts/host/windows-host.test.js"));
-    assert.ok(setup >= 0 && setup < build && build < host, file);
-    assert.equal(steps[setup].with["go-version-file"], "packages/agent/windows-service-host/go.mod", file);
-  }
+  const workflows = path.join(root, ".github/workflows");
+  const windows = yaml.load(fs.readFileSync(path.join(workflows, "certops-qualification.yml"), "utf8")).jobs.windows;
+  const releaseGo = yaml.load(fs.readFileSync(path.join(workflows, "windows-agent-signing-pilot.yml"), "utf8")).env.PILOT_GO_VERSION;
+  const { steps } = windows;
+  const setup = steps.findIndex(step => step.uses === "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e");
+  const build = steps.findIndex(step => step.run === "node packages/agent/scripts/build-windows-chain-helper.js");
+  const host = steps.findIndex(step => typeof step.run === "string" && step.run.split(/\r?\n/).some(line => line.trim() === "node --test packages/agent/scripts/host/windows-host.test.js"));
+  assert.ok(setup >= 0 && setup < build && build < host);
+  assert.match(releaseGo, /^\d+\.\d+\.\d+$/);
+  assert.equal(steps[setup].with["go-version"], releaseGo);
+  assert.equal(windows.env.GOTOOLCHAIN, "local");
 });
 
 test("unsupported historical ARM64 full-host dispatch fails before checkout or native mutation", () => {
