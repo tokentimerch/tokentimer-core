@@ -325,7 +325,7 @@ router.post("/webhooks/twilio/whatsapp/inbound", getApiLimiter(), async (req, re
           action: "RECIPIENT_WHATSAPP_CONFIRMED",
           targetType: "workspace",
           workspaceId: result.workspaceId,
-          metadata: { channel: "whatsapp" },
+          metadata: { channel: "whatsapp", contact_id: result.contactId },
         });
       } catch (error) {
         logger.debug("whatsapp confirmation audit skipped", { error: error.message });

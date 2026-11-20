@@ -218,7 +218,7 @@ function requestReconciliation({ workspaceId, jobId, actorUserId }) {
       action: "CERTOPS_MATERIAL_RECONCILIATION_REQUESTED",
       targetType: "certificate_job",
       targetId: job.id,
-      metadata: { originalJobId: snapshot.old.id },
+      metadata: { originalJobId: snapshot.old.id, reconciliationJobId: job.id },
     });
     return job;
   });
@@ -300,6 +300,7 @@ async function acceptReceipt({ client, workspaceId, agentId, job, receipt }) {
     targetType: "certificate_job",
     targetId: scope.originalJobId,
     metadata: {
+      originalJobId: scope.originalJobId,
       reconciliationJobId: job.id,
       claimId: job.claim_id,
       agentId,

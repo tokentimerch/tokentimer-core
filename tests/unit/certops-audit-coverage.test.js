@@ -38,6 +38,11 @@ const { runRenewalSchedulerSweep } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/renewalScheduler.js"),
 );
 
+const {
+  readdManagingSource,
+  stopManagingSource,
+} = require("../../apps/api/services/certops/certificateIdentity");
+
 const WORKSPACE = "11111111-1111-4111-8111-111111111111";
 const CERT_ID = "22222222-2222-4222-8222-222222222222";
 const PROFILE_ID = "33333333-3333-4333-8333-333333333333";
@@ -1138,5 +1143,89 @@ describe("CERTOPS_AGENT_REGISTERED", () => {
       if (saved === undefined) delete process.env[REGISTRATION_KEY_ENV];
       else process.env[REGISTRATION_KEY_ENV] = saved;
     }
+  });
+});
+
+describe("management period audit", () => {
+  it("records the stopped and resumed configuration with the period IDs", async () => {
+    const oldPeriodId = "44444444-4444-4444-8444-444444444444";
+    const newPeriodId = "55555555-5555-4555-8555-555555555555";
+    const identityId = "66666666-6666-4666-8666-666666666666";
+    const common = {
+      managed_certificate_id: CERT_ID,
+      current_identity_id: identityId,
+    };
+    const original = {
+      ...common,
+      id: oldPeriodId,
+      renewal_profile_id: PROFILE_ID,
+      automation_enabled: true,
+    };
+    const resumed = {
+      ...common,
+      id: newPeriodId,
+      renewal_profile_id: null,
+      automation_enabled: false,
+    };
+    const audits = [];
+    const client = {
+      async query(sql, params) {
+        if (sql.includes("INSERT INTO audit_events")) {
+          const [, action] = sql.match(/'(CERTOPS_MANAGEMENT_[A-Z]+)'/);
+          audits.push({ action, metadata: JSON.parse(params[1]) });
+          return { rows: [] };
+        }
+        if (sql.includes("SELECT p.*")) return { rows: [original] };
+        if (sql.includes("UPDATE certops_management_periods"))
+          return { rows: [{ ended_at: new Date() }] };
+        if (sql.includes("COUNT(*)")) return { rows: [{ c: 2 }] };
+        if (sql.includes("SELECT * FROM managed_certificates"))
+          return { rows: [{ id: CERT_ID, fingerprint_sha256: "a".repeat(64) }] };
+        if (sql.includes("SELECT p.id")) return { rows: [] };
+        if (sql.includes("SELECT id, lifecycle_status"))
+          return { rows: [{ id: identityId }] };
+        if (sql.includes("INSERT INTO certops_management_periods"))
+          return { rows: [resumed] };
+        if (/SELECT pg_advisory_xact_lock|SELECT certops_admit_management|UPDATE managed_certificates/.test(sql))
+          return { rows: [] };
+        assert.fail("Unexpected statement: " + sql);
+      },
+    };
+    await stopManagingSource({
+      workspaceId: WORKSPACE,
+      periodId: oldPeriodId,
+      client,
+    });
+    await readdManagingSource({
+      workspaceId: WORKSPACE,
+      managedCertificateId: CERT_ID,
+      renewalProfileId: null,
+      automationEnabled: false,
+      client,
+    });
+
+    assert.deepEqual(audits, [
+      {
+        action: "CERTOPS_MANAGEMENT_STOPPED",
+        metadata: {
+          periodId: oldPeriodId,
+          managedCertificateId: CERT_ID,
+          identityId,
+          renewalProfileId: PROFILE_ID,
+          automationEnabled: true,
+          runningJobs: 2,
+        },
+      },
+      {
+        action: "CERTOPS_MANAGEMENT_STARTED",
+        metadata: {
+          periodId: newPeriodId,
+          managedCertificateId: CERT_ID,
+          identityId,
+          renewalProfileId: null,
+          automationEnabled: false,
+        },
+      },
+    ]);
   });
 });

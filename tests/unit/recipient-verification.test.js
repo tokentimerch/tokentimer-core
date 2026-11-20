@@ -799,6 +799,7 @@ describe("recipient verification", () => {
     });
     assert.equal(confirmed.ok, true);
     assert.equal(confirmed.workspaceId, "ws-1");
+    assert.equal(confirmed.contactId, "contact-1");
     const replay = await verification.confirmWhatsAppInbound({
       pool: store.pool,
       from: "whatsapp:+14155550100",

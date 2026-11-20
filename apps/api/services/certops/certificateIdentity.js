@@ -1223,11 +1223,12 @@ async function stopManagingSource({
         AND status IN ('claimed', 'running')`,
       [workspaceId, periodId],
     );
+    const runningJobs = Number(running.rows[0]?.c || 0);
     if (period.ended_at)
       return {
         periodId,
         endedAt: period.ended_at,
-        runningJobs: Number(running.rows[0]?.c || 0),
+        runningJobs,
       };
     await tx.query(
       `INSERT INTO audit_events(actor_user_id, subject_user_id, action,
@@ -1239,6 +1240,10 @@ async function stopManagingSource({
         JSON.stringify({
           periodId,
           managedCertificateId: period.managed_certificate_id,
+          identityId: period.current_identity_id,
+          renewalProfileId: period.renewal_profile_id,
+          automationEnabled: period.automation_enabled,
+          runningJobs,
         }),
         workspaceId,
       ],
@@ -1246,7 +1251,7 @@ async function stopManagingSource({
     return {
       periodId,
       endedAt: closed.rows[0].ended_at,
-      runningJobs: Number(running.rows[0]?.c || 0),
+      runningJobs,
     };
   });
 }
@@ -1358,7 +1363,13 @@ async function readdManagingSource({
         $2::jsonb, $3)`,
       [
         actorUserId,
-        JSON.stringify({ periodId: inserted.rows[0].id, managedCertificateId }),
+        JSON.stringify({
+          periodId: inserted.rows[0].id,
+          managedCertificateId,
+          identityId: inserted.rows[0].current_identity_id,
+          renewalProfileId: inserted.rows[0].renewal_profile_id,
+          automationEnabled: inserted.rows[0].automation_enabled,
+        }),
         workspaceId,
       ],
     );
