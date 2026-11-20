@@ -51,6 +51,8 @@ After a change is merged, the push CI run on `main` remains the authoritative po
 Repository maintenance workflows live under
 [.github/maintainers/](.github/maintainers/README.md), separate from the
 installation, configuration and operations guides in `docs/`.
+See the [Core release runbook](.github/maintainers/release/README.md) for
+publication, independent verification and recovery.
 See the [roadmap maintenance guide](.github/maintainers/roadmap.md) for
 release reconciliation and the read-only consistency check.
 
