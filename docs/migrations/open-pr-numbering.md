@@ -55,6 +55,7 @@ are reservations, not no-op migrations. They do not install another feature.
 | 123 | agent_credential_rotations | Credential rotation preparation and receipt |
 | 124 | agent_credential_rotation_ack | Credential rotation acknowledgement |
 | 126 | certops_adcs_receipt_deadline | Reserved AD CS receipt deadline |
+| 127 | auto_sync_creation_expiration | Auto-sync creation metric expiration (#780) |
 
 A ledger based on the released numbering that records `agent_credential_rotations` or `agent_credential_rotation_ack` at version 109 or 110 is ambiguous and is rejected before migration SQL. Preserve the database and arrange a separately reviewed recovery; do not edit or relabel its ledger.
 
@@ -67,6 +68,9 @@ Only missing definitions are assigned; duplicate feature definitions must be
 removed when composing branches. Unknown, conflicting or unrecognized histories
 fail before DDL and require reviewed recovery. Database compatibility does not
 qualify the corresponding runtime feature or production artifact.
+
+A recognized #780 preview keeps its previously applied expiration row, including
+version 115 on a standard preview database. New installs use version 127.
 
 ## Applied history and supported previews
 

@@ -36,7 +36,7 @@ async function scan(run, items = [], complete = true) {
   const result = await persistScan({ workspaceId, provider: "gitlab",
     identityContext: { host: source.source_instance, ownerKey: source.source_owner_key },
     createdBy: userId, items: items.map(id => ({ sourceKind: source.source_kind, sourceObjectId: id, dimensions: {} })),
-    subScopes: [{ sourceKind: source.source_kind, complete }], request: {
+    subScopes: [{ sourceKind: source.source_kind, dimensions: { gitLabPatCoverage: "all" }, complete }], request: {
       isWorkerCall: true, integrationScanStartedAt: new Date(), body: { auto_sync_run: runs.runContext(run.config) } } });
   run.context.scanId = result.scanId;
   return result.scanId;
@@ -378,40 +378,76 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
   });
 
   describe("GitLab PAT scanner cleanup safety", () => {
-    const { scanGitLab } = require("../../apps/api/services/gitlabIntegration");
     const { gitlabPatFixture, pat } = require("../helpers/gitlab-pat-fixture");
 
     async function discoverAndImport(run, fixture, options = {}) {
       // A successful sibling scope must not authorize cleanup of inaccessible PATs.
-      const result = await scanGitLab({ ...fixture.options,
-        include: { tokens: true, keys: true },
-        filters: { includePATs: true, includeSSHKeys: true }, ...options });
-      const persisted = await persistScan({
-        workspaceId, provider: "gitlab", createdBy: userId,
-        identityContext: { host: result.host, ownerKey: result.ownerKey },
-        items: result.items.map((item) => ({
-          sourceKind: item.sourceKind, sourceObjectId: item.sourceObjectId, dimensions: {},
-        })),
-        subScopes: result.summary.map((entry) => ({
-          sourceKind: entry.sourceKind, dimensions: {}, complete: entry.complete === true,
-          reason: entry.error ? "error" : entry.truncated ? "truncated" : null,
-        })),
-        request: { isWorkerCall: true, integrationScanStartedAt: new Date(),
-          body: { auto_sync_run: runs.runContext(run.config) } },
-      });
-      run.context.scanId = persisted.scanId;
+      const scanned = await request(app)
+        .post(`/api/v1/integrations/gitlab/scan?workspace_id=${workspaceId}`)
+        .set("Authorization", "Bearer issue71-test-worker")
+        .send({
+          ...fixture.options, ...options,
+          include: { tokens: true, keys: true },
+          filters: { includePATs: true, includeSSHKeys: true, includeGroupTokens: false,
+            includeProjectTokens: false, includeDeployTokens: false },
+          auto_sync_run: runs.runContext(run.config),
+        });
+      assert.equal(scanned.status, 200, scanned.text);
+      const result = scanned.body;
+      const scanId = result.scan_id;
+      assert.ok(scanId, scanned.text);
+      assert.equal(Object.hasOwn(result, "gitLabPatCoverage"), false);
+      assert.ok(result.items.every(item => !Object.hasOwn(item, "gitlab_pat_owned_by_principal")));
+      run.context.scanId = scanId;
       const reply = await request(app)
         .post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
         .set("Authorization", "Bearer issue71-test-worker")
         .send({
-          items: result.items, scan_id: persisted.scanId,
+          items: result.items, scan_id: scanId,
           auto_sync_run: runs.runContext(run.config),
-          cleanup: { enabled: true, provider: "gitlab", scanId: persisted.scanId },
+          cleanup: { enabled: true, provider: "gitlab", scanId },
         });
       assert.equal(reply.status, 201, JSON.stringify(reply.body));
       assert.equal(reply.body.error_count, 0, JSON.stringify(reply.body));
       return { scan: result, imported: reply.body };
     }
+
+    it("retains other users' PATs when an admin account's PAT loses admin access", async (t) => {
+      const fixture = await gitlabPatFixture(t);
+      const authorityPath = "/api/v4/application/settings";
+      let effectiveAdmin = false;
+      fixture.routes.set(authorityPath, () => effectiveAdmin
+        ? { data: { signup_enabled: false, default_projects_limit: 10 } } : { status: 403 });
+      fixture.isAdmin = true;
+      fixture.pats = [pat(41), pat(42, 18)];
+      const first = await start(await configuration());
+      const initial = await discoverAndImport(first, fixture);
+      assert.equal(initial.imported.created_count, 2);
+      assert.equal(initial.imported.cleanup_complete, true);
+      assert.ok(!fixture.calls.some(url => url.pathname === authorityPath), "A distinct PAT owner proves admin access");
+      await finish(first);
+
+      fixture.pats = [];
+      const ownRun = await start(first.config);
+      const own = await discoverAndImport(ownRun, fixture);
+      assert.equal(own.imported.cleanup_complete, true);
+      assert.equal(own.imported.deleted_count, 1, "Own-only absence covers the previously observed own PAT");
+      assert.equal(fixture.calls.filter(url => url.pathname === authorityPath).length, 1);
+      const linkedIds = async () => (await pool.query(`SELECT t.source_object_id FROM tokens t
+        JOIN auto_sync_token_links l ON l.token_id=t.id WHERE l.config_id=$1`, [first.config.id]))
+        .rows.map(row => row.source_object_id);
+      assert.deepEqual(await linkedIds(), ["42"]);
+      await finish(ownRun);
+
+      effectiveAdmin = true;
+      const adminRun = await start(first.config);
+      const admin = await discoverAndImport(adminRun, fixture);
+      assert.equal(admin.imported.cleanup_complete, true);
+      assert.equal(admin.imported.deleted_count, 1, "Verified admin absence covers the other user's PAT");
+      assert.equal(fixture.calls.filter(url => url.pathname === authorityPath).length, 2);
+      assert.deepEqual(await linkedIds(), []);
+      await finish(adminRun);
+    });
 
     for (const mode of ["capped", "forbidden", "not-found", "later-page-failure", "rate-limited"]) {
       it(`retains tracked PAT B after an actual ${mode} scan, then cleans up after complete enumeration`, async (t) => {
@@ -554,7 +590,7 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
     const run=await start(await configuration());await scan(run,["42"]);
     const {token}=await imported(run);
     await pool.query("DELETE FROM auto_sync_token_links WHERE token_id=$1",[token.id]);
-    const manualScan=await persistScan({workspaceId,provider:"gitlab",identityContext:{host:source.source_instance,ownerKey:source.source_owner_key},items:[],subScopes:[{sourceKind:source.source_kind,complete:true}]});
+    const manualScan=await persistScan({workspaceId,provider:"gitlab",identityContext:{host:source.source_instance,ownerKey:source.source_owner_key},items:[],subScopes:[{sourceKind:source.source_kind,dimensions:{gitLabPatCoverage:"all"},complete:true}]});
     const attaching=await pool.connect();await attaching.query("BEGIN");
     await attaching.query("SELECT id FROM tokens WHERE id=$1 FOR UPDATE",[token.id]);
     const cleaning=cleanupObsoleteTokens({workspaceId,actorUserId:userId,cleanup:{enabled:true,provider:"gitlab",scanId:manualScan.scanId}});

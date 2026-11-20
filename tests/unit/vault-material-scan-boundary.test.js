@@ -224,3 +224,50 @@ test("denied or failed exact-leaf probes cannot prove an empty prefix complete",
     });
   }
 });
+
+test("malformed successful Vault inventory responses cannot prove cleanup coverage", async (t) => {
+  for (const { type, mount, listPath, itemPath } of [
+    { type: "kv", mount: "secret/", listPath: "/v1/secret/metadata/", itemPath: "/v1/secret/data/fixture" },
+    { type: "pki", mount: "pki/", listPath: "/v1/pki/certs", itemPath: "/v1/pki/cert/fixture" },
+  ]) {
+    for (const { name, list, read, complete } of [
+      { name: "malformed listing", list: { data: { keys: null } }, complete: false },
+      { name: "malformed listed asset", list: { data: { keys: ["fixture"] } }, read: { data: {} }, complete: false },
+      { name: "empty listing", list: { data: { keys: [] } }, complete: true },
+      { name: "empty LIST 404", list: null, complete: true },
+    ]) {
+      await t.test(`${type}: ${name}`, async (subtest) => {
+        const hits = [];
+        subtest.mock.method(globalThis, "fetch", async (url, options) => {
+          const pathname = new URL(url).pathname;
+          hits.push(pathname);
+          let body;
+          if (pathname === "/v1/sys/mounts") {
+            body = { data: { [mount]: { type, options: { version: "2" } } } };
+          } else if (pathname === listPath) {
+            assert.equal(options.method, "LIST");
+            body = list;
+          } else if (pathname === itemPath) {
+            assert.equal(options.method, "GET");
+            body = read;
+          } else {
+            assert.fail("Unexpected request: " + pathname);
+          }
+          return new Response(JSON.stringify(body ?? {}), {
+            status: body ? 200 : 404,
+            headers: { "Content-Type": "application/json" },
+          });
+        });
+        const result = await scanVault({
+          address: "https://vault.fixture.invalid",
+          token: "fixture-scanner",
+          include: { kv: type === "kv", pki: type === "pki" },
+        });
+        assert.deepEqual(result.items, []);
+        assert.equal(result.summary.length, 1);
+        assert.equal(result.summary[0].complete, complete);
+        assert.equal(hits.includes(itemPath), Boolean(read));
+      });
+    }
+  }
+});

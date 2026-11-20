@@ -2,7 +2,7 @@
 
 // Run against a migrated, disposable database whose name ends in _metric_labels_test.
 // This suite uses real PostgreSQL transactions, locks, routes, and token models.
-const { before, beforeEach, after, describe, it } = require("node:test");
+const { before, beforeEach, after, describe, it, mock } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const request = require("supertest");
@@ -10,24 +10,26 @@ const express = require("../../apps/api/node_modules/express");
 const { pool } = require("../../apps/api/db/database");
 const provenance = require("../../apps/api/services/autoSyncProvenance");
 const { persistScan } = require("../../apps/api/services/integrationScans");
+const { gitlabPatFixture } = require("../helpers/gitlab-pat-fixture");
 
 let runs, workerPool, userId, workspaceId, app;
 let sequence = 0;
 const source = { source_provider: "gitlab", source_instance: "gitlab.example",
   source_owner_key: "17", source_kind: "gitlab-project-token", source_object_id: "42" };
+const providerScanFixtures = new Map();
 
-async function configuration(name = `Config ${++sequence}`) {
+async function configuration(name = `Config ${++sequence}`, provider = "gitlab") {
   const result = await pool.query(`INSERT INTO auto_sync_configs
     (workspace_id, provider, credentials_encrypted, connection_key, created_by, next_sync_at)
-    VALUES ($1, 'gitlab', 'test-only', $2, $3, NOW() + INTERVAL '1 day') RETURNING *`,
-  [workspaceId, name, userId]);
+    VALUES ($1, $2, 'test-only', $3, $4, NOW() + INTERVAL '1 day') RETURNING *`,
+  [workspaceId, provider, name, userId]);
   return result.rows[0];
 }
 async function start(config) {
   await pool.query("UPDATE auto_sync_configs SET next_sync_at = NOW() WHERE id = $1", [config.id]);
   const [claimed] = await runs.claimDueAutoSyncRuns();
   assert.equal(claimed.id, config.id);
-  return { config: claimed, context: { configId: claimed.id, workspaceId, provider: "gitlab",
+  return { config: claimed, context: { configId: claimed.id, workspaceId, provider: claimed.provider,
     runId: claimed.runId, generation: claimed.generation, scanVersion: Number(claimed.scanVersion), leaseOwner: claimed.leaseOwner } };
 }
 async function scan(run, items = [], complete = true) {
@@ -104,6 +106,22 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     });
     app.use(require("../../apps/api/routes/admin"));
     process.env.WORKER_API_KEY = "issue71-test-worker";
+    // Stub only the provider boundary. The HTTP scan routes still apply
+    // their own provenance mapping, fencing and response serialization.
+    for (const [provider, moduleName, method] of [
+      ["github", "githubIntegration", "scanGitHub"],
+      ["gitlab", "gitlabIntegration", "scanGitLab"],
+      ["aws", "awsIntegration", "scanAWS"],
+      ["azure", "azureIntegration", "scanAzure"],
+      ["azure-ad", "azureADIntegration", "scanAzureAD"],
+      ["gcp", "gcpIntegration", "scanGCP"],
+      ["vault", "vaultIntegration", "scanVault"],
+    ]) {
+      const scanner = require(`../../apps/api/services/${moduleName}`);
+      const original = scanner[method];
+      mock.method(scanner, method, (...args) => providerScanFixtures.has(provider)
+        ? structuredClone(providerScanFixtures.get(provider)) : original(...args));
+    }
     app.use(require("../../apps/api/routes/integrations"));
     require("../../apps/api/services/autoSyncMetrics").registerAutoSyncMetrics(
       require("../../apps/api/node_modules/prom-client").register,
@@ -111,6 +129,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     app.use(require("../../apps/api/routes/health"));
   });
   beforeEach(async () => {
+    providerScanFixtures.clear();
     await pool.query('UPDATE users SET is_admin=FALSE WHERE id=$1',[userId]);
     delete process.env.AUTO_SYNC_METRICS_ENABLED;
     delete process.env.AUTO_SYNC_METRICS_LABELS;
@@ -125,6 +144,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     await pool.query("UPDATE auto_sync_feature_state SET multi_config_enabled = TRUE WHERE id = TRUE");
   });
   after(async () => {
+    mock.restoreAll();
     if (workspaceId) await pool.query("DELETE FROM workspaces WHERE id = $1", [workspaceId]);
     // Audit history is immutable; the disposable database owns the user fixture.
     await workerPool?.end();
@@ -146,9 +166,10 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     const result = await persistScan({
       workspaceId, provider: "gitlab", createdBy: userId,
       identityContext: { host: source.source_instance, ownerKey: source.source_owner_key },
-      items: entries.map(([id, owner, kind = "gitlab-pat"]) => ({
+      items: entries.map(([id, owner, kind = "gitlab-pat", expiration]) => ({
         sourceKind: kind, sourceObjectId: id,
-        dimensions: { project: "platform/backend", ...(owner === undefined ? {} : { owner_username: owner }) },
+        dimensions: { project: "platform/backend", ...(owner === undefined ? {} : { owner_username: owner }),
+          ...(expiration === undefined ? {} : { expiration }) },
       })),
       subScopes: [{ sourceKind: "gitlab-pat", complete: true }],
       request: manual ? null : {
@@ -513,6 +534,540 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
     assert.ok(inventory.every(row => !Object.hasOwn(row.source_dimensions, "owner_username")));
   });
 
+  it("keeps provider expiry on creation samples and ignores dates supplied by the importer", async () => {
+    const config = await configuration();
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "expiration,asset_name";
+    await settings(config, ["expiration", "asset_name", "kind"]);
+    const run = await start(config);
+    await ownerScan(run, [
+      ["known-expiry", undefined, "gitlab-pat", "2032-02-29"],
+      ["missing-expiry", undefined, "gitlab-pat"],
+      ["deploy-expiry", undefined, "gitlab-deploy-token", "2032-03-01T01:00:00+01:00"],
+    ]);
+    const response = await request(app)
+      .post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
+      .set("Authorization", "Bearer issue71-test-worker")
+      .send({
+        scan_id: run.context.scanId, auto_sync_run: runs.runContext(run.config),
+        items: ["known-expiry", "missing-expiry", "deploy-expiry"].map(id => ({
+          name: id, location: `gitlab.example/${id}`,
+          source: "gitlab", sourceKind: id === "deploy-expiry" ? "gitlab-deploy-token" : "gitlab-pat",
+          sourceObjectId: id, type: "api_key", expiration: "2099-12-31",
+          source_dimensions: { expiration: "2099-12-31" },
+        })),
+      });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.created_count, 3);
+    for (const metricName of ["auto_sync_items_created_detailed_total", "auto_sync_last_creation_timestamp_seconds"]) {
+      const samples = await metric(metricName);
+      assert.deepEqual(Object.fromEntries(samples.map(sample => [sample.labels.asset_name, sample.labels.expiration])), {
+        "known-expiry": "2032-02-29", "missing-expiry": "", "deploy-expiry": "2032-03-01T00:00:00.000Z",
+      });
+      assert.ok(samples.every(sample => metricName.endsWith("_total") ? sample.value === 1 : sample.value > 0));
+    }
+    const { rows } = await pool.query("SELECT source_dimensions FROM tokens WHERE workspace_id=$1", [workspaceId]);
+    assert.ok(rows.every(row => !Object.hasOwn(row.source_dimensions, "expiration")));
+    await finish(run);
+  });
+
+  it("carries authoritative expiration through every provider scan and import route to HTTP metrics", async () => {
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "asset_name,expiration,owner_username";
+    const token = "synthetic-provider-token";
+    const authoritativeTime = "2032-03-01T01:02:03+01:00";
+    const utcTime = "2032-03-01T00:02:03.000Z";
+    const gcpExpiry = "2032-03-01T00:02:03.123456789Z";
+    const fixture = (name, sourceKind, metricExpiration, attributes) => ({
+      name, source: sourceKind, sourceKind, sourceObjectId: name,
+      location: `fixture:${name}`, category: "key_secret", type: "api_key",
+      expiration: "2032-03-01", metric_expiration: metricExpiration, ...attributes,
+    });
+    const cert = { category: "cert", type: "tls_cert" };
+    const cases = [
+      ["gitlab", { baseUrl: "https://gitlab.example", token }, { host: "gitlab.example", ownerKey: "17" }, [
+        [fixture("gitlab-pat", "gitlab-pat", "2032-02-29", { owner_username: "fixture-owner" }), "2032-02-29"],
+        [fixture("gitlab-deploy", "gitlab-deploy-token", authoritativeTime), utcTime],
+        [fixture("gitlab-no-expiry", "gitlab-pat", null, { expiration: null }), ""],
+      ]],
+      ["github", { baseUrl: "https://github.example", token }, { host: "github.example", ownerKey: "18" }, [
+        [fixture("github-ssh", "github-ssh-key", undefined, { expiration: null, type: "ssh_key" }), ""],
+      ]],
+      ["aws", { accessKeyId: "synthetic-access-id", secretAccessKey: token, region: "us-east-1" }, { accountId: "123456789012" }, [
+        [fixture("aws-certificate", "aws-acm", authoritativeTime, { ...cert, region: "us-east-1" }), utcTime],
+        [fixture("aws-rotation-only", "aws-secrets-manager", undefined, { region: "us-east-1" }), ""],
+      ]],
+      ["azure", { vaultUrl: "https://fixture.vault.azure.net", token }, {}, [
+        [fixture("azure-key", "azure-key-vault-key", authoritativeTime), utcTime],
+        [fixture("azure-secret", "azure-key-vault-secret", authoritativeTime), utcTime],
+        [fixture("azure-certificate", "azure-key-vault-certificate", authoritativeTime, cert), utcTime],
+      ]],
+      ["azure-ad", { token }, { tenantId: "00000000-0000-4000-8000-000000000017" }, [
+        [fixture("entra-app-secret", "azure-ad-client-secret", authoritativeTime), utcTime],
+        [fixture("entra-sp-certificate", "azure-ad-sp-certificate", authoritativeTime, { ...cert, servicePrincipalType: "Application" }), utcTime],
+      ]],
+      ["gcp", { projectId: "fixture-project", accessToken: token }, {}, [
+        [fixture("gcp-secret", "gcp-secret-manager", gcpExpiry, { dimensions: { project: "fixture-project" } }), gcpExpiry],
+        [fixture("gcp-certificate", "gcp-compute-ssl-cert", authoritativeTime, cert), utcTime],
+        [fixture("gcp-rotation-only", "gcp-secret-manager"), ""],
+      ]],
+      ["vault", { address: "https://vault.example", token }, {}, [
+        [fixture("vault-pki-certificate", "vault-pki", authoritativeTime, { ...cert, mount: "pki", path: "cert/01" }), utcTime],
+        [fixture("vault-kv-certificate", "vault-kv", authoritativeTime, { ...cert, mount: "secret", path: "example-cert" }), utcTime],
+        [fixture("vault-rotation-only", "vault-kv", undefined, { mount: "secret", path: "rotation" }), ""],
+      ]],
+    ];
+    const workerPost = path => request(app).post(`${path}?workspace_id=${workspaceId}`)
+      .set("Authorization", "Bearer issue71-test-worker");
+    const labels = ["asset_name", "kind", "monitoring_group", "owner_username"];
+    const expected = [];
+    const beforeCreation = Date.now() / 1000;
+    async function scanAndImport(provider, credentials, sourceIdentity, fixtures, expirationSelected = true) {
+      const config = await configuration(`${provider} ${expected.length}`, provider);
+      await settings(config, expirationSelected ? [...labels, "expiration"] : labels);
+      const run = await start(config);
+      const runContext = runs.runContext(run.config);
+      const items = fixtures.map(([item]) => item);
+      providerScanFixtures.set(provider, { ...sourceIdentity, items,
+        summary: items.map(item => ({ sourceKind: item.sourceKind, complete: true })) });
+      const scanResponse = await workerPost(`/api/v1/integrations/${provider}/scan`)
+        .send({ ...credentials, auto_sync_run: runContext });
+      assert.equal(scanResponse.status, 200, `${provider} scan: ${scanResponse.text}`);
+      const scanId = scanResponse.body.scan_id;
+      assert.ok(scanId, `${provider} scan must be persisted`);
+      assert.ok(scanResponse.body.items.every(item => !Object.hasOwn(item, "metric_expiration")));
+      const { rows } = await pool.query(
+        "SELECT source_object_id, source_dimensions FROM integration_scan_items WHERE scan_id=$1", [scanId],
+      );
+      assert.equal(rows.length, items.length);
+      for (const [item, expiration] of fixtures) {
+        const persisted = rows.find(row => row.source_object_id === item.sourceObjectId);
+        assert.equal(persisted.source_dimensions.expiration, expirationSelected && expiration ? expiration : undefined, item.name);
+        expected.push({ provider, name: item.name, expiration: expirationSelected ? expiration : "", configId: config.id });
+      }
+      const importPath = provider === "vault" ? "/api/v1/integrations/vault/import" : "/api/v1/integrations/import";
+      const imported = await workerPost(importPath).send({
+        scan_id: scanId, auto_sync_run: runContext,
+        items: scanResponse.body.items.map(item => ({ ...item,
+          expiration: "2099-12-31", metric_expiration: "2099-12-31", source_dimensions: { expiration: "2099-12-31" },
+        })),
+      });
+      assert.equal(imported.status, 201, `${provider} import: ${imported.text}`);
+      assert.equal(imported.body.created_count, items.length, imported.text);
+      await finish(run);
+    }
+
+    for (const args of cases) await scanAndImport(...args);
+    const [provider, credentials, identity] = cases.find(([provider]) => provider === "aws");
+    await scanAndImport(provider, credentials, identity, [
+      [fixture("aws-unselected-expiry", "aws-acm", authoritativeTime, cert), utcTime],
+    ], false);
+
+    const scrape = await request(app).get("/metrics");
+    assert.equal(scrape.status, 200, scrape.text);
+    assert.match(scrape.headers["content-type"], /^text\/plain;.*version=0\.0\.4/);
+    const families = ["auto_sync_items_created_detailed_total", "auto_sync_last_creation_timestamp_seconds"];
+    for (const family of families) {
+      const lines = scrape.text.split("\n").filter(line => line.startsWith(`${family}{`));
+      assert.equal(lines.length, expected.length);
+      for (const { provider, name, expiration, configId } of expected) {
+        const line = lines.find(line => line.includes(`asset_name="${name}"`));
+        assert.ok(line, `Missing ${family} sample for ${name}`);
+        assert.ok(line.includes(`provider="${provider}"`) && line.includes(`configuration_id="${configId}"`));
+        assert.ok(line.includes(`expiration="${expiration}"`), line);
+        assert.ok(line.includes(`owner_username="${name === "gitlab-pat" ? "fixture-owner" : ""}"`), line);
+        const value = Number(line.slice(line.lastIndexOf(" ") + 1));
+        if (family.endsWith("_total")) assert.equal(value, 1);
+        else assert.ok(value >= beforeCreation && value <= Date.now() / 1000, `${name}: ${value}`);
+      }
+    }
+
+    const { rows } = await pool.query("SELECT source_dimensions FROM tokens WHERE workspace_id=$1", [workspaceId]);
+    assert.ok(rows.every(row => !Object.hasOwn(row.source_dimensions, "expiration")));
+    const aggregateSamples = scrape.text.split("\n").filter(line => line.startsWith("auto_sync_") &&
+      !families.some(family => line.startsWith(`${family}{`)));
+    assert.ok(aggregateSamples.every(line => !line.includes("expiration=")));
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "asset_name,owner_username";
+    const restricted = await request(app).get("/metrics");
+    assert.equal(restricted.status, 200, restricted.text);
+    const restrictedSamples = restricted.text.split("\n").filter(line => families.some(family => line.startsWith(`${family}{`)));
+    assert.equal(restrictedSamples.length, expected.length * families.length);
+    assert.ok(restrictedSamples.every(line => line.includes('expiration=""')));
+  });
+
+  it("imports page-two GitLab expiry and retains its inventory link across failed later pages", async (t) => {
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "asset_name,expiration";
+    const gitlab = await gitlabPatFixture(t);
+    const tokenPath = "/api/v4/projects/7/access_tokens";
+    const expiry = "2032-02-29";
+    const projectToken = { id: 42, name: "page-two-token", active: true, expires_at: expiry };
+    const firstToken = { id: 41, name: "page-one-token", active: true };
+    gitlab.routes.set("/api/v4/projects", () => ({
+      data: [{ id: 7, name: "Project", path_with_namespace: "platform/project" }],
+      headers: { "x-next-page": "" },
+    }));
+    // Keep an independently complete sibling scope in each run.
+    gitlab.routes.set("/api/v4/user/keys", () => ({ data: [], headers: { "x-next-page": "" } }));
+    const config = await configuration();
+    await settings(config, ["kind", "asset_name", "expiration"]);
+
+    const workerPost = path => request(app).post(`${path}?workspace_id=${workspaceId}`)
+      .set("Authorization", "Bearer issue71-test-worker");
+    const fractionalLimit = await workerPost("/api/v1/integrations/gitlab/scan").send({
+      baseUrl: gitlab.baseUrl, token: gitlab.options.token, maxItems: 1.5,
+    });
+    assert.equal(fractionalLimit.status, 400, fractionalLimit.text);
+    assert.equal(gitlab.calls.length, 0, "An invalid limit must not query the provider");
+    async function scanAndImport() {
+      gitlab.calls.length = 0;
+      const run = await start(config);
+      const runContext = runs.runContext(run.config);
+      const scanned = await workerPost("/api/v1/integrations/gitlab/scan").send({
+        baseUrl: gitlab.baseUrl, token: gitlab.options.token, auto_sync_run: runContext,
+        include: { tokens: true, keys: true },
+        filters: {
+          includePATs: false, includeProjectTokens: true, includeGroupTokens: false,
+          includeDeployTokens: false, includeTriggerTokens: false, includeSSHKeys: true,
+        },
+      });
+      assert.equal(scanned.status, 200, scanned.text);
+      const scanId = scanned.body.scan_id;
+      assert.ok(scanId, "The worker scan must be persisted and fenced");
+      const result = await workerPost("/api/v1/integrations/import").send({
+        scan_id: scanId, auto_sync_run: runContext, items: scanned.body.items,
+        cleanup: { enabled: true, provider: "gitlab", scanId },
+      });
+      assert.equal(result.status, 201, result.text);
+      assert.equal(result.body.error_count, 0, result.text);
+      await finish(run);
+      return { scanned: scanned.body, imported: result.body };
+    }
+    const pageNumber = url => Number(url.searchParams.get("page") || 1);
+    const pages = () => gitlab.calls.filter(url => url.pathname === tokenPath).map(pageNumber);
+    const projectScope = scanned => scanned.summary.find(scope => scope.sourceKind === "gitlab-project-token");
+    const firstPage = { data: [firstToken], headers: { "x-next-page": "2" } };
+    const terminalPage = { data: [firstToken], headers: {
+      "x-next-page": "", "x-total-pages": "1", "x-total": "1",
+    } };
+    const linkTarget = new URL("/unused-link-path?page=2&state=all", gitlab.baseUrl);
+    linkTarget.hostname = "localhost";
+    const observedRequests = [];
+    gitlab.routes.set(tokenPath, (url, headers) => {
+      observedRequests.push({
+        host: headers.host, authenticated: headers["private-token"] === gitlab.options.token,
+        state: url.searchParams.get("state"),
+      });
+      return pageNumber(url) === 1
+        ? { data: firstPage.data, headers: { ...firstPage.headers, link: `<${linkTarget}>; rel="next"` } }
+        : { data: [projectToken], headers: {
+          "x-next-page": "", "x-total-pages": "2", "x-total": "2",
+        } };
+    });
+    const beforeCreation = Date.now() / 1000;
+    const initial = await scanAndImport();
+    assert.deepEqual(pages(), [1, 2]);
+    const originalRequest = { host: new URL(gitlab.baseUrl).host, authenticated: true, state: "active" };
+    assert.deepEqual(observedRequests, [originalRequest, originalRequest]);
+    assert.equal(initial.imported.created_count, 2);
+    assert.equal(projectScope(initial.scanned).complete, true);
+    assert.equal(initial.imported.cleanup_complete, true);
+    const discovered = initial.scanned.items.find(item => item.sourceObjectId === "7:42");
+    assert.equal(discovered.expiration, expiry);
+    assert.equal(Object.hasOwn(discovered, "metric_expiration"), false);
+    const { rows: [stored] } = await pool.query(
+      "SELECT source_dimensions FROM integration_scan_items WHERE scan_id=$1 AND source_object_id='7:42'",
+      [initial.scanned.scan_id],
+    );
+    assert.equal(stored.source_dimensions.expiration, expiry);
+    const { rows: [tracked] } = await pool.query(
+      "SELECT id FROM tokens WHERE workspace_id=$1 AND source_object_id='7:42' AND auto_sync_managed=TRUE",
+      [workspaceId],
+    );
+    assert.ok(tracked, "Page two token is auto-sync-managed inventory");
+
+    const initialScrape = await request(app).get("/metrics");
+    assert.equal(initialScrape.status, 200);
+    const trackedSeries = text => text.split("\n").filter(line => line.startsWith("auto_sync_") &&
+      line.includes(`configuration_id="${config.id}"`) && line.includes('asset_name="page-two-token"'));
+    const samples = trackedSeries(initialScrape.text);
+    assert.equal(samples.length, 2);
+    for (const metricName of ["auto_sync_items_created_detailed_total", "auto_sync_last_creation_timestamp_seconds"]) {
+      const sample = samples.find(line => line.startsWith(`${metricName}{`));
+      assert.ok(sample?.includes(`expiration="${expiry}"`), sample);
+      const value = Number(sample.split(" ").at(-1));
+      if (metricName.endsWith("_total")) assert.equal(value, 1);
+      else assert.ok(value >= beforeCreation - 1 && value <= Date.now() / 1000 + 1, sample);
+      t.diagnostic(sample);
+    }
+
+    const partialCases = [
+      ...[403, 404, 503].map(status => ({
+        label: `page two HTTP ${status}`, expectedPages: [1, 2],
+        respond: url => pageNumber(url) === 1 ? firstPage : { status },
+      })),
+      {
+        label: "page one HTTP 404", expectedPages: [1], expectedIds: [],
+        respond: () => ({ status: 404 }),
+      },
+      {
+        label: "conflicting continuation", expectedPages: [1],
+        respond: () => ({ ...firstPage, headers: { ...firstPage.headers, "x-total-pages": "1" } }),
+      },
+      {
+        label: "repeated item with headerless short pages", expectedPages: [1, 2],
+        respond: () => ({ data: [firstToken] }),
+      },
+      {
+        label: "headerless short page followed by failure", expectedPages: [1, 2],
+        respond: url => pageNumber(url) === 1 ? { data: [firstToken] } : { status: 503 },
+      },
+    ];
+    for (const { label, expectedPages, respond, expectedIds = ["7:41"] } of partialCases) {
+      gitlab.routes.set(tokenPath, respond);
+      const partial = await scanAndImport();
+      assert.deepEqual(pages(), expectedPages, label);
+      assert.deepEqual(partial.scanned.items.map(item => item.sourceObjectId), expectedIds, label);
+      assert.equal(projectScope(partial.scanned).complete, false, label);
+      assert.equal(partial.scanned.summary.find(scope => scope.sourceKind === "gitlab-ssh-key").complete, true);
+      assert.equal(partial.imported.scan_complete, false);
+      assert.equal(partial.imported.cleanup_complete, false);
+      assert.equal(partial.imported.created_count, 0);
+      assert.equal(partial.imported.updated_count, expectedIds.length);
+      assert.equal(partial.imported.deleted_count, 0);
+      assert.equal((await pool.query(
+        "SELECT 1 FROM tokens t JOIN auto_sync_token_links l ON l.token_id=t.id WHERE t.id=$1 AND l.config_id=$2",
+        [tracked.id, config.id],
+      )).rowCount, 1, `${label} must preserve linked inventory`);
+      t.diagnostic(`GitLab ${label}: scan_complete=false, deleted_count=0, linked_inventory=1`);
+    }
+    const partialScrape = await request(app).get("/metrics");
+    assert.equal(partialScrape.status, 200);
+    assert.deepEqual(trackedSeries(partialScrape.text), samples);
+
+    gitlab.routes.set(tokenPath, () => terminalPage);
+    const complete = await scanAndImport();
+    assert.deepEqual(pages(), [1]);
+    assert.equal(projectScope(complete.scanned).complete, true);
+    assert.equal(complete.imported.cleanup_complete, true);
+    assert.equal(complete.imported.deleted_count, 1);
+    assert.equal((await pool.query("SELECT 1 FROM tokens WHERE id=$1", [tracked.id])).rowCount, 0);
+    t.diagnostic("GitLab authoritative absence: cleanup_complete=true, deleted_count=1, linked_inventory=0");
+  });
+
+  it("keeps GitHub page-two inventory on denied scans and reconciles complete absence", async (t) => {
+    const github = await gitlabPatFixture(t);
+    let repositoryIds = [5, 6];
+    github.routes.set("/api/v3/user", () => ({ data: { id: 31, login: "fixture" } }));
+    github.routes.set("/api/v3/user/repos", url => ({
+      data: Number(url.searchParams.get("page") || 1) === 1
+        ? repositoryIds.map(id => ({ id, owner: { login: "fixture" },
+          name: id === 5 ? "repo" : "hidden", full_name: id === 5 ? "fixture/repo" : "fixture/hidden" }))
+        : [],
+    }));
+    github.routes.set("/api/v3/repos/fixture/hidden/actions/secrets", () => ({
+      data: repositoryIds.length === 1
+        ? { secrets: [], total_count: 0 } : { secrets: [{ name: "HIDDEN" }], total_count: 1 },
+    }));
+    const secretPath = "/api/v3/repos/fixture/repo/actions/secrets";
+    let mode = "healthy";
+    github.routes.set(secretPath, url => {
+      const page = Number(url.searchParams.get("page") || 1);
+      if (mode === "gone") return { data: { secrets: [{ name: "ONE" }], total_count: 1 } };
+      if (page === 1) return {
+        data: { secrets: [{ name: "ONE" }], total_count: 2 },
+        headers: { link: `<${github.baseUrl}${secretPath}?page=2>; rel="next"` },
+      };
+      if (mode === "denied") return { status: 403 };
+      return { data: { secrets: [{ name: "TWO" }], total_count: 2 } };
+    });
+    const config = await configuration("GitHub paginated", "github");
+    const workerPost = path => request(app).post(`${path}?workspace_id=${workspaceId}`)
+      .set("Authorization", "Bearer issue71-test-worker");
+    async function scanAndImport(maxItems) {
+      github.calls.length = 0;
+      const run = await start(config);
+      const runContext = runs.runContext(run.config);
+      const scanned = await workerPost("/api/v1/integrations/github/scan").send({
+        baseUrl: `${github.baseUrl}/api/v3`, token: github.options.token, auto_sync_run: runContext, maxItems,
+        include: { tokens: true, sshKeys: false, deployKeys: false, secrets: true },
+      });
+      assert.equal(scanned.status, 200, scanned.text);
+      const scanId = scanned.body.scan_id;
+      assert.ok(scanId);
+      assert.ok(scanned.body.summary.some(scope => scope.type === "personal_access_tokens" && scope.note));
+      const result = await workerPost("/api/v1/integrations/import").send({
+        scan_id: scanId, auto_sync_run: runContext, items: scanned.body.items,
+        cleanup: { enabled: true, provider: "github", scanId },
+      });
+      assert.equal(result.status, 201, result.text);
+      assert.equal(result.body.error_count, 0, result.text);
+      await finish(run);
+      return result.body;
+    }
+    const listedPages = () => github.calls.filter(url => url.pathname === secretPath)
+      .map(url => Number(url.searchParams.get("page") || 1));
+    const initial = await scanAndImport();
+    assert.deepEqual(listedPages(), [1, 2]);
+    assert.equal(initial.created_count, 3);
+    assert.equal(initial.scan_complete, true, "An informational PAT note is not a failed scope");
+    assert.equal(initial.cleanup_complete, true);
+    const { rows: [tracked] } = await pool.query(
+      "SELECT id FROM tokens WHERE workspace_id=$1 AND source_object_id='5:TWO'", [workspaceId],
+    );
+    assert.ok(tracked);
+    mode = "denied";
+    const partial = await scanAndImport();
+    assert.deepEqual(listedPages(), [1, 2]);
+    assert.equal(partial.scan_complete, false);
+    assert.equal(partial.cleanup_complete, false);
+    assert.equal(partial.updated_count, 2);
+    assert.equal(partial.deleted_count, 0);
+    assert.equal((await pool.query(
+      "SELECT 1 FROM tokens t JOIN auto_sync_token_links l ON l.token_id=t.id WHERE t.id=$1 AND l.config_id=$2",
+      [tracked.id, config.id],
+    )).rowCount, 1);
+    mode = "gone";
+    repositoryIds = [5];
+    const complete = await scanAndImport(1);
+    assert.deepEqual(listedPages(), [1]);
+    assert.equal(complete.cleanup_complete, true);
+    assert.equal(complete.deleted_count, 1);
+    assert.equal((await pool.query("SELECT 1 FROM tokens WHERE id=$1", [tracked.id])).rowCount, 0);
+    const hiddenLink = () => pool.query(`SELECT 1 FROM tokens t JOIN auto_sync_token_links l ON l.token_id=t.id
+      WHERE t.workspace_id=$1 AND l.config_id=$2 AND t.source_object_id='6:HIDDEN'`, [workspaceId, config.id]);
+    assert.equal((await hiddenLink()).rowCount, 1, "A no-longer-visible repository is outside this cleanup scope");
+
+    repositoryIds = [];
+    const noParents = await scanAndImport();
+    assert.equal(noParents.cleanup_complete, true);
+    assert.equal(noParents.deleted_count, 0);
+    assert.equal((await hiddenLink()).rowCount, 1);
+
+    repositoryIds = [6];
+    const emptyChildList = await scanAndImport();
+    assert.equal(emptyChildList.cleanup_complete, true);
+    assert.equal(emptyChildList.deleted_count, 1, "A visible repository's verified empty child list can drive cleanup");
+    assert.equal((await hiddenLink()).rowCount, 0);
+  });
+
+  it("limits manual GitLab cleanup to parents whose child lists were checked", async (t) => {
+    const gitlab = await gitlabPatFixture(t);
+    let projectIds = [7, 8];
+    let empty = false;
+    let deny = false;
+    let includeKeys = false;
+    const listed = data => ({ data, headers: { "x-next-page": "" } });
+    gitlab.routes.set("/api/v4/projects", () => listed(projectIds.map(id => ({ id, name: `project-${id}` }))));
+    for (const id of projectIds) {
+      gitlab.routes.set(`/api/v4/projects/${id}/access_tokens`, () => deny
+        ? { status: 403 } : listed(empty ? [] : [{ id: 42, name: `token-${id}`, active: true }]));
+    }
+    const post = endpoint => request(app).post(`/api/v1/integrations/${endpoint}?workspace_id=${workspaceId}`);
+    async function scanAndImport(cleanup, maxItems) {
+      const scanned = await post("gitlab/scan").send({
+        ...gitlab.options,
+        include: { tokens: true, keys: includeKeys }, maxItems,
+        filters: { includePATs: false, includeProjectTokens: true, includeGroupTokens: false, includeDeployTokens: false },
+      });
+      assert.equal(scanned.status, 200, scanned.text);
+      const { scan_id: scanId, items } = scanned.body;
+      assert.ok(scanId);
+      assert.equal(Object.hasOwn(scanned.body, "cleanupParentIds"), false);
+      const imported = await post("import").send({ scan_id: scanId, items,
+        ...(cleanup ? { cleanup: { enabled: true, provider: "gitlab", scanId } } : {}),
+      });
+      assert.equal(imported.status, 201, imported.text);
+      assert.equal(imported.body.error_count, 0, imported.text);
+      return imported.body;
+    }
+    const inventory = async () => (await pool.query(`SELECT source_object_id FROM tokens
+      WHERE workspace_id=$1 AND source_kind='gitlab-project-token' ORDER BY source_object_id`, [workspaceId]))
+      .rows.map(row => row.source_object_id);
+    assert.equal((await scanAndImport(false)).created_count, 2);
+    assert.deepEqual(await inventory(), ["7:42", "8:42"]);
+
+    const legacyScan = await persistScan({
+      workspaceId, provider: "gitlab", createdBy: userId,
+      identityContext: { host: new URL(gitlab.baseUrl).host, ownerKey: "17" },
+      items: [], subScopes: [{ sourceKind: "gitlab-project-token", complete: true }],
+    });
+    const legacyImport = await post("import").send({ items: [], scan_id: legacyScan.scanId,
+      cleanup: { enabled: true, provider: "gitlab", scanId: legacyScan.scanId } });
+    assert.equal(legacyImport.status, 201, legacyImport.text);
+    assert.equal(legacyImport.body.deleted_count, 0);
+    assert.equal(legacyImport.body.cleanup_status, "skipped_incomplete");
+    assert.deepEqual(await inventory(), ["7:42", "8:42"]);
+    const legacyReplay = await post("import").send({ items: [], scan_id: legacyScan.scanId,
+      cleanup: { enabled: true, provider: "gitlab", scanId: legacyScan.scanId } });
+    assert.equal(legacyReplay.status, 201, legacyReplay.text);
+    assert.equal(legacyReplay.body.cleanup_status, "skipped_unavailable");
+
+    projectIds = [7];
+    deny = true;
+    const denied = await scanAndImport(true);
+    assert.equal(denied.deleted_count, 0);
+    assert.equal(denied.cleanup_status, "skipped_incomplete");
+    includeKeys = true;
+    const partial = await scanAndImport(true);
+    assert.equal(partial.deleted_count, 0);
+    assert.equal(partial.cleanup_status, "partial");
+    includeKeys = false;
+    assert.deepEqual(await inventory(), ["7:42", "8:42"]);
+    deny = false;
+    const exactLimit = await scanAndImport(true, 1);
+    assert.equal(exactLimit.updated_count, 1);
+    assert.equal(exactLimit.cleanup_status, "completed");
+    empty = true;
+    const covered = await scanAndImport(true);
+    assert.equal(covered.deleted_count, 1);
+    assert.equal(covered.cleanup_status, "completed");
+    assert.deepEqual(await inventory(), ["8:42"]);
+  });
+
+  it("defers manual cleanup when an import fails, including an otherwise complete scan", async () => {
+    const { token } = await imported(null, { name: "Manual candidate", source_object_id: "7:42" }, true);
+    const scan = await persistScan({
+      workspaceId, provider: "gitlab", createdBy: userId,
+      identityContext: { host: source.source_instance, ownerKey: source.source_owner_key },
+      items: [], subScopes: [{ sourceKind: source.source_kind, dimensions: { sourceObjectParentIds: ["7"] }, complete: true }],
+    });
+    const url = `/api/v1/integrations/import?workspace_id=${workspaceId}`;
+    const body = { scan_id: scan.scanId, cleanup: { enabled: true, provider: "gitlab", scanId: scan.scanId } };
+    const failed = await request(app).post(url).send({
+      ...body, items: [{ source: "gitlab", name: "Bad credential", location: "fixture",
+        category: "key_secret", type: "api_key", expiresAt: "2032-02-29", key_size: 1 }],
+    });
+    assert.equal(failed.status, 201, failed.text);
+    assert.equal(failed.body.error_count, 1, failed.text);
+    assert.equal(failed.body.deleted_count, 0);
+    assert.equal(failed.body.cleanup_status, "skipped_import_errors");
+    assert.equal((await pool.query("SELECT 1 FROM tokens WHERE id=$1", [token.id])).rowCount, 1);
+    assert.equal((await pool.query(
+      "SELECT cleanup_consumed_at FROM integration_scans WHERE id=$1", [scan.scanId],
+    )).rows[0].cleanup_consumed_at, null);
+    const complete = await request(app).post(url).send({ ...body, items: [] });
+    assert.equal(complete.status, 201, complete.text);
+    assert.equal(complete.body.deleted_count, 1);
+    assert.equal(complete.body.cleanup_status, "completed");
+  });
+
+  it("offers expiry to connections allowed by deployment without selecting it globally", async () => {
+    const config = await configuration();
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "expiration";
+    const url = `/api/v1/workspaces/${workspaceId}/auto-sync`;
+    const list = await request(app).get(url);
+    assert.equal(list.status, 200);
+    assert.deepEqual(list.body.metric_label_policy.extra_labels, ["expiration"]);
+    assert.ok(!list.body.metric_label_policy.system.labels.includes("expiration"));
+    const updated = await request(app).put(`${url}/${config.id}`).send({
+      metrics_settings: { enabled: true, labels: ["kind", "expiration"] },
+    });
+    assert.equal(updated.status, 200, updated.text);
+    assert.deepEqual(updated.body.metrics_settings.labels, ["expiration", "kind"]);
+    process.env.AUTO_SYNC_METRICS_EXTRA_LABELS = "none";
+    const denied = await request(app).get(url);
+    assert.equal(denied.status, 200);
+    assert.deepEqual(denied.body.metric_label_policy.extra_labels, []);
+  });
+
   it("saves a system-wide owner override, applies it to opted-out connections and respects deployment restrictions", async () => {
     const config = await configuration();
     const local = { enabled: false, labels: ["kind"], inherit_system: false };
@@ -780,6 +1335,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
       await client.query(`CREATE TEMP TABLE auto_sync_creation_stats
         (LIKE public.auto_sync_creation_stats INCLUDING ALL) ON COMMIT DROP`);
       await client.query("ALTER TABLE pg_temp.auto_sync_creation_stats DROP COLUMN owner_username");
+      await client.query("ALTER TABLE pg_temp.auto_sync_creation_stats DROP COLUMN expiration");
       await client.query(`INSERT INTO pg_temp.auto_sync_creation_stats
         (config_id,kind,asset_name,project,group_name,dimension_key,items_created_total,last_created_at)
         VALUES ($1,'gitlab-pat','','','',$2,7,'2026-01-02T03:04:05Z')`, [config.id, key]);
@@ -787,9 +1343,12 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
       const sql = require("node:fs").readFileSync(require("node:path").join(
         __dirname, "../../apps/api/migrations/111-auto-sync-owner-username.sql"), "utf8");
       await client.query(sql);
+      await client.query(require("node:fs").readFileSync(require("node:path").join(
+        __dirname, "../../apps/api/migrations/127-auto-sync-creation-expiration.sql"), "utf8"));
       const upgraded = (await client.query("SELECT * FROM pg_temp.auto_sync_creation_stats")).rows[0];
       assert.equal(upgraded.owner_username, "");
-      const { owner_username: _owner, ...unchanged } = upgraded;
+      assert.equal(upgraded.expiration, "");
+      const { owner_username: _owner, expiration: _expiration, ...unchanged } = upgraded;
       assert.deepEqual(unchanged, before);
       await require("../../apps/api/services/autoSyncMetricLabels").recordCreationMetrics(
         client, { provider: "gitlab", configId: config.id },

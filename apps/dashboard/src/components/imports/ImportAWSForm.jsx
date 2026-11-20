@@ -384,9 +384,12 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
     });
   };
 
-  const importAwsSelected = async () => {
+  const importAwsSelected = async ({
+    onComplete = onImportComplete,
+    onFailure = onError,
+  } = {}) => {
     if (!previewReady || isScanning) {
-      onError?.('Run a scan with the current settings before importing.');
+      onFailure?.('Run a scan with the current settings before importing.');
       return;
     }
     try {
@@ -398,11 +401,11 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
           ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
       if (!workspaceId) {
-        onError && onError('Please select a workspace first.');
+        onFailure?.('Please select a workspace first.');
         return;
       }
 
-      await integrationAPI.import({
+      const result = await integrationAPI.import({
         workspaceId,
         items: selected,
         filterRules: sanitizeFilterRules(filterRules),
@@ -420,9 +423,9 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
               }
             : undefined,
       });
-      onImportComplete && onImportComplete(selected);
+      onComplete?.(result);
     } catch (e) {
-      onError && onError(e?.message || 'AWS import failed');
+      onFailure?.(e?.message || 'AWS import failed');
     }
   };
 
@@ -532,7 +535,8 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
             size='sm'
             colorScheme='red'
           >
-            Remove previously imported items no longer found at the source
+            Remove previously imported items missing from this scan, including
+            items excluded by filters
           </Checkbox>
           <Text fontSize='xs' color={helpTextColor} pl={6}>
             <strong>Cleanup scope:</strong> Available immediately after a scan.

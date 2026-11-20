@@ -124,6 +124,7 @@ describe("Vault KV scan behavior", () => {
         expect(item.type).to.equal("ssl_cert");
         expect(item.path).to.equal("common/ca");
         expect(item.expiration).to.equal("2026-12-26");
+        expect(item.metric_expiration).to.equal("2026-12-26T12:46:12.000Z");
       }
       const locations = items.map((i) => i.location).sort();
       expect(locations).to.deep.equal([
@@ -180,12 +181,17 @@ describe("Vault KV scan behavior", () => {
       const items = mod._test.buildKvSecretItems({
         mountPath: "secret/",
         key: "db/creds",
-        secret: { data: { password: "hunter2" }, ...secretMeta },
+        secret: {
+          data: { password: "hunter2", expires_at: "2027-01-01" },
+          ...secretMeta,
+        },
       });
       expect(items).to.have.length(1);
       expect(items[0].category).to.equal("key_secret");
       expect(items[0].type).to.equal("password");
       expect(items[0].location).to.equal("vault:secret/db/creds");
+      expect(items[0].expiration).to.equal("2027-01-01");
+      expect(items[0]).to.not.have.property("metric_expiration");
     });
   });
 

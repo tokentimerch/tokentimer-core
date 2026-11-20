@@ -101,6 +101,17 @@ function composeMigrations(migrations, recorded = []) {
     .slice()
     .sort((a, b) => a.version - b.version);
   const byName = new Map(extensions.map((entry) => [entry.name, entry]));
+  // The expiration preview applied its schema immediately after PagerDuty recovery.
+  // Recognize that ordering when the ledger already contains the preview identity.
+  const expiration = byName.get("auto_sync_creation_expiration");
+  const recordedExpiration = rows.find((row) => row.name === expiration?.name);
+  const legacyExpiration = recordedExpiration && recordedExpiration.version !== expiration.version &&
+    rows.every((row) => row.name !== "certops_observed_revocation" || row.version > recordedExpiration.version);
+  const reviewExtensions = legacyExpiration ? [
+    ...extensions.filter((entry) => entry.version <= 114),
+    expiration,
+    ...extensions.filter((entry) => entry.version > 114 && entry !== expiration),
+  ] : extensions;
   // Validate the already-applied preview with the previous registry before
   // appending main's newer migrations under unoccupied identities.
   const hasRetirementPreview = byName.get("certops_retirement_dossiers")?.version !== 109 &&
@@ -119,7 +130,7 @@ function composeMigrations(migrations, recorded = []) {
     const store = ["store_issuance_explicit_renewal_consent", "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts", "certops_adcs_receipt_deadline"]
       .filter((name) => byName.has(name));
     const recovery = byName.has("distribution_pagerduty_recovery") ? ["distribution_pagerduty_recovery"] : [];
-    const canonicalTail = extensions.filter((entry) => entry.version >= 114).map((entry) => entry.name);
+    const canonicalTail = reviewExtensions.filter((entry) => entry.version >= 114).map((entry) => entry.name);
     const otherTail = canonicalTail.filter((name) => ![...store, ...recovery, ...rotations].includes(name));
     // Keep the canonical default. Recognize only ordered Store prefixes and
     // the intact rotation pair around recovery, then append newer definitions.
@@ -169,7 +180,7 @@ function composeMigrations(migrations, recorded = []) {
     for (const append of [priorAppend, priorAppendWithAuthority]) {
       for (let length = 0; length <= append.length; length++) {
         const appliedAppend = append.slice(0, length);
-        const remaining = extensions.map((entry) => entry.name).filter((name) => !priorMcpNames.includes(name) && !appliedAppend.includes(name));
+        const remaining = reviewExtensions.map((entry) => entry.name).filter((name) => !priorMcpNames.includes(name) && !appliedAppend.includes(name));
         const lifecycle = new Set([
           "certops_distribution_lifecycle", "certops_distribution_incident_delivery",
           "certops_stable_consumer_discovery", "certops_material_cleanup",
@@ -206,7 +217,7 @@ function composeMigrations(migrations, recorded = []) {
   if (!priorOrder && priorDraft) {
     const draftNames = [...priorMcpNames.slice(0, 10), "pagerduty_operator_actions", "remove_pagerduty_rest_lookup", ...mcpAppendNames.slice(2).filter((name) => !["certops_issuance_job_identity", "certops_issuance_identity_transfer"].includes(name))];
     const draftVersions = [78, 79, 80, 81, 82, 83, 84, 85, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103];
-    const names = [...draftNames, ...extensions.map((entry) => entry.name).filter((name) => !draftNames.includes(name))];
+    const names = [...draftNames, ...reviewExtensions.map((entry) => entry.name).filter((name) => !draftNames.includes(name))];
     const versions = [...draftVersions, ...names.slice(draftNames.length).map((_name, index) => 104 + index)];
     if (rows.every((row, index) => row.name === names[index] && row.version === versions[index])) priorOrder = names;
   }
@@ -355,7 +366,7 @@ function composeMigrations(migrations, recorded = []) {
       ),
     );
     const recognized = integratedSeeds.some((seed) => {
-      const remaining = extensions.map((entry) => entry.name).filter((name) => !seed.includes(name));
+      const remaining = reviewExtensions.map((entry) => entry.name).filter((name) => !seed.includes(name));
       const prefix = seed.filter((name) => byName.has(name));
       const ordinary = [...prefix, ...remaining];
       const independent = remaining.filter((name) => !laterCompanions.has(name));
@@ -412,6 +423,7 @@ function composeMigrations(migrations, recorded = []) {
     auto_sync_metric_labels: ["auto_sync_run_metrics"],
     auto_sync_system_metrics: ["auto_sync_metric_labels"],
     auto_sync_owner_username: ["auto_sync_metric_labels"],
+    auto_sync_creation_expiration: ["auto_sync_owner_username"],
     certops_distribution_lifecycle: ["certops_installed_file_distribution"],
     certops_distribution_incident_delivery: ["certops_distribution_lifecycle"],
     certops_material_cleanup: ["certops_distribution_lifecycle"],

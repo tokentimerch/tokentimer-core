@@ -5017,6 +5017,11 @@ migrations.push({
 
 migrations.push({ version: 123, name: "agent_credential_rotations", sql: fs.readFileSync(require("path").join(__dirname, "123-agent-credential-rotations.sql"), "utf8") });
 migrations.push({ version: 124, name: "agent_credential_rotation_ack", sql: fs.readFileSync(require("path").join(__dirname, "124-agent-rotation-ack.sql"), "utf8") });
+migrations.push({
+  version: 127,
+  name: "auto_sync_creation_expiration",
+  sql: fs.readFileSync(require("path").join(__dirname, "127-auto-sync-creation-expiration.sql"), "utf8"),
+});
 
 const { composeMigrations, assertUnambiguousRotationHistory } = require("./compose-migrations");
 

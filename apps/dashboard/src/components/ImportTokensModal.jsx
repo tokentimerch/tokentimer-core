@@ -41,6 +41,7 @@ import {
   Divider,
 } from '@chakra-ui/react';
 import { logger } from '../utils/logger';
+import { integrationImportWarning } from '../utils/integrationImportWarning.js';
 import { IMPORT_DOCS } from '../utils/docsUrls';
 import LearnMorePanel from './LearnMorePanel';
 import apiClient, {
@@ -1033,6 +1034,12 @@ function ImportTokensModalContent({
   const [error, setError] = React.useState(null);
   const [failedRows, setFailedRows] = React.useState([]);
   const [isImporting, setIsImporting] = React.useState(false);
+  const integrationImportRequest = React.useRef(null);
+  const invalidateIntegrationImport = React.useCallback(() => {
+    if (!integrationImportRequest.current) return;
+    integrationImportRequest.current = null;
+    setIsImporting(false);
+  }, []);
   const [progress, setProgress] = React.useState({ done: 0, total: 0 });
   const abortRef = React.useRef(null);
   const fileInputRef = React.useRef(null);
@@ -1250,6 +1257,7 @@ function ImportTokensModalContent({
   const renderAutoSyncMetrics = () => (
     <AutoSyncMetricSettings
       key={source + '/' + (autoSyncConfig?.id || 'new')}
+      provider={source}
       value={autoSyncMetricSettings}
       allowedExtraLabels={allowedExtraMetricLabels}
       systemPolicy={systemMetricPolicy}
@@ -1298,9 +1306,20 @@ function ImportTokensModalContent({
   const autoSyncManageMode =
     integrationSubTab === 'manage' && hasAutoSync && source !== 'file';
 
+  React.useLayoutEffect(() => {
+    invalidateIntegrationImport();
+  }, [
+    isOpen,
+    source,
+    workspaceId,
+    autoSyncManageMode,
+    invalidateIntegrationImport,
+  ]);
+
   React.useEffect(
     () => () => {
       autoSyncPollCancelRef.current = true;
+      integrationImportRequest.current = null;
     },
     []
   );
@@ -1773,10 +1792,10 @@ function ImportTokensModalContent({
     scanContextVersion,
   ]);
   const scanVerified = verifiedScanContext === scanContext;
-  const invalidateScanVerification = React.useCallback(
-    () => setVerifiedScanContext(null),
-    []
-  );
+  const invalidateScanVerification = React.useCallback(() => {
+    invalidateIntegrationImport();
+    setVerifiedScanContext(null);
+  }, [invalidateIntegrationImport]);
   const markScanVerified = React.useCallback(
     () => setVerifiedScanContext(scanContext),
     [scanContext]
@@ -2210,7 +2229,7 @@ function ImportTokensModalContent({
     setAzureADDuplicates(new Set());
     setIntegrationSubTab('scan');
     setPendingManageTab(false);
-  }, [startSource]);
+  }, [startSource, invalidateScanVerification]);
 
   const onSelectFile = async e => {
     const f = e?.target?.files?.[0];
@@ -2621,6 +2640,37 @@ function ImportTokensModalContent({
     }
   };
 
+  const beginIntegrationImport = () => {
+    const request = Symbol();
+    integrationImportRequest.current = request;
+    setError(null);
+    setIsImporting(true);
+
+    const settle = message => {
+      if (integrationImportRequest.current !== request) return;
+      integrationImportRequest.current = null;
+      setError(message);
+      setIsImporting(false);
+    };
+
+    return {
+      onComplete: result => {
+        const warning = integrationImportWarning(result);
+        settle(warning ? `${warning.title}. ${warning.description}` : '');
+        // The submitted import can still change inventory after the modal closes.
+        onImported?.(
+          [...(result?.created || []), ...(result?.updated || [])],
+          result?.deleted_count ?? 0
+        );
+      },
+      onFailure: settle,
+    };
+  };
+
+  const importFromForm = form => {
+    form?.importSelected(beginIntegrationImport());
+  };
+
   const importAzureADSelected = async () => {
     if (!azureADPreviewReady || isScanning) {
       setError(
@@ -2628,8 +2678,8 @@ function ImportTokensModalContent({
       );
       return;
     }
+    const { onComplete, onFailure } = beginIntegrationImport();
     try {
-      setIsImporting(true);
       const selected = azureADItems
         .filter((_, i) => selectedRowsAzureAD.has(i))
         .map(item => ({
@@ -2639,12 +2689,11 @@ function ImportTokensModalContent({
         }));
       const workspaceId = getWorkspaceId();
       if (!workspaceId) {
-        setError('Please select a workspace first.');
-        setIsImporting(false);
+        onFailure('Please select a workspace first.');
         return;
       }
 
-      await integrationAPI.import({
+      const result = await integrationAPI.import({
         filterRules: sanitizeFilterRules(azureADFilterRules),
         workspaceId,
         items: selected,
@@ -2662,11 +2711,9 @@ function ImportTokensModalContent({
               }
             : undefined,
       });
-      onImported && onImported(selected);
+      onComplete(result);
     } catch (e) {
-      setError(e?.message || 'Microsoft Entra ID import failed');
-    } finally {
-      setIsImporting(false);
+      onFailure(e?.message || 'Microsoft Entra ID import failed');
     }
   };
 
@@ -3530,14 +3577,7 @@ function ImportTokensModalContent({
                       : null
                   }
                   workspaceId={workspaceId}
-                  onImportComplete={selected => {
-                    setIsImporting(false);
-                    onImported && onImported(selected);
-                  }}
-                  onError={err => {
-                    setError(err);
-                    setIsImporting(false);
-                  }}
+                  onError={setError}
                   onScanSuccess={markScanVerified}
                   onScanInvalidated={invalidateScanVerification}
                   scanContext={scanContext}
@@ -3563,14 +3603,7 @@ function ImportTokensModalContent({
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={gitlabFormRef}
                   workspaceId={workspaceId}
-                  onImportComplete={selected => {
-                    setIsImporting(false);
-                    onImported && onImported(selected);
-                  }}
-                  onError={err => {
-                    setError(err);
-                    setIsImporting(false);
-                  }}
+                  onError={setError}
                   onScanSuccess={markScanVerified}
                   onScanInvalidated={invalidateScanVerification}
                   scanContext={scanContext}
@@ -3612,14 +3645,7 @@ function ImportTokensModalContent({
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={githubFormRef}
                   workspaceId={workspaceId}
-                  onImportComplete={selected => {
-                    setIsImporting(false);
-                    onImported && onImported(selected);
-                  }}
-                  onError={err => {
-                    setError(err);
-                    setIsImporting(false);
-                  }}
+                  onError={setError}
                   onScanSuccess={markScanVerified}
                   onScanInvalidated={invalidateScanVerification}
                   scanContext={scanContext}
@@ -3659,14 +3685,7 @@ function ImportTokensModalContent({
                   ref={awsFormRef}
                   initialAutoSyncScanParams={awsAutoSyncScanParams}
                   workspaceId={workspaceId}
-                  onImportComplete={selected => {
-                    setIsImporting(false);
-                    onImported && onImported(selected);
-                  }}
-                  onError={err => {
-                    setError(err);
-                    setIsImporting(false);
-                  }}
+                  onError={setError}
                   onScanSuccess={markScanVerified}
                   onScanInvalidated={invalidateScanVerification}
                   scanContext={scanContext}
@@ -3694,14 +3713,7 @@ function ImportTokensModalContent({
                       : null
                   }
                   workspaceId={workspaceId}
-                  onImportComplete={selected => {
-                    setIsImporting(false);
-                    onImported && onImported(selected);
-                  }}
-                  onError={err => {
-                    setError(err);
-                    setIsImporting(false);
-                  }}
+                  onError={setError}
                   onScanSuccess={markScanVerified}
                   onScanInvalidated={invalidateScanVerification}
                   scanContext={scanContext}
@@ -3729,14 +3741,7 @@ function ImportTokensModalContent({
                     restoredScanParamsFor === 'gcp' ? restoredScanParams : null
                   }
                   workspaceId={workspaceId}
-                  onImportComplete={selected => {
-                    setIsImporting(false);
-                    onImported && onImported(selected);
-                  }}
-                  onError={err => {
-                    setError(err);
-                    setIsImporting(false);
-                  }}
+                  onError={setError}
                   onScanSuccess={markScanVerified}
                   onScanInvalidated={invalidateScanVerification}
                   scanContext={scanContext}
@@ -3910,8 +3915,8 @@ function ImportTokensModalContent({
                         colorScheme='red'
                         isDisabled={!azureADLastScanId}
                       >
-                        Remove previously imported items no longer found at the
-                        source
+                        Remove previously imported items missing from this scan,
+                        including items excluded by filters
                       </Checkbox>
                       {!azureADLastScanId ? (
                         <Text fontSize='xs' color={muted} pl={6}>
@@ -4212,10 +4217,7 @@ function ImportTokensModalContent({
                   )
                 ) : source === 'vault' ? (
                   <Button
-                    onClick={() => {
-                      setIsImporting(true);
-                      vaultFormRef.current?.importSelected();
-                    }}
+                    onClick={() => importFromForm(vaultFormRef.current)}
                     {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
@@ -4225,10 +4227,7 @@ function ImportTokensModalContent({
                   </Button>
                 ) : source === 'gitlab' ? (
                   <Button
-                    onClick={() => {
-                      setIsImporting(true);
-                      gitlabFormRef.current?.importSelected();
-                    }}
+                    onClick={() => importFromForm(gitlabFormRef.current)}
                     {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
@@ -4238,10 +4237,7 @@ function ImportTokensModalContent({
                   </Button>
                 ) : source === 'github' ? (
                   <Button
-                    onClick={() => {
-                      setIsImporting(true);
-                      githubFormRef.current?.importSelected();
-                    }}
+                    onClick={() => importFromForm(githubFormRef.current)}
                     {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
@@ -4251,10 +4247,7 @@ function ImportTokensModalContent({
                   </Button>
                 ) : source === 'aws' ? (
                   <Button
-                    onClick={() => {
-                      setIsImporting(true);
-                      awsFormRef.current?.importSelected();
-                    }}
+                    onClick={() => importFromForm(awsFormRef.current)}
                     {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
@@ -4264,10 +4257,7 @@ function ImportTokensModalContent({
                   </Button>
                 ) : source === 'azure' ? (
                   <Button
-                    onClick={() => {
-                      setIsImporting(true);
-                      azureFormRef.current?.importSelected();
-                    }}
+                    onClick={() => importFromForm(azureFormRef.current)}
                     {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
@@ -4292,10 +4282,7 @@ function ImportTokensModalContent({
                   </Button>
                 ) : source === 'gcp' ? (
                   <Button
-                    onClick={() => {
-                      setIsImporting(true);
-                      gcpFormRef.current?.importSelected();
-                    }}
+                    onClick={() => importFromForm(gcpFormRef.current)}
                     {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}

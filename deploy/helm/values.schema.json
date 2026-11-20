@@ -482,7 +482,7 @@
               "uniqueItems": true,
               "oneOf": [
                 {
-                  "maxItems": 7,
+                  "maxItems": 8,
                   "items": {
                     "type": "string",
                     "enum": [
@@ -492,7 +492,8 @@
                       "asset_name",
                       "project",
                       "group",
-                      "owner_username"
+                      "owner_username",
+                      "expiration"
                     ]
                   }
                 },
@@ -509,14 +510,15 @@
               "uniqueItems": true,
               "oneOf": [
                 {
-                  "maxItems": 4,
+                  "maxItems": 5,
                   "items": {
                     "type": "string",
                     "enum": [
                       "asset_name",
                       "project",
                       "group",
-                      "owner_username"
+                      "owner_username",
+                      "expiration"
                     ]
                   }
                 },

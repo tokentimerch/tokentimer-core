@@ -38,7 +38,7 @@ describe("Independent PR migration and preview compatibility",function(){
       }else execute(upgrade);
       const after=(await client.query("SELECT * FROM migrations ORDER BY version")).rows;
       assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);
-      assert.equal(after.length,117);
+      assert.equal(after.length,118);
       assert.equal(after.filter(row=>row.name==="certops_retirement_dossiers").length,1);
       assert.equal(after.filter(row=>row.name==="certops_material_reconciliation").length,1);
       for(const name of ["certops_observed_revocation","agent_credential_rotations","agent_credential_rotation_ack"])

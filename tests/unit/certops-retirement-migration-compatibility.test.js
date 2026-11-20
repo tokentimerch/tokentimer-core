@@ -15,7 +15,7 @@ test("retirement preview preserves identities through partial released-main upgr
       const plan = composeMigrations(migrations, rows).map(({ version, name }) => ({ version, name }));
       assert.deepEqual(plan.slice(0, rows.length), rows);
       assert.deepEqual(plan.slice(preview.length).map(row => row.name).sort(),
-        [...appended.map(row => row.name), "certops_observed_revocation"].sort());
+        [...appended.map(row => row.name), "certops_observed_revocation", "auto_sync_creation_expiration"].sort());
       validateMigrationHistory(plan);
       assert.deepEqual(composeMigrations(migrations, plan).map(({version,name}) => ({version,name})), plan);
     }
@@ -26,7 +26,7 @@ test("retirement preview keeps an already applied rotation tail before recovery"
   const oldAppend = [...appended.slice(0, 4),
     {version:114,name:"agent_credential_rotations"}, {version:115,name:"agent_credential_rotation_ack"}];
   const expected = [...preview, ...oldAppend, {version:116,name:"distribution_pagerduty_recovery"},
-    {version:117,name:"certops_observed_revocation"}];
+    {version:117,name:"certops_observed_revocation"}, {version:118,name:"auto_sync_creation_expiration"}];
   for (const count of [5, 6, 7]) {
     const rows = expected.slice(0, preview.length + count);
     validateMigrationHistory(rows);
@@ -91,6 +91,24 @@ test("retirement Store composition rejects swapped, missing and unknown suffix i
       : row.name==="agent_credential_rotation_ack" ? {...row,name:"agent_credential_rotations"} : row)]) {
     assert.throws(() => composeMigrations(registry,invalid), /Unsupported Core/);
   }
+});
+test("an applied expiration preview keeps its migration identity while adding observed revocation", () => {
+  const originalExpiration = { version: 115, name: "auto_sync_creation_expiration" };
+  const observedRevocation = { version: 116, name: "certops_observed_revocation" };
+  const priorTails = [ledger.filter((row) => row.version <= 114), [...preview, ...appended.slice(0, 5)]];
+  for (const prior of priorTails) {
+    for (const applied of [[originalExpiration], [originalExpiration, observedRevocation]]) {
+      const recorded = [...prior, ...applied];
+      validateMigrationHistory(recorded);
+      const plan = composeMigrations(migrations, recorded).map(({ version, name }) => ({ version, name }));
+      assert.deepEqual(plan.slice(0, recorded.length), recorded);
+      assert.deepEqual(plan.map(({ name }) => name).sort(), migrations.map(({ name }) => name).sort());
+      validateMigrationHistory(plan);
+      assert.deepEqual(composeMigrations(migrations, plan).map(({ version, name }) => ({ version, name })), plan);
+    }
+  }
+  assert.throws(() => validateMigrationHistory([...ledger.filter((row) => row.version <= 113), originalExpiration]),
+    /Unsupported Core migration history/);
 });
 test("released main retains identities before appending retirement", () => {
   const rows = ledger.filter((row) => row.version <= 111);

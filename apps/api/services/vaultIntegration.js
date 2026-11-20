@@ -259,6 +259,14 @@ function parseCertificateFromUnknown(value) {
   return null;
 }
 
+function vaultListKeys(response) {
+  const keys = response?.data?.keys;
+  if (!Array.isArray(keys) || keys.some(key => typeof key !== "string" || !key)) {
+    throw new Error("Invalid Vault inventory list response");
+  }
+  return keys;
+}
+
 async function listKvV2KeysRecursive({
   address,
   session,
@@ -306,8 +314,7 @@ async function listKvV2KeysRecursive({
       if (e.status === 404) return;
       throw e;
     }
-    const keys =
-      data && data.data && Array.isArray(data.data.keys) ? data.data.keys : [];
+    const keys = vaultListKeys(data);
     for (const key of keys) {
       if (results.length >= limit) {
         truncated = true;
@@ -341,8 +348,11 @@ async function readKvV2Secret({ address, session, mountPath, secretPath }) {
     path: `/v1/${mountPath}data/${secretPath}`,
   });
   // v2 shape: { data: { data: {...}, metadata: {...} } }
-  const payload = (data && data.data) || {};
-  return { data: payload.data || {}, metadata: payload.metadata || {} };
+  const payload = data?.data;
+  if (!payload?.data || typeof payload.data !== "object" || Array.isArray(payload.data)) {
+    throw new Error("Invalid Vault KV read response");
+  }
+  return { data: payload.data, metadata: payload.metadata || {} };
 }
 
 // Node's `X509Certificate.subject`/`.issuer` return a newline-delimited RDN
@@ -481,6 +491,7 @@ function buildKvSecretItems({ mountPath, key, secret }) {
       category: "cert",
       type: "ssl_cert",
       expiration: expires ? formatDateYmd(expires) : null,
+      metric_expiration: formatDateYmd(parsed.notAfter) ? parsed.notAfter.toISOString() : null,
       issuer,
       subject,
       // Single-cert secrets keep the legacy location so tokens imported
@@ -621,8 +632,7 @@ async function tryListPkiCertSerials({ address, session, mountPath }) {
       method: "LIST",
       path: `/v1/${mountPath}certs`,
     });
-    const keys =
-      data && data.data && Array.isArray(data.data.keys) ? data.data.keys : [];
+    const keys = vaultListKeys(data);
     return keys;
   } catch (e) {
     if (e.status === 404) return [];
@@ -637,10 +647,11 @@ async function readPkiCertBySerial({ address, session, mountPath, serial }) {
     method: "GET",
     path: `/v1/${mountPath}cert/${encodeURIComponent(serial)}`,
   });
-  // Response contains certificate (PEM)
-  const pem =
-    data && data.data && data.data.certificate ? data.data.certificate : null;
-  return pem || null;
+  const pem = data?.data?.certificate;
+  if (typeof pem !== "string" || !pem.trim()) {
+    throw new Error("Invalid Vault PKI certificate read response");
+  }
+  return pem;
 }
 
 async function scanPki({ address, session, mount, maxItems = 500 }) {
@@ -674,9 +685,9 @@ async function scanPki({ address, session, mount, maxItems = 500 }) {
           recordVaultItemReadFailure(e, readState);
           return null;
         }
-        if (!pem) return null;
         const parsed = parseCertificatePemForDatesAndNames(pem);
         const notAfter = parsed && parsed.notAfter ? parsed.notAfter : null;
+        const expiration = formatDateYmd(notAfter);
         const subject = parsed && parsed.subject ? parsed.subject : null;
         const issuer = parsed && parsed.issuer ? parsed.issuer : null;
         const name = extractCommonName(subject) || `${mountPath}cert/${serial}`;
@@ -687,7 +698,8 @@ async function scanPki({ address, session, mount, maxItems = 500 }) {
           name,
           category: "cert",
           type: "ssl_cert",
-          expiration: notAfter ? formatDateYmd(notAfter) : null,
+          expiration,
+          metric_expiration: expiration ? notAfter.toISOString() : null,
           issuer,
           subject,
           location: `vault:${mountPath}cert/${serial}`,
