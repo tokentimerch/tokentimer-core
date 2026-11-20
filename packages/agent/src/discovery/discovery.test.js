@@ -59,6 +59,30 @@ function findOpensslBinary() {
 
 const OPENSSL_BINARY = findOpensslBinary();
 
+it("returns only the observed public certificate when explicitly requested", () => {
+  const dir = makeTempDir();
+  const source = path.join(__dirname, "..", "verify", "fixtures", "chain-leaf.crt.pem");
+  fs.copyFileSync(source, path.join(dir, "leaf.crt"));
+  const normal = discoverCertificatesInDirectory(dir);
+  const withPublicCertificate = discoverCertificatesInDirectory(dir, { includePublicCertificate: true });
+  assert.equal(normal.certificates[0].certificatePem, undefined);
+  const cert = new (require("node:crypto").X509Certificate)(withPublicCertificate.certificates[0].certificatePem);
+  assert.equal(cert.fingerprint256.replace(/:/g, "").toLowerCase(), withPublicCertificate.certificates[0].fingerprintSha256);
+  assert.doesNotMatch(withPublicCertificate.certificates[0].certificatePem, /PRIVATE KEY/);
+});
+
+it("retains public intermediate certificates from a full chain only for local verification", () => {
+  const dir = makeTempDir();
+  fs.copyFileSync(path.join(__dirname, "..", "verify", "fixtures", "chain-leaf-fullchain.crt.pem"), path.join(dir, "fullchain.pem"));
+  const result = discoverCertificatesInDirectory(dir, { includePublicCertificate: true });
+  assert.equal(result.certificates.length, 1);
+  assert.ok(result.certificates[0].intermediateCertificates.length > 0);
+  for (const cert of result.certificates[0].intermediateCertificates) {
+    assert.match(cert, /BEGIN CERTIFICATE/);
+    assert.doesNotMatch(cert, /PRIVATE KEY/);
+  }
+});
+
 /**
  * Generates a throwaway self-signed cert+key pair into `dir` using openssl
  * (test setup only). Returns the absolute paths written. The key material
