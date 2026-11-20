@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-20 (Core 0.20.0, main 9deb2fc5).
+Last reviewed: 2026-11-20 (Core 0.20.0, main 0264a3af).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -54,11 +54,8 @@ called stable while they are open.
   CA-backed revocation, step-ca and webhook connectors remain open.
 - **Operational diagnostics**
   ([#232](https://github.com/tokentimerch/tokentimer-core/issues/232)).
-  Correlation identifiers across API and workers; production error
-  reporting with secret scrubbing.
-  API request logs now share a generated `correlationId`, returned as
-  `X-Request-Id`, which dashboard API errors display as a request reference.
-  Worker propagation and production error-boundary reporting remain open.
+  Extend request correlation beyond certificate distribution to other worker
+  paths and give operators clearer next actions for more kinds of failure.
 
 ---
 

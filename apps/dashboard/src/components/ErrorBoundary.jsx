@@ -1,5 +1,6 @@
 import React from 'react';
 import { logger } from '../utils/logger.js';
+import { reportDashboardError } from '../utils/apiClient.js';
 import { primitives } from '../styles/colors.js';
 import {
   hasRecentChunkRecovery,
@@ -7,10 +8,29 @@ import {
   refreshAfterChunkFailure,
 } from '../utils/chunkLoadRecovery.js';
 
+const CHUNK_RECOVERY_ADVICE =
+  'Check your connection. If refreshing does not help, try again later or contact your administrator.';
+
+function ErrorReference({ reference }) {
+  if (!reference) return null;
+  return (
+    <p role='status'>
+      Reference: <code>{reference}</code>. Include it if you contact your
+      administrator.
+    </p>
+  );
+}
+
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null, preloadError: null };
+    this.state = {
+      hasError: false,
+      error: null,
+      preloadError: null,
+      lastReport: null,
+    };
+    this.errorReports = new WeakMap();
     this.handlePreloadError = this.handlePreloadError.bind(this);
   }
 
@@ -30,16 +50,46 @@ class ErrorBoundary extends React.Component {
     if (!isChunkLoadError(event.payload)) return;
     // Keep optional imports and their callers in control of their own errors.
     this.setState({ preloadError: event.payload });
+    this.reportError('chunk-load', event.payload);
   }
 
   componentDidCatch(error, errorInfo) {
-    logger.error('Error caught by boundary:', error, errorInfo);
+    if (!import.meta.env.PROD) {
+      logger.error('Error caught by boundary:', error, errorInfo);
+      return;
+    }
+    this.reportError(isChunkLoadError(error) ? 'chunk-load' : 'render', error);
+  }
+
+  reportError(kind, error) {
+    if (!import.meta.env.PROD) return;
+    // A Vite event and React's lazy import rejection can share one error.
+    const canDeduplicate = typeof error === 'object' && error !== null;
+    let report = canDeduplicate ? this.errorReports.get(error) : null;
+    if (!report) {
+      report = reportDashboardError(kind);
+      if (canDeduplicate) this.errorReports.set(error, report);
+    }
+    void report.then(reference => {
+      if (!reference) return;
+      this.setState(state => {
+        const visibleError = state.hasError ? state.error : state.preloadError;
+        if (visibleError !== error) return null;
+        return { lastReport: { error, reference } };
+      });
+    });
   }
 
   render() {
-    if (this.state.hasError) {
-      const chunkFailure = isChunkLoadError(this.state.error);
-      const recoveryFailed = chunkFailure && hasRecentChunkRecovery();
+    const { error, hasError, preloadError, lastReport } = this.state;
+    const visibleError = hasError ? error : preloadError;
+    const reference =
+      lastReport && lastReport.error === visibleError
+        ? lastReport.reference
+        : null;
+    if (hasError) {
+      const chunkFailure = isChunkLoadError(error);
+      const recentRecovery = chunkFailure && hasRecentChunkRecovery();
       const darkMode =
         typeof document !== 'undefined' &&
         (document.documentElement.dataset.theme === 'dark' ||
@@ -87,11 +137,12 @@ class ErrorBoundary extends React.Component {
               }}
             >
               {chunkFailure
-                ? recoveryFailed
-                  ? 'Refreshing did not resolve the problem. Check your connection and try again later. If it persists, contact your administrator.'
+                ? recentRecovery
+                  ? CHUNK_RECOVERY_ADVICE
                   : 'The dashboard may have been updated, or your connection may have been interrupted. Refresh to load the current version. Unsaved changes will be lost.'
                 : 'We encountered an unexpected error. Please try refreshing the page.'}
             </p>
+            <ErrorReference reference={reference} />
             <button
               onClick={() =>
                 chunkFailure
@@ -119,7 +170,7 @@ class ErrorBoundary extends React.Component {
     return (
       <>
         {this.props.children}
-        {this.state.preloadError && (
+        {preloadError && (
           <div
             role='alert'
             style={{
@@ -128,7 +179,7 @@ class ErrorBoundary extends React.Component {
               left: '1rem',
               right: '1rem',
               zIndex: 1500,
-              border: '1px solid ' + primitives.slate[300],
+              border: `1px solid ${primitives.slate[300]}`,
               borderRadius: '0.5rem',
               padding: '1rem',
               backgroundColor: primitives.slate[50],
@@ -138,10 +189,11 @@ class ErrorBoundary extends React.Component {
             <h2>Page files could not be loaded</h2>
             <p>
               {hasRecentChunkRecovery()
-                ? 'Refreshing did not resolve the problem. Check your connection and try again later. If it persists, contact your administrator.'
+                ? CHUNK_RECOVERY_ADVICE
                 : 'The dashboard may have been updated, or your connection may have been interrupted. Save your work before refreshing.'}{' '}
               Unsaved changes will be lost when you refresh.
             </p>
+            <ErrorReference reference={reference} />
             <button onClick={refreshAfterChunkFailure}>Refresh Page</button>
           </div>
         )}

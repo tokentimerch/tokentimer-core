@@ -12,11 +12,12 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 
 ## Core runtime and bootstrap
 
-API error messages in the dashboard show a **Reference** when the response
-includes a valid server-generated `X-Request-Id`. Include it when contacting
-support or your operator; it matches `correlationId` in API logs. This is enabled
-by default. Network failures and older servers or proxies that omit the header
-have no reference. Queued worker jobs do not yet inherit the request ID.
+Dashboard API errors show a **Reference** when the response includes a valid
+`X-Request-Id`. A production dashboard failure can also show a reference after
+the API accepts a report from a signed-in session. Reports contain only the
+error category and dashboard area. Share the reference when contacting your
+administrator. Search for `correlationId` in API logs and, for certificate
+distribution rollout requests and approvals, in the CertOps worker logs.
 
 | Variable                  | Description                              | Default value                  | Scope                  |
 | ------------------------- | ---------------------------------------- | ------------------------------ | ---------------------- |

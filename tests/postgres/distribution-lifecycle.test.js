@@ -15,6 +15,125 @@ const administration=require("../../apps/api/services/certops/distributionAdmini
 const discovery=require("../../apps/api/services/certops/consumerDiscovery");
 const request=require("supertest");
 test.after(()=>pool.end());
+
+function rolloutTestApp(actorUserId) {
+  const express = require("../../apps/api/node_modules/express");
+  const { requestCorrelation } = require("../../apps/api/utils/request-context");
+  const { requireAuth } = require("../../apps/api/middleware/auth");
+  const { loadWorkspace, requireWorkspaceMembership } = require("../../apps/api/services/rbac");
+  const app = express();
+  app.use(requestCorrelation, express.json(), (req, _res, next) => {
+    req.user = { id: actorUserId, auth_method: "local" };
+    req.isAuthenticated = () => true;
+    next();
+  });
+  app.use("/api/v1/workspaces/:id", requireAuth, loadWorkspace, requireWorkspaceMembership);
+  app.use(require("../../apps/api/routes/certops"));
+  return app;
+}
+
+test("a real rollout request keeps its API reference through replay and repeated outbox claims", async () => {
+  const f = await fixture({ requireApproval: false });
+  const app = rolloutTestApp(f.actor);
+  const path = `/api/v1/workspaces/${f.workspaceId}/certops/distribution-groups/${f.groupId}/rollouts`;
+  const rollout = () => request(app).post(path)
+    .set("Idempotency-Key", "diagnostics-rollout")
+    .set("X-Request-Id", "synthetic-user-controlled")
+    .send({ materialVersionId: f.materialVersionId });
+  const started = await rollout();
+  assert.equal(started.status, 201, JSON.stringify(started.body));
+  const correlationId = started.headers["x-request-id"];
+  assert.match(correlationId, /^[0-9a-f-]{36}$/);
+  const replay = await rollout();
+  assert.equal(replay.status, 201);
+  assert.equal(replay.body.id, started.body.id);
+  assert.notEqual(replay.headers["x-request-id"], correlationId);
+
+  const events = (await pool.query(
+    "SELECT id,payload FROM certops_outbox WHERE workspace_id=$1 AND event_type='distribution_rollout_requested'",
+    [f.workspaceId],
+  )).rows;
+  assert.equal(events.length, 1);
+  assert.equal(events[0].payload.correlationId, correlationId);
+  const log = [];
+  const { drainCertOpsOutbox } = await import("../../apps/worker/src/certops-worker.js");
+  const outboxId = String(events[0].id);
+  const worker = { dbPool: pool, log: { info: (_message, fields) => log.push(fields) } };
+  await drainCertOpsOutbox(worker);
+  // The rollout is waiting for the consumer. Advance the retry clock without
+  // forging consumer progress and let the worker claim the same row again.
+  await pool.query(
+    "UPDATE certops_outbox SET next_retry_at=clock_timestamp()-interval '1 second' WHERE id=$1 AND status='pending'",
+    [outboxId],
+  );
+  await drainCertOpsOutbox(worker);
+  const expected = {
+    correlationId,
+    outboxId,
+    eventType: "distribution_rollout_requested",
+    disposition: "deferred",
+  };
+  assert.deepEqual(log.filter((entry) => entry.outboxId === outboxId), [expected, expected]);
+
+  // A worker that cannot start because its lease expired still sees its
+  // claim ID until takeover. It must neither mark the row skipped nor report
+  // that it processed the intent.
+  await pool.query(
+    "UPDATE certops_outbox SET next_retry_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+    [outboxId],
+  );
+  await drainCertOpsOutbox({
+    ...worker,
+    distributionResolver: async (args) => {
+      if (String(args.row.id) === outboxId) {
+        await pool.query(
+          "UPDATE certops_outbox SET claimed_until=clock_timestamp()-interval '1 second' WHERE id=$1",
+          [outboxId],
+        );
+      }
+      return operations.handleDistributionIntent(args);
+    },
+  });
+  assert.deepEqual(log.at(-1), { ...expected, disposition: "claim_lost" });
+  const expired = (await pool.query(
+    "SELECT status,payload FROM certops_outbox WHERE id=$1",
+    [outboxId],
+  )).rows[0];
+  assert.equal(expired.status, "pending");
+  assert.equal(expired.payload.correlationId, correlationId);
+  await drainCertOpsOutbox(worker);
+  assert.deepEqual(log.at(-1), expected);
+});
+
+test("a rollout started by approval carries the reference from approval through its worker intent", async () => {
+  const f = await fixture({ requireApproval: true });
+  const job = await operations.requestRollout({ ...f, actorUserId: f.actor });
+  const approved = await request(rolloutTestApp(f.approver))
+    .post(`/api/v1/workspaces/${f.workspaceId}/certops/jobs/${job.id}/approve`)
+    .send({})
+    .expect(200);
+  const correlationId = approved.headers["x-request-id"];
+  const log = [];
+  const worker = { dbPool: pool, log: { info: (_message, fields) => log.push(fields) } };
+  const { drainCertOpsOutbox } = await import("../../apps/worker/src/certops-worker.js");
+  await drainCertOpsOutbox(worker);
+  const outbox = (await pool.query(
+    `SELECT event_type,payload
+       FROM certops_outbox
+      WHERE workspace_id=$1 AND event_type IN ('distribution_approval_granted','distribution_rollout_requested')
+      ORDER BY event_type`,
+    [f.workspaceId],
+  )).rows;
+  assert.deepEqual(outbox.map(({ event_type, payload }) => [event_type, payload.correlationId]), [
+    ["distribution_approval_granted", correlationId],
+    ["distribution_rollout_requested", correlationId],
+  ]);
+  await drainCertOpsOutbox(worker);
+  assert.deepEqual(log.filter((entry) => entry.correlationId === correlationId).map((entry) => entry.eventType), [
+    "distribution_approval_granted", "distribution_rollout_requested",
+  ]);
+});
+
 test("agent/profile collisions return a conflict and preserve disabled binding history",async()=>{
   const f=await fixture(),replacement=require("node:crypto").randomUUID();
   const input={...f,bindingId:replacement,binding:{...f.binding},actorUserId:f.actor};

@@ -2637,6 +2637,48 @@ paths:
                 properties:
                   csrfToken:
                     type: string
+  /api/diagnostics/dashboard:
+    post:
+      tags: [Session]
+      summary: Report a dashboard error
+      operationId: reportDashboardError
+      description: Records the dashboard error category and area in the installation logs.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [kind, area]
+              properties:
+                kind:
+                  type: string
+                  enum: [render, chunk-load]
+                area:
+                  type: string
+                  enum: [account, authentication, certops, dashboard, onboarding, other, settings, workspaces]
+      responses:
+        "204":
+          description: Report accepted
+          headers:
+            X-Request-Id:
+              description: Reference to the logged report.
+              schema:
+                type: string
+                format: uuid
+        "400":
+          description: Invalid report
+        "401":
+          description: Sign-in required
+        "403":
+          description: CSRF check failed or access denied
+        "429":
+          description: Rate limit exceeded
   /auth/login:
     post:
       tags: [Auth]
