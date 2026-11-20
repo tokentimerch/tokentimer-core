@@ -157,7 +157,7 @@ test("internal ACME store first issue atomically binds owner, enrollment and rep
 });
 
 
-test("orphan continuation is acknowledged, atomic and pinned to the original owner", async () => {
+async function createRecoveryFixture() {
   const user = (await pool.query("INSERT INTO users(email,email_original,display_name,password_hash,auth_method,email_verified) VALUES($1::text,$1::text,'ACME','x','local',true) RETURNING id", [randomUUID() + "@example.test"])).rows[0].id;
   const workspaceId = randomUUID(), agentId = randomUUID(), otherAgentId = randomUUID();
   await pool.query("INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'ACME',$2,'oss')", [workspaceId, user]);
@@ -169,6 +169,13 @@ test("orphan continuation is acknowledged, atomic and pinned to the original own
   const first = await tx(client => issue({ client, workspaceId, assignedAgentId: agentId, idempotencyKey: randomUUID(), operation: "issue", source: "api", mode: "real", requestedByUserId: user, transactionOwned: true,
     payload: { target: { type: "windows-cert-store", reference: "app.example.com", store: "My" }, caEndpoint: "https://acme.example.com/directory", commandRef: "certbot-csr", dnsProvider: "provider", dnsZone: "example.com", keyAlgorithm: "rsa", keySize: 2048 } }));
   const enrollment = (await pool.query("SELECT * FROM certops_acme_store_enrollments WHERE original_job_id=$1", [first.job.id])).rows[0];
+  const options = { workspaceId, enrollmentId: enrollment.id, orphanedJobId: first.job.id, actorUserId: user, reason: "Inspect the original order", acknowledgeUnknownEffect: true };
+  const recover = overrides => tx(client => persistence.continueAcmeStoreEnrollmentTx({ client, ...options, ...overrides }));
+  return { workspaceId, agentId, otherAgentId, first, enrollment, tx, recover };
+}
+
+test("orphan continuation is acknowledged, atomic and pinned to the original owner", async () => {
+  const { workspaceId, agentId, otherAgentId, first, enrollment, tx, recover } = await createRecoveryFixture();
   const originalClaim = randomUUID(), receiptId = randomUUID();
   await pool.query("UPDATE certificate_jobs SET status='running',claim_id=$2,claimed_by_agent_id=$3,lease_expires_at=NOW()+interval '5 minutes' WHERE id=$1", [first.job.id, originalClaim, agentId]);
   const evidence = { agentId, jobId: first.job.id, enrollmentId: enrollment.id, claimId: originalClaim, containerName: enrollment.container_name,
@@ -184,11 +191,9 @@ test("orphan continuation is acknowledged, atomic and pinned to the original own
   await stage("installing", { fingerprintSha256: leaf });
   const installedProof = { fingerprintSha256: leaf, store: "LocalMachine\\My", keyPossessionVerified: true, machineKey: true, nonExportable: true };
   await stage("installed", installedProof, installedReceiptId);
-  // The server received installation, but the result ACK was lost: the job is
-  // orphaned before inventory promotion. Recovery must re-prove the same leaf.
-  await pool.query("UPDATE certificate_jobs SET status='orphaned_unknown_effect',needs_operator_reconciliation=true WHERE id=$1", [first.job.id]);
-  const options = { workspaceId, enrollmentId: enrollment.id, orphanedJobId: first.job.id, actorUserId: user, reason: "Inspect the original order", acknowledgeUnknownEffect: true };
-  const recover = overrides => tx(client => persistence.continueAcmeStoreEnrollmentTx({ client, ...options, ...overrides }));
+  // Model the agent reporting uncertainty after the API received installation
+  // evidence. This terminal result retains the original claim.
+  await pool.query("UPDATE certificate_jobs SET status='orphaned_unknown_effect',needs_operator_reconciliation=true,lease_expires_at=NULL,completed_at=NOW() WHERE id=$1", [first.job.id]);
   await assert.rejects(recover({ acknowledgeUnknownEffect: false }), /acknowledgement/);
   await assert.rejects(recover({ audit: async () => { throw new Error("audit failed"); } }), /audit failed/);
   assert.equal((await pool.query("SELECT current_job_id FROM certops_acme_store_enrollments WHERE id=$1", [enrollment.id])).rows[0].current_job_id, first.job.id);
@@ -250,3 +255,31 @@ test("orphan continuation is acknowledged, atomic and pinned to the original own
   await pool.query("UPDATE certops_agents SET status='retired',retired_at=NOW() WHERE id=$1", [agentId]);
   await assert.rejects(tx(client => persistence.loadAcmeStoreBindingTx({ client, workspaceId, jobId: one.jobId, agentId })));
 }, { timeout: 120000 });
+
+test("an ACME job reaped after a Windows agent stops can be continued once", async () => {
+  const { workspaceId, agentId, first, enrollment, recover } = await createRecoveryFixture();
+  const jobId = first.job.id;
+  const lookup = () => persistence.lookupAcmeStoreRecoveryByJob({ client: pool, workspaceId, jobId });
+  // Age only this fixture's lease. The worker performs the terminal transition and records its own job log.
+  await pool.query(`UPDATE certificate_jobs SET status='running',claim_id=$3,claimed_by_agent_id=$4,attempt_count=1,
+    started_at=NOW()-interval '3 hours',lease_renewed_at=NOW()-interval '3 hours',lease_expires_at=NOW()-interval '2 hours'
+    WHERE workspace_id=$1 AND id=$2`, [workspaceId, jobId, randomUUID(), agentId]);
+  assert.deepEqual(await lookup(), { enrollmentId: enrollment.id, state: "keygen_intent", outcomeUncertain: false, recoveryAvailable: false });
+  const { reapExpiredLeases } = await import("../../apps/worker/src/certops-worker.js");
+  const client = await pool.connect();
+  try {
+    assert.deepEqual(await reapExpiredLeases({ client, batchSize: 1 }), { scanned: 1, requeued: 0, failed: 1, deferred: 0 });
+  } finally {
+    client.release();
+  }
+  const orphan = await pool.query(`SELECT status,claim_id,claimed_by_agent_id,needs_operator_reconciliation
+    FROM certificate_jobs WHERE workspace_id=$1 AND id=$2`, [workspaceId, jobId]);
+  assert.deepEqual(orphan.rows, [{ status: "orphaned_unknown_effect", claim_id: null, claimed_by_agent_id: null, needs_operator_reconciliation: true }]);
+  assert.deepEqual(await lookup(), { enrollmentId: enrollment.id, state: "keygen_intent", outcomeUncertain: true, recoveryAvailable: true });
+  const continuation = await recover();
+  assert.equal(continuation.created, true);
+  assert.deepEqual(await recover(), { jobId: continuation.jobId, created: false });
+  assert.deepEqual(await lookup(), { enrollmentId: enrollment.id, state: "keygen_intent", outcomeUncertain: true, recoveryAvailable: false });
+  const continuations = await pool.query("SELECT id,assigned_agent_id FROM certificate_jobs WHERE workspace_id=$1 AND operation='continue-enrollment'", [workspaceId]);
+  assert.deepEqual(continuations.rows, [{ id: continuation.jobId, assigned_agent_id: agentId }]);
+});
