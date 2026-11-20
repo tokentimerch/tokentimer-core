@@ -9150,11 +9150,12 @@ paths:
       summary: Inspect an uncertain AD CS installation
       description: >-
         Requires a human session and certops.issuer.manage. The original job must
-        have an unknown outcome and the same agent must have recorded the expected
-        certificate identity under its original live claim. This action only queues
+        have an unknown outcome. The expected certificate identity from the original
+        agent and claim must have been observed committed before its recorded deadline. This action only queues
         an inspection of the Windows certificate store; it never contacts the CA,
         creates a key, or installs a certificate. A qualified original agent is
-        required to queue inspection. Workspace pause blocks this action. CSRF is required.
+        required to queue inspection. Repeating the request after a failed inspection
+        queues a new inspection. Workspace pause blocks this action. CSRF is required.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - $ref: "#/components/parameters/CsrfTokenHeader"
@@ -9180,7 +9181,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CertOpsAdcsProofRecovery" }
         "200":
-          description: No expected identity, an intent awaiting an eligible agent, or an existing queued inspection.
+          description: No admissible expected identity, an intent awaiting an eligible agent, or an existing active or completed inspection.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CertOpsAdcsProofRecovery" }
@@ -15570,7 +15571,7 @@ components:
       properties:
         state:
           type: string
-          enum: [expected_identity_unavailable, transport_unavailable, queued]
+          enum: [expected_identity_unavailable, transport_unavailable, queued, completed]
         created:
           type: boolean
           description: Whether the recovery intent was created in this request.
@@ -15590,7 +15591,8 @@ components:
             updatedAt: { type: string, format: date-time }
       description: >-
         expected_identity_unavailable has no intentId or job; transport_unavailable
-        has an intentId and no job; queued has both intentId and job.
+        has an intentId and no job. queued has an active job and completed has
+        a terminal job. Both include intentId.
     CertOpsJob:
       type: object
       additionalProperties: false

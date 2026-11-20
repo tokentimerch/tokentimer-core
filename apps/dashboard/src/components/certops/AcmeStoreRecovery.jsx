@@ -12,6 +12,11 @@ export default function AcmeStoreRecovery({ job }) {
   const [ack, setAck] = useState(false);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const reconciliationJobId =
+    canManage &&
+    job?.reconciliationReason ===
+      'installation_verified_by_acme_continuation' &&
+    job.resultMetadata?.reconciliationJobId;
   const base = `/api/v1/workspaces/${encodeURIComponent(workspaceId || '')}/certops/acme-store-enrollments`;
   useEffect(() => {
     setEnrollment(null);
@@ -21,6 +26,7 @@ export default function AcmeStoreRecovery({ job }) {
     if (
       !workspaceId ||
       !canManage ||
+      reconciliationJobId ||
       job?.status !== 'orphaned_unknown_effect' ||
       !job?.id
     )
@@ -37,7 +43,14 @@ export default function AcmeStoreRecovery({ job }) {
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, canManage, job?.id, job?.status, base]);
+  }, [workspaceId, canManage, job?.id, job?.status, base, reconciliationJobId]);
+  if (reconciliationJobId) {
+    return (
+      <Text fontSize='xs'>
+        Recovery verified on the original agent by job {reconciliationJobId}.
+      </Text>
+    );
+  }
   if (!enrollment?.outcomeUncertain) return null;
   const recover = async () => {
     setBusy(true);

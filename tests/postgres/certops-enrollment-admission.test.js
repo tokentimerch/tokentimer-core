@@ -916,7 +916,7 @@ test("AD CS receipt deadline upgrade preserves identities and refuses an unprove
   } finally { await client.query("ROLLBACK"); client.release(); }
 });
 
-test("AD CS proof recovery binds the original live identity, verifies installation and preserves workspace deletion", async () => {
+for (const hasIisConsumers of [false, true]) test(`AD CS proof recovery verifies a reaped claim with ${hasIisConsumers ? "pending IIS" : "no IIS"}`, async () => {
   const f = await fixture();
   const crypto = require("node:crypto");
   const rawCredential = "expected-identity-" + randomUUID();
@@ -927,18 +927,26 @@ test("AD CS proof recovery binds the original live identity, verifies installati
   const recovery = require("../../apps/api/services/certops/adcsProofRecovery");
   const client = await pool.connect();
   let job, evidenceId;
+  const originalClaimId = randomUUID();
   try {
     await client.query("BEGIN");
     job = (await issue({ client, workspaceId: f.workspaceId, operation: "issue", source: "api", mode: "real", idempotencyKey: randomUUID(),
       assignedAgentId: f.agentId, requestedByUserId: f.actor, payload: { issuerId: f.issuerId, target } })).job;
-    const claim = randomUUID();
     await client.query(`UPDATE certificate_jobs SET status='running',claimed_by_agent_id=$2,claim_id=$3,attempt_count=1,
-      lease_expires_at=NOW()+interval '5 minutes' WHERE id=$1`, [job.id, f.agentId, claim]);
+      lease_expires_at=NOW()+interval '5 minutes' WHERE id=$1`, [job.id, f.agentId, originalClaimId]);
+    if (hasIisConsumers) {
+      const row = (await client.query("SELECT snapshot_bytes FROM certificate_enrollments WHERE id=$1", [job.enrollmentId])).rows[0];
+      const snapshot = JSON.parse(row.snapshot_bytes.toString("utf8"));
+      snapshot.iisConsumers = [{ consumerId: randomUUID(), authorizationRevision: 1 }];
+      const bytes = Buffer.from(JSON.stringify(snapshot));
+      await client.query("UPDATE certificate_enrollments SET snapshot_bytes=$2,snapshot_sha256=$3 WHERE id=$1",
+        [job.enrollmentId, bytes, crypto.createHash("sha256").update(bytes).digest("hex")]);
+    }
     const metadata = { step: "adcs.expected-identity", enrollmentId: job.enrollmentId,
       destinationSha256: crypto.createHash("sha256").update(JSON.stringify(target)).digest("hex"),
       fingerprintSha256: "ab".repeat(32), csrSpkiSha256: "cd".repeat(32), leafSpkiSha256: "cd".repeat(32) };
     evidenceId = (await client.query(`INSERT INTO certificate_evidence(workspace_id,job_id,evidence_type,claim_id,attempt_count,created_by_agent_id,metadata)
-      VALUES($1,$2,'validation.passed',$3,1,$4,$5::jsonb) RETURNING id`, [f.workspaceId, job.id, claim, f.agentId, JSON.stringify(metadata)])).rows[0].id;
+      VALUES($1,$2,'validation.passed',$3,1,$4,$5::jsonb) RETURNING id`, [f.workspaceId, job.id, originalClaimId, f.agentId, JSON.stringify(metadata)])).rows[0].id;
     // A terminal transition must not discard a valid fact from the still-live
     // original claim, even though proof-only recovery will be unavailable.
     await client.query("SAVEPOINT terminal_receipt");
@@ -970,14 +978,21 @@ test("AD CS proof recovery binds the original live identity, verifies installati
     // A lost ACK can be replayed after renewal only because the original
     // committed witness already proves receipt admission before its deadline.
     await require("../../apps/api/services/certops/agentDispatch").renewJobLease({ dbPool: pool, agent,
-      jobId: job.id, claimId: claim, deps: { enforceAgentSequence: async () => {},
+      jobId: job.id, claimId: originalClaimId, deps: { enforceAgentSequence: async () => {},
         extendJobNonceExpiry: async () => ({ expiresAt: new Date(Date.now()+60000).toISOString() }) } });
     await client.query("BEGIN");
     await recovery.witnessCommittedAdcsIdentityTx({ client, agent, jobId: job.id, receiptId: first.receiptId });
     await client.query("COMMIT");
     assert.deepEqual((await client.query("SELECT committed_seen_at,receipt_claim_expires_at FROM certops_adcs_expected_identity_receipts WHERE id=$1", [first.receiptId])).rows[0], witnessBefore);
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
-  await pool.query("UPDATE certificate_jobs SET status='orphaned_unknown_effect',needs_operator_reconciliation=true,lease_expires_at=NOW()-interval '1 minute' WHERE id=$1", [job.id]);
+  await pool.query("UPDATE certificate_jobs SET lease_expires_at=NOW()-interval '2 hours' WHERE id=$1", [job.id]);
+  const { reapExpiredLeases } = await import("../../apps/worker/src/certops-worker.js");
+  const reaperClient = await pool.connect();
+  try {
+    assert.deepEqual(await reapExpiredLeases({ client: reaperClient, batchSize: 1 }), { scanned: 1, requeued: 0, failed: 1, deferred: 0 });
+  } finally { reaperClient.release(); }
+  const orphan = (await pool.query("SELECT status,claim_id,claimed_by_agent_id FROM certificate_jobs WHERE id=$1", [job.id])).rows[0];
+  assert.deepEqual(orphan, { status: "orphaned_unknown_effect", claim_id: null, claimed_by_agent_id: null });
   const afterExpiry = await pool.connect();
   try {
     await afterExpiry.query("BEGIN");
@@ -997,6 +1012,11 @@ test("AD CS proof recovery binds the original live identity, verifies installati
       await assert.rejects(recovery.prepareAdcsProofRecoveryTx(request), { code: "CERTOPS_ADCS_PROOF_INVALID" });
       await resultTx.query("ROLLBACK TO SAVEPOINT terminal_before_prepare");
     }
+    await resultTx.query("SAVEPOINT incorrect_reaper_attempt");
+    await resultTx.query(`UPDATE certificate_job_log SET metadata=jsonb_set(metadata,'{attemptCount}','2')
+      WHERE workspace_id=$1 AND job_id=$2 AND metadata->>'sweep'='lease-reaper'`, [f.workspaceId, job.id]);
+    assert.deepEqual(await recovery.prepareAdcsProofRecoveryTx(request), { state: "expected_identity_unavailable", created: false });
+    await resultTx.query("ROLLBACK TO SAVEPOINT incorrect_reaper_attempt");
     const intent = await recovery.prepareAdcsProofRecoveryTx(request);
     assert.equal(intent.state, "transport_unavailable");
     assert.equal(intent.created, true);
@@ -1041,6 +1061,7 @@ test("AD CS proof recovery binds the original live identity, verifies installati
     }
     const binding = await recovery.loadAdcsProofJobBindingTx({ client: resultTx, workspaceId: f.workspaceId, jobId: queued.job.id, agentId: f.agentId });
     assert.equal(binding.originalJobId, job.id);
+    assert.equal(binding.originalClaimId, originalClaimId);
     assert.equal(binding.fingerprintSha256, "ab".repeat(32));
     assert.equal(await recovery.loadAdcsProofJobBindingTx({ client: resultTx, workspaceId: f.workspaceId, jobId: queued.job.id, agentId: randomUUID() }), null);
     const terminalWriter = await pool.connect();
@@ -1063,8 +1084,34 @@ test("AD CS proof recovery binds the original live identity, verifies installati
   assert.equal(claimedProof.jobs[0].jobId, proofJobId);
   assert.equal(claimedProof.jobs[0].adcsProof.originalJobId, job.id);
   assert.equal(claimedProof.jobs[0].caEndpoint, undefined);
+  const failedProof = (await pool.query("SELECT claim_id FROM certificate_jobs WHERE id=$1", [proofJobId])).rows[0];
+  await require("../../apps/api/services/certops/agentDispatch").ingestResult({ dbPool: pool, agent,
+    body: { jobId: proofJobId, claimId: failedProof.claim_id, status: "failed", nonce: randomUUID(), errorMessage: "Enrollment lock unavailable" },
+    deps: { consumeNonce: async () => ({ consumed: true }), enforceAgentSequence: async () => {}, enqueueOutboxEvent: async () => {} } });
+  const retryClient = await pool.connect();
+  try {
+    await retryClient.query("BEGIN");
+    const intent = await recovery.prepareAdcsProofRecoveryTx({ client: retryClient, workspaceId: f.workspaceId, enrollmentId: job.enrollmentId,
+      originalJobId: job.id, actorUserId: f.actor, reason: "Retry read-only inspection" });
+    const queue = () => recovery.queueAdcsProofRecoveryTx({ client: retryClient, workspaceId: f.workspaceId, intentId: intent.intentId, actorUserId: f.actor });
+    const retry = await queue();
+    assert.equal(retry.state, "queued");
+    assert.equal(retry.created, true);
+    assert.notEqual(retry.job.id, proofJobId);
+    assert.equal((await retryClient.query("SELECT status FROM certificate_jobs WHERE id=$1", [proofJobId])).rows[0].status, "failed");
+    const activeReplay = await queue();
+    assert.equal(activeReplay.created, false);
+    assert.equal(activeReplay.job.id, retry.job.id);
+    proofJobId = retry.job.id;
+    await retryClient.query("COMMIT");
+  } catch (error) { await retryClient.query("ROLLBACK"); throw error; } finally { retryClient.release(); }
+  const claimedRetry = await require("../../apps/api/services/certops/agentDispatch").claimJobs({ dbPool: pool,
+    agent: require("../../apps/api/services/certops/agentCredentialFence").bindAuthenticatedCredential({ id: f.agentId, agentId: publicId, workspaceId: f.workspaceId, status: "active", platform: "win32", protocolVersion: "1.0.0", agentVersion: "0.18.1" }, rawCredential),
+    body: { maxJobs: 1, supportedActions: ["adcs-installation-proof"] }, env: { CERTOPS_ENABLED: "true" },
+    deps: { enforceAgentSequence: async () => {}, signJobForDispatch: async ({ job: signed }) => signed } });
+  assert.equal(claimedRetry.jobs[0].jobId, proofJobId);
   const proofJob = (await pool.query("SELECT * FROM certificate_jobs WHERE id=$1", [proofJobId])).rows[0];
-  const signedProof = claimedProof.jobs[0].adcsProof;
+  const signedProof = claimedRetry.jobs[0].adcsProof;
   const metadata = { ...signedProof, ownerAgentId: signedProof.agentId, step: "adcs-proof-only", store: "LocalMachine\\My",
     destinationType: "windows-cert-store", keyPossessionVerified: true, machineKey: true, nonExportable: true,
     validTo: "2027-11-10T00:00:00.000Z" };
@@ -1092,7 +1139,8 @@ test("AD CS proof recovery binds the original live identity, verifies installati
   assert.equal(recovered.status, "active");
   assert.equal(recovered.fingerprint_sha256, metadata.fingerprintSha256);
   const originalAfter = (await pool.query("SELECT status,needs_operator_reconciliation,reconciliation_reason FROM certificate_jobs WHERE id=$1", [job.id])).rows[0];
-  assert.deepEqual(originalAfter, { status: "orphaned_unknown_effect", needs_operator_reconciliation: false, reconciliation_reason: "installation_verified_by_proof" });
+  assert.deepEqual(originalAfter, { status: "orphaned_unknown_effect", needs_operator_reconciliation: hasIisConsumers,
+    reconciliation_reason: hasIisConsumers ? "installation_verified_iis_reconciliation_required" : "installation_verified_by_proof" });
   assert.equal(auditEvents.filter(action => action === "CERTOPS_ADCS_INSTALLATION_PROOF_RECONCILED").length, 1);
   replay = true;
   assert.equal((await submit()).duplicate, true);
@@ -1117,6 +1165,12 @@ test("AD CS proof recovery binds the original live identity, verifies installati
   const app = express(); app.use(express.json());
   app.use((req, _res, next) => { req.user = { id: f.actor }; req.authz = { workspaceRole: "admin" }; req.workspace = { id: f.workspaceId }; req.isAuthenticated = () => true; next(); });
   app.use(require("../../apps/api/routes/certops-enrollments"));
+  const completed = await request(app).post(`/api/v1/workspaces/${f.workspaceId}/certops/enrollments/${job.enrollmentId}/recover-installation-proof`)
+    .send({ orphanedJobId: job.id, reason: "Inspect uncertain installation" });
+  assert.equal(completed.status, 200, JSON.stringify(completed.body));
+  assert.equal(completed.body.state, "completed");
+  assert.equal(completed.body.job.id, proofJobId);
+  assert.equal(completed.body.job.status, "succeeded");
   const route = `/api/v1/workspaces/${f.workspaceId}/certops/enrollments/${missingJob.enrollmentId}/recover-installation-proof`;
   const response = await request(app).post(route).send({ orphanedJobId: missingJob.id, reason: "Inspect uncertain installation" });
   assert.equal(response.status, 200, JSON.stringify(response.body));

@@ -171,7 +171,7 @@ async function createRecoveryFixture() {
   const enrollment = (await pool.query("SELECT * FROM certops_acme_store_enrollments WHERE original_job_id=$1", [first.job.id])).rows[0];
   const options = { workspaceId, enrollmentId: enrollment.id, orphanedJobId: first.job.id, actorUserId: user, reason: "Inspect the original order", acknowledgeUnknownEffect: true };
   const recover = overrides => tx(client => persistence.continueAcmeStoreEnrollmentTx({ client, ...options, ...overrides }));
-  return { workspaceId, agentId, otherAgentId, first, enrollment, tx, recover };
+  return { workspaceId, agentId, otherAgentId, user, first, enrollment, tx, recover };
 }
 
 test("orphan continuation is acknowledged, atomic and pinned to the original owner", async () => {
@@ -256,8 +256,8 @@ test("orphan continuation is acknowledged, atomic and pinned to the original own
   await assert.rejects(tx(client => persistence.loadAcmeStoreBindingTx({ client, workspaceId, jobId: one.jobId, agentId })));
 }, { timeout: 120000 });
 
-test("an ACME job reaped after a Windows agent stops can be continued once", async () => {
-  const { workspaceId, agentId, first, enrollment, recover } = await createRecoveryFixture();
+test("concurrent operator requests continue a reaped ACME job only once", async t => {
+  const { workspaceId, agentId, user, first, enrollment } = await createRecoveryFixture();
   const jobId = first.job.id;
   const lookup = () => persistence.lookupAcmeStoreRecoveryByJob({ client: pool, workspaceId, jobId });
   // Age only this fixture's lease. The worker performs the terminal transition and records its own job log.
@@ -276,10 +276,137 @@ test("an ACME job reaped after a Windows agent stops can be continued once", asy
     FROM certificate_jobs WHERE workspace_id=$1 AND id=$2`, [workspaceId, jobId]);
   assert.deepEqual(orphan.rows, [{ status: "orphaned_unknown_effect", claim_id: null, claimed_by_agent_id: null, needs_operator_reconciliation: true }]);
   assert.deepEqual(await lookup(), { enrollmentId: enrollment.id, state: "keygen_intent", outcomeUncertain: true, recoveryAvailable: true });
-  const continuation = await recover();
-  assert.equal(continuation.created, true);
-  assert.deepEqual(await recover(), { jobId: continuation.jobId, created: false });
+  const express = require("../../apps/api/node_modules/express");
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    req.user = { id: user };
+    req.authz = { workspaceRole: "workspace_manager" };
+    req.workspace = { id: workspaceId };
+    req.isAuthenticated = () => true;
+    next();
+  });
+  app.use(require("../../apps/api/routes/certops-enrollments"));
+  const server = await new Promise(resolve => {
+    const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+  });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const url = `http://127.0.0.1:${server.address().port}/api/v1/workspaces/${workspaceId}/certops/acme-store-enrollments/${enrollment.id}/recover`;
+  const request = async () => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orphanedJobId: jobId, reason: "Inspect the original order", acknowledgeUnknownEffect: true }),
+    });
+    return { status: res.status, body: await res.json() };
+  };
+
+  // Hold the workspace lock until both POSTs are waiting in the real route.
+  // A shared agent lock followed by an upgrade deadlocks after this release.
+  const gate = await pool.connect();
+  let requests;
+  try {
+    await gate.query("BEGIN");
+    await gate.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [workspaceId]);
+    requests = Promise.all([request(), request()]);
+    const deadline = Date.now() + 10000;
+    while (true) {
+      const { rows: [{ blocked }] } = await pool.query(`SELECT count(*)::int AS blocked FROM pg_stat_activity
+        WHERE datname=current_database() AND wait_event_type='Lock'
+          AND (query LIKE '%certops_require_approval_always%' OR query LIKE '%SELECT a.id FROM certops_agents a JOIN certops_acme_store_enrollments e%')`);
+      if (blocked === 2) break;
+      assert.ok(Date.now() < deadline, "both recovery requests reached PostgreSQL");
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+  } finally {
+    await gate.query("ROLLBACK");
+    gate.release();
+  }
+  const [replay, created] = (await requests).sort((left, right) => left.status - right.status);
+  assert.deepEqual([replay.status, created.status], [200, 201], JSON.stringify([replay, created]));
+  assert.equal(created.body.created, true);
+  assert.deepEqual(replay.body, { jobId: created.body.jobId, created: false });
   assert.deepEqual(await lookup(), { enrollmentId: enrollment.id, state: "keygen_intent", outcomeUncertain: true, recoveryAvailable: false });
   const continuations = await pool.query("SELECT id,assigned_agent_id FROM certificate_jobs WHERE workspace_id=$1 AND operation='continue-enrollment'", [workspaceId]);
-  assert.deepEqual(continuations.rows, [{ id: continuation.jobId, assigned_agent_id: agentId }]);
+  assert.deepEqual(continuations.rows, [{ id: created.body.jobId, assigned_agent_id: agentId }]);
+});
+
+test("a verified terminal ACME continuation resolves only its historical chain and replays once", async () => {
+  const { workspaceId, agentId, first, enrollment, recover, tx } = await createRecoveryFixture();
+  const orphan = jobId => pool.query(`UPDATE certificate_jobs SET status='orphaned_unknown_effect',
+    claim_id=$2,claimed_by_agent_id=$3,completed_at=NOW(),attempt_count=1,
+    needs_operator_reconciliation=TRUE,error_code='effects_unknown' WHERE id=$1`, [jobId, randomUUID(), agentId]);
+  await orphan(first.job.id);
+  const intermediate = await recover();
+  await orphan(intermediate.jobId);
+  const continuation = await recover({ orphanedJobId: intermediate.jobId });
+  const unrelated = randomUUID();
+  await pool.query(`INSERT INTO certificate_jobs(id,workspace_id,subject_type,subject_id,operation,status,
+    assigned_agent_id,needs_operator_reconciliation) VALUES($1,$2,'managed_certificate',$3,'renew','orphaned_unknown_effect',$4,TRUE)`,
+  [unrelated, workspaceId, first.job.subjectId, agentId]);
+
+  const claimId = randomUUID();
+  await pool.query(`UPDATE certificate_jobs SET status='running',claim_id=$2,claimed_by_agent_id=$3,
+    attempt_count=1,lease_expires_at=NOW()+interval '5 minutes' WHERE id=$1`, [continuation.jobId, claimId, agentId]);
+  const boundEvidence = {
+    enrollmentId: enrollment.id, requestSha256: enrollment.request_sha256, containerName: enrollment.container_name,
+    csrSha256: "a".repeat(64), csrSpkiSha256: "b".repeat(64),
+  };
+  const proof = {
+    ...boundEvidence, fingerprintSha256: "c".repeat(64),
+    store: "LocalMachine\\My", keyPossessionVerified: true, machineKey: true, nonExportable: true,
+    validTo: "2029-01-01T00:00:00Z",
+  };
+  for (const [state, detail] of [
+    ["prepared", {}],
+    ["submitting", {}],
+    ["issued", { fingerprintSha256: proof.fingerprintSha256, leafSpkiSha256: proof.csrSpkiSha256 }],
+    ["installing", { fingerprintSha256: proof.fingerprintSha256 }],
+    ["installed", { ...proof }],
+  ]) {
+    await tx(client => persistence.applyAcmeStoreReceiptTx({ client, workspaceId, enrollmentId: enrollment.id,
+      authenticatedAgentRowId: agentId, claimId, receiptId: randomUUID(),
+      evidence: { ...boundEvidence, agentId, jobId: continuation.jobId, claimId, state, ...detail },
+    }));
+  }
+  await pool.query(`INSERT INTO certificate_evidence(workspace_id,job_id,evidence_type,claim_id,attempt_count,created_by_agent_id,metadata)
+    VALUES($1,$2,'validation.passed',$3,1,$4,$5::jsonb)`, [workspaceId, continuation.jobId, claimId, agentId,
+    JSON.stringify({ ...proof, step: "acme-store-receipt", state: "installed" })]);
+
+  const rawCredential = randomBytes(32).toString("hex");
+  const { rows: [owner] } = await pool.query("UPDATE certops_agents SET credential_hash=$2 WHERE id=$1 RETURNING agent_id",
+    [agentId, require("node:crypto").createHash("sha256").update(rawCredential).digest("hex")]);
+  const agent = require("../../apps/api/services/certops/agentCredentialFence").bindAuthenticatedCredential({
+    id: agentId, agentId: owner.agent_id, workspaceId, status: "active", platform: "win32", protocolVersion: "1.0.0", agentVersion: "0.18.1",
+  }, rawCredential);
+  const dispatch = require("../../apps/api/services/certops/agentDispatch");
+  let duplicate = false;
+  const submit = () => dispatch.ingestResult({ dbPool: pool, agent,
+    body: { jobId: continuation.jobId, claimId, status: "succeeded", nonce: randomUUID() },
+    deps: { enforceAgentSequence: async () => {}, consumeNonce: async () => duplicate
+      ? { consumed: false, code: "CERTOPS_NONCE_REPLAYED" } : { consumed: true } },
+  });
+  await submit();
+  const { rows: [certificate] } = await pool.query("SELECT status,fingerprint_sha256 FROM managed_certificates WHERE id=$1", [first.job.subjectId]);
+  assert.deepEqual(certificate, { status: "active", fingerprint_sha256: proof.fingerprintSha256 });
+  const { rows: historical } = await pool.query(`SELECT id,status,error_code,needs_operator_reconciliation,reconciliation_reason,
+    result_metadata->>'reconciliationJobId' AS reconciliation_job_id FROM certificate_jobs WHERE id=ANY($1::uuid[])`,
+  [[first.job.id, intermediate.jobId]]);
+  assert.equal(historical.length, 2);
+  for (const row of historical) {
+    assert.equal(row.status, "orphaned_unknown_effect");
+    assert.equal(row.error_code, "effects_unknown");
+    assert.equal(row.needs_operator_reconciliation, false);
+    assert.equal(row.reconciliation_reason, "installation_verified_by_acme_continuation");
+    assert.equal(row.reconciliation_job_id, continuation.jobId);
+  }
+  assert.equal((await pool.query("SELECT needs_operator_reconciliation FROM certificate_jobs WHERE id=$1", [unrelated])).rows[0].needs_operator_reconciliation, true);
+  assert.deepEqual(await persistence.lookupAcmeStoreRecoveryByJob({ client: pool, workspaceId, jobId: first.job.id }),
+    { enrollmentId: enrollment.id, state: "installed", outcomeUncertain: false, recoveryAvailable: false });
+  assert.deepEqual(await recover(), { jobId: intermediate.jobId, created: false });
+  assert.deepEqual(await recover({ orphanedJobId: intermediate.jobId }), { jobId: continuation.jobId, created: false });
+  duplicate = true;
+  assert.equal((await submit()).duplicate, true);
+  const { rows: audit } = await pool.query(`SELECT metadata FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_ACME_STORE_RECOVERY_RECONCILED'`, [workspaceId]);
+  assert.deepEqual(audit, [{ metadata: { enrollmentId: enrollment.id, originalJobId: first.job.id, reconciliationJobId: continuation.jobId } }]);
 });

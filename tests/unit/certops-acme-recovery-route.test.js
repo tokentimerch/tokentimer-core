@@ -30,7 +30,7 @@ test("recovery locks owner before workspace, commits atomically and rolls back e
   try {
     const req = { workspace: { id }, user: { id: 3 }, params: { enrollmentId: id }, body: { orphanedJobId: id, reason: "reviewed", acknowledgeUnknownEffect: true } };
     const res = response(); await handler(req, res);
-    assert.equal(res.statusCode, 201); assert.equal(calls[0], "BEGIN"); assert.match(calls[1], /FOR SHARE OF a/);
+    assert.equal(res.statusCode, 201); assert.equal(calls[0], "BEGIN"); assert.match(calls[1], /FOR UPDATE OF a/);
     assert.deepEqual(calls.slice(2), ["workspace", "recovery", "COMMIT", "release"]);
     calls.length = 0; recoverStub.mock.mockImplementation(async () => { throw new Error("audit failed"); });
     const failed = response(); await handler(req, failed); assert.equal(failed.statusCode, 500); assert.ok(calls.includes("ROLLBACK")); assert.ok(!calls.includes("COMMIT"));

@@ -133,6 +133,9 @@ export function reconciliationAdvisoryText(reason) {
   if (reason === 'certificate_retirement_overlapped_execution') {
     return 'Certificate retirement overlapped this operation. Verify what is installed and remove or replace retired certificates where needed.';
   }
+  if (reason === 'installation_verified_iis_reconciliation_required') {
+    return 'The certificate and key are verified in the Windows store. Check the dependent IIS bindings and the certificate each listener serves.';
+  }
   const suffix = reason ? ` (reason: ${reason})` : '';
   return `This job's side effects could not be confirmed and need manual review${suffix}.`;
 }
