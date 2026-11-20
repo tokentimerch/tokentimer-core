@@ -2,6 +2,8 @@
 
 Audit rows identify the action, timestamp, actor, subject, target, channel, workspace, and event details. A background process may have no user actor. For UUID-backed resources, look in `workspace_id` or metadata because `target_id` stores integers. Historical rows retain the metadata available when they were written. See [CertOps audit events](certops/audit-events.md) for certificate and agent activity.
 
+Open **Audit** in the dashboard and select **This workspace** to include machine activity. Enter an action name in **Exact audit action** and press Enter, then search by an identifier such as the management period ID to narrow the results. CSV and JSON exports use the active filters. CSV includes separate actor and subject user ID columns so you can identify who made a change and whose account it affected.
+
 ## Authentication and account
 
 - `REGISTRATION` records an account created through an invitation. Metadata includes `method` and `invited_role`.

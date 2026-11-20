@@ -823,6 +823,25 @@ If you did not expect this invitation, please contact your workspace administrat
     }
   },
 );
+async function withLockedWorkspaceMember(workspaceId, userId, change) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      "SELECT role FROM workspace_memberships WHERE user_id=$1 AND workspace_id=$2 FOR UPDATE",
+      [userId, workspaceId],
+    );
+    const result = await change(client, rows[0]?.role);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 router.patch(
   "/api/v1/workspaces/:id/members/:userId",
   getApiLimiter(),
@@ -853,31 +872,43 @@ router.patch(
           .status(400)
           .json({ error: "Invalid role", code: "VALIDATION_ERROR" });
       }
-      const currentRoleRes = await pool.query(
-        "SELECT role FROM workspace_memberships WHERE user_id=$1 AND workspace_id=$2",
-        [targetUserId, ws.id],
+      const outcome = await withLockedWorkspaceMember(
+        ws.id,
+        targetUserId,
+        async (client, currentRole) => {
+          if (!currentRole) return "missing";
+          if (currentRole === "admin") return "protected";
+          if (currentRole === nextRole) return "unchanged";
+
+          const updated = await client.query(
+            "UPDATE workspace_memberships SET role=$1 WHERE user_id=$2 AND workspace_id=$3",
+            [nextRole, targetUserId, ws.id],
+          );
+          if (updated.rowCount === 0) return "missing";
+          await writeAudit({
+            client,
+            actorUserId: userId,
+            subjectUserId: targetUserId,
+            action: "MEMBER_ROLE_CHANGED",
+            targetType: "workspace",
+            workspaceId: ws.id,
+            metadata: { role: nextRole, previous_role: currentRole },
+          });
+          return "changed";
+        },
       );
-      const currentRole = String(
-        currentRoleRes.rows?.[0]?.role || "",
-      ).toLowerCase();
-      if (currentRole === "admin") {
+      if (outcome === "missing") {
+        return res.status(404).json({
+          error: "Workspace member not found",
+          code: "NOT_FOUND",
+        });
+      }
+      if (outcome === "protected") {
         return res.status(403).json({
           error: "Workspace admin role cannot be changed here",
           code: "FORBIDDEN",
         });
       }
-      await pool.query(
-        "UPDATE workspace_memberships SET role=$1 WHERE user_id=$2 AND workspace_id=$3",
-        [nextRole, targetUserId, ws.id],
-      );
-      await writeAudit({
-        actorUserId: userId,
-        subjectUserId: targetUserId,
-        action: "MEMBER_ROLE_CHANGED",
-        targetType: "workspace",
-        workspaceId: ws.id,
-        metadata: { role: nextRole, previous_role: currentRole || null },
-      });
       return res.json({ user_id: targetUserId, role: nextRole });
     } catch (err) {
       logger.error("Failed to change role", { error: err.message });
@@ -915,30 +946,35 @@ router.delete(
           });
         }
       }
-      // Managers cannot remove admins
-      const { rows } = await pool.query(
-        "SELECT role FROM workspace_memberships WHERE user_id=$1 AND workspace_id=$2",
-        [targetUserId, ws.id],
+      const outcome = await withLockedWorkspaceMember(
+        ws.id,
+        targetUserId,
+        async (client, targetRole) => {
+          if (!targetRole) return "missing";
+          if (targetRole === "admin") return "protected";
+
+          const removed = await client.query(
+            "DELETE FROM workspace_memberships WHERE user_id=$1 AND workspace_id=$2",
+            [targetUserId, ws.id],
+          );
+          if (removed.rowCount === 0) return "missing";
+          await writeAudit({
+            client,
+            actorUserId: userId,
+            subjectUserId: targetUserId,
+            action: "MEMBER_REMOVED",
+            targetType: "workspace",
+            workspaceId: ws.id,
+            metadata: { removed_role: targetRole },
+          });
+          return "removed";
+        },
       );
-      const targetRole = rows[0]?.role;
-      // Admin cannot be removed via API (protect one-admin rule)
-      if (targetRole === "admin") {
+      if (outcome === "protected") {
         return res
           .status(403)
           .json({ error: "Forbidden: cannot remove admin", code: "FORBIDDEN" });
       }
-      const removed = await pool.query(
-        "DELETE FROM workspace_memberships WHERE user_id=$1 AND workspace_id=$2 RETURNING role",
-        [targetUserId, ws.id],
-      );
-      await writeAudit({
-        actorUserId: userId,
-        subjectUserId: targetUserId,
-        action: "MEMBER_REMOVED",
-        targetType: "workspace",
-        workspaceId: ws.id,
-        metadata: { removed_role: removed.rows[0]?.role || null },
-      });
       return res.status(204).send();
     } catch (err) {
       logger.error("Failed to remove member", { error: err.message });
