@@ -195,7 +195,7 @@ func beginInstallGuard(ctx context.Context) (func() error, error) {
 	}
 	parent, err := nativeProgramFiles()
 	if err == nil {
-		err = assertNoPendingExecution(parent)
+		err = assertNoPendingExecution(parent, legacyInstallRoot)
 	}
 	if err != nil {
 		_ = unlockInstall(h)

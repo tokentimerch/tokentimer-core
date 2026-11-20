@@ -77,7 +77,8 @@ func ReleaseQuarantineAfterOperatorReview(ctx context.Context, transaction strin
 	}
 	parents := map[string]bool{"S-1-5-18": true, "S-1-5-32-544": true, "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464": true}
 	stages := map[string]bool{"S-1-5-18": true, "S-1-5-32-544": true}
-	return releaseQuarantinePair(parent, `C:\ProgramData\TokenTimerAgent\state\upgrade-recovery.json`, transaction, bootstraplock.Policy{Owners: parents, Writers: parents}, bootstraplock.Policy{Owners: stages, Writers: stages}, "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", renameProtectedMarker, renameOpenFile)
+	journal := filepath.Join(legacyInstallRoot, "state", upgradeJournalName)
+	return releaseQuarantinePair(parent, journal, transaction, bootstraplock.Policy{Owners: parents, Writers: parents}, bootstraplock.Policy{Owners: stages, Writers: stages}, "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", renameProtectedMarker, renameOpenFile)
 }
 
 // No production provider is available. Do not replace this guard with a
@@ -229,7 +230,7 @@ func releaseQuarantinePair(parent, journal, transaction string, parentPolicy, st
 // Hold protected state ancestors and directories while creating or checking
 // the barrier. A missing, linked or unverifiable state directory fails closed.
 func lockUpgradeState(journal string, parentPolicy, statePolicy bootstraplock.Policy) (func(), error) {
-	if !filepath.IsAbs(journal) || !strings.EqualFold(filepath.Base(journal), "upgrade-recovery.json") {
+	if !filepath.IsAbs(journal) || !strings.EqualFold(filepath.Base(journal), upgradeJournalName) {
 		return nil, fmt.Errorf("invalid upgrade journal path")
 	}
 	state := filepath.Dir(journal)
