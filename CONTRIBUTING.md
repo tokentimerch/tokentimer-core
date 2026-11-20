@@ -40,6 +40,8 @@ Contributor pull-request Actions are intentionally disabled to avoid executing u
 
 Local validation is the normal pre-merge path. Maintainers should run the relevant local checks before merging. For a complete validation, `pnpm run test:ci` can be used.
 
+For workflow changes, use the same [Actionlint 1.7.12](https://github.com/rhysd/actionlint/releases/tag/v1.7.12) as CI and run `actionlint -shellcheck= -pyflakes=` from the checkout root. This checks all workflow schemas and expressions. ShellCheck and Pyflakes are disabled so installed tools do not change the result.
+
 A maintainer may use `workflow_dispatch` for a validation run only when the selected code/ref has already been reviewed and is considered trusted. It must not be used to execute unreviewed contributor code.
 
 After a change is merged, the push CI run on `main` remains the authoritative post-merge validation and must be green before a release.
