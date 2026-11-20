@@ -219,6 +219,94 @@ describe("installer packaging smoke (B9)", () => {
   });
 });
 
+// skip-reason: platform - the native install layout and ACLs require Windows PowerShell.
+it("selects the protected bundled root and refuses an occupied legacy or bundled slot", { skip: process.platform !== "win32" }, (t) => {
+  const installer = path.join(__dirname, "install-agent.ps1");
+  const probeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tt-install-root-"));
+  t.after(() => fs.rmSync(probeRoot, { recursive: true, force: true }));
+  const probe = String.raw`
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$source = [Management.Automation.Language.Parser]::ParseFile($env:TT_TEST_INSTALL_SCRIPT, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw ($errors | Out-String) }
+function Find-Statement([string]$prefix) {
+    $statement = @($source.EndBlock.Statements | Where-Object { $_.Extent.Text.StartsWith($prefix) })
+    if ($statement.Count -ne 1) { throw "Expected one statement for $prefix" }
+    return [scriptblock]::Create($statement[0].Extent.Text)
+}
+function Fail([string]$message) { throw $message }
+foreach ($name in @('Get-NativeProgramFiles', 'Test-FreshPathExists', 'Assert-FreshInstallDirectoryAccess',
+        'Assert-FreshInstallParents', 'Assert-BundledFreshMachine')) {
+    . (Find-Statement "function $name {")
+}
+. (Find-Statement '$LegacyInstallRoot =')
+$script:DryRun = $true
+$expectedParent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+$env:ProgramFiles = 'C:\TokenTimer-Test-Untrusted-Environment'
+$env:ProgramW6432 = $env:ProgramFiles
+$script:RequiresBundledRuntime = $true
+. (Find-Statement 'if ($script:RequiresBundledRuntime -or -not $script:DryRun)')
+. (Find-Statement '$InstallRoot =')
+. (Find-Statement '$AppDir =')
+. (Find-Statement '$StateDir =')
+if ($AppDir -cne (Join-Path $expectedParent 'TokenTimerAgent\app') -or
+    $StateDir -cne (Join-Path $expectedParent 'TokenTimerAgent\state')) { throw 'wrong bundled layout' }
+
+# Use the effective Users rule observed on stock Server ProgramData. A read-only
+# Users rule under Program Files passes; the original ProgramData rule still fails.
+$script:ancestor = [Security.AccessControl.DirectorySecurity]::new()
+$script:ancestor.SetSecurityDescriptorSddlForm('O:BAG:BAD:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)')
+$script:stockProgramData = [Security.AccessControl.DirectorySecurity]::new()
+$script:stockProgramData.SetSecurityDescriptorSddlForm('O:SYG:SYD:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;CI;0x00000116;;;BU)')
+function Get-Acl([string]$LiteralPath, $ErrorAction) {
+    if ($LiteralPath -eq 'C:\ProgramData') { return $script:stockProgramData }
+    return $script:ancestor
+}
+Assert-FreshInstallParents
+try {
+    Assert-FreshInstallDirectoryAccess -Directory 'C:\ProgramData'
+    throw 'accepted the stock ProgramData write rule'
+} catch {
+    if ($_.Exception.Message -cne 'fresh installation ancestor permits untrusted replacement') { throw }
+}
+$ServiceName = 'TokenTimerAgent'
+function Get-ChildItem([string]$LiteralPath, $ErrorAction) {}
+function Get-CimInstance($ClassName, $Filter, $ErrorAction) {}
+function Test-FreshPathExists([string]$Path) { return $Path -eq $script:occupied }
+$script:occupied = ''
+Assert-BundledFreshMachine
+foreach ($occupied in @($LegacyInstallRoot, $BundledInstallRoot)) {
+    $script:occupied = $occupied
+    try {
+        Assert-BundledFreshMachine
+        throw 'accepted an occupied installation root'
+    } catch {
+        if ($_.Exception.Message -cne 'existing agent installation or state is present') { throw }
+    }
+}
+$script:RequiresBundledRuntime = $false
+. (Find-Statement '$InstallRoot =')
+if ($InstallRoot -cne 'C:\ProgramData\TokenTimerAgent') { throw 'generic layout changed' }
+$script:DryRun = $false
+$script:occupied = $BundledInstallRoot
+try {
+    . (Find-Statement 'if (-not $script:RequiresBundledRuntime -and -not $script:DryRun)')
+    throw 'generic installer accepted a bundled root'
+} catch {
+    if ($_.Exception.Message -cnotlike 'generic installer cannot proceed; existing state was preserved*') { throw }
+}
+`;
+  const probePath = path.join(probeRoot, "probe.ps1");
+  fs.writeFileSync(probePath, probe);
+  const result = spawnSync("powershell.exe", [
+    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", probePath,
+  ], { encoding: "utf8", env: { ...process.env, TT_TEST_INSTALL_SCRIPT: installer }, timeout: 15000 });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, [result.stdout, result.stderr].join("\n"));
+});
+
 /**
  * Windows service lifecycle smoke test (H-blocker regression guard).
  *
@@ -553,13 +641,13 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
     // selectors mapped to this disposable fixture. No released configuration
     // changes or production service paths are needed to test preservation.
     const originalInstaller = fs.readFileSync(path.join(__dirname, "install-agent.ps1"), "utf8");
-    const originalRoot = '$InstallRoot = "C:\\ProgramData\\TokenTimerAgent"';
+    const originalRoot = '$LegacyInstallRoot = "C:\\ProgramData\\TokenTimerAgent"';
     const originalService = '$ServiceName = "TokenTimerAgent"';
     assert.ok(originalInstaller.includes(originalRoot));
     assert.ok(originalInstaller.includes(originalService));
     const installerFixture = path.join(serviceConfigDir, "qualification-uninstall.ps1");
     fs.writeFileSync(installerFixture, "\uFEFF" + originalInstaller
-      .replace(originalRoot, `$InstallRoot = '${serviceConfigDir.replace(/'/g, "''")}'`)
+      .replace(originalRoot, `$LegacyInstallRoot = '${serviceConfigDir.replace(/'/g, "''")}'`)
       .replace(originalService, `$ServiceName = '${SERVICE_NAME}'`));
     const preservedState = path.join(serviceConfigDir, "state");
     const removedApp = path.join(serviceConfigDir, "app");

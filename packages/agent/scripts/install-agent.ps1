@@ -10,9 +10,8 @@
 # What it does (see -h / --help for flags):
 #   1. Verifies the OS is 64-bit Windows (amd64/arm64) and that the
 #      installed Node satisfies the package.json "engines" range.
-#   2. Copies the agent package to C:\ProgramData\TokenTimerAgent\app and
-#      creates the state (config + credential) dir
-#      C:\ProgramData\TokenTimerAgent\state with a restricted ACL.
+#   2. Copies the agent package to the installation root's app directory
+#      and creates its state directory with a restricted ACL.
 #   3. Writes a config.json skeleton from flags/env, unless one already
 #      exists (a re-run never clobbers operator edits to config.json).
 #   4. Delivers the bootstrap token to the service's first run via the
@@ -77,9 +76,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$InstallRoot = "C:\ProgramData\TokenTimerAgent"
-$AppDir = Join-Path $InstallRoot "app"
-$StateDir = Join-Path $InstallRoot "state"
+$LegacyInstallRoot = "C:\ProgramData\TokenTimerAgent"
 $ServiceName = "TokenTimerAgent"
 $ServiceDisplayName = "TokenTimer CertOps Agent"
 
@@ -488,17 +485,19 @@ Options:
                          production. Also writes allowInsecureLocalHttp=true
                          into config.json.
   --dry-run              Print every action without executing anything.
-  --uninstall            Stop and remove the TokenTimerAgent service and
+  --uninstall            For the generic archive only, stop and remove
+                         the TokenTimerAgent service and
                          the app dir. The state dir (credential, keys) is
                          preserved; remove it manually once you are sure
                          (Remove-Item -Recurse -Force
                          C:\ProgramData\TokenTimerAgent).
   -h, --help             Show this help.
 
-Layout created:
-  C:\ProgramData\TokenTimerAgent\app     agent package (read-only at
-                                          runtime)
-  C:\ProgramData\TokenTimerAgent\state   config dir: config.json,
+Layout created under the installation root:
+  Generic archive: C:\ProgramData\TokenTimerAgent
+  Bundled archive: TokenTimerAgent in the native Program Files folder
+  app                                    agent package (read-only at runtime)
+  state                                  config dir: config.json,
                                           credential (written by the agent
                                           at registration), bootstrap.env
                                           (deleted automatically by the
@@ -605,6 +604,22 @@ function Test-IsAdministrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-NativeProgramFiles {
+    if (-not [Environment]::Is64BitProcess) { throw 'native 64-bit PowerShell is required' }
+    $parent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+    if ([string]::IsNullOrWhiteSpace($parent)) { throw 'native Program Files folder unavailable' }
+    return $parent
+}
+
+$BundledInstallRoot = $null
+if ($script:RequiresBundledRuntime -or -not $script:DryRun) {
+    try { $BundledInstallRoot = Join-Path (Get-NativeProgramFiles) 'TokenTimerAgent' }
+    catch { Fail "cannot resolve the protected installation location ($($_.Exception.Message))" }
+}
+$InstallRoot = if ($script:RequiresBundledRuntime) { $BundledInstallRoot } else { $LegacyInstallRoot }
+$AppDir = Join-Path $InstallRoot "app"
+$StateDir = Join-Path $InstallRoot "state"
+
 # Cooperating installers and launchers serialize creation of a protected
 # execution intent with upgrade recovery. Earlier installers do not honor this
 # lock; they must not run concurrently with a verified launcher.
@@ -691,9 +706,7 @@ function Assert-ProtectedIntentMarker {
 # immutable intent records and their protected parent bind it to these exact
 # directories. This gate never authorizes automatic recovery after a crash.
 function Assert-AuthorizedLauncherOrNoIntent {
-    if (-not [Environment]::Is64BitProcess) { throw 'native 64-bit PowerShell is required' }
-    $parent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
-    if ([string]::IsNullOrWhiteSpace($parent)) { throw 'launcher staging parent unavailable' }
+    $parent = Get-NativeProgramFiles
     Assert-ProtectedIntentDirectory -Directory $parent
     $intents = @(Get-ChildItem -LiteralPath $parent -Filter 'TokenTimer-Staging-*.intent' -Force -ErrorAction Stop)
     $handleText = [Environment]::GetEnvironmentVariable('TOKENTIMER_AGENT_INTENT_HANDLE', 'Process')
@@ -804,8 +817,6 @@ function Assert-FreshInstallDirectoryAccess {
             $granted += $ace.SecurityIdentifier.Value
         } elseif (([int]$ace.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) -eq 0 -and
             $ace.SecurityIdentifier.Value -notin $trusted -and ($ace.AccessMask -band 0x500d0142) -ne 0) {
-            # ProgramData may permit creating subdirectories. Keep the bundle
-            # guard's rejection of reparse mutation, deletion and owner/DACL rights.
             throw 'fresh installation ancestor permits untrusted replacement'
         }
     }
@@ -871,7 +882,9 @@ function New-BundledFreshInstallRoot {
 }
 function Assert-BundledFreshMachine {
     Assert-FreshInstallParents
-    if (Test-FreshPathExists -Path $InstallRoot) { throw 'existing agent installation or state is present' }
+    if ((Test-FreshPathExists -Path $InstallRoot) -or (Test-FreshPathExists -Path $LegacyInstallRoot)) {
+        throw 'existing agent installation or state is present'
+    }
     # Include the reserved generation service namespace as well as the
     # historical singleton, including registry entries pending SCM deletion.
     $registryParent = 'HKLM:\SYSTEM\CurrentControlSet\Services'
@@ -881,6 +894,13 @@ function Assert-BundledFreshMachine {
     if ($registryMatches.Count -ne 0) { throw 'existing agent service registry state is present' }
     $service = @(Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName' OR Name LIKE '$ServiceName-%'" -ErrorAction Stop)
     if ($service.Count -ne 0) { throw 'existing agent service is present' }
+}
+if (-not $script:RequiresBundledRuntime -and -not $script:DryRun) {
+    try {
+        if (Test-FreshPathExists -Path $BundledInstallRoot) {
+            throw 'bundled agent installation or state is present'
+        }
+    } catch { Fail "generic installer cannot proceed; existing state was preserved ($($_.Exception.Message))" }
 }
 if ($script:RequiresBundledRuntime) {
     if ($script:Uninstall) { Fail 'bundled package supports first installation only; uninstall is unavailable' }
@@ -899,9 +919,8 @@ if ($script:Uninstall) {
     }
     if (-not $script:DryRun) {
         try {
-            if (-not [Environment]::Is64BitProcess) { throw 'native 64-bit PowerShell is required' }
             Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1')) -NoClobber -ErrorAction Stop
-            $launcherParent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+            $launcherParent = Get-NativeProgramFiles
             Assert-ProtectedIntentDirectory -Directory $launcherParent
             Assert-NoQuarantinedLauncherIntent -LauncherParent $launcherParent
             if (Test-Path -LiteralPath (Join-Path $StateDir 'upgrade-recovery.json') -ErrorAction Stop) { throw 'upgrade recovery record exists' }

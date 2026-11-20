@@ -6,7 +6,7 @@ The agent also needs Windows PowerShell 5.1 (`powershell.exe`, present by defaul
 
 For discovery of non-SNI IIS sites with host headers, install IIS Management Scripts and Tools (`Web-Scripting-Tools`). Without its `WebAdministration` module, the agent retains the HTTP.sys binding but cannot safely associate those sites with it.
 
-Bundled Node.js packages remain unavailable for deployment. Their installer accepts only fresh installations and refuses existing agent directories, state or services, upgrades and uninstall. After failure, preserve retained files and contact support; do not delete them to retry. Windows Server 2019/2022/2025 amd64 acceptance and the exact publisher-signed package/generated command remain pending. Rollback and ARM64 require separate qualification. Use the generic archive's protected system Node.js prerequisite below. TokenTimer must deliver bundled runtime security updates through replacement agent packages. Windows PowerShell and any separately required ACME tools remain prerequisites.
+Bundled Node.js packages remain unavailable for deployment. They use the Windows Program Files folder for both the app and state under `TokenTimerAgent`, with a protected installation ACL. The installer accepts only fresh installations and refuses existing agent directories, state or services, upgrades and uninstall. Preserve retained files after failure and contact support. Windows Server 2019/2022/2025 amd64 acceptance and the publisher-signed install command remain pending. Rollback and ARM64 require separate qualification. Use the generic archive and protected system Node.js below.
 
 ## Prepare the control plane
 

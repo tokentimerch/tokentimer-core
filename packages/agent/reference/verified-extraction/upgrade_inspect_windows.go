@@ -66,13 +66,12 @@ func InspectUpgradeRecovery(ctx context.Context) (report UpgradeInspection, err 
 	}()
 	parent := map[string]bool{"S-1-5-18": true, "S-1-5-32-544": true, "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464": true}
 	strict := map[string]bool{"S-1-5-18": true, "S-1-5-32-544": true}
-	root := `C:\ProgramData\TokenTimerAgent`
-	return inspectUpgradeRecovery(root, bootstraplock.Policy{Owners: parent, Writers: parent}, bootstraplock.Policy{Owners: strict, Writers: strict}, readServiceState)
+	return inspectUpgradeRecovery(legacyInstallRoot, bootstraplock.Policy{Owners: parent, Writers: parent}, bootstraplock.Policy{Owners: strict, Writers: strict}, readServiceState)
 }
 
 func inspectUpgradeRecovery(root string, parentPolicy, statePolicy bootstraplock.Policy, service func() (string, error)) (UpgradeInspection, error) {
 	var out UpgradeInspection
-	journal := filepath.Join(root, "state", "upgrade-recovery.json")
+	journal := filepath.Join(root, "state", upgradeJournalName)
 	unlock, err := lockUpgradeState(journal, parentPolicy, statePolicy)
 	if err != nil {
 		return out, fmt.Errorf("protected state unavailable")

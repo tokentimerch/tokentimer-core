@@ -6,14 +6,21 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-const installMutexName = `Global\TokenTimer.Agent.Install.v1`
+const (
+	installMutexName        = `Global\TokenTimer.Agent.Install.v1`
+	legacyInstallRoot       = `C:\ProgramData\TokenTimerAgent`
+	bundledInstallDirectory = "TokenTimerAgent"
+	upgradeJournalName      = "upgrade-recovery.json"
+)
 
 // The installer uses the same named mutex. Its security descriptor must be
 // verified even when CreateMutex opened an object created by another process.
@@ -107,9 +114,9 @@ func validateInstallMutex(h windows.Handle) error {
 	return nil
 }
 
-// Called only with the shared mutex held. A pre-existing marker or legacy
-// recovery record needs operator reconciliation before beginning a candidate.
-func assertNoPendingExecution(parent string) error {
+// Called only with the shared mutex held. A pre-existing marker or upgrade
+// recovery record in either installation needs operator reconciliation.
+func assertNoPendingExecution(parent, legacyRoot string) error {
 	entries, err := os.ReadDir(parent)
 	if err != nil {
 		return fmt.Errorf("recovery_required: staging inventory unavailable: %w", err)
@@ -120,8 +127,32 @@ func assertNoPendingExecution(parent string) error {
 			return ErrExecutionRecoveryPending
 		}
 	}
-	_, err = os.Lstat(`C:\ProgramData\TokenTimerAgent\state\upgrade-recovery.json`)
-	if err == nil || !os.IsNotExist(err) {
+	for _, root := range []string{legacyRoot, filepath.Join(parent, bundledInstallDirectory)} {
+		if err := assertNoUpgradeJournal(root); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func assertNoUpgradeJournal(root string) error {
+	state := filepath.Join(root, "state")
+	// Absence requires only metadata reads. Recovery still validates and locks
+	// its own protected paths before opening any journal.
+	for _, dir := range []string{root, state} {
+		entry, err := os.Lstat(dir)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil || !entry.IsDir() {
+			return ErrExecutionRecoveryPending
+		}
+		attrs, ok := entry.Sys().(*syscall.Win32FileAttributeData)
+		if !ok || attrs.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+			return ErrExecutionRecoveryPending
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(state, upgradeJournalName)); !os.IsNotExist(err) {
 		return ErrExecutionRecoveryPending
 	}
 	return nil

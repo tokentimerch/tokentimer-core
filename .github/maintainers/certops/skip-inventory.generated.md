@@ -8,7 +8,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `prerequisite`: needs the fixture or privilege supplied by its owning CI job
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 191
+Total skips found: 192
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -17,7 +17,8 @@ Total skips found: 191
 | `packages/agent/scripts/host/windows-host.test.js` | 91 | Windows real-host discovery and service-host qualification | dynamic (this.skip() / t.skip()) | `platform` |
 | `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 14 | actual installer filesystem branches preserve literal brackets and wildcard siblings | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/install-agent-sh.test.js` | 36 | install-agent.sh polkit grants on re-run | describe(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/installer-smoke.test.js` | 373 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `packages/agent/scripts/installer-smoke.test.js` | 223 | selects the protected bundled root and refuses an occupied legacy or bundled slot | it(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/installer-smoke.test.js` | 461 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/scripts/pack-release.test.js` | 208 | tracks install-agent.sh as executable in git (mode 100755) | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/scripts/pack-release.test.js` | 217 | assertExecutableEntries rejects a tarball whose installer lost the exec bit | dynamic (this.skip() / t.skip()) | `platform` |
 | `packages/agent/scripts/windows-node-preflight.test.js` | 9 | checks external Node trust before any runtime probe | test(..., { skip }) option-object | `platform` |

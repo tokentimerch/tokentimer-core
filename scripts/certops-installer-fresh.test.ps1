@@ -22,7 +22,10 @@ $declaration = @($native.FindAll({param($n) $n -is [Management.Automation.Langua
 if ($declaration.Count -ne 1) { throw 'Expected actual interop declaration' }
 Add-Type -TypeDefinition $declaration[0].Value
 
-$InstallRoot = 'C:\ProgramData\TokenTimerAgent'; $ServiceName = 'TokenTimerAgent'
+$LegacyInstallRoot = 'C:\ProgramData\TokenTimerAgent'
+$InstallParent = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+$InstallRoot = Join-Path $InstallParent 'TokenTimerAgent'
+$ServiceName = 'TokenTimerAgent'
 $AppDir = Join-Path $InstallRoot 'app'; $StateDir = Join-Path $InstallRoot 'state'
 $script:AuthorizedLauncherTransaction = 'synthetic-owned-transaction'
 $standard = 'O:SYG:SYD:AI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;;0x100004;;;BU)(A;OICIIO;FA;;;CO)'
@@ -31,12 +34,15 @@ $script:scenario = ''; $script:rootCreated = $false; $script:nativeCalls = 0; $s
 $script:sddl = $standard
 function Get-Item {
     param($LiteralPath,[switch]$Force,$ErrorAction)
-    if ($script:scenario -eq 'unreadable-parent' -and $LiteralPath -eq 'C:\ProgramData') { throw 'parent unreadable' }
+    if ($script:scenario -eq 'unreadable-parent' -and $LiteralPath -eq $InstallParent) { throw 'parent unreadable' }
+    if ($LiteralPath -eq $LegacyInstallRoot -and $script:scenario -ne 'existing-legacy-root') {
+        Write-Error 'missing legacy root' -Category ObjectNotFound -ErrorAction Stop
+    }
     if ($LiteralPath -eq $InstallRoot -and -not $script:rootCreated) {
         if ($script:scenario -eq 'unreadable-root') { Write-Error 'root unreadable' -Category PermissionDenied -ErrorAction Stop }
         if ($script:scenario -ne 'existing-root') { Write-Error 'missing' -Category ObjectNotFound -ErrorAction Stop }
     }
-    $linked = $script:scenario -eq 'linked-parent' -and $LiteralPath -eq 'C:\ProgramData'
+    $linked = $script:scenario -eq 'linked-parent' -and $LiteralPath -eq $InstallParent
     return [pscustomobject]@{PSIsContainer=($script:scenario -ne 'file-parent'); Attributes=$(if($linked){[IO.FileAttributes]::ReparsePoint}else{[IO.FileAttributes]::Directory})}
 }
 function Get-Acl {
@@ -87,7 +93,7 @@ if ($LegacyParentCheck) {
     throw 'Legacy control unexpectedly accepted standard ProgramData'
 }
 
-Check 'standard ProgramData' $true { Assert-FreshInstallParents }
+Check 'protected Program Files' $true { Assert-FreshInstallParents }
 $script:sddl = $standard.Replace('0x100004','0x4')
 Check 'subdirectory creation without replacement' $true { Assert-FreshInstallParents }
 foreach ($mask in @('0x2','0x100','0x40','0x10000','0x40000','0x80000','0x10000000','0x40000000')) {
@@ -99,7 +105,7 @@ Check 'untrusted ancestor owner' $false { Assert-FreshInstallParents }
 $script:sddl = 'O:SYG:SYD:NO_ACCESS_CONTROL'
 Check 'null DACL' $false { Assert-FreshInstallParents }
 $script:sddl = $standard
-foreach ($case in @('linked-parent','file-parent','unreadable-parent','existing-root','unreadable-root',
+foreach ($case in @('linked-parent','file-parent','unreadable-parent','existing-root','existing-legacy-root','unreadable-root',
     'registry-error','registry-service','registry-generation','scm-error','scm-service','scm-generation')) {
     $script:scenario = $case
     Check $case $false { Assert-BundledFreshMachine }
