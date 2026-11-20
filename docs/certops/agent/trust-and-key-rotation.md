@@ -201,3 +201,5 @@ receipt write.
 ## Related
 
 [Agent overview](../agent.md) · [Configuration](configuration.md) · [Operations](operations.md)
+
+For domain-client trust through Group Policy, see [Distribute AD CS trust with Group Policy](../adcs-gpo-trust.md).

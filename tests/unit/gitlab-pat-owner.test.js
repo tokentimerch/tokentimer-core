@@ -128,6 +128,16 @@ test("admin PAT owners come from the user cache without Admin suffixes or token 
   assertComplete(result);
 });
 
+test("admin and self scans preserve GitLab PAT expiry precision for metrics", async () => {
+  for (const admin of [true, false]) {
+    const result = await scanner({
+      admin,
+      pats: [pat(10, 1, { expires_at: "2034-02-19" }), pat(11, 1, { expires_at: null })],
+    }).scan();
+    assert.deepEqual(result.items.map(item => item.metric_expiration), ["2034-02-19", null]);
+  }
+});
+
 test("admin resolves inactive owners by ID and caches deleted owners", async () => {
   const fixture = scanner({
     pats: [pat(10, 2), pat(11, 2), pat(12, 3), pat(13, 3)],
@@ -479,7 +489,9 @@ test("non-PAT inventory never receives the structured PAT owner field", async ()
     respond: (pathname) => {
       if (pathname === "/api/v4/projects") return [{ id: 7, name: "project" }];
       if (pathname === "/api/v4/groups") return [{ id: 8, name: "group" }];
-      if (pathname === "/api/v4/user/keys") return [{ id: 9, title: "ssh" }];
+      if (pathname === "/api/v4/user/keys") {
+        return [{ id: 9, title: "ssh", expires_at: "2034-02-19T17:45:30Z" }];
+      }
       if (pathname === "/api/v4/projects/7/access_tokens") {
         return [{ id: 10, username: "project-bot", user_id: 1 }];
       }
@@ -503,6 +515,10 @@ test("non-PAT inventory never receives the structured PAT owner field", async ()
     },
   });
   assert.equal(result.items.length, 5);
+  assert.equal(
+    result.items.find((item) => item.sourceKind === "gitlab-ssh-key").metric_expiration,
+    "2034-02-19T17:45:30Z",
+  );
   assert.ok(
     result.items.every((item) => !Object.hasOwn(item, "owner_username")),
   );

@@ -204,6 +204,12 @@ router.put(
           workspaceId: req.workspace.id,
           metadata: {
             contact_id: updated.id,
+            fields_updated: [
+              ...(first_name && String(first_name).trim() ? ["first_name"] : []),
+              ...(last_name && String(last_name).trim() ? ["last_name"] : []),
+              ...(hasPhoneField ? ["phone_e164"] : []),
+              ...(details !== undefined ? ["details"] : []),
+            ],
           },
         });
       } catch (_err) {

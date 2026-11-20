@@ -262,6 +262,7 @@ const CERTIFICATE_INSTANCE_FIELDS = [
   "observedIssuer",
   "observedNotAfter",
   "observedNotBefore",
+  "observedRevocation",
   "observedSerialNumber",
   "observedSubject",
   "responsibleAgentId",
@@ -709,6 +710,7 @@ describe("CertOps inventory routes", function () {
     expect(item.observedSerialNumber).to.equal(leafCertificate.serialNumber);
     expect(item.observedSubject).to.equal(leafCertificate.commonName);
     expect(item.observedIssuer).to.equal(leafCertificate.issuer);
+    expect(item.observedRevocation).to.equal(null);
     expect(item.observedNotBefore).to.equal(leafCertificate.notBefore);
     expect(item.observedNotAfter).to.equal(leafCertificate.notAfter);
     expect(item.deploymentReference).to.equal("https://certops.example");

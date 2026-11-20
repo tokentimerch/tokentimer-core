@@ -225,9 +225,12 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     });
   };
 
-  const importGcpSelected = async () => {
+  const importGcpSelected = async ({
+    onComplete = onImportComplete,
+    onFailure = onError,
+  } = {}) => {
     if (!previewReady || isScanning) {
-      onError?.('Run a scan with the current settings before importing.');
+      onFailure?.('Run a scan with the current settings before importing.');
       return;
     }
     try {
@@ -239,11 +242,11 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
           ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
       if (!workspaceId) {
-        onError && onError('Please select a workspace first.');
+        onFailure?.('Please select a workspace first.');
         return;
       }
 
-      await integrationAPI.import({
+      const result = await integrationAPI.import({
         workspaceId,
         items: selected,
         filterRules: sanitizeFilterRules(filterRules),
@@ -261,9 +264,9 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
               }
             : undefined,
       });
-      onImportComplete && onImportComplete(selected);
+      onComplete?.(result);
     } catch (e) {
-      onError && onError(e?.message || 'GCP import failed');
+      onFailure?.(e?.message || 'GCP import failed');
     }
   };
 
@@ -410,7 +413,8 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
             colorScheme='red'
             isDisabled={!lastScanId}
           >
-            Remove previously imported items no longer found at the source
+            Remove previously imported items missing from this scan, including
+            items excluded by filters
           </Checkbox>
           {!lastScanId ? (
             <Text fontSize='xs' color={helpTextColor} pl={6}>

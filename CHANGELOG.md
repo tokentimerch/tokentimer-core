@@ -12,6 +12,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **Operational diagnostics.** Signed-in users can share dashboard error references with their administrator. Reports record only the error category and dashboard area. Certificate distribution rollout and approval references connect the API and CertOps worker logs. See [configuration](docs/CONFIGURATION.md#core-runtime-and-bootstrap).
+- **Observed certificate revocation.** Windows and Linux agents report leaf and issuing-CA revocation through OCSP and HTTP(S) CRLs, including delta CRLs. Unavailable checks retain the last verified finding. Managers can filter the observation history for a registration in certificate details. **Operator action:** allow the responder origins in `observedRevocation.allowedOrigins`; new installer configurations enable monitoring with an empty allowlist. LDAP-only CRLs remain unsupported. See [agent configuration](docs/certops/agent/configuration.md) and [GPO trust distribution](docs/certops/adcs-gpo-trust.md).
+- **Asset expiration in auto-sync metrics.** Detailed creation metrics can include verified expiry for new inventory. **Operator guidance:** allow and select `expiration` to include the date or time in creation alerts. See the [auto-sync metrics guide](docs/AUTO_SYNC.md#asset-expiration-labels).
+
+### Fixed
+
+- **Integration discovery and cleanup.** GitLab and GitHub scans now follow additional pages, including GitHub Actions secrets. Scopes with failed or invalid list results are ineligible for cleanup. Auto-sync retains existing associations when a requested scope is incomplete, and one-time imports skip cleanup when an item fails to import.
+
+### Security
+
+- **Container runtimes.** Upgrade Core images to Node.js 22.23.5 and rebuild subfinder and the Linux revocation helpers with Go 1.26.11. [Node.js security release](https://nodejs.org/en/blog/release/v22.23.5) · [Go release history](https://go.dev/doc/devel/release)
 
 ## [0.20.0] - 2026-11-19
 

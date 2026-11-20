@@ -2,10 +2,12 @@ import axios from 'axios';
 import {
   showError as showGlobalError,
   showSuccess as showGlobalSuccess,
+  showWarning as showGlobalWarning,
 } from './toast.js';
 import { logger, redactLogValue } from './logger.js';
 import { resetIdentity } from './analytics.js';
 import { clearSessionLastWorkspaceId } from './lastWorkspacePreference.js';
+import { integrationImportWarning } from './integrationImportWarning.js';
 
 // Tracks whether the frontend has ever observed a logged-in session. A 401
 // should only trigger the "session expired" toast + redirect when the user
@@ -28,6 +30,13 @@ function attachContactGroupImportDefaults(payload, defaults = {}) {
     payload.contact_group_id = defaults.contact_group_id || null;
   }
   return payload;
+}
+
+function showImportWarning(result, cleanup) {
+  const warning = integrationImportWarning(result, cleanup?.enabled === true);
+  if (!warning) return false;
+  showGlobalWarning(warning.title, warning.description);
+  return true;
 }
 
 // Debug: Log environment variables only in development or on local/staging hosts
@@ -1430,6 +1439,7 @@ export const vaultAPI = {
         API_ENDPOINTS.VAULT_IMPORT(workspaceId),
         payload
       );
+      if (showImportWarning(res.data, cleanup)) return res.data;
       const createdCount = res?.data?.created_count || 0;
       const updatedCount = res?.data?.updated_count || 0;
       const deletedCount = res?.data?.deleted_count || 0;
@@ -1800,6 +1810,7 @@ export const integrationAPI = {
         API_ENDPOINTS.INTEGRATION_IMPORT(workspaceId),
         payload
       );
+      if (showImportWarning(res.data, cleanup)) return res.data;
       const createdCount = res?.data?.created_count || 0;
       const updatedCount = res?.data?.updated_count || 0;
       const deletedCount = res?.data?.deleted_count || 0;

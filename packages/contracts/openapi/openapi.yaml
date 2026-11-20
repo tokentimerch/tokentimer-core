@@ -4248,7 +4248,7 @@ paths:
             schema:
               $ref: "#/components/schemas/IntegrationImportRequest"
       responses:
-        "200":
+        "201":
           description: Import result
           content:
             application/json:
@@ -4488,7 +4488,7 @@ paths:
             schema:
               $ref: "#/components/schemas/IntegrationImportRequest"
       responses:
-        "200":
+        "201":
           description: Import result
           content:
             application/json:
@@ -4854,7 +4854,7 @@ paths:
                         type: array
                         default: []
                         uniqueItems: true
-                        items: { type: string, enum: [asset_name, project, group, owner_username] }
+                        items: { type: string, enum: [asset_name, project, group, owner_username, expiration] }
                   items:
                     type: array
                     items:
@@ -4988,7 +4988,8 @@ paths:
                       - project
                       - group
                       - owner_username
-                  maxItems: 7
+                      - expiration
+                  maxItems: 8
       responses:
         "200":
           description: Saved effective defaults
@@ -7333,6 +7334,30 @@ paths:
                     code: CERTOPS_CERTIFICATE_NOT_FOUND
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/certificates/{certId}/observations:
+    get:
+      tags: [CertOps]
+      operationId: listCertOpsCertificateObservations
+      summary: List observation history for the current certificate fingerprint
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - { in: path, name: certId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: fingerprint, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0 } }
+        - { in: query, name: sortBy, schema: { type: string, enum: [source, observedAt, location] } }
+        - { in: query, name: sortDirection, schema: { type: string, enum: [asc, desc] } }
+        - { in: query, name: revocationStatus, schema: { type: string, enum: [good, revoked, issuer_revoked, unknown, not_configured, disabled, invalid_observation, unavailable] } }
+        - { in: query, name: location, description: Case-insensitive literal location search; manager access required., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { in: query, name: since, description: Inclusive observed timestamp lower bound with explicit timezone., schema: { type: string, format: date-time } }
+        - { in: query, name: until, description: Inclusive observed timestamp upper bound with explicit timezone., schema: { type: string, format: date-time } }
+      responses:
+        "200": { description: Paginated certificate observations }
+        "400": { description: Invalid observation history query }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Certificate fingerprint changed }
   /api/v1/workspaces/{id}/certops/certificates/{certId}/instances:
     get:
       tags: [CertOps]
@@ -13978,19 +14003,19 @@ components:
         enabled: { type: boolean, nullable: true }
         labels:
           type: array
-          items: { type: string, enum: [configuration_name, monitoring_group, kind, asset_name, project, group, owner_username] }
+          items: { type: string, enum: [configuration_name, monitoring_group, kind, asset_name, project, group, owner_username, expiration] }
         locked: { type: boolean }
         source: { type: string, nullable: true, enum: [env, database, null] }
         extra_labels:
           type: array
-          description: Permitted high-cardinality labels. Empty AUTO_SYNC_METRICS_EXTRA_LABELS uses saved System Settings permissions; a nonempty list restricts labels and none denies them. Owner permission never selects owner_username; effective global or connection selection must also include it.
-          items: { type: string, enum: [asset_name, project, group, owner_username] }
+          description: Permitted high-cardinality labels. Empty AUTO_SYNC_METRICS_EXTRA_LABELS uses saved System Settings permissions; a nonempty list restricts labels and none denies them. The effective global or connection selection must also include owner_username or expiration to expose the respective label.
+          items: { type: string, enum: [asset_name, project, group, owner_username, expiration] }
         extra_labels_locked: { type: boolean }
         labels_locked: { type: boolean, description: Complete label selection is controlled by AUTO_SYNC_METRICS_LABELS. }
     AutoSyncMetricSettings:
       type: object
       additionalProperties: false
-      description: Connection metric settings, overridden independently by active system metric or monitoring-group overrides. Configuration ID is always included; changing these settings does not restart a scan. Names, project/group and owner_username labels can multiply time series and expose metadata to metrics readers. No credential values are exported. Environment settings take precedence over saved system defaults. Extra labels are off by default. owner_username is the best-effort GitLab PAT owner, not the importing user; it requires deployment permission and label selection, applies only to new inventory creations, does not enrich existing inventory retroactively and does not describe expiry.
+      description: Connection metric settings, overridden independently by active system metric or monitoring-group overrides. Configuration ID is always included. Extra labels are off by default and can multiply time series and expose metadata to metrics readers. Environment settings take precedence over saved system defaults. owner_username is the best-effort GitLab PAT owner. expiration is the verified expiry date or UTC timestamp from the source scan, when available. Both labels require permission and selection and describe newly created inventory as observed by auto-sync.
       properties:
         inherit_system:
           type: boolean
@@ -14002,10 +14027,10 @@ components:
         labels:
           type: array
           uniqueItems: true
-          maxItems: 7
+          maxItems: 8
           items:
             type: string
-            enum: [configuration_name, monitoring_group, kind, asset_name, project, group, owner_username]
+            enum: [configuration_name, monitoring_group, kind, asset_name, project, group, owner_username, expiration]
         monitoring_group:
           type: string
           maxLength: 64
@@ -14633,6 +14658,37 @@ components:
         - createdAt
         - updatedAt
       properties:
+        revocationObservable:
+          type: boolean
+          description: A current agent observation exists; this does not establish a successful revocation check.
+        observedRevocation: &observedRevocationSchema
+          type: object
+          nullable: true
+          additionalProperties: false
+          description: Latest observed revocation and local chain verification, separate from lifecycle status.
+          required: [verdict, chainStatus, checkedAt, validUntil, detail]
+          properties:
+            verdict: { type: string, enum: [good, revoked, issuer_revoked, unknown, not_configured, disabled, invalid_observation] }
+            chainStatus: { type: string, enum: [valid, invalid, unknown] }
+            checkedAt: { type: string, format: date-time, nullable: true }
+            reportedAt: { type: string, format: date-time, description: Server observation time for a configuration state; not a check time. }
+            revision: { type: integer, minimum: 1, maximum: 9007199254740991, description: Agent scan ordering revision. }
+            validUntil: { type: string, format: date-time, nullable: true }
+            detail: { type: string, nullable: true, maxLength: 256 }
+            revokedIssuerFingerprintSha256: { type: string, pattern: '^[a-f0-9]{64}$', description: 'Exact revoked intermediate certificate, when supplied by a qualified agent.' }
+            derivedFromIssuerChain: { type: boolean, description: This CA status was derived from an observed certificate chain. }
+            lastVerified:
+              type: object
+              additionalProperties: false
+              required: [verdict, chainStatus, checkedAt, validUntil, detail]
+              properties:
+                verdict: { type: string, enum: [good, revoked, issuer_revoked] }
+                chainStatus: { type: string, enum: [valid] }
+                checkedAt: { type: string, format: date-time }
+                validUntil: { type: string, format: date-time }
+                detail: { type: string, nullable: true, maxLength: 256 }
+                revision: { type: integer, minimum: 1, maximum: 9007199254740991 }
+                revokedIssuerFingerprintSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
         schemaVersion:
           type: integer
           enum: [1]
@@ -14820,6 +14876,7 @@ components:
         - source
         - target
       properties:
+        observedRevocation: *observedRevocationSchema
         id:
           type: string
           format: uuid
@@ -17869,10 +17926,23 @@ components:
     IntegrationImportResponse:
       type: object
       properties:
+        created_count: { type: integer, minimum: 0 }
+        updated_count: { type: integer, minimum: 0 }
+        error_count: { type: integer, minimum: 0 }
+        deleted_count: { type: integer, minimum: 0 }
+        cleanup_status:
+          type: string
+          enum: [completed, partial, skipped_import_errors, skipped_incomplete, skipped_unavailable, failed]
+          description: Outcome of requested one-time cleanup. Omitted when no one-time cleanup was requested. Partial means only complete scan scopes were processed.
         created:
-          type: integer
+          type: array
+          items: { type: object, additionalProperties: true }
         updated:
-          type: integer
+          type: array
+          items: { type: object, additionalProperties: true }
+        deleted:
+          type: array
+          items: { type: object, additionalProperties: true }
         errors:
           type: array
           items:
