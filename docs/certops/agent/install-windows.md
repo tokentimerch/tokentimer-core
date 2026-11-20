@@ -6,13 +6,15 @@ The agent also needs Windows PowerShell 5.1 (`powershell.exe`, present by defaul
 
 For discovery of non-SNI IIS sites with host headers, install IIS Management Scripts and Tools (`Web-Scripting-Tools`). Without its `WebAdministration` module, the agent retains the HTTP.sys binding but cannot safely associate those sites with it.
 
+Bundled Node.js packages remain unavailable for deployment. They use the Windows Program Files folder for both the app and state under `TokenTimerAgent`, with a protected installation ACL. The installer accepts only fresh installations and refuses existing agent directories, state or services, upgrades and uninstall. Preserve retained files after failure and contact support. Windows Server 2019/2022/2025 amd64 acceptance and the publisher-signed install command remain pending. Rollback and ARM64 require separate qualification. Use the generic archive and protected system Node.js below.
+
 ## Prepare the control plane
 
 Enable CertOps and provision the signing and registration encryption keys. In the workspace's Agent fleet panel, create a single-use bootstrap token. A bootstrap token is shown once and expires 24 hours after creation by default (maximum 30 days); create a new one if it expires. Prepare [local policy](configuration.md) before enrolling the host for real work.
 
 ## Install
 
-Download the matching agent release, compare its checksum with the published checksum, and extract the package. From that directory:
+Download the matching agent release, compare its checksum with the published checksum, and extract the package. For the generic archive, use a system Node installation protected from unprivileged changes; an unsafe Node path is refused even for `--dry-run`. From that directory:
 
 ```powershell
 $workspaceId = Read-Host 'Workspace ID'
@@ -23,7 +25,7 @@ Get-Service TokenTimerAgent
 
 The installer prompts privately for the bootstrap token. The service runs as LocalSystem through the bundled native service host. The app lives at `C:\ProgramData\TokenTimerAgent\app`; configuration and custody state live at `C:\ProgramData\TokenTimerAgent\state`.
 
-For a private API CA, set `caBundlePath` in any prewritten configuration. `--ca-bundle` copies the CA into the state directory but only adds that setting when creating a new config. API, material-store and issued-certificate trust are separate.
+Configure a private API CA with `caBundlePath`; `--ca-bundle` applies only to new configuration. Explicit per-service CA flags become Node arguments; preloads remain blocked. If the service lacks `NODE_USE_SYSTEM_CA`, an explicit machine value is copied into its environment; later machine changes require updating that service value. Conflicting settings or machine `NODE_OPTIONS` CA flags stop installation before changes: configure per-service trust first. After a CA-bearing interruption, preserve files and request manual review. Default trust is unchanged; API, material-store and issued-certificate trust remain separate.
 
 Write your policy first, then run the installer: it keeps an existing `config.json` and only creates one when absent. Command profile names and target selectors are read when the agent starts, so prepare them before the first registration. With a loopback `http` API address, pass `--allow-insecure-local-http` and also add `"allowInsecureLocalHttp": true` to a hand-written `config.json`. On an upgrade the installer still asks for a token; a registered agent keeps its credential and does not use it, so paste any value that starts with `ttboot_` or set `$env:TOKENTIMER_AGENT_BOOTSTRAP_TOKEN = 'ttboot_unused'`.
 
@@ -32,6 +34,10 @@ Save `config.json` and any DNS credentials file as UTF-8 without a byte order ma
 Windows state is protected and checked with `icacls` ACLs. Only the agent identity and SYSTEM are granted access; Administrators are accepted if already present. A failed permission check stops the operation.
 
 For a protected config that even an elevated editor cannot change, follow [Windows configuration maintenance](../windows-maintenance.md). Never delete enrolled identity or keys to get past an access error.
+
+If the verified installer reports `recovery_required` or retained staging, stop retries and contact support. Preserve the staging directories, their `.intent` records and `state\upgrade-recovery.json`: they are needed to assess the operation. A launcher-backed upgrade retains its backup and journal even after a successful health check; a failed check requires review rather than automatic rollback. Do not manually remove or move these files to resume installation. Process checks alone cannot establish that services or other persistent Windows components will not act later. An administrator can run the authenticated launcher with `--inspect-upgrade-recovery` to collect a read-only local report for support; the report does not authorize recovery. If a different account installed the agent and its access is still present, inspection may refuse; contact support.
+
+The authenticated launcher can inspect retained staging using `--inspect-quarantine`. Use `--inspect-scm-recovery` to show the service's current failure actions without exposing their command. Keep the staging directories, intent records and any upgrade recovery journal, and contact support before retrying. Releasing quarantine is currently unavailable: Windows may execute a previously queued service recovery command even after the service is disabled or its configuration changes, and an operator acknowledgement cannot establish that no action remains queued.
 
 ## Verify
 

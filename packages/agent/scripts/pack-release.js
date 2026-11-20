@@ -6,7 +6,7 @@
  * see README.md). This does not sign the artifact — signing infrastructure is
  * not present in this repository yet.
  *
- *   node scripts/pack-release.js [--out-dir DIR] [--linux-only]
+ *   node scripts/pack-release.js [--out-dir DIR] [--windows-runtime-dir DIR | --linux-only]
  */
 
 const fs = require("node:fs");
@@ -24,6 +24,7 @@ const {
   targets: observedRevocationTargets,
 } = require("./build-observed-revocation-helper.js");
 const { buildOne: buildWindowsHelper, TARGET_ARCHES } = require("./build-windows-chain-helper.js");
+const { buildWindowsArchives } = require("./windows-runtime-package.js");
 
 const packageRoot = path.resolve(__dirname, "..");
 const pkg = JSON.parse(
@@ -201,23 +202,39 @@ function assertExecutableEntries(tarballPath, { platform = process.platform } = 
 
 function parseArgs(argv) {
   let outDir = path.join(packageRoot, "dist");
+  let windowsRuntimeDir;
   let linuxOnly = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--out-dir") {
-      outDir = path.resolve(argv[++i] || "");
+      if (!argv[i + 1] || argv[i + 1].startsWith("--")) {
+        throw new Error("--out-dir requires a directory");
+      }
+      outDir = path.resolve(argv[++i]);
     } else if (arg.startsWith("--out-dir=")) {
       outDir = path.resolve(arg.slice("--out-dir=".length));
+    } else if (arg === "--windows-runtime-dir") {
+      if (!argv[i + 1] || argv[i + 1].startsWith("--")) {
+        throw new Error("--windows-runtime-dir requires a directory");
+      }
+      windowsRuntimeDir = path.resolve(argv[++i]);
+    } else if (arg.startsWith("--windows-runtime-dir=")) {
+      const value = arg.slice("--windows-runtime-dir=".length);
+      if (!value) throw new Error("--windows-runtime-dir requires a directory");
+      windowsRuntimeDir = path.resolve(value);
     } else if (arg === "--linux-only") {
       linuxOnly = true;
     } else if (arg === "-h" || arg === "--help") {
-      process.stdout.write("Usage: node scripts/pack-release.js [--out-dir DIR] [--linux-only]\n");
+      process.stdout.write("Usage: node scripts/pack-release.js [--out-dir DIR] [--windows-runtime-dir DIR | --linux-only]\n");
       process.exit(0);
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
-  return { outDir, linuxOnly };
+  if (linuxOnly && windowsRuntimeDir) {
+    throw new Error("--linux-only and --windows-runtime-dir cannot be combined");
+  }
+  return { outDir, windowsRuntimeDir, linuxOnly };
 }
 
 function sha256File(filePath) {
@@ -234,7 +251,7 @@ function main(argv = process.argv.slice(2)) {
     );
   }
 
-  const { outDir, linuxOnly } = parseArgs(argv);
+  const { outDir, windowsRuntimeDir, linuxOnly } = parseArgs(argv);
   if (linuxOnly) {
     assert.equal(process.platform, "linux");
     assert.deepEqual(pkg.os, ["linux"]);
@@ -311,18 +328,27 @@ function main(argv = process.argv.slice(2)) {
   // Coreutils `sha256sum -c` friendly format: "<hash>  <filename>"
   fs.writeFileSync(checksumPath, `${digest}  ${tarballName}\n`, "utf8");
 
+  const windowsArchives = windowsRuntimeDir
+    ? buildWindowsArchives(tarballPath, windowsRuntimeDir, outDir, pkg.version)
+    : [];
+  for (const artifact of windowsArchives) {
+    assertNoPrivateKeyMaterial(artifact.archive);
+    assertExecutableEntries(artifact.archive);
+  }
+
   process.stdout.write(
     [
       `Packed ${tarballName}`,
       `Version ${pkg.version}`,
       `SHA256 ${digest}`,
       `Checksum file ${checksumName}`,
+      ...windowsArchives.map((artifact) => `Windows ${artifact.architecture}: ${path.basename(artifact.archive)} SHA256 ${artifact.sha256}`),
       "Signing: not available in this repository (document checksum out-of-band).",
       "",
     ].join("\n"),
   );
 
-  return { tarballPath, checksumPath, digest, version: pkg.version };
+  return { tarballPath, checksumPath, digest, version: pkg.version, windowsArchives };
 }
 
 module.exports = {

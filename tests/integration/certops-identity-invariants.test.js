@@ -2899,6 +2899,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     for (const operation of ["renew", "deploy", "reload"]) {
       it(`records reconciliation for a ${jobStatus} ${operation} job completed after revocation`, async () => {
         const { ingestResult } = require("../../apps/api/services/certops/agentDispatch");
+        const { bindAuthenticatedAgent } = require("../../apps/api/services/certops/agentCredentialFence");
         const ws = await workspace(),
           tid = await token(ws),
           mc = await source(ws, A, { status: "active", tokenId: tid }),
@@ -2945,7 +2946,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
           [ws, mutation.id, claimId, JSON.stringify({ step: "verify", fingerprintSha256: A, validTo: "2027-01-01T00:00:00Z" })],
         );
         const result = await ingestResult({
-          dbPool: db, agent: { id: agentRow.id, workspaceId: ws, agentId: agentRow.agent_id },
+          dbPool: db, agent: bindAuthenticatedAgent({ id: agentRow.id, workspaceId: ws, agentId: agentRow.agent_id }, agentRow.credential_hash),
           envelope: { sequence: 1 }, body: { jobId: mutation.id, claimId, nonce, status: "succeeded" },
         });
         assert.equal(result.status, "succeeded", "retain the executor's reported physical outcome");
@@ -2963,6 +2964,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
   }
   it("records reconciliation when completion holds the job lock during revocation", async () => {
     const { ingestResult } = require("../../apps/api/services/certops/agentDispatch");
+    const { bindAuthenticatedAgent } = require("../../apps/api/services/certops/agentCredentialFence");
     const { consumeNonce } = require("../../apps/api/services/certops/jobSigning");
     const ws = await workspace(), mc = await source(ws, A, { status: "active" }),
       identityA = await identity(ws, A), mutation = await job(ws, mc, "running", "deploy");
@@ -2982,7 +2984,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     const pause = new Promise(resolve => { releaseResult = resolve; });
     const locked = new Promise(resolve => { jobLockReached = resolve; });
     const completion = ingestResult({ dbPool:db,
-      agent:{id:agentRow.id,workspaceId:ws,agentId:agentRow.agent_id},
+      agent:bindAuthenticatedAgent({id:agentRow.id,workspaceId:ws,agentId:agentRow.agent_id},agentRow.credential_hash),
       envelope:{sequence:1},body:{jobId:mutation.id,claimId,nonce,status:"succeeded"},
       deps:{consumeNonce:async options=>{ jobLockReached(); await pause; return consumeNonce(options); }},
     });
@@ -3032,6 +3034,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
   });
   it("records revocation without deadlocking a completion that already owns the token", async () => {
     const { ingestResult } = require("../../apps/api/services/certops/agentDispatch");
+    const { bindAuthenticatedAgent } = require("../../apps/api/services/certops/agentCredentialFence");
     const { consumeNonce } = require("../../apps/api/services/certops/jobSigning");
     const ws=await workspace(),tid=await token(ws),mc=await source(ws,A,{status:"active",tokenId:tid}),
       identityA=await identity(ws,A),mutation=await job(ws,mc,"running","deploy");
@@ -3045,7 +3048,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     let releaseResult,tokenLockReached;
     const pause=new Promise(resolve=>{releaseResult=resolve;});
     const locked=new Promise(resolve=>{tokenLockReached=resolve;});
-    const completion=ingestResult({dbPool:db,agent:{id:agentRow.id,workspaceId:ws,agentId:agentRow.agent_id},
+    const completion=ingestResult({dbPool:db,agent:bindAuthenticatedAgent({id:agentRow.id,workspaceId:ws,agentId:agentRow.agent_id},agentRow.credential_hash),
       envelope:{sequence:1},body:{jobId:mutation.id,claimId,nonce,status:"succeeded"},
       deps:{consumeNonce:async options=>{
         await options.client.query("SELECT id FROM tokens WHERE id=$1 FOR UPDATE",[tid]);
