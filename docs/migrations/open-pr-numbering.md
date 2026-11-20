@@ -46,7 +46,7 @@ are reservations, not no-op migrations. They do not install another feature.
 | 119 | certops_material_adcs_operation_union | AD CS operation union |
 | 120 | certops_iis_absence_proofs | IIS absence proofs |
 | 121 | certops_enrollment_jobs_index | Enrollment job lookup |
-| 122 | certops_observed_revocation | Observed revocation |
+| 122 | certops_observed_revocation | Observed certificate revocation (#541) |
 | 123 | agent_credential_rotations | Agent credential rotation |
 | 124 | agent_credential_rotation_ack | Agent credential rotation acknowledgement |
 | 125 | certops_adcs_preflight_lookup_index | AD CS preflight lookup |
@@ -81,11 +81,10 @@ SQL or customer records to make the ledger look canonical. The upgrade tests
 run historical SQL through the executor, preserve retained material and counter
 evidence, and replay concurrent/restarted runners.
 
-The retirement preview at 109 also preserves either recovery-first or Store-first
-append histories after 110–113, including partial Store prefixes. Missing definitions
-are appended without changing applied rows. The receipt deadline uses canonical
-126 on fresh main installations; these recognized previews record it at 117 or
-118. Do not manually relabel them.
+The retirement preview at 109 preserves recovery-first, Store-first and
+observed-revocation-first histories after 110–113. The runner appends missing
+definitions without changing applied rows. Fresh installations record the
+receipt deadline at 126.
 
 The MCP preview with mainline schemas through 82 and operator schemas at
 83–85 keeps those applied rows. The runner appends missing provider, recipient

@@ -9,6 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Observed certificate revocation.** Windows and Linux agents report leaf and issuing-CA revocation through OCSP and HTTP(S) CRLs, including delta CRLs. Unavailable checks retain the last verified finding. Managers can filter the observation history for a registration in certificate details. **Operator action:** allow the responder origins in `observedRevocation.allowedOrigins`; new installer configurations enable monitoring with an empty allowlist. LDAP-only CRLs remain unsupported. See [agent configuration](docs/certops/agent/configuration.md) and [GPO trust distribution](docs/certops/adcs-gpo-trust.md).
+
+### Security
+
+- **Container runtimes.** Upgrade Core images to Node.js 22.23.5 and rebuild subfinder and the Linux revocation helpers with Go 1.26.11. [Node.js security release](https://nodejs.org/en/blog/release/v22.23.5) · [Go release history](https://go.dev/doc/devel/release)
+
 ## [0.20.0] - 2026-11-19
 
 ### Added

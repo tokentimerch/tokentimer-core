@@ -77,6 +77,7 @@ test("upgrades a real main database with migrations through 114 and repeats safe
       [115, "store_issuance_explicit_renewal_consent"],
       [116, "certops_acme_store_enrollment_identity"],
       [117, "certops_adcs_expected_identity_receipts"],
+      [122, "certops_observed_revocation"],
       [126, "certops_adcs_receipt_deadline"],
     ]);
     const preserved = await client.query("SELECT version,name,executed_at FROM migrations WHERE version=98");
@@ -89,15 +90,17 @@ test("upgrades a real main database with migrations through 114 and repeats safe
   } finally { client.release(); }
 }, { timeout: 180000 });
 
-test("fills recovery 114 without rewriting an already-applied canonical Store ledger", async () => {
+test("fills recovery 114 and revocation 122 without rewriting an applied canonical Store ledger", async () => {
   const { client, database } = await isolatedDatabase();
   try {
-    await applyRegistry(client, migrations.migrations.filter(entry => entry.version !== 114));
+    const missing = [114, 122];
+    await applyRegistry(client, migrations.migrations.filter(entry => !missing.includes(entry.version)));
     const before = (await client.query("SELECT version,name,executed_at FROM migrations ORDER BY version")).rows;
     migrate(database);
     const after = (await client.query("SELECT version,name,executed_at FROM migrations ORDER BY version")).rows;
-    assert.deepEqual(after.filter(row => row.version !== 114), before);
+    assert.deepEqual(after.filter(row => !missing.includes(row.version)), before);
     assert.equal(after.find(row => row.version === 114).name, "distribution_pagerduty_recovery");
+    assert.equal(after.find(row => row.version === 122).name, "certops_observed_revocation");
     migrate(database);
     assert.deepEqual((await client.query("SELECT version,name,executed_at FROM migrations ORDER BY version")).rows, after);
   } finally { await client.end(); }
@@ -105,11 +108,17 @@ test("fills recovery 114 without rewriting an already-applied canonical Store le
 
 const baseAppend = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation"];
 const storeAppend = ["store_issuance_explicit_renewal_consent", "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts", "certops_adcs_receipt_deadline"];
-for (const storeCount of [0, 4]) {
-  test(`retirement preview with ${storeCount} applied Store migrations upgrades and survives restart`, async () => {
+const recovery = "distribution_pagerduty_recovery";
+const revocation = "certops_observed_revocation";
+for (const [history, applied, remaining] of [
+  ["recovery-first", [recovery], [...storeAppend.slice(0, 3), revocation, storeAppend[3]]],
+  ["revocation-first", [recovery, revocation], storeAppend],
+  ["Store-first", storeAppend, [recovery, revocation]],
+]) {
+  test(`retirement preview with ${history} history upgrades and survives restart`, async () => {
     const { client, database } = await isolatedDatabase();
     try {
-      const oldAppend = [...baseAppend, ...(storeCount ? storeAppend : ["distribution_pagerduty_recovery"])];
+      const oldAppend = [...baseAppend, ...applied];
       const fixture = [
         ...migrations.migrations.filter(entry => entry.version <= 108),
         { ...migrations.migrations.find(entry => entry.name === "certops_retirement_dossiers"), version: 109 },
@@ -120,9 +129,7 @@ for (const storeCount of [0, 4]) {
       migrate(database);
       const after = (await client.query("SELECT version,name,executed_at FROM migrations ORDER BY version")).rows;
       assert.deepEqual(after.slice(0, before.length), before);
-      const expected = storeCount
-        ? [...baseAppend, ...storeAppend, "distribution_pagerduty_recovery"]
-        : [...baseAppend, "distribution_pagerduty_recovery", ...storeAppend];
+      const expected = [...oldAppend, ...remaining];
       assert.deepEqual(after.filter(row => row.version >= 110).map(({ version, name }) => [version, name]),
         expected.map((name, index) => [110 + index, name]));
       const columns = (await client.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='certops_adcs_expected_identity_receipts'")).rows;

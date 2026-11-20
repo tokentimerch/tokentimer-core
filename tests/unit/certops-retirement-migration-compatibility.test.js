@@ -8,7 +8,8 @@ const preview = [...ledger.filter((row) => row.version <= 108), { version: 109, 
 const baseNames = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation"];
 const storeNames = ["store_issuance_explicit_renewal_consent", "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts", "certops_adcs_receipt_deadline"];
 const recovery = "distribution_pagerduty_recovery";
-const appended = [...baseNames, recovery, ...storeNames].map((name, index) => ({ version: 110 + index, name }));
+const revocation = "certops_observed_revocation";
+const appended = [...baseNames, recovery, ...storeNames.slice(0, 3), revocation, storeNames[3]].map((name, index) => ({ version: 110 + index, name }));
 test("retirement preview preserves identities through partial released-main upgrades", () => {
   for (let count = 0; count <= appended.length; count++) {
     const rows = [...preview, ...appended.slice(0, count)];
@@ -24,9 +25,10 @@ for (let count = 1; count <= storeNames.length; count++) {
   test(`retirement preview retains ${count} already-applied Store migrations when recovery arrives`, () => {
     const oldAppended = [...baseNames, ...storeNames.slice(0, count)]
       .map((name, index) => ({ version: 110 + index, name }));
-    const expected = [...preview, ...[
-      ...baseNames, ...storeNames.slice(0, count), recovery, ...storeNames.slice(count),
-    ].map((name, index) => ({ version: 110 + index, name }))];
+    const missing = appended.filter(({ name }) => !oldAppended.some((entry) => entry.name === name));
+    const expected = [...preview, ...oldAppended, ...missing.map(({ name }, index) => ({
+      version: 110 + oldAppended.length + index, name,
+    }))];
     const recorded = [...preview, ...oldAppended];
     validateMigrationHistory(recorded);
     const first = composeMigrations(migrations, recorded).map(({ version, name }) => ({ version, name }));
@@ -36,6 +38,26 @@ for (let count = 1; count <= storeNames.length; count++) {
     assert.deepEqual(composeMigrations(migrations, first).map(({ version, name }) => ({ version, name })), first);
   });
 }
+
+test("retirement preview preserves observed revocation already recorded before Store", () => {
+  const recorded = [...preview, ...baseNames.map((name, index) => ({ version: 110 + index, name })),
+    { version: 114, name: recovery }, { version: 115, name: revocation }];
+  const expected = [...recorded, ...storeNames.map((name, index) => ({ version: 116 + index, name }))];
+  validateMigrationHistory(recorded);
+  assert.deepEqual(composeMigrations(migrations, recorded).map(({ version, name }) => ({ version, name })), expected);
+  validateMigrationHistory(expected);
+  assert.deepEqual(composeMigrations(migrations, expected).map(({ version, name }) => ({ version, name })), expected);
+});
+
+test("retirement preview preserves a Store receipt deadline already recorded before revocation", () => {
+  const recorded = [...preview, ...[...baseNames, recovery, ...storeNames]
+    .map((name, index) => ({ version: 110 + index, name }))];
+  const expected = [...recorded, { version: 119, name: revocation }];
+  validateMigrationHistory(recorded);
+  assert.deepEqual(composeMigrations(migrations, recorded).map(({ version, name }) => ({ version, name })), expected);
+  validateMigrationHistory(expected);
+  assert.deepEqual(composeMigrations(migrations, expected).map(({ version, name }) => ({ version, name })), expected);
+});
 
 test("canonical Store-first history leaves its existing identities unchanged when recovery fills 114", () => {
   const recorded = ledger.filter(row => row.version !== 114);
@@ -52,7 +74,7 @@ test("released main retains identities before appending retirement", () => {
 });
 test("retirement preview rejects forged or non-prefix appended identity", () => {
   for (const rows of [[...preview, {version:110,name:"recipient_member_verification"}], [...preview, {version:111,name:"recipient_member_verification"}],
-    [...preview, ...appended, {version:119,name:"unrecognized_feature"}],
+    [...preview, ...appended, {version:120,name:"unrecognized_feature"}],
     [...preview, ...appended.filter(row => row.version !== 116)],
     [...preview, ...appended.slice(0, -1), {version:126,name:"certops_adcs_receipt_deadline"}]]) {
     assert.throws(() => validateMigrationHistory(rows), /Unsupported Core retirement preview migration history/);

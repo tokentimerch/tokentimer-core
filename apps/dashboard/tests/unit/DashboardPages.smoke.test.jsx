@@ -338,7 +338,77 @@ describe('Dashboard page smoke tests', () => {
     }
   });
 
+  it('filters by a typed exact action that has no suggestion', async () => {
+    workspaceListMock.mockResolvedValue({
+      items: [{ id: 'ws-1', name: 'Workspace', role: 'admin' }],
+    });
+    renderWithProviders(<Audit {...baseProps} />);
+    const actionInput = await screen.findByRole('combobox', {
+      name: 'Exact audit action',
+    });
+    const action = 'CERTOPS_DISTRIBUTION_INCIDENT_OPENED';
+    fireEvent.change(actionInput, { target: { value: action } });
+    fireEvent.keyDown(actionInput, { key: 'Enter' });
+    await waitFor(() =>
+      expect(alertGetAuditEventsMock).toHaveBeenLastCalledWith(
+        expect.any(Number),
+        expect.any(Number),
+        expect.objectContaining({ action })
+      )
+    );
+  });
+
   it.each([
+    [
+      'CERTOPS_DISTRIBUTION_INCIDENT_OPENED',
+      {
+        incidentId: 'incident-1',
+        groupId: 'group-1',
+        code: 'verification_stale',
+        evidence: { observation: 'full evidence remains in the export' },
+      },
+      [
+        'Incident ID: incident-1',
+        'Group ID: group-1',
+        'Code: verification_stale',
+      ],
+    ],
+    [
+      'CERTOPS_MANAGEMENT_STOPPED',
+      {
+        managedCertificateId: 'certificate-1',
+        periodId: 'period-1',
+        identityId: 'identity-1',
+        renewalProfileId: 'profile-1',
+        automationEnabled: false,
+        runningJobs: 0,
+      },
+      [
+        'Certificate ID: certificate-1',
+        'Management period ID: period-1',
+        'Identity ID: identity-1',
+        'Renewal profile ID: profile-1',
+        'Automation: disabled',
+        'Running jobs: 0',
+      ],
+    ],
+    [
+      'DOMAIN_MONITOR_HEALTH_CHECK',
+      {
+        monitor_id: 'monitor-1',
+        url: 'https://example.test',
+        status: 'healthy',
+        statusCode: 200,
+        responseMs: 0,
+      },
+      [
+        'Monitor ID: monitor-1',
+        'URL: https://example.test',
+        'Status: healthy',
+        'HTTP status: 200',
+        'Response time: 0 ms',
+      ],
+    ],
     [
       'CERTOPS_ISSUER_CREATED',
       { issuerId: 'issuer-1', kind: 'adcs' },
