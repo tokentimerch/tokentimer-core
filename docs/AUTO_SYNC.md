@@ -98,7 +98,7 @@ no single asset owner. These metrics retain their low-cardinality labels.
 
 ### Optional configuration and asset labels
 
-- Apply migrations through 111 with matching API/dashboard code; aggregate counters stay unchanged.
+- Apply migrations through 115 with matching API/dashboard code; aggregate counters stay unchanged.
 - System Settings → Auto-sync independently overrides metrics/labels and monitoring group, locking integration controls. Otherwise, integrations retain their choices.
 - Environment wins: `AUTO_SYNC_METRICS_ENABLED=true/false`, optional `AUTO_SYNC_METRICS_LABELS` (CSV or `none`), and independent `AUTO_SYNC_METRICS_MONITORING_GROUP`. Empty restores saved values; `AUTO_SYNC_METRICS_EXTRA_LABELS` optionally restricts asset labels.
 - Helm: `monitoring.metrics.autoSyncEnabled`, `autoSyncLabels`, `autoSyncMonitoringGroup` (under `tokentimer` in Enterprise). Available labels are listed beside these settings.
@@ -108,23 +108,30 @@ no single asset owner. These metrics retain their low-cardinality labels.
 
 - `owner_username` resolves the GitLab PAT's owner ID to a username, never the importer or configuration creator. Missing IDs, inaccessible/deleted users, older servers and lookup limits leave it empty; old PAT coverage is not guaranteed.
 - Disabled by default. Select **GitLab PAT owner username** in **System Settings → Auto-sync → Override integration metrics** for all connections, or in individual connection settings. An empty `AUTO_SYNC_METRICS_EXTRA_LABELS` uses saved System Settings permissions. A nonempty list restricts permitted labels, for example `owner_username` (Helm: `monitoring.metrics.extraLabels: [owner_username]`); `none` denies them. Owner permission never selects the label: the effective global or connection selection must also include it. Connection selection alone grants no permission.
-- Both `auto_sync_last_creation_timestamp_seconds` and `auto_sync_items_created_detailed_total` use creation-time metadata, not expiry. Rediscovery or renaming does not create an event or enrich old inventory; unknown/unselected owners are empty.
+- Both `auto_sync_last_creation_timestamp_seconds` and `auto_sync_items_created_detailed_total` use creation-time metadata. Rediscovery or renaming does not create an event or enrich old inventory; unknown/unselected owners are empty.
 - Usernames increase cardinality and expose personal metadata to metrics readers and alert recipients. Effective opt-ins gate scan/statistics capture, not just display. Opt-out hides retained statistics; configuration deletion removes them. Persisted scan metadata remains until its scan/workspace is deleted; old Prometheus samples follow Prometheus retention.
 - In Grafana/Prometheus, explicit `max by (...)` lists must preserve `owner_username`; annotations can use `{{ $labels.owner_username }}`. Aggregation that drops it cannot show the owner.
 
+### Asset expiration labels
+
+- For one connection, allow **Asset expiration** in **System Settings → Auto-sync** with **Override integration metrics** off. Then enable additional metrics and select it on the connection. For all connections, select it in the system override. Helm can allow it through `monitoring.metrics.extraLabels`.
+- The label records a date or UTC timestamp for newly created assets with a verified source expiry. Core supports GitLab. Enterprise adds AWS ACM, Azure Key Vault, Entra ID, GCP and Vault.
+- After a new creation, verify `expiration` on `auto_sync_last_creation_timestamp_seconds` in Grafana. Allow and select `asset_name` to show names. The bundled critical rule also requires `monitoring_group=critical`.
+- Use an instant query, retain `expiration` in `max by (...)`, and use a query or threshold alert condition. Preview `{{ $labels.expiration }}` in the rule annotation. [Grafana annotation templates](https://grafana.com/docs/grafana/latest/alerting/alerting-rules/templates/reference/#labels).
+
 ## Cleanup and removal
 
-Destructive cleanup is explicit opt-in; leave it off while changing filters or splitting configurations. Partial, truncated, rate-limited or inaccessible scans must not be treated as proof that an asset disappeared and do not authorize cleanup of incomplete scope. Complete scans reconcile only the scope actually covered. Another configuration's association prevents deletion, and manually owned inventory survives detachment.
+Destructive cleanup is opt-in. Leave it off while changing filters or splitting configurations. If any requested scope is incomplete, auto-sync can import the assets it found, marks the run partial, and keeps existing associations. One-time imports clean up only fully scanned scopes and only after all selected assets import successfully. Another configuration's association prevents deletion, and manually owned inventory survives detachment.
+
+GitHub and GitLab keep assets under repositories, projects or groups the scan could no longer access. For one-time imports, read any cleanup warning before retrying. A fresh scan rechecks coverage.
 
 **Disable auto-sync** deletes the selected configuration and detaches its associations; it does not blanket-delete inventory. Retained or manually adopted assets stay visible. Other configurations continue to protect their associated records. Inspect run/provenance history before deleting anything manually.
 
 ## Deployment activation and rollback
 
-Apply migration 111 before the new API reads or writes statistics. Upgrade the
-entire API/dashboard fleet before saving owner selections: older validators do
-not recognize them. Keep this label off during mixed-version rollout; existing
-settings and ownerless dimension hashes remain unchanged. No ownership backfill
-is performed.
+Apply migration 111 for owner labels and migration 127 for expiration labels
+before the new API reads or writes statistics. Upgrade every API and dashboard
+replica before selecting these labels so all replicas recognize the settings.
 
 For an installation upgrading to multiple configurations, migration leaves activation off. As a system administrator:
 

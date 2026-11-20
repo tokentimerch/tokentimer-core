@@ -196,6 +196,12 @@
           "admits concurrent agent locations and a manual import sharing one fingerprint at quota",
           "does not deadlock token-first manual enrollment with an agent enriching the same certificate",
           "rejects malformed and fingerprint-mismatched public material before burning sequence",
+          "preserves the latest revocation and last verified result across late or older-agent observations",
+          "replaces a prior good result when policy is removed or disabled, while preserving history",
+          "fails closed on malformed observations and accepts revisionless revocations",
+          "retains unmanaged agent revocation and exposes it without topology access",
+          "does not hide an unchecked or revoked location behind a good location",
+          "projects a revoked issuing CA by exact fingerprint and retains it after an unavailable check",
           "rolls back the sequence and retained observations on non-admission database failures"
         ]
       }
@@ -513,6 +519,8 @@
         "names": [
           "creates the job, log, and evidence tables with safe columns and indexes",
           "roundtrips job, log, and evidence data with workspace isolation",
+          "sorts observation history before pagination with stable ties",
+          "filters observation history before sorting and pagination within its workspace",
           "rejects dangerous payload and evidence metadata before persistence",
           "enforces monotonic status transitions and replay-safe idempotency",
           "cascades job logs and detaches evidence when a job is deleted",

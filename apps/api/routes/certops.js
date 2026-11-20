@@ -1602,6 +1602,28 @@ function evidenceItem(item) {
   };
 }
 
+function observationHistoryItem(item, includeTopology) {
+  const metadata = item.metadata || {};
+  const allowed = [
+    "fingerprintSha256",
+    "observedRevocationVerdict",
+    "observedRevocationState",
+    "observedRevocationCheckedAt",
+    "observedRevocationValidUntil",
+  ];
+  if (includeTopology) {
+    allowed.push("observedRevocationDetail", "agentId", "source", "targetHost", "locationSlot", "filePath");
+  }
+  return {
+    id: item.id,
+    observedAt: item.observedAt,
+    createdAt: item.createdAt,
+    metadata: Object.fromEntries(
+      allowed.filter((key) => metadata[key] != null).map((key) => [key, metadata[key]]),
+    ),
+  };
+}
+
 function apiTokenMetadata(token) {
   return {
     id: token.id,
@@ -4004,6 +4026,136 @@ router.patch(
   },
 );
 
+const OBSERVATION_HISTORY_STATUSES = [
+  "good",
+  "revoked",
+  "issuer_revoked",
+  "unknown",
+  "not_configured",
+  "disabled",
+  "invalid_observation",
+  "unavailable",
+];
+
+function normalizeObservationHistoryTimestamp(value) {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-](\d{2}):(\d{2}))$/.exec(value);
+  if (!match) return null;
+  const [year, month, day, hour, minute, second, zoneHour, zoneMinute] = match.slice(1).map(Number);
+  const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const timestamp = Date.parse(value);
+  if (
+    year < 100 || month < 1 || month > 12 || day < 1 || day > days ||
+    hour > 23 || minute > 59 || second > 59 || zoneHour > 23 || zoneMinute > 59 ||
+    !Number.isFinite(timestamp)
+  ) {
+    return null;
+  }
+  // Use UTC bounds so PostgreSQL does not need to parse the supplied offset.
+  const utc = new Date(timestamp).toISOString();
+  return utc.length === 24 ? utc : null;
+}
+
+function createObservationHistoryHandler({
+  certificateReader = getManagedCertificate,
+  evidenceReader = listCertificateEvidence,
+} = {}) {
+  return async (req, res) => {
+    const { certId } = req.params;
+    if (!UUID_PATTERN.test(String(certId || ""))) {
+      return res.status(404).json({
+        error: "Certificate not found",
+        code: "CERTOPS_CERTIFICATE_NOT_FOUND",
+      });
+    }
+    try {
+      const certificate = await certificateReader({ workspaceId: req.workspace.id, certId });
+      if (!certificate) {
+        return res.status(404).json({
+          error: "Certificate not found",
+          code: "CERTOPS_CERTIFICATE_NOT_FOUND",
+        });
+      }
+      const query = req.query;
+      if (
+        query.fingerprint &&
+        String(query.fingerprint).toLowerCase() !== String(certificate.fingerprintSha256 || "").toLowerCase()
+      ) {
+        return res.status(409).json({
+          error: "Certificate changed. Reload its details.",
+          code: "CERTOPS_CERTIFICATE_CHANGED",
+        });
+      }
+      const includeTopology =
+        req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager");
+      if (query.location !== undefined && !includeTopology) {
+        return res.status(403).json({
+          error: "Insufficient permissions for observation filter",
+          code: "FORBIDDEN",
+        });
+      }
+      if (!includeTopology && (query.sortBy === "source" || query.sortBy === "location")) {
+        return res.status(403).json({
+          error: "Insufficient permissions for observation sort",
+          code: "FORBIDDEN",
+        });
+      }
+      const since = normalizeObservationHistoryTimestamp(query.since);
+      const until = normalizeObservationHistoryTimestamp(query.until);
+      if (
+        (query.revocationStatus !== undefined && !OBSERVATION_HISTORY_STATUSES.includes(query.revocationStatus)) ||
+        (query.location !== undefined &&
+          (typeof query.location !== "string" || !query.location.trim() || query.location.length > 256)) ||
+        since === null || until === null || (since && until && since > until)
+      ) {
+        return res.status(400).json({
+          error: "Invalid observation history query",
+          code: CERTOPS_EVIDENCE_INVALID,
+        });
+      }
+      const result = await evidenceReader({
+        workspaceId: req.workspace.id,
+        subjectType: "managed_certificate",
+        subjectId: certId,
+        observationsOnly: true,
+        currentCertificateFingerprintOnly: true,
+        expectedFingerprint: certificate.fingerprintSha256,
+        limit: query.limit,
+        offset: query.offset,
+        sortBy: query.sortBy,
+        sortDirection: query.sortDirection,
+        revocationStatus: query.revocationStatus,
+        location: query.location?.trim(),
+        since,
+        until,
+      });
+      return res.json({
+        items: result.items.map((item) => observationHistoryItem(item, includeTopology)),
+        pagination: result.pagination,
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+      logger.error("CertOps certificate observations list failed", {
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list certificate observations",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  };
+}
+
+router.get(
+  "/api/v1/workspaces/:id/certops/certificates/:certId/observations",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  createObservationHistoryHandler(),
+);
+
 router.get(
   "/api/v1/workspaces/:id/certops/certificates/:certId/instances",
   getApiLimiter(),
@@ -4499,6 +4651,7 @@ router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollout
 
 module.exports = router;
 module.exports._test = {
+  createObservationHistoryHandler,
   createManualCertificateJobHandler,
   createAgentJobLogReadHandler,
   bulkRenewCertificatesHandler,

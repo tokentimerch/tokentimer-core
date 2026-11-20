@@ -21,7 +21,7 @@ test("Core auto-sync Helm examples match the canonical tested Prometheus rules",
   assert.deepEqual(standalone.groups, rules.groups);
 });
 
-test("critical asset alerts preserve owner identity on both sides without scrape labels", () => {
+test("critical asset alerts preserve owner and expiration on both sides without scrape labels", () => {
   const root = path.resolve(__dirname, "../..");
   const example = yaml.load(fs.readFileSync(path.join(root, "deploy/helm/examples/values-auto-sync-alerts.yaml"), "utf8"));
   const rule = example.monitoring.prometheusRules.groups
@@ -30,7 +30,8 @@ test("critical asset alerts preserve owner identity on both sides without scrape
     .map(match => match[1].split(",").map(label => label.trim()));
   const expected = ["installation", "namespace", "job", "provider", "configuration_id",
     "configuration_name", "monitoring_group", "kind", "asset_name", "owner_username",
-    "project", "group", "label_set"];
+    "expiration", "project", "group", "label_set"];
   assert.deepEqual(groupings, [expected, expected]);
   assert.match(rule.annotations.description, /\{\{ with \$labels\.owner_username \}\} Owner: \{\{ \. \}\}\.\{\{ end \}\}/);
+  assert.match(rule.annotations.description, /\{\{ with \$labels\.expiration \}\} Expires: \{\{ \. \}\}\.\{\{ end \}\}/);
 });

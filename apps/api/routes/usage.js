@@ -741,7 +741,7 @@ router.get(
           scope: scope || "user",
           generatedAt: new Date().toISOString(),
           count: items.length,
-          note: "Audit events export for the selected scope. Fields: occurredAt, actor_user_id, subject_user_id, action, target_type, target_id, channel, metadata, workspace_id.",
+          note: "Audit events export for the selected scope. Fields: occurred_at, actor_user_id, subject_user_id, action, target_type, target_id, channel, metadata, workspace_id.",
         },
         events: items,
       };
@@ -761,10 +761,15 @@ router.get(
           "workspace_id",
           "workspace_name",
           "metadata",
+          "actor_user_id",
+          "subject_user_id",
         ];
         const escape = (val) => {
-          const s = val == null ? "" : String(val);
-          return `"${s.replace(/"/g, '""').replace(/\n/g, " ")}"`;
+          const text = val == null ? "" : String(val);
+          const cell = typeof val === "string" && /^[\t\r\n]|^\s*[=+\-@]/.test(text)
+            ? "'" + text
+            : text;
+          return `"${cell.replace(/"/g, '""').replace(/[\r\n]/g, " ")}"`;
         };
         const rows = items.map((ev) => [
           ev.id,
@@ -777,6 +782,8 @@ router.get(
           ev.workspace_id || "",
           ev.workspace_name || "",
           ev.metadata ? JSON.stringify(ev.metadata) : "",
+          ev.actor_user_id,
+          ev.subject_user_id,
         ]);
         const csv = [
           headers.join(","),

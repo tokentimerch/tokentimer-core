@@ -205,6 +205,7 @@ describe("CertOps route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/certificates",
       "GET /api/v1/workspaces/:id/certops/certificates/:certId",
       "GET /api/v1/workspaces/:id/certops/certificates/:certId/instances",
+      "GET /api/v1/workspaces/:id/certops/certificates/:certId/observations",
       "GET /api/v1/workspaces/:id/certops/csrs",
       "GET /api/v1/workspaces/:id/certops/csrs/:csrId",
       "GET /api/v1/workspaces/:id/certops/instances",
@@ -568,6 +569,10 @@ describe("CertOps route hardening", () => {
       [
         "get",
         "/api/v1/workspaces/:id/certops/certificates/:certId/instances",
+      ],
+      [
+        "get",
+        "/api/v1/workspaces/:id/certops/certificates/:certId/observations",
       ],
       [
         "post",

@@ -195,6 +195,7 @@ jobs:
     env:
       CERTOPS_HOST_TESTS: '1'
       CERTOPS_WINDOWS_DISPOSABLE_HOST: '1'
+      GOTOOLCHAIN: local
       CERTOPS_QUALIFICATION_STRICT: '1'
       CERTOPS_QUALIFICATION_REPORT: qualification-results/windows.json
       CERTOPS_HOST_ARTIFACTS: qualification-results/host
@@ -209,7 +210,8 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version-file: packages/agent/windows-service-host/go.mod
+          # Match the release package toolchain, including the observed-revocation helper.
+          go-version: '1.26.11'
           cache: false
       - run: pnpm install --frozen-lockfile
       - name: Validate qualification catalog and skip ownership
