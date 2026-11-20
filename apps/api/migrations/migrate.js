@@ -5346,6 +5346,13 @@ migrations.push({
   `,
 });
 
+const { SHARED_SSO_MIGRATION_NAME, SHARED_SSO_SCHEMA_SQL } = require("./sso-schema");
+migrations.push({
+  version: 128,
+  name: SHARED_SSO_MIGRATION_NAME,
+  sql: SHARED_SSO_SCHEMA_SQL,
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);

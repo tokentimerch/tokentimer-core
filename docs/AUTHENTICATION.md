@@ -32,6 +32,31 @@ On subsequent user registration or first login (when not joining via invitation)
 - Otherwise a new **Default workspace** is created.
 - Workspace role: **admin** (workspace owner) only for the user who **creates** a new Default workspace; **workspace_manager** for everyone who joins an existing Default workspace (including system admins).
 
+## Single sign-on
+
+Core supports one active OIDC or SAML provider across the installation. A system administrator can open **System Settings → Manage SSO**, choose a template, and copy the callback URL to the identity provider. Use public HTTPS origins for `API_URL` and `APP_URL`. Route both `/auth` and `/api` to the API. Keep a working local administrator session while enabling SSO and verify a fresh sign-in in a private browser window.
+
+- **OIDC.** Register the exact `/auth/oidc/<slug>/callback` URL on a confidential authorization-code client. Enable PKCE S256, request `openid profile email`, and enter the issuer, client ID and client secret. Register the dashboard login URL for post-logout redirects if supported.
+- **SAML.** Register the SP entity ID and POST ACS shown in the wizard. Paste the IdP metadata XML or supply its URL. The IdP must send a signed assertion with a stable NameID and an email attribute. Once the provider is enabled and ready, get SP metadata at `/auth/saml/<slug>/metadata`. Keep `validate_in_response_to=always` to bind each response to the browser that started sign-in. `ifPresent` also accepts unsolicited sign-ins, and `never` disables request correlation. Application logout ends the local session.
+- **Accounts and recovery.** The provider slug and subject identify a returning user. Keep the slug stable. Local-account email linking is disabled by default. If enabled, OIDC requires an IdP-verified email. SAML trusts the signed assertion for linking, so enable it only when the IdP controls the email claim. To accept a pending workspace invitation during SSO sign-in, the IdP must send the exact invited email and its verification claim. New SSO users otherwise follow the installation’s existing workspace and group policies. Test the expected access with an ordinary user and the local recovery administrator.
+- **Changing providers.** Create a new provider to change the OIDC issuer after accounts have linked. Disable the current provider before enabling its replacement. If an adopted database has multiple enabled providers, use **Select** next to the provider you want on **SSO Providers**. This disables the other providers and keeps their settings and linked identities.
+
+See [provider configuration notes](#provider-configuration-notes) and [deployment, key rotation and rollback](CONFIGURATION.md#single-sign-on).
+
+### Provider configuration notes
+
+**Keycloak is the reference integration.** For OIDC, use the realm issuer `https://idp.example.com/realms/<realm>`, enable client authentication and Standard flow, and register the displayed redirect URI. For SAML, create a SAML client with the displayed SP entity ID and POST ACS, enable signed assertions, and import the SAML IdP metadata with the realm signing certificate. Map email and a stable NameID for the test user. Verify the resulting TokenTimer account, workspace and logout in a fresh browser session.
+
+| Provider | Configuration notes |
+| --- | --- |
+| authentik, ZITADEL, GitLab CE or GitLab.com | Use Generic OIDC. For authentik, use the application issuer including its slug and trailing slash. For ZITADEL use the instance issuer and a Web application. For GitLab register an OAuth application with the instance root as issuer and the `openid profile email` scopes. The wizard includes endpoint hints for all three. |
+| Microsoft Entra ID | Use a tenant-specific v2 issuer for OIDC. For SAML, configure the displayed reply URL and identifier, and map the emitted email/name attributes. |
+| Okta | Use the issuer for the assigned authorization server and assign the user to the app. For SAML, copy the ACS and audience from TokenTimer and supply the Okta signing certificate. |
+| Auth0, Google Workspace, Amazon Cognito | Use a confidential web client. Preserve the Auth0 discovery issuer, including its trailing slash. Google Workspace standard OIDC does not emit group membership. Cognito uses the user-pool issuer for discovery and its hosted domain for interactive login. |
+| AD FS, SimpleSAMLphp | Use Generic SAML. Configure the relying party with the displayed POST ACS and entity ID, map a stable NameID and email, then supply the IdP metadata and test a signed assertion. |
+
+The wizard's connectivity check tests provider configuration. Qualify each deployment by signing in, checking the user's claims and access, and logging out.
+
 ## System admin vs workspace owner
 
 TokenTimer separates **installation-wide administration** from **workspace ownership**. They use different database fields and are granted through different paths.
@@ -39,7 +64,7 @@ TokenTimer separates **installation-wide administration** from **workspace owner
 | | System admin | Workspace owner |
 |--|--------------|-----------------|
 | **Stored as** | `users.is_admin = TRUE` | `workspace_memberships.role = 'admin'` |
-| **Scope** | Whole installation (System Settings, SMTP, grant/revoke system admin, Enterprise SSO admin APIs) | One workspace (rename, delete workspace, org-scoped audit for that workspace) |
+| **Scope** | Whole installation (System Settings, SMTP, grant/revoke system admin, SSO provider administration) | One workspace (rename, delete workspace, org-scoped audit for that workspace) |
 | **Dashboard** | **System Settings** nav (when `session.user.isAdmin`) | **Workspaces** owner actions (rename, delete) |
 | **How to grant** | **Workspaces → Members → System admin** toggle (system admins only), or Enterprise SSO `admin` group mapping | Automatic when **creating** a workspace; not assignable from Members tab |
 | **How many** | Multiple system admins supported | One owner per workspace in normal operation (creator at provision time) |
@@ -152,8 +177,7 @@ Content-Type: application/json
 }
 ```
 
-If the email belongs to an existing user, they are added to the workspace directly.
-If not, an invitation token is created and (optionally) emailed.
+An existing verified local account receives access immediately. Other recipients receive a pending invitation. An SSO user redeems it by signing in with proof of the exact invited address. To change a current SSO member’s role, use the member ID endpoint below.
 
 ### List Members
 

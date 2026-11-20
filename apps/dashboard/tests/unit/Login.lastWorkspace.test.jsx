@@ -31,6 +31,7 @@ vi.mock('../../src/components/WelcomeModal', () => ({
 }));
 
 vi.mock('../../src/utils/apiClient', () => ({
+  API_BASE_URL: '',
   default: {
     post: postMock,
   },

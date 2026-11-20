@@ -36,6 +36,8 @@ const { generateToken: generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
 
 const csrfExempt = createCsrfExemptMiddleware(doubleCsrfProtection, {
   allowPath: (requestPath, req) =>
+    (req.baseUrl === "/auth" && req.method === "POST" &&
+      /^\/saml\/[a-z0-9][a-z0-9_-]{0,62}\/callback\/?$/i.test(requestPath)) ||
     isCertOpsMachineTokenCsrfExemptPath(requestPath, req) ||
     isOperatorBearerCsrfExemptRequest(requestPath, req),
   skip: (process.env.NODE_ENV || "").trim().toLowerCase() === "test",

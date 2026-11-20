@@ -41,7 +41,9 @@ are reservations, not no-op migrations. They do not install another feature.
 | 114 | distribution_pagerduty_recovery | Main; unchanged |
 | 115–121 | Store issuance and IIS schemas | Reserved by independent open PRs; no SQL installed here |
 | 122 | certops_observed_revocation | Observed certificate revocation (#541) |
+| 123–126 | Agent rotation, AD CS preflight and receipt deadline | Reserved by independent PRs |
 | 127 | auto_sync_creation_expiration | Auto-sync creation metric expiration (#780) |
+| 128 | shared_sso_schema | Shared OIDC and SAML sign-in (#779) |
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.
@@ -68,6 +70,12 @@ The same unmodified provider SQL is used for known #460 preview histories:
   (including #460 `66f94086`): append metric labels at 82 and system metrics at 83.
 - Installed assurance at 78, stats at 79, run metrics at 80, metric labels at 81,
   providers at 82 (#460 `6d685f95`): append system metrics at 83.
+
+Run the normal migration command. Fresh installs use 122 for observed revocation,
+127 for expiration metrics and 128 for SSO. A recognized #779 preview keeps its
+already-applied SSO row, including 115 on the first standard preview and 127 on the
+later standard preview. The runner appends missing schemas; unrecognized histories
+stop before migration SQL runs.
 
 Partial recognized prefixes and the older distribution/enrollment preview
 histories remain supported. Never update recorded names, execution timestamps,

@@ -19,15 +19,46 @@ import {
   FormErrorMessage,
   useColorModeValue,
 } from '@chakra-ui/react';
-import apiClient, { authAPI } from '../utils/apiClient';
+import apiClient, { authAPI, API_BASE_URL } from '../utils/apiClient';
 import WelcomeModal from '../components/WelcomeModal';
 import { trackEvent } from '../utils/analytics.js';
 import { dashboardHrefAfterLogin } from '../utils/lastWorkspacePreference.js';
 import { mcpAuthorizationReturnTo } from '../utils/mcpAuthorization.js';
 
+import {
+  buildSsoLoginUrl,
+  parseAuthFeaturesProviders,
+} from '../lib/sso-ui-shared.js';
+
 export default function Login() {
   const navigate = useNavigate();
   const [error, setError] = useState('');
+  const [signInProvider, setSignInProvider] = useState(null);
+  const formBackground = useColorModeValue(
+    'rgba(255, 255, 255, 0.72)',
+    'gray.800'
+  );
+  const formBorder = useColorModeValue('gray.200', 'gray.600');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${API_BASE_URL}/api/auth/features`, {
+      credentials: 'include',
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => {
+        if (!data || controller.signal.aborted) return;
+        setSignInProvider(
+          parseAuthFeaturesProviders(data).find(
+            provider => provider.signInReady === true
+          ) || null
+        );
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, []);
   const [verificationMessage, setVerificationMessage] = useState('');
   const [verificationAlert, setVerificationAlert] = useState({
     show: false,
@@ -52,7 +83,13 @@ export default function Login() {
     const verificationSuccess = urlParams.get('verification_success');
     const email = urlParams.get('email');
 
-    if (errorParam === 'account_not_found') {
+    if (
+      /^(oidc_|saml_|provider_disabled$|state_mismatch$)/.test(errorParam || '')
+    ) {
+      setError(
+        'Single sign-on failed. Try again or contact your administrator.'
+      );
+    } else if (errorParam === 'account_not_found') {
       setError('Account not found. Contact your administrator for access.');
     } else if (errorParam === 'email_exists') {
       setError(
@@ -262,15 +299,31 @@ export default function Login() {
 
         {/* Login Options */}
         <VStack spacing={4}>
+          {signInProvider && (
+            <Button
+              as='a'
+              href={buildSsoLoginUrl(
+                signInProvider,
+                mcpAuthorizationReturnTo(
+                  new URLSearchParams(window.location.search).get('returnTo')
+                ),
+                API_BASE_URL
+              )}
+              colorScheme='blue'
+              w='full'
+            >
+              Sign in with {signInProvider.displayName || signInProvider.slug}
+            </Button>
+          )}
           {/* Email Login */}
           <Box
             w='full'
-            bg={useColorModeValue('rgba(255, 255, 255, 0.72)', 'gray.800')}
+            bg={formBackground}
             p={6}
             borderRadius='md'
             boxShadow='sm'
             border='1px solid'
-            borderColor={useColorModeValue('gray.200', 'gray.600')}
+            borderColor={formBorder}
           >
             {formErrors.general && (
               <VStack spacing={3} mb={4}>

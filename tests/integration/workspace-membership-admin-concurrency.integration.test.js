@@ -34,11 +34,21 @@ describe("Workspace invitation atomic admin protection", function () {
       await a.query(`CREATE SCHEMA ${schema}`);
       created = true;
       await a.query(
-        `CREATE TABLE ${schema}.workspaces(id uuid PRIMARY KEY,created_by uuid); CREATE TABLE ${schema}.workspace_memberships(user_id uuid,workspace_id uuid,role text,invited_by uuid,PRIMARY KEY(user_id,workspace_id))`,
+        `CREATE TABLE ${schema}.workspaces(id uuid PRIMARY KEY,created_by uuid);
+         CREATE TABLE ${schema}.workspace_memberships (
+           user_id uuid, workspace_id uuid, role text, invited_by uuid,
+           PRIMARY KEY(user_id, workspace_id)
+         );
+         CREATE TABLE ${schema}.workspace_invitations (
+           id uuid PRIMARY KEY, workspace_id uuid REFERENCES ${schema}.workspaces,
+           email text NOT NULL, role text NOT NULL, accepted_at timestamptz
+         );`,
       );
       const user = crypto.randomUUID(),
         workspace = crypto.randomUUID(),
-        owner = crypto.randomUUID();
+        owner = crypto.randomUUID(),
+        invitation = crypto.randomUUID();
+      const email = "member@example.test";
       await a.query(`INSERT INTO ${schema}.workspaces VALUES($1,$2)`, [
         workspace,
         owner,
@@ -53,8 +63,9 @@ describe("Workspace invitation atomic admin protection", function () {
         {
           file: "apps/api/services/workspace.js",
           expression:
-            /`(INSERT INTO workspace_memberships \(user_id, workspace_id, role, invited_by\)[\s\S]*?RETURNING role)`/,
-          args: [user, workspace, "viewer"],
+            /`(WITH claimed AS \([\s\S]*?RETURNING workspace_id, role)`/,
+          args: [user, invitation, email],
+          claimsInvitation: true,
         },
       ];
       const aid = (await a.query("SELECT pg_backend_pid() AS pid")).rows[0].pid,
@@ -71,12 +82,23 @@ describe("Workspace invitation atomic admin protection", function () {
             "INSERT INTO workspace_memberships",
             `INSERT INTO ${schema}.workspace_memberships`,
           )
-          .replace("FROM workspaces w", `FROM ${schema}.workspaces w`);
+          .replace("FROM workspace_invitations", `FROM ${schema}.workspace_invitations`)
+          .replace("JOIN workspaces w", `JOIN ${schema}.workspaces w`);
+        const seedInvitation = async () => {
+          if (descriptor.claimsInvitation) {
+            await a.query(
+              `INSERT INTO ${schema}.workspace_invitations (id, workspace_id, email, role)
+               VALUES ($1, $2, $3, 'viewer')`,
+              [invitation, workspace, email],
+            );
+          }
+        };
         await a.query(`DELETE FROM ${schema}.workspace_memberships`);
         await a.query(
           `INSERT INTO ${schema}.workspace_memberships VALUES($1,$2,'workspace_manager',NULL)`,
           [user, workspace],
         );
+        await seedInvitation();
         await a.query("BEGIN");
         await a.query(
           `UPDATE ${schema}.workspace_memberships SET role='admin' WHERE user_id=$1`,
@@ -112,16 +134,18 @@ describe("Workspace invitation atomic admin protection", function () {
         await a.query(
           `UPDATE ${schema}.workspace_memberships SET role='workspace_manager'`,
         );
+        await seedInvitation();
         assert.equal((await b.query(sql, descriptor.args)).rowCount, 1);
         assert.equal(
           (await a.query(`SELECT role FROM ${schema}.workspace_memberships`))
             .rows[0].role,
           "viewer",
         );
-        if (descriptor.file.includes("services/")) {
+        if (descriptor.claimsInvitation) {
           await a.query(`DELETE FROM ${schema}.workspace_memberships`);
+          await seedInvitation();
           assert.equal(
-            (await b.query(sql, [owner, workspace, "viewer"])).rowCount,
+            (await b.query(sql, [owner, invitation, email])).rowCount,
             0,
           );
           assert.equal(

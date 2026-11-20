@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useLocation } from 'react-router';
+import { Link as RouterLink, useLocation } from 'react-router';
 import {
   Box,
   Text,
@@ -408,6 +408,19 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
         contentProps={{ overflowX: 'hidden', w: 'full', maxW: '100%' }}
       >
         <VStack align='stretch' spacing={SETTINGS_SECTION_GAP} w='full'>
+          <DashboardPanel>
+            <HStack justify='space-between' wrap='wrap' spacing={3}>
+              <Box>
+                <Text fontWeight='semibold'>Single sign-on</Text>
+                <Text color={muted}>
+                  Configure OIDC or SAML sign-in for this installation.
+                </Text>
+              </Box>
+              <DashboardActionButton as={RouterLink} to='/sso-providers'>
+                Manage SSO
+              </DashboardActionButton>
+            </HStack>
+          </DashboardPanel>
           <Box id='auto-sync'>
             <SettingsIntegrationCard
               title='Auto-sync'

@@ -1,0 +1,18 @@
+{
+  "providers": [
+    {
+      "slug": "keycloak",
+      "type": "oidc",
+      "displayName": "Keycloak",
+      "enabled": true,
+      "config": {
+        "issuer": "https://idp.example.com/realms/internal",
+        "client_id": "tokentimer",
+        "scopes": "openid profile email"
+      },
+      "secrets": {
+        "client_secret": "SSO_KEYCLOAK_OIDC_CLIENT_SECRET"
+      }
+    }
+  ]
+}

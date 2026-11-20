@@ -549,6 +549,14 @@ jobs:
           DB_NAME: pr498_retirement_preview_ci_test
           CERTOPS_ENABLED: "true"
         run: node --test --test-force-exit tests/postgres/retirement-preview-migration-upgrade.test.js
+      - name: Verify SAML request isolation and concurrent provider selection on PostgreSQL
+        run: node --test tests/postgres/saml-cache-provider.test.js tests/postgres/sso-provider-selection.test.js
+      - name: Verify OIDC and SAML dashboard sign-in against Keycloak
+        env:
+          TT_KEYCLOAK_E2E: "1"
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          node --test tests/e2e/keycloak-sso.test.cjs
       - name: Verify alert date serialization across host timezones
         run: node --test tests/postgres/alert-queue-timezones.test.js
       - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability

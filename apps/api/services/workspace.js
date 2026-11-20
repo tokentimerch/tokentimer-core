@@ -6,6 +6,82 @@ const { ensureSystemAdminWorkspaceAccess } = require("./systemAdmin");
 const DEFAULT_WORKSPACE_NAME = "Default workspace";
 const INSTALLATION_DEFAULT_LOCK_KEY = 0x5454_5744; // TTWD
 
+async function loadPendingInvitations(db, userEmail, { sso, verifiedEmail }) {
+  if (sso) {
+    const mailbox =
+      typeof verifiedEmail === "string" ? verifiedEmail.trim().toLowerCase() : "";
+    if (!mailbox) return { rowCount: 0, rows: [] };
+
+    return db.query(
+      `SELECT id, email
+         FROM workspace_invitations
+        WHERE accepted_at IS NULL AND LOWER(email) = $1`,
+      [mailbox],
+    );
+  }
+
+  const emailLc = (userEmail || "").trim().toLowerCase();
+  const localPart = emailLc.includes("@") ? emailLc.split("@")[0] : emailLc;
+  const domainPart = emailLc.includes("@") ? emailLc.split("@")[1] : "";
+  const localNoPlus = localPart.split("+")[0];
+  const isGmailLike =
+    domainPart === "gmail.com" || domainPart === "googlemail.com";
+  const gmailCanonicalLocal = localNoPlus.replace(/\./g, "");
+
+  return db.query(
+    `SELECT id, email
+       FROM workspace_invitations
+      WHERE accepted_at IS NULL
+        AND (
+              LOWER(email) = $1
+           OR (
+                LOWER(SPLIT_PART(email,'@',2)) = $2
+            AND regexp_replace(SPLIT_PART(LOWER(email),'@',1), '\\+.*', '') = $3
+              )
+           OR (
+                $4::boolean = TRUE
+            AND LOWER(SPLIT_PART(email,'@',2)) IN ('gmail.com','googlemail.com')
+            AND regexp_replace(
+                  regexp_replace(SPLIT_PART(LOWER(email),'@',1), '\\+.*', ''),
+                  '\\.',
+                  '',
+                  'g'
+                ) = $5
+              )
+            )`,
+    [emailLc, domainPart, localNoPlus, isGmailLike, gmailCanonicalLocal],
+  );
+}
+
+async function acceptPendingInvitations(db, userId, userEmail, options, onAccepted) {
+  const invites = await loadPendingInvitations(db, userEmail, options);
+  const accepted = [];
+  for (const { id, email } of invites.rows) {
+    // A revoked or concurrently claimed invite grants nothing. Read the current role
+    // from the deleted row so changing an invitation also changes the grant.
+    const membership = await db.query(
+      `WITH claimed AS (
+         DELETE FROM workspace_invitations
+          WHERE id = $2 AND email = $3 AND accepted_at IS NULL
+          RETURNING workspace_id, role
+       )
+       INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
+       SELECT $1, w.id, claimed.role, NULL FROM claimed
+         JOIN workspaces w ON w.id = claimed.workspace_id
+        WHERE w.created_by IS DISTINCT FROM $1
+       ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = EXCLUDED.role
+       WHERE workspace_memberships.role <> 'admin'
+       RETURNING workspace_id, role`,
+      [userId, id, email],
+    );
+    for (const row of membership.rows) {
+      accepted.push(row);
+      await onAccepted?.(row);
+    }
+  }
+  return accepted;
+}
+
 /**
  * Ensure a user has initial workspace context.
  * Accepts pending invitations, then ensures membership on the installation default workspace.
@@ -14,89 +90,36 @@ const INSTALLATION_DEFAULT_LOCK_KEY = 0x5454_5744; // TTWD
  * @param {string} userId - The user's ID
  * @param {string} userEmail - The user's email address
  * @param {string} displayName - The user's display name
+ * @param {object} [options]
+ * @param {boolean} [options.sso] - Apply the SSO invitation proof requirement
+ * @param {string|null} [options.verifiedEmail] - Exact verified mailbox for the current SSO login
+ * @param {boolean} [options.invitationsOnly] - Redeem invitations before strict SSO admission without provisioning
  */
-async function ensureInitialWorkspaceForUser(userId, userEmail, displayName) {
+async function ensureInitialWorkspaceForUser(
+  userId,
+  userEmail,
+  displayName,
+  options = {},
+) {
   try {
-    const emailLc = (userEmail || "").trim().toLowerCase();
-    const localPart = emailLc.includes("@") ? emailLc.split("@")[0] : emailLc;
-    const domainPart = emailLc.includes("@") ? emailLc.split("@")[1] : "";
-    const localNoPlus = localPart.split("+")[0];
-    const isGmailLike =
-      domainPart === "gmail.com" || domainPart === "googlemail.com";
-    const gmailCanonicalLocal = localNoPlus.replace(/\./g, "");
-
-    const invites = await pool.query(
-      `SELECT id, workspace_id, role
-         FROM workspace_invitations
-        WHERE accepted_at IS NULL
-          AND (
-                LOWER(email) = $1
-             OR (
-                  LOWER(SPLIT_PART(email,'@',2)) = $2
-              AND regexp_replace(SPLIT_PART(LOWER(email),'@',1), '\\+.*', '') = $3
-                )
-             OR (
-                  $4::boolean = TRUE
-              AND LOWER(SPLIT_PART(email,'@',2)) IN ('gmail.com','googlemail.com')
-              AND regexp_replace(
-                    regexp_replace(SPLIT_PART(LOWER(email),'@',1), '\\+.*', ''),
-                    '\\.',
-                    '',
-                    'g'
-                  ) = $5
-                )
-              )`,
-      [emailLc, domainPart, localNoPlus, isGmailLike, gmailCanonicalLocal],
-    );
-    if (invites.rowCount > 0) {
-      for (const row of invites.rows) {
-        // Invitations cannot replace an owner's implicit admin role or an existing admin.
-        const membership = await pool.query(
-          `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
-           SELECT $1, w.id, $3, NULL FROM workspaces w
-            WHERE w.id = $2 AND w.created_by IS DISTINCT FROM $1
-           ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = EXCLUDED.role
-           WHERE workspace_memberships.role <> 'admin'
-           RETURNING role`,
-          [userId, row.workspace_id, row.role],
-        );
-        try {
-          await pool.query(
-            "UPDATE workspace_invitations SET accepted_at = NOW() WHERE id = $1 AND accepted_at IS NULL",
-            [row.id],
-          );
-        } catch (_err) {
-          logger.warn("DB operation failed", { error: _err.message });
-        }
-        try {
-          if (membership.rowCount > 0) {
-            await writeAudit({
-              actorUserId: userId,
-              subjectUserId: userId,
-              action: "WORKSPACE_MEMBERSHIP_ACCEPTED",
-              targetType: "workspace",
-              targetId: null,
-              channel: null,
-              workspaceId: row.workspace_id,
-              metadata: { role: row.role },
-              });
-          }
-        } catch (_err) {
-          logger.warn("Audit write failed (WORKSPACE_MEMBERSHIP_ACCEPTED)", {
-            error: _err.message,
-            stack: _err.stack,
-          });
-        }
-      }
+    await acceptPendingInvitations(pool, userId, userEmail, options, async (membership) => {
       try {
-        await pool.query(
-          "DELETE FROM workspace_invitations WHERE id = ANY($1::uuid[])",
-          [invites.rows.map((row) => row.id)],
-        );
-      } catch (_err) {
-        logger.warn("DB operation failed", { error: _err.message });
+        await writeAudit({
+          actorUserId: userId,
+          subjectUserId: userId,
+          action: "WORKSPACE_MEMBERSHIP_ACCEPTED",
+          targetType: "workspace",
+          targetId: null,
+          channel: null,
+          workspaceId: membership.workspace_id,
+          metadata: { role: membership.role },
+        });
+      } catch (err) {
+        logger.warn("Audit write failed (WORKSPACE_MEMBERSHIP_ACCEPTED)", { error: err?.message });
       }
-    }
+    });
+
+    if (options.invitationsOnly) return;
 
     const membershipCheck = await pool.query(
       `SELECT 1 FROM workspace_memberships WHERE user_id = $1 LIMIT 1`,
@@ -235,6 +258,7 @@ async function ensureInitialWorkspaceForUser(userId, userEmail, displayName) {
       error: err.message,
       stack: err.stack,
     });
+    if (options.invitationsOnly) return;
   }
 
   try {
@@ -303,4 +327,8 @@ async function seedCreatorContact(workspaceId, userId, userEmail, displayName) {
   }
 }
 
-module.exports = { ensureInitialWorkspaceForUser, DEFAULT_WORKSPACE_NAME };
+module.exports = {
+  acceptPendingInvitations,
+  ensureInitialWorkspaceForUser,
+  DEFAULT_WORKSPACE_NAME,
+};

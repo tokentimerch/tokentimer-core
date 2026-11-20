@@ -415,6 +415,7 @@ describe("Core services unit coverage", () => {
               rows: [
                 {
                   id: "inv-1",
+                  email: "owner@example.com",
                   workspace_id: "ws-invite",
                   role: "workspace_manager",
                 },
@@ -454,20 +455,10 @@ describe("Core services unit coverage", () => {
       expect(inviteSelect).to.exist;
       expect(inviteSelect.text).to.match(/accepted_at\s+IS\s+NULL\s+AND\s+\(/i);
 
-      expect(
-        queryLog.some((q) =>
-          q.text.includes(
-            "UPDATE workspace_invitations SET accepted_at = NOW()",
-          ),
-        ),
-      ).to.equal(true);
-      expect(
-        queryLog.some(
-          (q) =>
-            q.text.includes("DELETE FROM workspace_invitations") &&
-            q.text.includes("id = ANY($1::uuid[])"),
-        ),
-      ).to.equal(true);
+      const claim = queryLog.find(({ text }) => text.includes("WITH claimed AS"));
+      expect(claim.text).to.include("DELETE FROM workspace_invitations");
+      expect(claim.text).to.include("claimed.role");
+      expect(claim.text).to.include("INSERT INTO workspace_memberships");
       expect(
         queryLog.some((q) =>
           q.text.includes(

@@ -14,14 +14,16 @@ const { previewInvite, createInvite, deliverInvite } = require("../../apps/api/s
 const operator = { workspaceId: "workspace", connectionId: "connection", userId: 2, scopes: ["mcp:members:invite"] };
 const planId = "b6b7a2c6-c57d-4c31-b699-9dd90e1e8e29", requestId = "f24604a6-a89a-456c-a69d-a07dfb2455c8";
 function database() {
-  const state = { plan: null, request: null, targetId: null, member: false, invited: false, sends: 0, writes: 0, personal: false };
+  const state = { plan: null, request: null, targetId: null, targetMethod: "local", verified: true, member: false, invited: false, sends: 0, writes: 0, personal: false };
   return { state, query: async (sql, params) => {
     if (sql.startsWith("SELECT COUNT(*)::int AS count FROM operator_inventory_plans")) return { rows: [{ count: 0 }] };
     if (sql.startsWith("SELECT id,name,created_by,plan")) return { rows: [{ id: "workspace", name: "Example", created_by: 1, plan: "oss", is_personal_default: state.personal }] };
     if (sql.startsWith("SELECT created_by FROM workspaces")) return { rows: [{ created_by: 1 }] };
     if (sql.startsWith("SELECT id FROM users WHERE id IN")) return { rows: [{ id: 1 }, { id: 2 }, ...(state.targetId ? [{ id: state.targetId }] : [])] };
     if (sql.startsWith("SELECT email FROM users")) return { rows: [{ email: "actor@example.test" }] };
-    if (sql.startsWith("SELECT id FROM users")) return { rows: state.targetId ? [{ id: state.targetId }] : [] };
+    if (sql.startsWith("SELECT id,auth_method,email_verified FROM users")) return {
+      rows: state.targetId ? [{ id: state.targetId, auth_method: state.targetMethod, email_verified: state.verified }] : [],
+    };
     if (sql.startsWith("SELECT 1 FROM workspace_memberships")) return { rows: state.member ? [{}] : [], rowCount: state.member ? 1 : 0 };
     if (sql.startsWith("SELECT 1 FROM workspace_invitations")) return { rows: state.invited ? [{}] : [], rowCount: state.invited ? 1 : 0 };
     if (sql.startsWith("INSERT INTO operator_inventory_plans")) {
@@ -82,4 +84,34 @@ test("an uncertain mail attempt is not repeated automatically", async () => {
   assert.equal(await deliverInvite({ operator, requestId, db: client, send, template }), "unknown");
   assert.equal(await deliverInvite({ operator, requestId, db: client, send, template }), "unknown");
   assert.equal(sends, 1);
+});
+
+test("preview and execution keep an existing SSO account pending until mailbox proof", async () => {
+  const client = database();
+  client.state.targetId = 9;
+  client.state.targetMethod = "sso";
+  const plan = await previewInvite({ client, operator, invite: { email: "member@example.test" } });
+  assert.equal(plan.effect.mode, "invite_new_user");
+  const result = await createInvite({ client, operator, planId, planHash: plan.planHash, requestId });
+  assert.equal(result.mode, "invite_new_user");
+  assert.equal(client.state.member, false);
+  assert.equal(client.state.invited, true);
+  const template = async ({ buttonText, buttonUrl }) => {
+    assert.equal(buttonText, "Sign in");
+    assert.match(buttonUrl, /\/login$/);
+    return { html: "test", text: "test" };
+  };
+  assert.equal(await deliverInvite({
+    operator, requestId, db: client, template, send: async () => ({ success: true }),
+  }), "sent");
+});
+
+test("a verified local account is still admitted immediately", async () => {
+  const client = database();
+  client.state.targetId = 9;
+  const plan = await previewInvite({ client, operator, invite: { email: "member@example.test" } });
+  assert.equal(plan.effect.mode, "add_existing_user");
+  await createInvite({ client, operator, planId, planHash: plan.planHash, requestId });
+  assert.equal(client.state.member, true);
+  assert.equal(client.state.invited, false);
 });
