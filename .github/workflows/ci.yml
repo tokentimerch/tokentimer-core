@@ -1082,7 +1082,7 @@ jobs:
       # Native credential checks start PowerShell. Serialize test files so
       # cold starts on the Windows runner can finish within the ACL timeout.
       - name: Run MCP adapter tests including native Windows credential ACLs
-        run: pnpm --filter @tokentimer/mcp exec node --test --test-force-exit --test-concurrency=1 "src/**/*.test.js"
+        run: pnpm --filter @tokentimer/mcp test:windows
 
       - name: Lint agent package
         run: pnpm run lint:agent
