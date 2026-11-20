@@ -40,6 +40,7 @@ function fixture({ complete = true } = {}) {
     servicePrincipalType: "ManagedIdentity",
     sourceKind: "azure-ad-sp-certificate",
     sourceObjectId: "app:key",
+    metric_expiration: "2032-03-01T00:02:03.123456789Z",
   };
   const mocks = {
     express: { Router: () => router },
@@ -78,6 +79,9 @@ function fixture({ complete = true } = {}) {
       scrubAzureSecretsFromBody: noop,
     },
     "../services/importFilterRules": require(path.join(core, "apps/api/services/importFilterRules")),
+    "../services/autoSyncMetricLabels": load("apps/api/services/autoSyncMetricLabels.js", {
+      "./systemSettings": { registerJsonColumn: noop },
+    }),
     "../services/integrationScans": {
       async persistScan(body) {
         calls.persisted.push(body);
@@ -106,7 +110,7 @@ async function request(handler, body, isWorkerCall = false) {
 }
 
 for (const mode of [undefined, "all", "exclude", "only"]) {
-  it(`Core Entra route forwards ${mode ?? "default"} selection and classification`, async () => {
+  it(`Core Entra route forwards ${mode ?? "default"} selection, classification, and expiry`, async () => {
     const { handler, calls } = fixture();
     const response = await request(handler, { token: "graph", managedIdentityMode: mode });
     assert.equal(response.statusCode, 200);
@@ -114,6 +118,7 @@ for (const mode of [undefined, "all", "exclude", "only"]) {
     assert.equal(calls.scan[0].managedIdentityMode, mode);
     assert.deepEqual(calls.persisted[0].items[0].dimensions, {
       servicePrincipalType: "ManagedIdentity",
+      expiration: "2032-03-01T00:02:03.123456789Z",
     });
     assert.equal(response.body.scan_id, "scan");
   });
