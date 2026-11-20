@@ -34,10 +34,11 @@ On subsequent user registration or first login (when not joining via invitation)
 
 ## Single sign-on
 
-Core supports one active OIDC or SAML provider across the installation. A system administrator can open **System Settings → Manage SSO**, choose a template, and copy the callback URL to the identity provider. Use public HTTPS origins for `API_URL` and `APP_URL`. Route both `/auth` and `/api` to the API. Keep a working local administrator session while enabling SSO and verify a fresh sign-in in a private browser window.
+Core supports one active OIDC or SAML provider across the installation. A system administrator can choose **Set up single sign-on for my team** in the setup guide or open **System Settings → Single Sign-On (SSO)** to manage providers and policies. Use public HTTPS origins for `API_URL` and `APP_URL`. Route both `/auth` and `/api` to the API. Keep a working local administrator session and verify a fresh SSO sign-in in a private window.
 
 - **OIDC.** Register the exact `/auth/oidc/<slug>/callback` URL on a confidential authorization-code client. Enable PKCE S256, request `openid profile email`, and enter the issuer, client ID and client secret. Register the dashboard login URL for post-logout redirects if supported.
 - **SAML.** Register the SP entity ID and POST ACS shown in the wizard. Paste the IdP metadata XML or supply its URL. The IdP must send a signed assertion with a stable NameID and an email attribute. Once the provider is enabled and ready, get SP metadata at `/auth/saml/<slug>/metadata`. Keep `validate_in_response_to=always` to bind each response to the browser that started sign-in. `ifPresent` also accepts unsolicited sign-ins, and `never` disables request correlation. Application logout ends the local session.
+- **Group mappings.** In **Single Sign-On (SSO)**, map a group from your identity provider to Viewer or Workspace Manager for a selected workspace, or grant System Admin globally. Preview a sample claim in the provider editor’s Group mapping simulator. Mappings apply at the user’s next sign-in.
 - **Accounts and recovery.** The provider slug and subject identify a returning user. Keep the slug stable. Local-account email linking is disabled by default. If enabled, OIDC requires an IdP-verified email. SAML trusts the signed assertion for linking, so enable it only when the IdP controls the email claim. To accept a pending workspace invitation during SSO sign-in, the IdP must send the exact invited email and its verification claim. New SSO users otherwise follow the installation’s existing workspace and group policies. Test the expected access with an ordinary user and the local recovery administrator.
 - **Changing providers.** Create a new provider to change the OIDC issuer after accounts have linked. Disable the current provider before enabling its replacement. If an adopted database has multiple enabled providers, use **Select** next to the provider you want on **SSO Providers**. This disables the other providers and keeps their settings and linked identities.
 
@@ -66,7 +67,7 @@ TokenTimer separates **installation-wide administration** from **workspace owner
 | **Stored as** | `users.is_admin = TRUE` | `workspace_memberships.role = 'admin'` |
 | **Scope** | Whole installation (System Settings, SMTP, grant/revoke system admin, SSO provider administration) | One workspace (rename, delete workspace, org-scoped audit for that workspace) |
 | **Dashboard** | **System Settings** nav (when `session.user.isAdmin`) | **Workspaces** owner actions (rename, delete) |
-| **How to grant** | **Workspaces → Members → System admin** toggle (system admins only), or Enterprise SSO `admin` group mapping | Automatic when **creating** a workspace; not assignable from Members tab |
+| **How to grant** | **Workspaces → Members → System admin** toggle (system admins only), or SSO `admin` group mapping | Automatic when **creating** a workspace; not assignable from Members tab |
 | **How many** | Multiple system admins supported | One owner per workspace in normal operation (creator at provision time) |
 
 **Important:** Granting system admin to a second user does **not** make them workspace owner on the shared Default workspace. They remain **manager** there unless they separately created that workspace.

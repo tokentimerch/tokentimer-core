@@ -808,7 +808,7 @@ export default function SsoProviderWizard({
                 <VStack align='stretch' spacing={3}>
                   <Callout kind='next'>
                     {embedded ? (
-                      'The next step maps IdP groups to roles. Without mappings, SSO users join the shared Default workspace on first login.'
+                      'The next step maps IdP groups to roles. New SSO users follow your installation’s workspace access settings until mappings apply.'
                     ) : (
                       <>
                         Enabling sign-in returns you to the provider list. New

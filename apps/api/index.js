@@ -737,6 +737,7 @@ app.use(require("./routes/auth"));
 const { mountSsoRoutes, startSso } = require("./sso/core-sso.js");
 mountSsoRoutes(app, { passport, express, pool });
 app.use(require("./routes/sso-providers"));
+app.use(require("./routes/sso-mappings"));
 // --- TOKENS (extracted to routes/tokens.js) ---
 app.use(require("./routes/tokens"));
 // --- HEALTH (extracted to routes/health.js) ---
@@ -749,6 +750,10 @@ app.use(require("./routes/controlCenter"));
 app.use(require("./routes/alerts"));
 app.use(require("./routes/incidentActions"));
 // --- ONBOARDING (extracted to routes/onboarding.js) ---
+require("./sso/onboarding-edition").registerSsoOnboarding({
+  capabilities: require("./services/onboarding/capabilities"),
+  summary: require("./services/onboarding/summary"),
+});
 app.use(require("./routes/onboarding"));
 // --- ACCOUNT (extracted to routes/account.js) ---
 app.use(require("./routes/account"));

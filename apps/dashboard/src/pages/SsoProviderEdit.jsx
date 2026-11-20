@@ -50,6 +50,7 @@ import {
   OVERRIDE_FIELD_HELP,
 } from '../lib/sso-oidc-ui-helpers.js';
 import { isFieldLocked, lockedFieldHint } from '../lib/sso-ui-shared.js';
+import SsoGroupMappingSimulator from '../components/SsoGroupMappingSimulator.jsx';
 import SsoClaimInspector from '../components/SsoClaimInspector.jsx';
 
 function UrlCopyRow({ label, value, onCopy }) {
@@ -741,6 +742,10 @@ export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
                 <Divider />
                 <SsoClaimInspector
                   provider={{ ...provider, claim_mapping: form.claim_mapping }}
+                />
+                <SsoGroupMappingSimulator
+                  providers={[provider]}
+                  defaultProviderSlug={slug}
                 />
               </VStack>
             </Collapse>

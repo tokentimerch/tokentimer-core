@@ -4702,6 +4702,121 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/admin/sso/group-mappings:
+    get:
+      tags: [Auth]
+      operationId: listSsoGroupMappings
+      summary: List SSO group mappings
+      description: Self-hosted system administrator session required.
+      responses:
+        "200":
+          description: Mappings and available roles, workspaces, and providers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoGroupMappingList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded. }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      tags: [Auth]
+      operationId: createSsoGroupMapping
+      summary: Create an SSO group mapping
+      description: Self-hosted system administrator session required.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SsoGroupMappingWrite" }
+      responses:
+        "201":
+          description: Created mapping.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoGroupMapping" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { description: An equivalent mapping already exists. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded. }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/admin/sso/group-mappings/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Auth]
+      operationId: updateSsoGroupMapping
+      summary: Replace an SSO group mapping
+      description: Self-hosted system administrator session required.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SsoGroupMappingWrite" }
+      responses:
+        "200":
+          description: Updated mapping.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoGroupMapping" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: An equivalent mapping already exists. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded. }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      tags: [Auth]
+      operationId: deleteSsoGroupMapping
+      summary: Delete an SSO group mapping
+      description: Self-hosted system administrator session required.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      responses:
+        "200":
+          description: Deleted mapping.
+          content:
+            application/json:
+              schema: { type: object, required: [ok, removed], properties: { ok: { type: boolean }, removed: { $ref: "#/components/schemas/SsoGroupMapping" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded. }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/admin/sso/group-mappings/simulate:
+    post:
+      tags: [Auth]
+      operationId: simulateSsoGroupMappings
+      summary: Preview SSO group grants
+      description: Self-hosted system administrator session required.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SsoGroupMappingSimulationWrite" }
+      responses:
+        "200":
+          description: Grants resolved without modifying users or memberships.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoGroupMappingSimulation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded. }
+        "500": { $ref: "#/components/responses/InternalError" }
+
   /api/admin/sso/providers:
     get:
       tags: [Auth]
@@ -13413,6 +13528,117 @@ components:
               description: Names of stored secrets to remove on update.
               type: array
               items: { type: string }
+    SsoGroupMappingRole:
+      type: string
+      enum: [admin, workspace_manager, viewer]
+    SsoGroupMappingWrite:
+      type: object
+      required: [provider_slug, idp_group, role]
+      properties:
+        provider_slug: { $ref: "#/components/schemas/SsoProviderSlug" }
+        idp_group:
+          type: string
+          minLength: 1
+          description: Identity provider group value. Matches case-insensitively.
+        role: { $ref: "#/components/schemas/SsoGroupMappingRole" }
+        workspace_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Omit or pass null for global scope. The admin role always has global scope.
+        priority: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+    SsoGroupMapping:
+      allOf:
+        - $ref: "#/components/schemas/SsoGroupMappingWrite"
+        - type: object
+          required: [id, workspace_id, priority, created_at, created_by, updated_at]
+          properties:
+            id: { type: string, format: uuid }
+            created_at: { type: string, format: date-time }
+            created_by: { type: string, format: email, nullable: true }
+            updated_at: { type: string, format: date-time, nullable: true }
+    SsoGroupMappingList:
+      type: object
+      required: [mappings, workspaces, roles, providers]
+      properties:
+        mappings:
+          type: array
+          items: { $ref: "#/components/schemas/SsoGroupMapping" }
+        workspaces:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+        roles:
+          type: array
+          items: { $ref: "#/components/schemas/SsoGroupMappingRole" }
+        providers:
+          type: array
+          items:
+            type: object
+            required: [slug, displayName, type]
+            properties:
+              slug: { $ref: "#/components/schemas/SsoProviderSlug" }
+              displayName: { type: string }
+              type: { type: string, enum: [oidc, saml] }
+    SsoGroupMappingSimulationWrite:
+      type: object
+      required: [provider_slug]
+      properties:
+        provider_slug: { $ref: "#/components/schemas/SsoProviderSlug" }
+        groups: { type: array, items: { type: string }, default: [] }
+        strict_sync_preview: { type: boolean, default: false }
+    SsoGroupMappingSimulation:
+      type: object
+      required: [provider_slug, matched_groups, matched_groups_count, is_admin, grants, workspace_grants, revoked_preview, strict_sync_note, roles]
+      properties:
+        provider_slug: { $ref: "#/components/schemas/SsoProviderSlug" }
+        matched_groups: { type: array, items: { type: string } }
+        matched_groups_count: { type: integer, minimum: 0 }
+        is_admin: { type: boolean }
+        grants:
+          type: array
+          items:
+            type: object
+            required: [role, workspace]
+            properties:
+              role: { $ref: "#/components/schemas/SsoGroupMappingRole" }
+              workspace: { type: string }
+              workspace_id: { type: string, format: uuid }
+        workspace_grants:
+          type: array
+          items:
+            type: object
+            required: [role, workspace_id]
+            properties:
+              role: { $ref: "#/components/schemas/SsoGroupMappingRole" }
+              workspace_id: { type: string, format: uuid }
+        revoked_preview:
+          type: array
+          description: Empty for group-only previews, which have no existing memberships to compare.
+          items:
+            type: object
+            properties:
+              workspace_id: { type: string, format: uuid }
+        strict_sync_note: { type: string }
+        users_who_would_no_longer_match_admin_mapping:
+          oneOf:
+            - { type: integer }
+            - { type: string }
+        roles:
+          type: array
+          items:
+            type: object
+            required: [label, role, workspace_id, workspace]
+            properties:
+              label: { type: string }
+              role: { $ref: "#/components/schemas/SsoGroupMappingRole" }
+              workspace_id: { type: string, format: uuid }
+              workspace: { type: string }
+
     SsoProvider:
       allOf:
         - $ref: "#/components/schemas/SsoProviderSettings"

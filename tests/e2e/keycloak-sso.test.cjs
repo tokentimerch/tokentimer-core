@@ -99,6 +99,7 @@ function realm(api, app, oidcSecret, userPassword) {
     realm: "tt-test",
     enabled: true,
     sslRequired: "external",
+    groups: [{ name: "qa-viewers" }],
     clients: [
       {
         clientId: "core-oidc",
@@ -112,6 +113,17 @@ function realm(api, app, oidcSecret, userPassword) {
           "pkce.code.challenge.method": "S256",
           "post.logout.redirect.uris": app + "/login",
         },
+        protocolMappers: [{
+          name: "OIDC groups",
+          protocol: "openid-connect",
+          protocolMapper: "oidc-group-membership-mapper",
+          config: {
+            "full.path": "false",
+            "claim.name": "groups",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+          },
+        }],
       },
       {
         clientId: "core-saml",
@@ -127,6 +139,17 @@ function realm(api, app, oidcSecret, userPassword) {
           saml_force_name_id_format: "true",
           saml_assertion_consumer_url_post: api + "/auth/saml/saml/callback",
         },
+        protocolMappers: [{
+          name: "SAML groups",
+          protocol: "saml",
+          protocolMapper: "saml-group-membership-mapper",
+          config: {
+            "full.path": "false",
+            "attribute.name": "groups",
+            "attribute.nameformat": "Basic",
+            "single": "true",
+          },
+        }],
       },
     ],
     users: ["oidc", "saml"].map((type) => ({
@@ -136,6 +159,7 @@ function realm(api, app, oidcSecret, userPassword) {
       firstName: "Test",
       lastName: type,
       enabled: true,
+      groups: ["/qa-viewers"],
       credentials: [
         { type: "password", value: userPassword, temporary: false },
       ],
@@ -165,8 +189,18 @@ async function write(request, api, app, method, route, data, status) {
   }
 }
 
+async function createMapping(page, provider) {
+  await page.getByRole("button", { name: "Add mapping", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Identity provider").selectOption(provider);
+  await dialog.getByLabel("IdP group name").fill("qa-viewers");
+  await dialog.getByLabel("TokenTimer role to grant").selectOption("viewer");
+  await dialog.getByRole("button", { name: "Create mapping", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+}
+
 test(
-  "Core administers one provider and signs in and out with Keycloak OIDC and SAML",
+  "Core guides SSO setup, maps groups, and signs in and out with Keycloak OIDC and SAML",
   {
     skip: process.env.TT_KEYCLOAK_E2E !== "1",
     timeout: 300000,
@@ -320,6 +354,62 @@ test(
       200,
     );
     const adminPath = "/api/admin/sso/providers";
+    const mappingPath = "/api/admin/sso/group-mappings";
+    const adminPage = await admin.newPage();
+    adminPage.setDefaultTimeout(15000);
+    await adminPage.goto(app + "/onboarding");
+    await adminPage.getByText("Set up single sign-on for my team", { exact: true }).click();
+    await adminPage.getByRole("button", { name: "Continue", exact: true }).click();
+    await adminPage.getByText("Choose protocol", { exact: true }).waitFor();
+    const next = adminPage.getByRole("button", { name: "Continue", exact: true });
+    await next.click();
+    await next.click();
+    await adminPage.getByLabel("Display name").fill("Keycloak OIDC");
+    await adminPage.getByPlaceholder("entra-prod").fill("oidc");
+    await adminPage.getByLabel("Issuer URL").fill(issuer);
+    await adminPage.getByLabel("Client ID").fill("core-oidc");
+    await adminPage.getByLabel("Client secret").fill(clientSecret);
+    await next.click();
+    await next.click();
+    const [connectivity] = await Promise.all([
+      adminPage.waitForResponse((response) =>
+        new URL(response.url()).pathname === adminPath + "/oidc/test" &&
+        response.request().method() === "POST"),
+      adminPage.getByRole("button", { name: "Save and run test" }).click(),
+    ]);
+    assert.equal(connectivity.status(), 200);
+    assert.equal((await connectivity.json()).ok, true, "OIDC connectivity test");
+    await adminPage.getByRole("button", { name: "Enable provider", exact: true }).click();
+    await adminPage.getByText("OIDC, sign-in ready", { exact: true }).waitFor();
+    await next.click();
+    await adminPage.getByRole("heading", { name: "Map groups to roles", exact: true }).waitFor();
+    await createMapping(adminPage, "oidc");
+    t.diagnostic("The setup guide configured, tested, enabled and mapped Keycloak OIDC");
+
+    await adminPage.goto(app + "/sso-providers/oidc");
+    await adminPage.getByRole("button", { name: "Show advanced options" }).click();
+    await adminPage.getByLabel("Sample payload").fill(JSON.stringify({ groups: ["qa-viewers"] }));
+    const [simulation] = await Promise.all([
+      adminPage.waitForResponse((response) =>
+        new URL(response.url()).pathname === mappingPath + "/simulate"),
+      adminPage.getByRole("button", { name: "Simulate", exact: true }).click(),
+    ]);
+    assert.equal(simulation.status(), 200);
+    const simulated = await simulation.json();
+    assert.deepEqual(simulated.grants.map(({ role }) => role), ["viewer"]);
+    await adminPage.getByRole("cell", { name: "Viewer", exact: true }).waitFor();
+
+    const openSystemSso = async () => {
+      await adminPage.goto(app + "/system-settings");
+      await adminPage.getByRole("button", { name: /Single Sign-On \(SSO\)/i }).click();
+    };
+    await openSystemSso();
+    await adminPage.getByText("Installation-wide SSO policy", { exact: true }).waitFor();
+    await adminPage.getByText("Strict membership sync", { exact: true }).click();
+    await adminPage.getByRole("button", { name: "Save SSO policy" }).click();
+    await adminPage.getByText("SSO policy settings saved", { exact: true }).waitFor();
+    const policy = await (await admin.request.get(api + "/api/admin/system-settings")).json();
+    assert.equal(policy.sso.strict_membership_sync.value, true);
     const keys = await (
       await fetch(issuer + "/protocol/openid-connect/certs")
     ).json();
@@ -359,7 +449,11 @@ test(
           validate_in_response_to: "always",
         };
       }
-      await write(admin.request, api, app, "POST", adminPath, provider, 201);
+      if (type === "saml") {
+        await write(admin.request, api, app, "POST", adminPath, provider, 201);
+        await openSystemSso();
+        await createMapping(adminPage, "saml");
+      }
       const context = await localContext();
       const page = await context.newPage();
       const navigations = [];
@@ -438,6 +532,14 @@ test(
       }
       assert.equal(session.user.email, type + "@example.test");
       assert.equal(session.user.isAdmin, false);
+      assert.equal((await context.request.get(api + mappingPath)).status(), 403);
+      const membership = docker(
+        "exec", pg, "psql", "-U", "postgres", "-d", "tt_sso_test", "-At", "-c",
+        "SELECT m.role || ':' || m.source || ':' || m.source_provider_slug " +
+          "FROM workspace_memberships m JOIN users u ON u.id = m.user_id " +
+          "WHERE u.email = '" + type + "@example.test'",
+      );
+      assert.equal(membership, "viewer:sso:" + type);
       const { url } = await (
         await context.request.get(api + "/api/sso/logout-url")
       ).json();

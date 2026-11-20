@@ -27,5 +27,7 @@ it("only bypasses CSRF for the provider-scoped SAML callback POST", async (t) =>
   await request(app).post("/auth/saml/callback").expect(403);
   await request(app).post("/auth/saml/keycloak/metadata").expect(403);
   await request(app).post("/api/saml/keycloak/callback").expect(403);
+  await request(app).post("/api/admin/sso/group-mappings").expect(403);
+  await request(app).post("/api/admin/sso/group-mappings/simulate").expect(403);
   await request(app).post("/auth/login").expect(403);
 });
