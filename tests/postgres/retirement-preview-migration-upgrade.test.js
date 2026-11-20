@@ -31,6 +31,7 @@ test("an applied retirement preview upgrades and replays without rewriting its l
       {version:113,name:"certops_material_reconciliation"},
       {version:114,name:"distribution_pagerduty_recovery"},
       {version:115,name:"certops_observed_revocation"},
+      { version: 116, name: "auto_sync_creation_expiration" },
     ]);
     await runMigrations();
     assert.deepEqual((await pool.query("SELECT * FROM migrations ORDER BY version")).rows, upgraded);

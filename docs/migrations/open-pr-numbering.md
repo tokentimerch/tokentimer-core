@@ -41,6 +41,7 @@ are reservations, not no-op migrations. They do not install another feature.
 | 114 | distribution_pagerduty_recovery | Main; unchanged |
 | 115–121 | Store issuance and IIS schemas | Reserved by independent open PRs; no SQL installed here |
 | 122 | certops_observed_revocation | Observed certificate revocation (#541) |
+| 127 | auto_sync_creation_expiration | Auto-sync creation metric expiration (#780) |
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.
@@ -49,6 +50,9 @@ Only missing definitions are assigned; duplicate feature definitions must be
 removed when composing branches. Unknown, conflicting or unrecognized histories
 fail before DDL and require reviewed recovery. Database compatibility does not
 qualify the corresponding runtime feature or production artifact.
+
+A recognized #780 preview keeps its previously applied expiration row, including
+version 115 on a standard preview database. New installs use version 127.
 
 ## Applied history and supported previews
 
