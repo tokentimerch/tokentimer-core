@@ -5479,13 +5479,14 @@ async function applyMigrationSql(client, migration) {
   // The old Store preview's AD CS definition predates released material
   // cleanup and reconciliation. Keep its historical SQL file intact, but
   // preserve both already valid operations when applying the missing schema.
-  const sql = migration.name === "certops_adcs_expected_identity_receipts"
-    ? migration.sql.replace(
-        "'deploy-from-store','reload','revoke'",
-        "'deploy-from-store','cleanup-from-store','reconcile-from-store','reload','revoke'",
-      )
-    : migration.sql;
-  await client.query(sql);
+  if (migration.name === "certops_adcs_expected_identity_receipts") {
+    await client.query(migration.sql.replace(
+      "'deploy-from-store','reload','revoke'",
+      "'deploy-from-store','cleanup-from-store','reconcile-from-store','reload','revoke'",
+    ));
+  } else {
+    await client.query(migration.sql);
+  }
   if (migration.version === 62) await client.query("DROP VIEW pg_temp.audit_events");
 }
 
