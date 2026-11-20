@@ -39,7 +39,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PILOT_SOURCE: 'fb4b006d911e9cb5d2059c99d194b66cd468e541'
+  PILOT_SOURCE: '54d13375c9f8f4b60f183ec1da450700e9c0bd55'
   PACKAGE_WORKFLOW_SHA: ${{ inputs.package_workflow_sha }}
   PACKAGE_RUN_ID: ${{ inputs.package_run_id }}
   PACKAGE_RUN_ATTEMPT: ${{ inputs.package_run_attempt }}
