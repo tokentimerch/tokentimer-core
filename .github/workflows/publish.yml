@@ -3,31 +3,73 @@ name: Publish Images
 on:
   workflow_dispatch:
     inputs:
+      source_ref:
+        description: "Optional refs/heads/... or refs/tags/... to build. Dispatch this workflow from main."
+        required: false
+        type: string
       push_latest:
-        description: "Also tag and push :latest"
+        description: "Deprecated. Leave false, manual publication cannot use :latest."
         required: false
         type: boolean
         default: false
       tag_suffix:
-        description: "Optional extra tag suffix (e.g. staging-latest, v1.2.3)"
+        description: "Optional staging-* or debug-* tag (e.g. staging-latest)"
         required: false
         type: string
 
-permissions:
-  contents: read
-  packages: write
+# Different source refs can still write the same SHA or staging alias.
+concurrency:
+  group: core-manual-image-publication
+  cancel-in-progress: false
+
+permissions: {}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  validate-tags:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.tags.outputs.sha }}
+      ref_tag: ${{ steps.tags.outputs.ref_tag }}
+      extra_tag: ${{ steps.tags.outputs.extra_tag }}
+    steps:
+      - name: Require the reviewed publication workflow
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Dispatch Publish Images from main and use source_ref to select the development source."
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate development image tags
+        id: tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          PUSH_LATEST: ${{ inputs.push_latest }}
+          TAG_SUFFIX: ${{ inputs.tag_suffix }}
+        run: node scripts/manual-image-tags.cjs
+
   publish:
     name: Build and Push Images (no tests)
+    needs: validate-tags
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-tags.outputs.sha }}
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -41,10 +83,10 @@ jobs:
 
       - name: Compute tags
         id: meta
+        env:
+          OWNER: ${{ github.repository_owner }}
+          EXTRA_TAG: ${{ needs.validate-tags.outputs.extra_tag }}
         run: |
-          OWNER=${{ github.repository_owner }}
-          SHA_TAG=${{ github.sha }}
-          BRANCH=${GITHUB_REF_NAME//\//-}
           API_REPO="ghcr.io/${OWNER}/tokentimer-core-api"
           DASHBOARD_REPO="ghcr.io/${OWNER}/tokentimer-core-dashboard"
           WORKER_REPO="ghcr.io/${OWNER}/tokentimer-core-worker"
@@ -55,19 +97,11 @@ jobs:
           echo "worker_repo=${WORKER_REPO}" >> $GITHUB_OUTPUT
           echo "controller_repo=${CONTROLLER_REPO}" >> $GITHUB_OUTPUT
 
-          # Conditionally push latest tags only if explicitly requested
-          if [ "${{ inputs.push_latest }}" = "true" ]; then
-            echo "api_latest=${API_REPO}:latest" >> $GITHUB_OUTPUT
-            echo "dashboard_latest=${DASHBOARD_REPO}:latest" >> $GITHUB_OUTPUT
-            echo "worker_latest=${WORKER_REPO}:latest" >> $GITHUB_OUTPUT
-            echo "controller_latest=${CONTROLLER_REPO}:latest" >> $GITHUB_OUTPUT
-          fi
-          # Optional extra suffix
-          if [ -n "${{ inputs.tag_suffix }}" ]; then
-            echo "api_extra=${API_REPO}:${{ inputs.tag_suffix }}" >> $GITHUB_OUTPUT
-            echo "dashboard_extra=${DASHBOARD_REPO}:${{ inputs.tag_suffix }}" >> $GITHUB_OUTPUT
-            echo "worker_extra=${WORKER_REPO}:${{ inputs.tag_suffix }}" >> $GITHUB_OUTPUT
-            echo "controller_extra=${CONTROLLER_REPO}:${{ inputs.tag_suffix }}" >> $GITHUB_OUTPUT
+          if [ -n "$EXTRA_TAG" ]; then
+            echo "api_extra=${API_REPO}:${EXTRA_TAG}" >> "$GITHUB_OUTPUT"
+            echo "dashboard_extra=${DASHBOARD_REPO}:${EXTRA_TAG}" >> "$GITHUB_OUTPUT"
+            echo "worker_extra=${WORKER_REPO}:${EXTRA_TAG}" >> "$GITHUB_OUTPUT"
+            echo "controller_extra=${CONTROLLER_REPO}:${EXTRA_TAG}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and push API
@@ -78,9 +112,8 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: |
-            ${{ steps.meta.outputs.api_repo }}:${{ github.sha }}
-            ${{ steps.meta.outputs.api_repo }}:${{ github.ref_name }}
-            ${{ steps.meta.outputs.api_latest }}
+            ${{ steps.meta.outputs.api_repo }}:${{ needs.validate-tags.outputs.sha }}
+            ${{ steps.meta.outputs.api_repo }}:${{ needs.validate-tags.outputs.ref_tag }}
             ${{ steps.meta.outputs.api_extra }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -95,9 +128,8 @@ jobs:
           build-args: |
             VITE_API_URL=
           tags: |
-            ${{ steps.meta.outputs.dashboard_repo }}:${{ github.sha }}
-            ${{ steps.meta.outputs.dashboard_repo }}:${{ github.ref_name }}
-            ${{ steps.meta.outputs.dashboard_latest }}
+            ${{ steps.meta.outputs.dashboard_repo }}:${{ needs.validate-tags.outputs.sha }}
+            ${{ steps.meta.outputs.dashboard_repo }}:${{ needs.validate-tags.outputs.ref_tag }}
             ${{ steps.meta.outputs.dashboard_extra }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -110,9 +142,8 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: |
-            ${{ steps.meta.outputs.worker_repo }}:${{ github.sha }}
-            ${{ steps.meta.outputs.worker_repo }}:${{ github.ref_name }}
-            ${{ steps.meta.outputs.worker_latest }}
+            ${{ steps.meta.outputs.worker_repo }}:${{ needs.validate-tags.outputs.sha }}
+            ${{ steps.meta.outputs.worker_repo }}:${{ needs.validate-tags.outputs.ref_tag }}
             ${{ steps.meta.outputs.worker_extra }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -125,9 +156,8 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: |
-            ${{ steps.meta.outputs.controller_repo }}:${{ github.sha }}
-            ${{ steps.meta.outputs.controller_repo }}:${{ github.ref_name }}
-            ${{ steps.meta.outputs.controller_latest }}
+            ${{ steps.meta.outputs.controller_repo }}:${{ needs.validate-tags.outputs.sha }}
+            ${{ steps.meta.outputs.controller_repo }}:${{ needs.validate-tags.outputs.ref_tag }}
             ${{ steps.meta.outputs.controller_extra }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
