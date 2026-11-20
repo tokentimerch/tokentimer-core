@@ -16,27 +16,35 @@ test("revoked issuer fingerprint remains a valid OpenAPI schema property", () =>
   assert.match(property.description, /when supplied by a qualified agent/);
 });
 
-test("reserved Windows store migrations and observed revocation compose in either order", () => {
-  const store = [
-    { version: 116, name: "store_issuance_explicit_renewal_consent" },
-    { version: 117, name: "certops_acme_store_enrollment_identity" },
-    { version: 118, name: "certops_adcs_expected_identity_receipts" },
-  ];
-  const consent = { version: 119, name: "certops_windows_iis_consent" };
-  const histories = [migrations.filter((item) => item.version <= 110), migrations.filter((item) => item.version !== 115 && item.version !== 119)];
-  for (const history of histories) {
-    const plan = composeMigrations(migrations, history.map(({ version, name }) => ({ version, name })));
-    assert.deepEqual(plan.filter((item) => item.version >= 112).map(({ version, name }) => ({ version, name })), [
-      { version: 112, name: "certops_retirement_dossiers" },
-      { version: 113, name: "certops_material_reconciliation" },
-      { version: 114, name: "distribution_pagerduty_recovery" },
-      { version: 115, name: "certops_observed_revocation" },
-      ...store,
-      consent,
-      { version: 120, name: "certops_material_adcs_operation_union" },
-      { version: 121, name: "certops_iis_absence_proofs" },
-      { version: 122, name: "certops_enrollment_jobs_index" },
+test("Windows Store, IIS and observed revocation use their shared canonical reservations", () => {
+  for (const history of [migrations.filter((row) => row.version <= 114), migrations.filter((row) => row.version === 122 || row.version <= 114), migrations]) {
+    const plan = composeMigrations(migrations, history);
+    assert.deepEqual(plan.filter((row) => row.version >= 115).map(({ version, name }) => ({ version, name })), [
+      { version: 115, name: "store_issuance_explicit_renewal_consent" },
+      { version: 116, name: "certops_acme_store_enrollment_identity" },
+      { version: 117, name: "certops_adcs_expected_identity_receipts" },
+      { version: 118, name: "certops_windows_iis_consent" },
+      { version: 119, name: "certops_material_adcs_operation_union" },
+      { version: 120, name: "certops_iis_absence_proofs" },
+      { version: 121, name: "certops_enrollment_jobs_index" },
+      { version: 122, name: "certops_observed_revocation" },
     ]);
+  }
+});
+
+test("preserves the integrated Windows preview identities at every applied prefix", () => {
+  const oldOrder = [
+    "certops_observed_revocation",
+    ...migrations.filter((row) => row.version >= 115 && row.version < 122).map(({ name }) => name),
+  ];
+  const released = migrations.filter((row) => row.version <= 114);
+  for (let length = 1; length <= oldOrder.length; length++) {
+    const ledger = [...released, ...oldOrder.slice(0, length).map((name, index) => ({ version: 115 + index, name }))];
+    const plan = composeMigrations(migrations, ledger);
+    for (const row of ledger) {
+      assert.equal(plan.find((entry) => entry.version === row.version)?.name, row.name);
+    }
+    assert.deepEqual(composeMigrations(migrations, plan), plan);
   }
 });
 

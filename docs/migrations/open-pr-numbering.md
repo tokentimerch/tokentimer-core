@@ -43,77 +43,13 @@ are reservations, not no-op migrations. They do not install another feature.
 | 112 | certops_retirement_dossiers | Distribution lifecycle on main |
 | 113 | certops_material_reconciliation | Distribution lifecycle on main |
 | 114 | distribution_pagerduty_recovery | PagerDuty distribution recovery on main |
-| 115 | certops_observed_revocation | Observed certificate revocation (#589) |
-| 116 | store_issuance_explicit_renewal_consent | Windows store issuance consent |
-| 117 | certops_acme_store_enrollment_identity | Windows store ACME enrollment identity |
-| 118 | certops_adcs_expected_identity_receipts | Windows store AD CS identity receipts |
-| 119 | certops_windows_iis_consent | Windows IIS reassociation consent |
-| 120 | certops_material_adcs_operation_union | Preserve both material and AD CS job operations |
-| 121 | certops_iis_absence_proofs | Reconcile proven IIS observations |
-| 122 | certops_enrollment_jobs_index | Index enrollment jobs |
+| 115 | store_issuance_explicit_renewal_consent | Windows Store issuance consent |
+| 116 | certops_acme_store_enrollment_identity | Windows Store ACME enrollment identity |
+| 117 | certops_adcs_expected_identity_receipts | Windows Store AD CS identity receipts |
+| 118 | certops_windows_iis_consent | Windows IIS reassociation consent |
+| 119 | certops_material_adcs_operation_union | Preserve material and AD CS job operations |
+| 120 | certops_iis_absence_proofs | Reconcile proven IIS observations |
+| 121 | certops_enrollment_jobs_index | Index enrollment jobs |
+| 122 | certops_observed_revocation | Observed certificate revocation (#541) |
 
-Use the normal runner with these canonical identities. Independent feature tails
-may leave unapplied reservations absent; never install no-op SQL to fill them.
-Recognized applied previews retain their names, numbers, SQL and timestamps.
-Only missing definitions are assigned; duplicate feature definitions must be
-removed when composing branches. Unknown, conflicting or unrecognized histories
-fail before DDL and require reviewed recovery. Database compatibility does not
-qualify the corresponding runtime feature or production artifact.
-
-## Applied history and supported previews
-
-The runner serializes concurrent migrations before reading history. Fresh
-installs and released main through 78, 79, 80, 81 or 82 append provider schema at 83.
-The same unmodified provider SQL is used for known #460 preview histories:
-
-- Providers at 78, then installed assurance at 79: append stats at 80,
-  run metrics at 81, metric labels at 82 and system metrics at 83.
-- Installed assurance at 78, providers at 79: append stats at 80,
-  run metrics at 81, metric labels at 82 and system metrics at 83.
-- Installed assurance at 78, stats at 79, run metrics at 80, providers at 81
-  (including #460 `66f94086`): append metric labels at 82 and system metrics at 83.
-- Installed assurance at 78, stats at 79, run metrics at 80, metric labels at 81,
-  providers at 82 (#460 `6d685f95`): append system metrics at 83.
-
-Partial recognized prefixes and the older distribution/enrollment preview
-histories remain supported. Never update recorded names, execution timestamps,
-SQL or customer records to make the ledger look canonical. The upgrade tests
-run historical SQL through the executor, preserve retained material and counter
-evidence, and replay concurrent/restarted runners.
-
-The MCP preview with mainline schemas through 82 and operator schemas at
-83–85 keeps those applied rows. The runner appends missing provider, recipient
-and PagerDuty schemas without reapplying MCP SQL. The later preview with MCP at
-94–96 also retains its applied identities; missing mainline PagerDuty definitions
-are appended after that tail. The later draft with MCP at 96–103 also keeps its
-applied identities and appends missing authority work. Fresh installs use MCP 99–106. Do not manually
-renumber an existing preview database.
-
-An unrecognized Windows store preview with store migrations at 109–111
-conflicts with released identities and is rejected before DDL. Preserve its
-ledger and use a separately reviewed recovery; do not manually relabel it.
-
-A ledger containing another PR's former 81 is not a provider alias. Unknown or conflicting histories fail before migration DDL. Do not manually edit them.
-In particular #496's earlier PagerDuty-at-79 preview requires its explicit
-backup/check/apply recovery procedure, using its independent reservation 92; this build
-does not silently relabel it. Any deployed #461/#498 preview needs a separately
-reviewed history-aware recovery before integrating the associated feature.
-
-## Cleanup contract handoff to #498
-
-Use separate `operation` and `provider` identities from the shared
-`packages/contracts/certops/material-provider.cjs`. Legacy cleanup `type` is
-accepted only for the exact Vault soft-delete operation and cannot override
-provider identity. Canonical `operation: "soft-delete"` is supported alongside
-the earlier explicit `operation: "vault-kv2-soft-delete"`; normalization never
-rewrites a signed intent. A future Vault `deletion_time` is a readable scheduled
-version, not completed deletion; retention and metadata readback still apply.
-#498 must preserve its independent approval, exact-version
-reference fence, local cleanup credential/retention checks and claim-bound
-receipt admission when consuming the shared adapter. Its contract schemas and
-intent producer must accept the explicit operation/provider shape together;
-never alter already signed jobs to migrate the wire shape.
-
-Database compatibility and local protocol tests cover the migration and wire
-contract. See [distribution availability](../certops/distribution-extensions.md)
-for the production capability requirements.
+The integrated Windows Store and IIS preview previously used 115 for observed revocation and 116–122 for Store and IIS. The runner preserves those recorded pairs and appends only missing definitions.

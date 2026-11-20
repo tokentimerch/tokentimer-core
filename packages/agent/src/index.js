@@ -7797,6 +7797,7 @@ module.exports = {
   mapJobKeyAlgorithm,
   resolveJobMode,
   isValidCertificateId,
+  runRevisionedDiscoveryScan,
   runDiscoveryScan,
   runRevisionedDiscoveryScan,
   runWindowsRetentionSweep,

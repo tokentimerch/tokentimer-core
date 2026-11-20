@@ -4982,12 +4982,7 @@ const migrations = [
     sql: fs.readFileSync(require("path").join(__dirname, "109-certops-retirement-dossiers.sql"), "utf8"),
   },
   {
-    version: 115,
-    name: "certops_observed_revocation",
-    sql: fs.readFileSync(require("path").join(__dirname, "112-certops-observed-revocation.sql"), "utf8"),
-  },
-  {
-    version: 119,
+    version: 118,
     name: "certops_windows_iis_consent",
     sql: fs.readFileSync(require("path").join(__dirname, "116-certops-windows-iis-consent.sql"), "utf8"),
   },
@@ -5017,6 +5012,12 @@ migrations.push({
   version: 114,
   name: "distribution_pagerduty_recovery",
   sql: fs.readFileSync(require("path").join(__dirname, "114-distribution-pagerduty-recovery.sql"), "utf8"),
+});
+
+migrations.push({
+  version: 122,
+  name: "certops_observed_revocation",
+  sql: fs.readFileSync(require("path").join(__dirname, "122-certops-observed-revocation.sql"), "utf8"),
 });
 
 const { composeMigrations } = require("./compose-migrations");
@@ -5345,7 +5346,7 @@ migrations.push({
 });
 
 migrations.push({
-  version: 116,
+  version: 115,
   name: "store_issuance_explicit_renewal_consent",
   sql: `
     CREATE OR REPLACE FUNCTION certops_sync_open_management_automation()
@@ -5367,7 +5368,7 @@ migrations.push({
 });
 
 migrations.push({
-  version: 117,
+  version: 116,
   name: "certops_acme_store_enrollment_identity",
   sql: `
     CREATE TABLE IF NOT EXISTS certops_acme_store_enrollments (
@@ -5409,25 +5410,25 @@ migrations.push({
 });
 
 migrations.push({
-  version: 118,
+  version: 117,
   name: "certops_adcs_expected_identity_receipts",
   sql: fs.readFileSync(require("path").join(__dirname, "115-certops-adcs-expected-identity.sql"), "utf8"),
 });
 
 migrations.push({
-  version: 120,
+  version: 119,
   name: "certops_material_adcs_operation_union",
   sql: fs.readFileSync(require("path").join(__dirname, "119-certops-material-adcs-operation-union.sql"), "utf8"),
 });
 
 migrations.push({
-  version: 121,
+  version: 120,
   name: "certops_iis_absence_proofs",
   sql: fs.readFileSync(require("path").join(__dirname, "120-certops-iis-absence-proofs.sql"), "utf8"),
 });
 
 migrations.push({
-  version: 122,
+  version: 121,
   name: "certops_enrollment_jobs_index",
   sql: `CREATE INDEX IF NOT EXISTS idx_certificate_jobs_enrollment
     ON certificate_jobs(workspace_id, enrollment_id) WHERE enrollment_id IS NOT NULL`,
@@ -5463,7 +5464,16 @@ async function applyMigrationSql(client, migration) {
       `CREATE TEMP VIEW audit_events AS SELECT * FROM ${relation} WHERE workspace_id IS NOT NULL`,
     );
   }
-  await client.query(migration.sql);
+  // The old Store preview's AD CS definition predates released material
+  // cleanup and reconciliation. Keep its historical SQL file intact, but
+  // preserve both already valid operations when applying the missing schema.
+  const sql = migration.name === "certops_adcs_expected_identity_receipts"
+    ? migration.sql.replace(
+        "'deploy-from-store','reload','revoke'",
+        "'deploy-from-store','cleanup-from-store','reconcile-from-store','reload','revoke'",
+      )
+    : migration.sql;
+  await client.query(sql);
   if (migration.version === 62) await client.query("DROP VIEW pg_temp.audit_events");
 }
 

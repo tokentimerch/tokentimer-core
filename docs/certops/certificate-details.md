@@ -41,14 +41,11 @@ separate service bindings remain distinct. Unknown visibility at a genuinely
 unmonitored location is still shown and still matters for decommissioning.
 Seeing a certificate does not by itself configure automatic renewal.
 
-A registration’s **Observation history** can be filtered by revocation status and
-observation time (entered in local time); roles allowed to manage CertOps can
-also search locations. It shows observations for that registration’s current
-certificate fingerprint, including earlier management periods with the same
-fingerprint. The current version has no automatic age-based purge; deleting the
-workspace deletes its evidence. This is operational history, not a guaranteed
-audit log: a network outage can leave gaps because discovery observations are
-not queued for later delivery.
+Open **Observation history** under **Observed locations** and select a
+registration. Filter by verdict or date in local time. Managers can also search
+locations. History covers the current fingerprint across its management periods.
+Viewer API responses omit host and location details. Discovery gaps may leave
+the history empty, so use current evidence to verify removal or check results.
 
 ## Certificate management
 

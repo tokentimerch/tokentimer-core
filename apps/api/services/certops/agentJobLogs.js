@@ -631,6 +631,7 @@ async function ingestAgentJobLogs({
       return applyIngest(client, {
         workspaceId: agent.workspaceId,
         agentRowId: agent.id,
+        agentId: agent.agentId,
         jobId,
         body,
         env,
@@ -648,7 +649,7 @@ async function ingestAgentJobLogs({
   }
 }
 
-async function applyIngest(client, { workspaceId, agentRowId, jobId, body, env, reservedNames, quotaLimitBytes }) {
+async function applyIngest(client, { workspaceId, agentRowId, agentId, jobId, body, env, reservedNames, quotaLimitBytes }) {
   assertLockSequence(OPERATION_LOCKS.ingest);
   const jobState = await lockJobState(client, workspaceId, jobId);
   if (!jobState) {
@@ -843,7 +844,7 @@ async function applyIngest(client, { workspaceId, agentRowId, jobId, body, env, 
         targetType: "certificate_job",
         targetId: null,
         workspaceId,
-        metadata: { jobId, claimId: body.claimId, code: CERTOPS_AGENT_LOG_PRIVATE_MATERIAL },
+        metadata: { agentId, jobId, claimId: body.claimId, code: CERTOPS_AGENT_LOG_PRIVATE_MATERIAL },
       });
     } catch (error) {
       logger.warn("agent log rejection audit failed", { code: error?.code || null });

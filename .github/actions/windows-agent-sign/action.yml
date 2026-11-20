@@ -1,0 +1,103 @@
+name: Sign Windows agent files
+description: Experimental Authenticode signing preflight; not a release qualification gate
+inputs:
+  package-root:
+    description: Extracted, independently verified package directory on a trusted runner
+    required: true
+  architecture:
+    description: Native Node runtime architecture (amd64 or arm64)
+    required: true
+  client-id:
+    description: Azure federated identity client ID
+    required: true
+  tenant-id:
+    description: Azure tenant ID
+    required: true
+  subscription-id:
+    description: Azure subscription ID
+    required: true
+  endpoint:
+    description: Azure Artifact Signing endpoint
+    required: true
+  account-name:
+    description: Azure Artifact Signing account
+    required: true
+  profile-name:
+    description: Azure Artifact Signing certificate profile
+    required: true
+  profile-eku:
+    description: Independently configured profile-specific EKU OID
+    required: true
+  issuer-sha256:
+    description: Independently configured trusted issuer certificate SHA-256
+    required: true
+  node-sha256:
+    description: Independently verified upstream Node runtime SHA-256
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Select explicit first-party signing targets
+      id: targets
+      shell: pwsh
+      env:
+        TT_SIGNING_PACKAGE_ROOT: ${{ inputs.package-root }}
+        TT_SIGNING_ARCHITECTURE: ${{ inputs.architecture }}
+        TT_SIGNING_NODE_EXPECTED: ${{ inputs.node-sha256 }}
+        TT_SIGNING_PROFILE_EKU: ${{ inputs.profile-eku }}
+        TT_SIGNING_ISSUER_SHA256: ${{ inputs.issuer-sha256 }}
+      run: |
+        if ($env:RUNNER_OS -ne 'Windows') { throw 'Windows runner required' }
+        node "$env:GITHUB_WORKSPACE/scripts/windows-signing-targets.cjs"
+        if ($LASTEXITCODE -ne 0) { throw 'Unsafe or incomplete signing stage' }
+    - name: Reject already signed first-party inputs
+      shell: pwsh
+      env:
+        TT_SIGNING_FILES: ${{ steps.targets.outputs.files }}
+      run: |
+        foreach ($file in ($env:TT_SIGNING_FILES -split "`n")) {
+          $file = $file.TrimEnd("`r")
+          if (-not $file) { continue }
+          if ((Get-AuthenticodeSignature -LiteralPath $file).Status -ne 'NotSigned') {
+            throw 'First-party signing inputs must not already carry a signature'
+          }
+        }
+    - name: Authenticate to Azure with OIDC
+      uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+      with:
+        client-id: ${{ inputs.client-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        subscription-id: ${{ inputs.subscription-id }}
+    - name: Sign first-party files
+      uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+      with:
+        endpoint: ${{ inputs.endpoint }}
+        signing-account-name: ${{ inputs.account-name }}
+        certificate-profile-name: ${{ inputs.profile-name }}
+        files: ${{ steps.targets.outputs.files }}
+        file-digest: SHA256
+        timestamp-rfc3161: http://timestamp.acs.microsoft.com
+        timestamp-digest: SHA256
+        exclude-environment-credential: true
+        exclude-workload-identity-credential: true
+        exclude-managed-identity-credential: true
+        exclude-shared-token-cache-credential: true
+        exclude-visual-studio-credential: true
+        exclude-visual-studio-code-credential: true
+        exclude-azure-cli-credential: false
+        exclude-azure-powershell-credential: true
+        exclude-azure-developer-cli-credential: true
+        exclude-interactive-browser-credential: true
+        cache-dependencies: false
+    - name: Verify publisher profile and timestamp presence
+      shell: pwsh
+      env:
+        TT_SIGNING_FILES: ${{ steps.targets.outputs.files }}
+        TT_SIGNING_PROFILE_EKU: ${{ inputs.profile-eku }}
+        TT_SIGNING_ISSUER_SHA256: ${{ inputs.issuer-sha256 }}
+        TT_SIGNING_PACKAGE_ROOT: ${{ inputs.package-root }}
+        TT_SIGNING_ARCHITECTURE: ${{ inputs.architecture }}
+        TT_SIGNING_NODE_SHA256: ${{ steps.targets.outputs.node_sha256 }}
+        TT_SIGNING_NODE_EXPECTED: ${{ inputs.node-sha256 }}
+      run: |
+        & "$env:GITHUB_WORKSPACE/scripts/verify-windows-signing.ps1"

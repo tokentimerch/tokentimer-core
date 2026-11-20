@@ -261,14 +261,14 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
   {"version":112,"name":"certops_retirement_dossiers"},
   {"version":113,"name":"certops_material_reconciliation"},
   {"version":114,"name":"distribution_pagerduty_recovery"},
-  {"version":115,"name":"certops_observed_revocation"},
-  {"version":116,"name":"store_issuance_explicit_renewal_consent"},
-  {"version":117,"name":"certops_acme_store_enrollment_identity"},
-  {"version":118,"name":"certops_adcs_expected_identity_receipts"},
-  {"version":119,"name":"certops_windows_iis_consent"},
-  {"version":120,"name":"certops_material_adcs_operation_union"},
-  {"version":121,"name":"certops_iis_absence_proofs"},
-  {"version":122,"name":"certops_enrollment_jobs_index"},
+  {"version":115,"name":"store_issuance_explicit_renewal_consent"},
+  {"version":116,"name":"certops_acme_store_enrollment_identity"},
+  {"version":117,"name":"certops_adcs_expected_identity_receipts"},
+  {"version":118,"name":"certops_windows_iis_consent"},
+  {"version":119,"name":"certops_material_adcs_operation_union"},
+  {"version":120,"name":"certops_iis_absence_proofs"},
+  {"version":121,"name":"certops_enrollment_jobs_index"},
+  {"version":122,"name":"certops_observed_revocation"},
 ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition
