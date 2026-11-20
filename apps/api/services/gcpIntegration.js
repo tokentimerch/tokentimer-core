@@ -1,13 +1,40 @@
 "use strict";
 
 const axios = require("axios");
+const { X509Certificate } = require("node:crypto");
 const {
   tryParseDate,
   formatDateYmd,
+  normalizeProviderExpiry,
+  advanceListCursor,
   CREDENTIALED_AXIOS_REDIRECTS,
 } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
 const { formatGcpApiError } = require("./gcpApiError");
+
+function certificateMetricExpiry(expireTime, ...pemChains) {
+  if (normalizeProviderExpiry(expireTime)) return expireTime;
+
+  for (const chain of pemChains) {
+    if (typeof chain !== "string") continue;
+    const blocks = chain.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+    if (!blocks) continue;
+    try {
+      const certificates = blocks.map((pem) => new X509Certificate(pem));
+      const leaves = certificates.length === 1
+        ? certificates
+        : certificates.filter((certificate) => !certificate.ca);
+      // Use a single leaf so a bundle cannot supply an intermediate's date.
+      if (leaves.length === 1) {
+        const notAfter = tryParseDate(leaves[0].validTo);
+        if (notAfter) return notAfter.toISOString();
+      }
+    } catch {
+      // A malformed certificate supplies no expiry metadata.
+    }
+  }
+  return "";
+}
 
 async function gcpRequest({ accessToken, method = "GET", path, body = null }) {
   const baseUrl = `https://secretmanager.googleapis.com/v1`;
@@ -58,6 +85,7 @@ async function gcpRequest({ accessToken, method = "GET", path, body = null }) {
 
 async function listSecrets({ projectId, accessToken, maxItems = 500 }) {
   const secrets = [];
+  const seenCursors = new Set();
   let nextPageToken = null;
   let pageCount = 0;
   const maxPages = 50;
@@ -86,11 +114,15 @@ async function listSecrets({ projectId, accessToken, maxItems = 500 }) {
       });
 
       const data = response.data;
+      if (!data || typeof data !== "object" || Array.isArray(data) ||
+          (Object.hasOwn(data, "secrets") && !Array.isArray(data.secrets))) {
+        throw new Error("Invalid GCP Secret Manager list response");
+      }
       if (Array.isArray(data.secrets)) {
         secrets.push(...data.secrets);
       }
 
-      nextPageToken = data.nextPageToken || null;
+      nextPageToken = advanceListCursor(data.nextPageToken, seenCursors, "GCP Secret Manager");
       pageCount++;
 
       if (secrets.length >= maxItems || pageCount >= maxPages) {
@@ -98,11 +130,7 @@ async function listSecrets({ projectId, accessToken, maxItems = 500 }) {
         break;
       }
     } catch (e) {
-      // Axios errors have response.status, not status directly
-      const status = e.response?.status || e.status;
-      if (status === 404) break; // Not found is OK, return empty
-      // 403 and other errors should propagate to caller for proper handling
-      // Normalize error to include status for upstream handling
+      // A missing or unreadable project does not establish an empty scope.
       if (e.response && !e.status) {
         e.status = e.response.status;
       }
@@ -197,6 +225,7 @@ async function listCertificateManagerCertificates({
   maxItems = 500,
 }) {
   const certs = [];
+  const seenCursors = new Set();
   let nextPageToken = null;
   let pageCount = 0;
   const maxPages = 50;
@@ -236,7 +265,7 @@ async function listCertificateManagerCertificates({
         certs.push(...data.certificates);
       }
 
-      nextPageToken = data.nextPageToken || null;
+      nextPageToken = advanceListCursor(data.nextPageToken, seenCursors, "GCP Certificate Manager");
       pageCount++;
 
       if (certs.length >= maxItems || pageCount >= maxPages) {
@@ -272,6 +301,7 @@ async function listComputeSslCertificates({
   maxItems = 500,
 }) {
   const certs = [];
+  const seenCursors = new Set();
   let nextPageToken = null;
   let pageCount = 0;
   const maxPages = 50;
@@ -332,7 +362,7 @@ async function listComputeSslCertificates({
         for (const scope of data.unreachables) unreachable.add(scope);
       }
 
-      nextPageToken = data.nextPageToken || null;
+      nextPageToken = advanceListCursor(data.nextPageToken, seenCursors, "GCP Compute Engine");
       pageCount++;
 
       if (certs.length >= maxItems || pageCount >= maxPages) {
@@ -416,6 +446,7 @@ async function scanGCP({
           await Promise.all(
             batch.map(async (secret) => {
               if (items.length >= maxItems) return;
+              const secretExpiration = secret.expireTime || secret.expiration?.expireTime;
               const secretName = secret.name.split("/").pop();
 
               // Get enabled versions to check expiration
@@ -479,6 +510,7 @@ async function scanGCP({
                   category: "key_secret",
                   type: "secret",
                   expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                  metric_expiration: secretExpiration,
                   location: `gcp:${projectId}/secrets/${secretName}`,
                   created_at: secret.createTime || null,
                   updated_at: secret.updateTime || null,
@@ -503,6 +535,7 @@ async function scanGCP({
                   category: "key_secret",
                   type: "secret",
                   expiration: null,
+                  metric_expiration: secretExpiration,
                   location: `gcp:${projectId}/secrets/${secretName}`,
                   created_at: secret.createTime || null,
                   updated_at: secret.updateTime || null,
@@ -580,6 +613,7 @@ async function scanGCP({
             category: "cert",
             type: "ssl_cert",
             expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+            metric_expiration: certificateMetricExpiry(cert.expireTime, cert.pemCertificate),
             location: `gcp:${projectId}/locations/${location}/certificates/${certName}`,
             domains,
             issuer: isManaged ? "Google Trust Services" : null,
@@ -674,6 +708,9 @@ async function scanGCP({
             category: "cert",
             type: "ssl_cert",
             expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+            metric_expiration: certificateMetricExpiry(
+              cert.expireTime, cert.selfManaged?.certificate, cert.certificate,
+            ),
             location: region
               ? `gcp:${projectId}/regions/${region}/sslCertificates/${cert.name}`
               : `gcp:${projectId}/global/sslCertificates/${cert.name}`,

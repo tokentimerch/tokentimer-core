@@ -27,6 +27,7 @@ describe("Core distribution and lifecycle migration histories", function () {
     'certops_adcs_expected_identity_receipts', 'certops_windows_iis_consent', 'certops_material_adcs_operation_union',
     'certops_iis_absence_proofs', 'certops_enrollment_jobs_index', 'certops_observed_revocation',
     'certops_adcs_receipt_deadline',
+    'auto_sync_creation_expiration',
   ];
   const migrations = require('../../apps/api/migrations/migrate').migrations;
   const companions = companionNames.filter(name => migrations.some(m => m.name === name));

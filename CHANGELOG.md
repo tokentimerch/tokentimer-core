@@ -12,6 +12,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **Observed certificate revocation.** Windows and Linux agents report leaf and issuing-CA revocation through OCSP and HTTP(S) CRLs, including delta CRLs. Unavailable checks retain the last verified finding. Managers can filter the observation history for a registration in certificate details. **Operator action:** allow the responder origins in `observedRevocation.allowedOrigins`; new installer configurations enable monitoring with an empty allowlist. LDAP-only CRLs remain unsupported. See [agent configuration](docs/certops/agent/configuration.md) and [GPO trust distribution](docs/certops/adcs-gpo-trust.md).
+- **Asset expiration in auto-sync metrics.** Detailed creation metrics can include verified expiry for new inventory. **Operator guidance:** allow and select `expiration` to include the date or time in creation alerts. See the [auto-sync metrics guide](docs/AUTO_SYNC.md#asset-expiration-labels).
+
+### Fixed
+
+- **Integration discovery and cleanup.** GitLab and GitHub scans now follow additional pages, including GitHub Actions secrets. Scopes with failed or invalid list results are ineligible for cleanup. Auto-sync retains existing associations when a requested scope is incomplete, and one-time imports skip cleanup when an item fails to import.
 
 ### Security
 

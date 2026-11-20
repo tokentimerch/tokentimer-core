@@ -25,6 +25,7 @@ test("retirement preview upgrades through PagerDuty recovery and survives restar
       "certops_material_reconciliation",
       "distribution_pagerduty_recovery",
       "certops_observed_revocation",
+      "auto_sync_creation_expiration",
     ]);
     await runMigrations();
     assert.deepEqual((await pool.query("SELECT version,name FROM migrations ORDER BY version")).rows,upgraded);

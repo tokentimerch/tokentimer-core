@@ -1,5 +1,7 @@
 "use strict";
 
+const { metricSourceDimensions } = require("./autoSyncMetricLabels");
+
 const MAX_SWEEP_REGIONS = 40;
 
 function normalizeAwsSweepRegions(regions) {
@@ -42,7 +44,7 @@ function awsScanPersistRecords(items, summary, fallbackRegion) {
     items: (Array.isArray(items) ? items : []).map((item) => ({
       sourceKind: item.sourceKind,
       sourceObjectId: item.sourceObjectId,
-      dimensions: awsItemPersistDimensions(item, fallbackRegion),
+      dimensions: metricSourceDimensions(item, awsItemPersistDimensions(item, fallbackRegion)),
     })),
     subScopes: (Array.isArray(summary) ? summary : [])
       .filter((s) => s && s.sourceKind)

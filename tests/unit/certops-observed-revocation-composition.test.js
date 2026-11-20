@@ -29,6 +29,7 @@ test("Windows Store, IIS and observed revocation use their shared canonical rese
       { version: 121, name: "certops_enrollment_jobs_index" },
       { version: 122, name: "certops_observed_revocation" },
       { version: 126, name: "certops_adcs_receipt_deadline" },
+      { version: 127, name: "auto_sync_creation_expiration" },
     ]);
   }
 });
