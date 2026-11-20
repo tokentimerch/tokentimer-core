@@ -17,6 +17,8 @@ const material = api("./services/certops/materialDistribution");
 const { createCertificateIssuanceJob } = api("./services/certops/issuance");
 const { approveJob } = api("./services/certops/jobApprovals");
 const { transferTokenAssociations } = api("./services/workspaceTokenTransfer");
+const { generateAgentCredential } = api("./services/certops/agentCredentials");
+const { bindAuthenticatedCredential } = api("./services/certops/agentCredentialFence");
 const health = api("./services/certops/renewalPathHealth");
 const request = require("supertest");
 const uuid = () => crypto.randomUUID();
@@ -62,15 +64,17 @@ async function fixture({ ordinary = false, published = true, neverStarted = fals
       );
     }
   }
+  const issuerCredential = generateAgentCredential();
+  const issuerAgentId = uuid();
   const issuer = (
     await pool.query(
       `INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
     VALUES($1,$2,'0.17.3','1.0.0',$3,$4) RETURNING id`,
       [
         workspaceId,
-        uuid(),
-        `ttagent_${crypto.randomBytes(8).toString("hex")}`,
-        crypto.randomBytes(32).toString("hex"),
+        issuerAgentId,
+        issuerCredential.credentialPrefix,
+        issuerCredential.credentialHash,
       ],
     )
   ).rows[0].id;
@@ -245,6 +249,8 @@ async function fixture({ ordinary = false, published = true, neverStarted = fals
     workspaceId,
     destination,
     issuer,
+    issuerAgentId,
+    issuerCredential: issuerCredential.plaintextCredential,
     certificateId,
     groupId,
     materialVersionId,
@@ -632,10 +638,16 @@ test("transfer terminalizes every unstarted publication admission state and leav
       assert.equal(after.workspace_id, f.workspaceId);
       assert.equal(after.claim_id, null);
       assert.equal(after.attempt_count, 0);
-      const agent = (await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1", [f.issuer])).rows[0];
+      const agent = bindAuthenticatedCredential({
+        id: f.issuer,
+        workspaceId: f.workspaceId,
+        agentId: f.issuerAgentId,
+        status: "active",
+        protocolVersion: "1.0.0",
+        agentVersion: "0.17.3",
+      }, f.issuerCredential);
       const claimed = await api("./services/certops/agentDispatch").claimJobs({
-        agent: { id: f.issuer, workspaceId: f.workspaceId, agentId: agent.agent_id,
-          status: "active", protocolVersion: "1.0.0", agentVersion: "0.17.3" },
+        agent,
         body: { supportedActions: ["renew"], maxJobs: 1 },
       });
       assert.deepEqual(claimed.jobs, []);
