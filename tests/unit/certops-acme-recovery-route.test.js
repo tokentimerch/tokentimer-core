@@ -30,24 +30,48 @@ test("recovery locks owner before workspace, commits atomically and rolls back e
   try {
     const req = { workspace: { id }, user: { id: 3 }, params: { enrollmentId: id }, body: { orphanedJobId: id, reason: "reviewed", acknowledgeUnknownEffect: true } };
     const res = response(); await handler(req, res);
-    assert.equal(res.statusCode, 201); assert.equal(calls[0], "BEGIN"); assert.match(calls[1], /FOR SHARE OF a/);
+    assert.equal(res.statusCode, 201); assert.equal(calls[0], "BEGIN"); assert.match(calls[1], /FOR UPDATE OF a/);
     assert.deepEqual(calls.slice(2), ["workspace", "recovery", "COMMIT", "release"]);
     calls.length = 0; recoverStub.mock.mockImplementation(async () => { throw new Error("audit failed"); });
     const failed = response(); await handler(req, failed); assert.equal(failed.statusCode, 500); assert.ok(calls.includes("ROLLBACK")); assert.ok(!calls.includes("COMMIT"));
   } finally { poolStub.mock.restore(); lockStub.mock.restore(); recoverStub.mock.restore(); }
 });
 test("lookup is scoped to workspace and returns only recovery state", async () => {
+  const enrollmentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const agentId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const certificateId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const ownerReported = {
+    id: enrollmentId, job_id: id, current_job_id: id, original_job_id: id, operation: "issue", original_operation: "issue",
+    status: "orphaned_unknown_effect", needs_operator_reconciliation: true, state: "submitting", claim_id: id,
+    agent_status: "active", agent_id: agentId, claimed_by_agent_id: agentId, assigned_agent_id: agentId,
+    subject_type: "managed_certificate", subject_id: certificateId, original_subject_id: certificateId, certificate_id: certificateId,
+    mode: "real", executor_kind: "agent", lease_reaped: false, secret: "not returned",
+  };
+  const reaped = { ...ownerReported, state: "installed", claim_id: null, claimed_by_agent_id: null, lease_reaped: true };
+  let row = ownerReported;
   const query = mock.method(db.pool, "query", async (sql, params) => {
     assert.match(sql, /e.workspace_id=\$1/); assert.deepEqual(params, [id, id]);
-    return { rows: [{ id, current_job_id: id, status: "orphaned_unknown_effect", needs_operator_reconciliation: true, state: "submitting", secret: "not returned" }] };
+    assert.match(sql, /l\.workspace_id=j\.workspace_id AND l\.job_id=j\.id/);
+    assert.match(sql, /l\.metadata->>'sweep'='lease-reaper'/);
+    return { rows: row ? [row] : [] };
   });
+  async function read() {
+    const res = response();
+    await lookup({ workspace: { id }, params: { jobId: id } }, res);
+    return res;
+  }
   try {
-    const res = response(); await lookup({ workspace: { id }, params: { jobId: id } }, res);
-    assert.deepEqual(res.body, { enrollmentId: id, state: "submitting", outcomeUncertain: true, recoveryAvailable: true });
-    query.mock.mockImplementation(async () => ({ rows: [{ id, current_job_id: id, status: "orphaned_unknown_effect", needs_operator_reconciliation: true, state: "installed" }] }));
-    const installed = response(); await lookup({ workspace: { id }, params: { jobId: id } }, installed);
-    assert.equal(installed.body.recoveryAvailable, true, "lost installation acknowledgement must allow proof replay");
-    query.mock.mockImplementation(async () => ({ rows: [] }));
-    const missing = response(); await lookup({ workspace: { id }, params: { jobId: id } }, missing); assert.equal(missing.statusCode, 404);
+    assert.deepEqual((await read()).body, { enrollmentId, state: "submitting", outcomeUncertain: true, recoveryAvailable: true });
+    row = reaped;
+    assert.deepEqual((await read()).body, { enrollmentId, state: "installed", outcomeUncertain: true, recoveryAvailable: true },
+      "an installed certificate can be re-proved after an expired claim");
+    for (const refused of [{ ...ownerReported, claimed_by_agent_id: certificateId }, { ...reaped, lease_reaped: false }]) {
+      row = refused;
+      assert.equal((await read()).body.recoveryAvailable, false);
+    }
+    row = { ...reaped, current_job_id: enrollmentId };
+    assert.equal((await read()).body.recoveryAvailable, false);
+    row = undefined;
+    assert.equal((await read()).statusCode, 404);
   } finally { query.mock.restore(); }
 });

@@ -1,5 +1,6 @@
 "use strict";
 
+
 const { pool } = require("../../db/database");
 const {
   CERTOPS_CERTIFICATE_PARSE_FAILED,

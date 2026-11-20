@@ -213,6 +213,7 @@
           "fails closed on malformed observations and accepts revisionless revocations",
           "retains unmanaged agent revocation and exposes it without topology access",
           "does not hide an unchecked or revoked location behind a good location",
+          "projects a revoked issuing CA by exact fingerprint and retains it after an unavailable check",
           "rolls back the sequence and retained observations on non-admission database failures"
         ]
       },

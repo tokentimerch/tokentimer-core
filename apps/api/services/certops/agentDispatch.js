@@ -2088,7 +2088,7 @@ async function preserveRecoveredIssuanceIdentity({ client, workspaceId, job, fin
   if (job.operation === "adcs-installation-proof") {
     result = await client.query(`SELECT original.id, original.operation, original.certificate_identity_id
       FROM certops_adcs_proof_recovery_intents i
-      JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id
+      JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id AND r.committed_seen_at IS NOT NULL
       JOIN certificate_enrollments e ON e.workspace_id=i.workspace_id AND e.id=i.enrollment_id
       JOIN certificate_jobs original ON original.workspace_id=r.workspace_id AND original.id=r.original_job_id
       WHERE i.workspace_id=$1 AND i.proof_job_id=$2::uuid AND i.agent_id=$3::uuid
@@ -3242,23 +3242,35 @@ async function ingestResult({
           agent,
         });
       }
+      if (job.operation === "continue-enrollment" && !job.enrollment_id &&
+          job.payload?.target?.type === "windows-cert-store" &&
+          (provisioned?.promoted || refreshed?.refreshed)) {
+        await require("./acmeStorePersistence").reconcileAcmeStoreRecoveryTx({
+          client, workspaceId: agent.workspaceId, jobId: String(job.id), agentId: String(agent.id), audit: auditWriter,
+        });
+      }
       if (job.operation === "adcs-installation-proof") {
         if (!provisioned?.promoted && !refreshed?.refreshed) {
           throw serviceError("Proof-only result could not reconcile the certificate", CERTOPS_AGENT_RESULT_STATUS_INVALID);
         }
-        const original = (await client.query(`SELECT old.id FROM certops_adcs_proof_recovery_intents i
-          JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id
+        const original = (await client.query(`SELECT old.id,e.snapshot_bytes FROM certops_adcs_proof_recovery_intents i
+          JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id AND r.committed_seen_at IS NOT NULL
           JOIN certificate_jobs old ON old.workspace_id=r.workspace_id AND old.id=r.original_job_id
+          JOIN certificate_enrollments e ON e.workspace_id=i.workspace_id AND e.id=i.enrollment_id AND e.current_job_id=old.id
           WHERE i.workspace_id=$1 AND i.proof_job_id=$2 AND old.status='orphaned_unknown_effect'
             AND old.needs_operator_reconciliation=TRUE FOR UPDATE OF old SKIP LOCKED`, [agent.workspaceId, job.id])).rows[0];
         if (!original) throw serviceError("Original job is busy or no longer uncertain", CERTOPS_AGENT_RESULT_STATUS_INVALID);
-        await client.query(`UPDATE certificate_jobs SET needs_operator_reconciliation=FALSE,
-          reconciliation_reason='installation_verified_by_proof',updated_at=NOW() WHERE workspace_id=$1 AND id=$2`, [agent.workspaceId, original.id]);
+        const snapshot = JSON.parse(Buffer.from(original.snapshot_bytes).toString("utf8"));
+        const iisRequiresReconciliation = Array.isArray(snapshot.iisConsumers) && snapshot.iisConsumers.length > 0;
+        const reason = iisRequiresReconciliation ? "installation_verified_iis_reconciliation_required" : "installation_verified_by_proof";
+        await client.query(`UPDATE certificate_jobs SET needs_operator_reconciliation=$3,
+          reconciliation_reason=$4,updated_at=NOW() WHERE workspace_id=$1 AND id=$2`,
+        [agent.workspaceId, original.id, iisRequiresReconciliation, reason]);
         await client.query(`UPDATE certificate_enrollments SET state='installed',updated_at=NOW()
           WHERE workspace_id=$1 AND id=$2::uuid AND agent_id=$3::uuid`, [agent.workspaceId, job.enrollment_id, agent.id]);
         await auditWriter({ client, workspaceId: agent.workspaceId, actorUserId: null, subjectUserId: null,
           action: "CERTOPS_ADCS_INSTALLATION_PROOF_RECONCILED", targetType: "certificate_enrollment", targetId: null,
-          metadata: { enrollmentId: String(job.enrollment_id), originalJobId: String(original.id), proofJobId: String(job.id) } });
+          metadata: { enrollmentId: String(job.enrollment_id), originalJobId: String(original.id), proofJobId: String(job.id), iisRequiresReconciliation } });
       }
     }
 

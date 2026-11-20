@@ -1775,7 +1775,12 @@ async function confirmWhatsAppInbound({ pool, from, body, messageSid }) {
     const row = consumed.rows[0];
     if (!row) return { ok: false, reason: "invalid" };
     await upsertVerification(client, row, "verified", "whatsapp_inbound_confirm");
-    return { ok: true, outcome: "accepted", workspaceId: row.workspace_id };
+    return {
+      ok: true,
+      outcome: "accepted",
+      workspaceId: row.workspace_id,
+      contactId: row.contact_id,
+    };
   });
 }
 

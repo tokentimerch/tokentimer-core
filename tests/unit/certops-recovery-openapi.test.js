@@ -24,7 +24,7 @@ test("recovery endpoints document their authorization, strict inputs and outcome
   }
   assert.deepEqual(acme.requestBody.content["application/json"].schema.properties.acknowledgeUnknownEffect.enum, [true]);
   assert.deepEqual(spec.components.schemas.CertOpsAdcsProofRecovery.properties.state.enum,
-    ["expected_identity_unavailable", "transport_unavailable", "queued"]);
+    ["expected_identity_unavailable", "transport_unavailable", "queued", "completed"]);
   assert.deepEqual(lookup.responses["200"].content["application/json"].schema.properties.state.enum,
     ["keygen_intent", "prepared", "submitting", "issued", "installing", "installed", "uncertain"]);
 });

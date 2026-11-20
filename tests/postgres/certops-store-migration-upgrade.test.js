@@ -65,20 +65,26 @@ test("upgrades a real main database with PagerDuty recovery at migration 114 and
       [112, "certops_retirement_dossiers"],
       [113, "certops_material_reconciliation"],
       [114, "distribution_pagerduty_recovery"],
-      [115, "certops_observed_revocation"],
-      [116, "store_issuance_explicit_renewal_consent"],
-      [117, "certops_acme_store_enrollment_identity"],
-      [118, "certops_adcs_expected_identity_receipts"],
-      [119, "certops_windows_iis_consent"],
-      [120, "certops_material_adcs_operation_union"],
-      [121, "certops_iis_absence_proofs"],
-      [122, "certops_enrollment_jobs_index"],
+      [115, "store_issuance_explicit_renewal_consent"],
+      [116, "certops_acme_store_enrollment_identity"],
+      [117, "certops_adcs_expected_identity_receipts"],
+      [118, "certops_windows_iis_consent"],
+      [119, "certops_material_adcs_operation_union"],
+      [120, "certops_iis_absence_proofs"],
+      [121, "certops_enrollment_jobs_index"],
+      [122, "certops_observed_revocation"],
       [125, "certops_adcs_preflight_lookup_index"],
+      [126, "certops_adcs_receipt_deadline"],
+      [127, "auto_sync_creation_expiration"],
     ]);
     const preserved = await client.query("SELECT version,name,executed_at FROM migrations WHERE version <= 114 ORDER BY version");
     assert.deepEqual(preserved.rows, before.rows);
     const objects = await client.query("SELECT to_regclass('certops_acme_store_enrollments') AS acme, to_regclass('certops_adcs_expected_identity_receipts') AS adcs, to_regprocedure('certops_sync_open_management_automation()') AS sync");
     assert.ok(objects.rows[0].acme && objects.rows[0].adcs && objects.rows[0].sync);
+    const receiptFields = await client.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='certops_adcs_expected_identity_receipts'");
+    for (const column of ["origin_xid", "committed_seen_at", "receipt_claim_expires_at"]) {
+      assert.ok(receiptFields.rows.some(({ column_name }) => column_name === column));
+    }
     const constraint = await client.query("SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid='certificate_jobs'::regclass AND conname='certificate_jobs_operation_check'");
     for (const operation of ["cleanup-from-store", "reconcile-from-store", "adcs-installation-proof"]) assert.match(constraint.rows[0].definition, new RegExp(operation));
     migrate();

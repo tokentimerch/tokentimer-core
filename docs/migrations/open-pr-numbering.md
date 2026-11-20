@@ -43,24 +43,17 @@ are reservations, not no-op migrations. They do not install another feature.
 | 112 | certops_retirement_dossiers | Distribution lifecycle on main |
 | 113 | certops_material_reconciliation | Distribution lifecycle on main |
 | 114 | distribution_pagerduty_recovery | PagerDuty distribution recovery on main |
-| 115 | certops_observed_revocation | Observed certificate revocation (#589) |
-| 116 | store_issuance_explicit_renewal_consent | Windows store issuance consent |
-| 117 | certops_acme_store_enrollment_identity | Windows store ACME enrollment identity |
-| 118 | certops_adcs_expected_identity_receipts | Windows store AD CS identity receipts |
-| 119 | certops_windows_iis_consent | Windows IIS reassociation consent |
-| 120 | certops_material_adcs_operation_union | Preserve both material and AD CS job operations |
-| 121 | certops_iis_absence_proofs | Reconcile proven IIS observations |
-| 122 | certops_enrollment_jobs_index | Index enrollment jobs |
-| 123 | agent_credential_rotations | Reserved by #614 |
-| 124 | agent_credential_rotation_ack | Reserved by #614 |
-| 125 | certops_adcs_preflight_lookup_index | Partial index for issuer/agent preflight history (#714) |
-
-The index uses canonical version 125 on fresh installs. The recognized retirement
-preview keeps its applied version-109 ledger. With PagerDuty recovery already
-applied, the index appends at version 123. The earlier preview that recorded the
-index at 122 retains that identity and appends pending PagerDuty recovery and
-secure-agent migrations in the reviewed order. Leave reserved slots unapplied
-until their definitions arrive.
+| 115 | store_issuance_explicit_renewal_consent | Windows Store issuance consent |
+| 116 | certops_acme_store_enrollment_identity | Windows Store ACME enrollment identity |
+| 117 | certops_adcs_expected_identity_receipts | Windows Store AD CS identity receipts |
+| 118 | certops_windows_iis_consent | Windows IIS reassociation consent |
+| 119 | certops_material_adcs_operation_union | Preserve material and AD CS job operations |
+| 120 | certops_iis_absence_proofs | Reconcile proven IIS observations |
+| 121 | certops_enrollment_jobs_index | Index enrollment jobs |
+| 122 | certops_observed_revocation | Observed certificate revocation (#541) |
+| 125 | certops_adcs_preflight_lookup_index | Index issuer and agent preflight history (#714) |
+| 126 | certops_adcs_receipt_deadline | Immutable AD CS receipt admission deadline |
+| 127 | auto_sync_creation_expiration | Auto-sync creation metric expiration (#780) |
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.
@@ -69,6 +62,13 @@ Only missing definitions are assigned; duplicate feature definitions must be
 removed when composing branches. Unknown, conflicting or unrecognized histories
 fail before DDL and require reviewed recovery. Database compatibility does not
 qualify the corresponding runtime feature or production artifact.
+
+A recognized #780 preview keeps its previously applied expiration row, including
+version 115 on a standard preview database. New installs use version 127.
+
+Canonical installs use version 125 for the AD CS preflight index. A recognized retirement preview keeps its applied index at 122 and appends any missing recovery and credential migrations.
+
+The integrated Windows Store and IIS preview previously used 115 for observed revocation and 116–122 for Store and IIS. The runner preserves those recorded pairs and appends only missing definitions.
 
 ## Applied history and supported previews
 
@@ -98,10 +98,6 @@ and PagerDuty schemas without reapplying MCP SQL. The later preview with MCP at
 are appended after that tail. The later draft with MCP at 96–103 also keeps its
 applied identities and appends missing authority work. Fresh installs use MCP 99–106. Do not manually
 renumber an existing preview database.
-
-An unrecognized Windows store preview with store migrations at 109–111
-conflicts with released identities and is rejected before DDL. Preserve its
-ledger and use a separately reviewed recovery; do not manually relabel it.
 
 A ledger containing another PR's former 81 is not a provider alias. Unknown or conflicting histories fail before migration DDL. Do not manually edit them.
 In particular #496's earlier PagerDuty-at-79 preview requires its explicit

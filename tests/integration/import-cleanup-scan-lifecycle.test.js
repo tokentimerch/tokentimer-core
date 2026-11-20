@@ -708,7 +708,11 @@ describe("Import cleanup scan lifecycle (real database)", function () {
       provider: "gitlab",
       identityContext: { host: instance, ownerKey: "7" },
       items: [],
-      subScopes: [{ sourceKind: "gitlab-pat", dimensions: {}, complete: true }],
+      subScopes: [{
+        sourceKind: "gitlab-pat",
+        dimensions: { gitLabPatCoverage: "all" },
+        complete: true,
+      }],
     });
 
     const first = await cleanupObsoleteTokens({
@@ -716,6 +720,7 @@ describe("Import cleanup scan lifecycle (real database)", function () {
       actorUserId: ownerId,
       cleanup: { enabled: true, provider: "gitlab", scanId: scan.scanId },
     });
+    expect(first.status).to.equal("completed");
     expect(first.deleted.map((d) => d.id)).to.include(obsolete.id);
 
     // A second token that would otherwise be a valid cleanup candidate
@@ -734,6 +739,7 @@ describe("Import cleanup scan lifecycle (real database)", function () {
       actorUserId: ownerId,
       cleanup: { enabled: true, provider: "gitlab", scanId: scan.scanId },
     });
+    expect(replay.status).to.equal("skipped_unavailable");
     expect(replay.deleted).to.have.length(0);
     expect(await tokenStillExists(secondObsolete.id)).to.equal(true);
 

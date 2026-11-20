@@ -1,0 +1,91 @@
+name: Read Windows agent signing profile
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Exact reviewed Core main commit to run
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: windows-agent-signing-profile-read
+  cancel-in-progress: false
+
+jobs:
+  read-profile:
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha
+    environment: windows-agent-signing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      id-token: write
+    env:
+      SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+      SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+    steps:
+      - name: Validate protected profile configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SIGNING_ENDPOINT" =~ ^https://[a-z][a-z0-9-]*\.codesigning\.azure\.net$ ]]
+          [[ "$SIGNING_ACCOUNT" =~ ^[A-Za-z][A-Za-z0-9-]{1,22}[A-Za-z0-9]$ ]]
+          [[ "$SIGNING_PROFILE" =~ ^[A-Za-z][A-Za-z0-9-]{3,98}[A-Za-z0-9]$ ]]
+
+      - name: Authenticate the protected environment to Azure
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ vars.AZURE_SIGNING_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_SIGNING_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SIGNING_SUBSCRIPTION_ID }}
+
+      - name: Read the public certificate chain and profile EKUs
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/windows-signing-public-chain"
+          mkdir -m 700 "$output"
+          resource="$SIGNING_ENDPOINT/codesigningaccounts/$SIGNING_ACCOUNT/certificateprofiles/$SIGNING_PROFILE/sign"
+          # Match the Windows signing SDK's two read operations and service audience.
+          az rest --method get --url "$resource/certchain?api-version=2022-06-15-preview" \
+            --headers 'Accept=application/pkcs7-mime' \
+            --resource 'https://codesigning.azure.net' --only-show-errors --output none \
+            --output-file "$RUNNER_TEMP/chain-response" >/dev/null 2>&1 ||
+            { echo '::error::The protected principal could not read the certificate chain.'; exit 1; }
+          az rest --method get --url "$resource/eku?api-version=2022-06-15-preview" \
+            --headers 'Accept=application/json' \
+            --resource 'https://codesigning.azure.net' --only-show-errors --output none \
+            --output-file "$RUNNER_TEMP/eku-response" >/dev/null 2>&1 ||
+            { echo '::error::The protected principal could not read the profile EKUs.'; exit 1; }
+
+          if openssl pkcs7 -inform DER -in "$RUNNER_TEMP/chain-response" -noout 2>/dev/null; then
+            cp "$RUNNER_TEMP/chain-response" "$output/chain.der"
+          else
+            # Azure can serialize the PKCS #7 bytes as a base64 JSON string.
+            jq -er 'select(type == "string" and test("^[A-Za-z0-9+/]+={0,2}$"))' \
+              "$RUNNER_TEMP/chain-response" | base64 --decode > "$output/chain.der"
+          fi
+          openssl pkcs7 -inform DER -in "$output/chain.der" -print_certs -out "$RUNNER_TEMP/chain-certs.pem"
+          grep -q '^-----BEGIN CERTIFICATE-----$' "$RUNNER_TEMP/chain-certs.pem"
+          jq -ec 'if type == "string" then [.] else . end |
+            select(type == "array" and length > 0 and all(.[]; type == "string" and test("^[0-9]+(\\.[0-9]+)+$")))' \
+            "$RUNNER_TEMP/eku-response" > "$output/eku.json"
+          chain_sha=$(sha256sum "$output/chain.der" | cut -d ' ' -f 1)
+          eku_sha=$(sha256sum "$output/eku.json" | cut -d ' ' -f 1)
+          jq -n --arg source "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg chain "$chain_sha" --arg eku "$eku_sha" \
+            '{sourceCommit:$source,runId:$run,runAttempt:$attempt,chainSha256:$chain,ekuSha256:$eku}' > "$output/receipt.json"
+
+      - name: Retain public verification material and exact-run receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-signing-public-chain-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/windows-signing-public-chain/chain.der
+            ${{ runner.temp }}/windows-signing-public-chain/eku.json
+            ${{ runner.temp }}/windows-signing-public-chain/receipt.json
+          if-no-files-found: error
+          retention-days: 1

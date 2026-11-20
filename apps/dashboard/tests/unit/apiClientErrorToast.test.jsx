@@ -2,14 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import axios from 'axios';
 import { logger } from '../../src/utils/logger.js';
 
-const { showErrorMock } = vi.hoisted(() => ({
+const { showErrorMock, showSuccessMock, showWarningMock } = vi.hoisted(() => ({
   showErrorMock: vi.fn(),
+  showSuccessMock: vi.fn(),
+  showWarningMock: vi.fn(),
 }));
 
 vi.mock('../../src/utils/toast.js', () => ({
   showError: showErrorMock,
-  showSuccess: vi.fn(),
-  showWarning: vi.fn(),
+  showSuccess: showSuccessMock,
+  showWarning: showWarningMock,
   showInfo: vi.fn(),
   showToast: vi.fn(),
 }));
@@ -81,6 +83,35 @@ describe('handleApiError - webhook test endpoint toast suppression', () => {
 
     expect(showErrorMock).not.toHaveBeenCalled();
   });
+});
+
+describe('manual import notifications', () => {
+  it.each(['integrationAPI', 'vaultAPI'])(
+    '%s reports item errors and skipped cleanup without a success toast',
+    async name => {
+      const clients = await import('../../src/utils/apiClient.js');
+      const data = { error_count: 1, created_count: 1, updated_count: 0 };
+      const post = vi.spyOn(clients.default, 'post').mockResolvedValue({ data });
+      showSuccessMock.mockClear();
+      showWarningMock.mockClear();
+      try {
+        await expect(
+          clients[name].import({
+            workspaceId: 'workspace',
+            items: [],
+            cleanup: { enabled: true },
+          })
+        ).resolves.toBe(data);
+        expect(showWarningMock).toHaveBeenCalledWith(
+          '1 item failed to import',
+          'Created 1. Updated 0. Obsolete-item cleanup was skipped.'
+        );
+        expect(showSuccessMock).not.toHaveBeenCalled();
+      } finally {
+        post.mockRestore();
+      }
+    }
+  );
 });
 
 describe('API request cancellation', () => {

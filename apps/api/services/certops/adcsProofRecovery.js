@@ -8,6 +8,29 @@ const { writeAudit } = require("../audit");
 const { redactGenericSecrets } = require("../../utils/secretMaterial");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HEX = /^[a-f0-9]{64}$/;
+// The receipt captured the live claim and attempt. Claim acquisition always
+// increments attempt_count. Only the worker's atomic terminal event can
+// substitute for a claim ID cleared when reaping that same attempt.
+const ORIGINAL_CLAIM_MATCH = `
+  original.assigned_agent_id=r.agent_id AND original.attempt_count=r.original_attempt
+  AND (original.claim_id=r.original_claim_id OR (
+    original.claim_id IS NULL AND original.claimed_by_agent_id IS NULL
+    AND original.lease_expires_at IS NULL AND original.completed_at IS NOT NULL
+    AND original.error_code='effects_unknown'
+    AND original.reconciliation_reason IN ('lease_expired_after_side_effect_window_agent_unresponsive',
+      'installation_verified_by_proof', 'installation_verified_iis_reconciliation_required')
+    AND EXISTS (
+      SELECT 1 FROM certificate_job_log l
+      WHERE l.workspace_id=original.workspace_id AND l.job_id=original.id
+        AND l.event_type='job.failed' AND l.status='orphaned_unknown_effect'
+        AND l.created_by_user_id IS NULL AND l.created_by_api_token_id IS NULL
+        AND NOT (l.metadata ? 'jobStatusTransitionApplied')
+        AND l.metadata->>'sweep'='lease-reaper' AND l.metadata->>'outcome'=original.status
+        AND l.metadata->>'errorCode'=original.error_code
+        AND l.metadata->>'reconciliationReason'='lease_expired_after_side_effect_window_agent_unresponsive'
+        AND l.metadata->'attemptCount'=to_jsonb(original.attempt_count)
+    )
+  ))`;
 function fail(message, code = "CERTOPS_ADCS_PROOF_INVALID") { const error = new Error(message); error.code = code; throw error; }
 function tx(client) {
   if (!client || typeof client.query !== "function" || (typeof client.connect === "function" && typeof client.idleCount === "number")) fail("transaction client required");
@@ -50,15 +73,15 @@ async function recordAdcsExpectedIdentityTx({ client, agent, jobId, evidenceId }
       metadata.enrollmentId !== String(enrollment.id) || metadata.destinationSha256 !== destinationSha256 ||
       !HEX.test(metadata.fingerprintSha256 || "") || !HEX.test(metadata.csrSpkiSha256 || "") ||
       metadata.leafSpkiSha256 !== metadata.csrSpkiSha256) fail("evidence does not prove the expected leaf and CSR identity");
-  const stillLive = await client.query(`SELECT 1 FROM certificate_jobs WHERE workspace_id=$1 AND id=$2::uuid
+  const stillLive = await client.query(`SELECT lease_expires_at::text AS receipt_deadline FROM certificate_jobs WHERE workspace_id=$1 AND id=$2::uuid
     AND claim_id=$3::uuid AND attempt_count=$4 AND status IN ('claimed','running') AND lease_expires_at > clock_timestamp()`,
     [agent.workspaceId, job.id, job.claim_id, job.attempt_count]);
   if (!stillLive.rows[0]) fail("the original agent claim is no longer admissible");
   const params = [agent.workspaceId, enrollment.id, agent.id, job.id, job.claim_id, job.attempt_count, evidence.id,
-    snapshotSha256, destinationSha256, metadata.fingerprintSha256, metadata.csrSpkiSha256];
+    snapshotSha256, destinationSha256, metadata.fingerprintSha256, metadata.csrSpkiSha256, stillLive.rows[0].receipt_deadline];
   const inserted = await client.query(`INSERT INTO certops_adcs_expected_identity_receipts
-    (workspace_id,enrollment_id,agent_id,original_job_id,original_claim_id,original_attempt,evidence_id,snapshot_sha256,destination_sha256,fingerprint_sha256,csr_spki_sha256)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    (workspace_id,enrollment_id,agent_id,original_job_id,original_claim_id,original_attempt,evidence_id,snapshot_sha256,destination_sha256,fingerprint_sha256,csr_spki_sha256,origin_xid,receipt_claim_expires_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,txid_current(),$12::timestamptz)
     ON CONFLICT (workspace_id,enrollment_id,original_job_id,original_claim_id,original_attempt) DO NOTHING RETURNING id`, params);
   if (inserted.rows[0]) return { receiptId: inserted.rows[0].id, created: true };
   const prior = (await client.query(`SELECT id,evidence_id,snapshot_sha256,destination_sha256,fingerprint_sha256,csr_spki_sha256
@@ -66,6 +89,34 @@ async function recordAdcsExpectedIdentityTx({ client, agent, jobId, evidenceId }
   if (!prior || String(prior.evidence_id) !== String(evidence.id) || prior.snapshot_sha256 !== snapshotSha256 || prior.destination_sha256 !== destinationSha256 ||
       prior.fingerprint_sha256 !== metadata.fingerprintSha256 || prior.csr_spki_sha256 !== metadata.csrSpkiSha256) fail("receipt replay differs from the committed identity");
   return { receiptId: prior.id, created: false };
+}
+
+// Run in a new transaction after the receipt transaction has committed. Seeing
+// the receipt here while the original lease is live proves that its commit
+// preceded the receipt's immutable deadline. A later lease renewal cannot
+// make a receipt admissible retroactively; a missing witness fails closed.
+async function witnessCommittedAdcsIdentityTx({ client, agent, jobId, receiptId }) {
+  tx(client); uuid(jobId); uuid(receiptId);
+  await assertCurrentAgentCredential({ client, agent });
+  const job = (await client.query(`SELECT id,claim_id,attempt_count,assigned_agent_id,claimed_by_agent_id,status
+    FROM certificate_jobs WHERE workspace_id=$1 AND id=$2::uuid FOR UPDATE`, [agent.workspaceId, jobId])).rows[0];
+  if (!job || !job.claim_id || String(job.assigned_agent_id) !== String(agent.id) ||
+      String(job.claimed_by_agent_id) !== String(agent.id) || !["claimed", "running"].includes(job.status)) {
+    fail("the original agent claim is no longer admissible");
+  }
+  const seen = await client.query(`WITH observation AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
+    UPDATE certops_adcs_expected_identity_receipts r
+    SET committed_seen_at=COALESCE(r.committed_seen_at,o.observed_at)
+    FROM observation o
+    WHERE r.workspace_id=$1 AND r.id=$2::uuid AND r.agent_id=$3::uuid AND r.original_job_id=$4::uuid
+      AND r.original_claim_id=$5::uuid AND r.original_attempt=$6
+      AND r.origin_xid IS NOT NULL AND r.origin_xid <> txid_current()
+      AND (r.committed_seen_at IS NOT NULL OR r.receipt_claim_expires_at > o.observed_at)
+      AND EXISTS (SELECT 1 FROM certificate_jobs j WHERE j.workspace_id=r.workspace_id AND j.id=r.original_job_id
+        AND j.lease_expires_at > o.observed_at) RETURNING r.id`,
+  [agent.workspaceId, receiptId, agent.id, jobId, job.claim_id, job.attempt_count]);
+  if (!seen.rows[0]) fail("committed identity was not observed within the original claim");
+  return true;
 }
 
 /** Records a non-executable recovery intent; never dispatches CA work. */
@@ -76,15 +127,28 @@ async function prepareAdcsProofRecoveryTx({ client, workspaceId, enrollmentId, o
   const owner = (await client.query(`SELECT agent_id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2::uuid`, [workspaceId, enrollmentId])).rows[0];
   if (!owner) fail("enrollment not found");
   await client.query(`SELECT id FROM certops_agents WHERE workspace_id=$1 AND id=$2::uuid FOR SHARE`, [workspaceId, owner.agent_id]);
-  const enrollment = (await client.query(`SELECT e.id,e.agent_id,e.certificate_id,e.current_job_id,e.snapshot_bytes,e.snapshot_sha256,e.deploy_target,j.status AS original_status,
-      j.claim_id AS original_claim_id,j.attempt_count AS original_attempt,j.needs_operator_reconciliation
+  const enrollment = (await client.query(`SELECT e.id,e.agent_id,e.certificate_id,e.current_job_id,e.snapshot_bytes,e.snapshot_sha256,e.deploy_target,
+      j.status AS original_status,j.needs_operator_reconciliation,j.reconciliation_reason
     FROM certificate_enrollments e JOIN certificate_jobs j ON j.workspace_id=e.workspace_id AND j.enrollment_id=e.id AND j.id=$3::uuid
     WHERE e.workspace_id=$1 AND e.id=$2::uuid AND e.state NOT IN ('cancelled','expired','abandoned') FOR UPDATE OF e`, [workspaceId, enrollmentId, originalJobId])).rows[0];
-  if (!enrollment || String(enrollment.agent_id) !== String(owner.agent_id) || enrollment.original_status !== "orphaned_unknown_effect" || enrollment.needs_operator_reconciliation !== true || !enrollment.original_claim_id) fail("the exact orphaned enrollment job is required");
+  if (!enrollment || String(enrollment.agent_id) !== String(owner.agent_id) || enrollment.original_status !== "orphaned_unknown_effect") fail("the exact orphaned enrollment job is required");
   if (String(enrollment.current_job_id) !== originalJobId) fail("another enrollment attempt already superseded this job");
-  const receipt = (await client.query(`SELECT id,snapshot_sha256,destination_sha256 FROM certops_adcs_expected_identity_receipts WHERE workspace_id=$1 AND enrollment_id=$2::uuid
-    AND original_job_id=$3::uuid AND original_claim_id=$4::uuid AND original_attempt=$5 AND agent_id=$6::uuid`,
-    [workspaceId, enrollmentId, originalJobId, enrollment.original_claim_id, enrollment.original_attempt, enrollment.agent_id])).rows[0];
+  const receipts = (await client.query(`SELECT r.id,r.snapshot_sha256,r.destination_sha256,
+      CASE WHEN p.status='succeeded' THEN i.id END AS completed_intent_id
+    FROM certops_adcs_expected_identity_receipts r
+    JOIN certificate_jobs original ON original.workspace_id=r.workspace_id AND original.id=r.original_job_id
+    LEFT JOIN certops_adcs_proof_recovery_intents i ON i.workspace_id=r.workspace_id AND i.receipt_id=r.id
+    LEFT JOIN certificate_jobs p ON p.workspace_id=i.workspace_id AND p.id=i.proof_job_id AND p.operation='adcs-installation-proof'
+    WHERE r.workspace_id=$1 AND r.enrollment_id=$2::uuid AND r.original_job_id=$3::uuid
+      AND r.agent_id=$4::uuid AND r.committed_seen_at IS NOT NULL
+      AND ${ORIGINAL_CLAIM_MATCH}`, [workspaceId, enrollmentId, originalJobId, enrollment.agent_id])).rows;
+  const receipt = receipts.length === 1 ? receipts[0] : null;
+  if (enrollment.needs_operator_reconciliation !== true) {
+    if (enrollment.reconciliation_reason === "installation_verified_by_proof" && receipt?.completed_intent_id) {
+      return { intentId: receipt.completed_intent_id, state: "completed", created: false };
+    }
+    fail("the exact orphaned enrollment job is required");
+  }
   if (!receipt) {
     await client.query(`UPDATE managed_certificates SET reconciliation_reason='expected_identity_unavailable',updated_at=NOW()
       WHERE workspace_id=$1 AND id=$2::uuid`, [workspaceId, enrollment.certificate_id]);
@@ -113,52 +177,58 @@ async function prepareAdcsProofRecoveryTx({ client, workspaceId, enrollmentId, o
 async function queueAdcsProofRecoveryTx({ client, workspaceId, intentId, actorUserId, env = process.env }) {
   tx(client); uuid(workspaceId); uuid(intentId);
   if (!Number.isInteger(actorUserId) || actorUserId <= 0) fail("operator required");
-  const candidate = (await client.query(`SELECT agent_id,proof_job_id,enrollment_id FROM certops_adcs_proof_recovery_intents WHERE workspace_id=$1 AND id=$2::uuid`, [workspaceId, intentId])).rows[0];
+  const candidate = (await client.query(`SELECT i.agent_id
+    FROM certops_adcs_proof_recovery_intents i
+    JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id
+    WHERE i.workspace_id=$1 AND i.id=$2::uuid AND r.committed_seen_at IS NOT NULL`, [workspaceId, intentId])).rows[0];
   if (!candidate) fail("proof recovery intent not found");
-  if (candidate.proof_job_id) {
-    const eligible = await client.query(`SELECT id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2::uuid
-      AND state NOT IN ('cancelled','expired','abandoned') FOR SHARE`, [workspaceId, candidate.enrollment_id]);
-    if (!eligible.rows[0]) fail("proof enrollment is terminal or unavailable");
-    const job = await require("./jobs").getCertificateJobById({ client, workspaceId, jobId: candidate.proof_job_id, env });
-    return { job, created: false };
-  }
   const agent = (await client.query(`SELECT status,platform,declared_capabilities,capabilities_updated_at FROM certops_agents
     WHERE workspace_id=$1 AND id=$2::uuid FOR SHARE`, [workspaceId, candidate.agent_id])).rows[0];
+  const intent = (await client.query(`SELECT i.id,i.agent_id,i.enrollment_id,i.receipt_id,i.state,i.proof_job_id,e.certificate_id,e.deploy_target,e.snapshot_bytes,
+      e.snapshot_sha256 AS current_snapshot_sha256,r.snapshot_sha256,r.destination_sha256
+    FROM certops_adcs_proof_recovery_intents i JOIN certificate_enrollments e ON e.workspace_id=i.workspace_id AND e.id=i.enrollment_id
+    JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id AND r.enrollment_id=e.id AND r.agent_id=i.agent_id AND r.committed_seen_at IS NOT NULL
+    JOIN certificate_jobs original ON original.workspace_id=r.workspace_id AND original.id=r.original_job_id
+    LEFT JOIN certificate_jobs p ON p.workspace_id=i.workspace_id AND p.id=i.proof_job_id AND p.operation='adcs-installation-proof'
+    WHERE i.workspace_id=$1 AND i.id=$2::uuid AND e.current_job_id=original.id AND original.enrollment_id=e.id
+      AND e.state NOT IN ('cancelled','expired','abandoned')
+      AND original.status='orphaned_unknown_effect' AND (original.needs_operator_reconciliation=TRUE
+        OR (original.reconciliation_reason='installation_verified_by_proof' AND p.status='succeeded'))
+      AND ${ORIGINAL_CLAIM_MATCH}
+    FOR UPDATE OF i,e SKIP LOCKED`, [workspaceId, intentId])).rows[0];
+  if (!intent || String(intent.agent_id) !== String(candidate.agent_id)) fail("proof intent is busy or changed");
+  const { createCertificateJob, getCertificateJobById, isTerminalJobStatus } = require("./jobs");
+  const previousJob = intent.proof_job_id
+    ? await getCertificateJobById({ client, workspaceId, jobId: intent.proof_job_id, env })
+    : null;
+  if (intent.proof_job_id && !previousJob) fail("proof job is unavailable");
+  if (previousJob && previousJob.status !== "failed") {
+    return { job: previousJob, created: false, state: isTerminalJobStatus(previousJob.status) ? "completed" : "queued" };
+  }
   const { hasFreshCapability } = require("./agentJobEligibility");
   if (!agent || agent.status !== "active" || agent.platform !== "win32" ||
       ["adcs-store-proof-only-v1", "windows-store-only-adcs-v1", "adcs-enroll-v1", "evidence-claim-binding-v1"].some(capability =>
         !hasFreshCapability({ declaredCapabilities: agent.declared_capabilities, capabilitiesUpdatedAt: agent.capabilities_updated_at, capability, env }))) {
     fail("original agent does not declare the qualified proof capability", "CERTOPS_ADCS_PROOF_AGENT_UNAVAILABLE");
   }
-  const intent = (await client.query(`SELECT i.id,i.agent_id,i.enrollment_id,i.receipt_id,i.state,i.proof_job_id,e.certificate_id,e.deploy_target,e.snapshot_bytes,
-      e.snapshot_sha256 AS current_snapshot_sha256,r.snapshot_sha256,r.destination_sha256
-    FROM certops_adcs_proof_recovery_intents i JOIN certificate_enrollments e ON e.workspace_id=i.workspace_id AND e.id=i.enrollment_id
-    JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id AND r.enrollment_id=e.id AND r.agent_id=i.agent_id
-    JOIN certificate_jobs original ON original.workspace_id=r.workspace_id AND original.id=r.original_job_id
-    WHERE i.workspace_id=$1 AND i.id=$2::uuid AND e.current_job_id=original.id AND original.enrollment_id=e.id
-      AND e.state NOT IN ('cancelled','expired','abandoned')
-      AND original.status='orphaned_unknown_effect' AND original.needs_operator_reconciliation=TRUE
-      AND original.claim_id=r.original_claim_id AND original.attempt_count=r.original_attempt
-    FOR UPDATE OF i,e SKIP LOCKED`, [workspaceId, intentId])).rows[0];
-  if (!intent || String(intent.agent_id) !== String(candidate.agent_id)) fail("proof intent is busy or changed");
-  if (intent.proof_job_id) {
-    const job = await require("./jobs").getCertificateJobById({ client, workspaceId, jobId: intent.proof_job_id, env });
-    return { job, created: false };
-  }
   const target = intent.deploy_target;
   const digest = crypto.createHash("sha256").update(Buffer.from(intent.snapshot_bytes)).digest("hex");
   const destination = target?.type === "windows-cert-store" && target.store === "My"
     ? crypto.createHash("sha256").update(JSON.stringify({ type: "windows-cert-store", reference: target.reference, store: "My" })).digest("hex") : null;
   if (digest !== intent.current_snapshot_sha256 || digest !== intent.snapshot_sha256 || destination !== intent.destination_sha256) fail("enrollment identity changed after the receipt");
-  const outcome = await require("./jobs").createCertificateJob({ client, transactionOwned: true, workspaceId,
+  if (previousJob) {
+    await client.query(`UPDATE certops_adcs_proof_recovery_intents SET state='transport_unavailable',proof_job_id=NULL
+      WHERE workspace_id=$1 AND id=$2::uuid AND proof_job_id=$3::uuid`, [workspaceId, intentId, previousJob.id]);
+  }
+  const outcome = await createCertificateJob({ client, transactionOwned: true, workspaceId,
     operation: "adcs-installation-proof", allowAdcsProofOnly: true, adcsProofIntentId: intent.id,
     enrollmentId: intent.enrollment_id, assignedAgentId: intent.agent_id, subjectType: "managed_certificate",
     subjectId: String(intent.certificate_id), source: "api", mode: "real", requestedByUserId: actorUserId,
-    idempotencyKey: `adcs-proof:${intent.receipt_id}`, returnOutcome: true,
+    idempotencyKey: `adcs-proof:${intent.receipt_id}${previousJob ? `:${previousJob.id}` : ""}`, returnOutcome: true,
     payload: { schemaVersion: 1, certificateId: String(intent.certificate_id), target: intent.deploy_target, keyMode: "os-store-managed" } });
   await client.query(`UPDATE certops_adcs_proof_recovery_intents SET state='queued',proof_job_id=$3
     WHERE workspace_id=$1 AND id=$2::uuid AND proof_job_id IS NULL`, [workspaceId, intentId, outcome.job.id]);
-  return outcome;
+  return { ...outcome, state: "queued" };
 }
 
 // Shared by Core and edition claim gates. A missing or locked binding means
@@ -169,7 +239,7 @@ async function loadAdcsProofJobBindingTx({ client, workspaceId, jobId, agentId }
       r.snapshot_sha256,r.destination_sha256,r.fingerprint_sha256,r.csr_spki_sha256,e.snapshot_bytes,e.snapshot_sha256 AS current_snapshot_sha256,e.deploy_target,
       j.subject_id,j.assigned_agent_id,j.enrollment_id AS job_enrollment_id,j.payload
     FROM certops_adcs_proof_recovery_intents i
-    JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id
+    JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id AND r.committed_seen_at IS NOT NULL
     JOIN certificate_enrollments e ON e.workspace_id=i.workspace_id AND e.id=i.enrollment_id
     JOIN certificate_jobs j ON j.workspace_id=i.workspace_id AND j.id=i.proof_job_id
     JOIN certificate_jobs original ON original.workspace_id=r.workspace_id AND original.id=r.original_job_id
@@ -180,7 +250,7 @@ async function loadAdcsProofJobBindingTx({ client, workspaceId, jobId, agentId }
       AND j.subject_type='managed_certificate' AND j.subject_id=e.certificate_id::text AND mc.deployed_agent_id=i.agent_id
       AND r.enrollment_id=e.id AND r.agent_id=i.agent_id
       AND e.current_job_id=original.id AND original.enrollment_id=e.id AND original.status='orphaned_unknown_effect'
-      AND original.needs_operator_reconciliation=TRUE AND original.claim_id=r.original_claim_id AND original.attempt_count=r.original_attempt
+      AND original.needs_operator_reconciliation=TRUE AND ${ORIGINAL_CLAIM_MATCH}
     FOR SHARE OF i,r,e SKIP LOCKED`, [workspaceId, jobId, agentId])).rows[0];
   if (!row) return null;
   const target = row.deploy_target;
@@ -195,4 +265,4 @@ async function loadAdcsProofJobBindingTx({ client, workspaceId, jobId, agentId }
     fingerprintSha256: row.fingerprint_sha256, csrSpkiSha256: row.csr_spki_sha256 };
 }
 
-module.exports = { recordAdcsExpectedIdentityTx, prepareAdcsProofRecoveryTx, queueAdcsProofRecoveryTx, loadAdcsProofJobBindingTx };
+module.exports = { recordAdcsExpectedIdentityTx, witnessCommittedAdcsIdentityTx, prepareAdcsProofRecoveryTx, queueAdcsProofRecoveryTx, loadAdcsProofJobBindingTx };

@@ -1615,13 +1615,23 @@ function evidenceItem(item) {
 
 function observationHistoryItem(item, includeTopology) {
   const metadata = item.metadata || {};
-  const allowed = ["fingerprintSha256", "observedRevocationVerdict", "observedRevocationState", "observedRevocationCheckedAt", "observedRevocationValidUntil"];
-  if (includeTopology) allowed.push("observedRevocationDetail", "agentId", "source", "targetHost", "locationSlot", "filePath");
+  const allowed = [
+    "fingerprintSha256",
+    "observedRevocationVerdict",
+    "observedRevocationState",
+    "observedRevocationCheckedAt",
+    "observedRevocationValidUntil",
+  ];
+  if (includeTopology) {
+    allowed.push("observedRevocationDetail", "agentId", "source", "targetHost", "locationSlot", "filePath");
+  }
   return {
     id: item.id,
     observedAt: item.observedAt,
     createdAt: item.createdAt,
-    metadata: Object.fromEntries(allowed.filter((key) => metadata[key] != null).map((key) => [key, metadata[key]])),
+    metadata: Object.fromEntries(
+      allowed.filter((key) => metadata[key] != null).map((key) => [key, metadata[key]]),
+    ),
   };
 }
 
@@ -4067,61 +4077,125 @@ router.patch(
   },
 );
 
-function createObservationHistoryHandler({ certificateReader = getManagedCertificate, evidenceReader = listCertificateEvidence } = {}) {
+const OBSERVATION_HISTORY_STATUSES = [
+  "good",
+  "revoked",
+  "issuer_revoked",
+  "unknown",
+  "not_configured",
+  "disabled",
+  "invalid_observation",
+  "unavailable",
+];
+
+function normalizeObservationHistoryTimestamp(value) {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-](\d{2}):(\d{2}))$/.exec(value);
+  if (!match) return null;
+  const [year, month, day, hour, minute, second, zoneHour, zoneMinute] = match.slice(1).map(Number);
+  const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const timestamp = Date.parse(value);
+  if (
+    year < 100 || month < 1 || month > 12 || day < 1 || day > days ||
+    hour > 23 || minute > 59 || second > 59 || zoneHour > 23 || zoneMinute > 59 ||
+    !Number.isFinite(timestamp)
+  ) {
+    return null;
+  }
+  // Use UTC bounds so PostgreSQL does not need to parse the supplied offset.
+  const utc = new Date(timestamp).toISOString();
+  return utc.length === 24 ? utc : null;
+}
+
+function createObservationHistoryHandler({
+  certificateReader = getManagedCertificate,
+  evidenceReader = listCertificateEvidence,
+} = {}) {
   return async (req, res) => {
-    if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
-      return res.status(404).json({ error: "Certificate not found", code: "CERTOPS_CERTIFICATE_NOT_FOUND" });
+    const { certId } = req.params;
+    if (!UUID_PATTERN.test(String(certId || ""))) {
+      return res.status(404).json({
+        error: "Certificate not found",
+        code: "CERTOPS_CERTIFICATE_NOT_FOUND",
+      });
     }
     try {
-      const certificate = await certificateReader({ workspaceId: req.workspace.id, certId: req.params.certId });
-      if (!certificate) return res.status(404).json({ error: "Certificate not found", code: "CERTOPS_CERTIFICATE_NOT_FOUND" });
-      if (req.query.fingerprint && String(req.query.fingerprint).toLowerCase() !== String(certificate.fingerprintSha256 || "").toLowerCase()) {
-        return res.status(409).json({ error: "Certificate changed. Reload its details.", code: "CERTOPS_CERTIFICATE_CHANGED" });
+      const certificate = await certificateReader({ workspaceId: req.workspace.id, certId });
+      if (!certificate) {
+        return res.status(404).json({
+          error: "Certificate not found",
+          code: "CERTOPS_CERTIFICATE_NOT_FOUND",
+        });
       }
-      const includeTopology = req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager");
       const query = req.query;
-      const invalid = () => res.status(400).json({ error: "Invalid observation history query", code: CERTOPS_EVIDENCE_INVALID });
-      const validTimestamp = (value) => {
-        if (typeof value !== "string") return false;
-        const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(value);
-        if (!match) return false;
-        const [, year, month, day, hour, minute, second, , zoneHour, zoneMinute] = match;
-        const days = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
-        return Number(year) >= 100 && Number(month) >= 1 && Number(month) <= 12 && Number(day) >= 1 && Number(day) <= days && Number(hour) <= 23 && Number(minute) <= 59 && Number(second) <= 59 && (zoneHour === undefined || (Number(zoneHour) <= 23 && Number(zoneMinute) <= 59)) && Number.isFinite(Date.parse(value));
-      };
-      const statuses = ["good", "revoked", "issuer_revoked", "unknown", "not_configured", "disabled", "invalid_observation", "unavailable"];
-      if (query.location !== undefined && !includeTopology) {
-        return res.status(403).json({ error: "Insufficient permissions for observation filter", code: "FORBIDDEN" });
+      if (
+        query.fingerprint &&
+        String(query.fingerprint).toLowerCase() !== String(certificate.fingerprintSha256 || "").toLowerCase()
+      ) {
+        return res.status(409).json({
+          error: "Certificate changed. Reload its details.",
+          code: "CERTOPS_CERTIFICATE_CHANGED",
+        });
       }
-      if ((query.revocationStatus !== undefined && (typeof query.revocationStatus !== "string" || !statuses.includes(query.revocationStatus))) ||
-          (query.location !== undefined && (typeof query.location !== "string" || !query.location.trim() || query.location.length > 256)) ||
-          ["since", "until"].some((key) => query[key] !== undefined && !validTimestamp(query[key])) ||
-          (query.since !== undefined && query.until !== undefined && Date.parse(query.since) > Date.parse(query.until))) return invalid();
-      if (!includeTopology && (req.query.sortBy === "source" || req.query.sortBy === "location")) {
-        return res.status(403).json({ error: "Insufficient permissions for observation sort", code: "FORBIDDEN" });
+      const includeTopology =
+        req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager");
+      if (query.location !== undefined && !includeTopology) {
+        return res.status(403).json({
+          error: "Insufficient permissions for observation filter",
+          code: "FORBIDDEN",
+        });
+      }
+      if (!includeTopology && (query.sortBy === "source" || query.sortBy === "location")) {
+        return res.status(403).json({
+          error: "Insufficient permissions for observation sort",
+          code: "FORBIDDEN",
+        });
+      }
+      const since = normalizeObservationHistoryTimestamp(query.since);
+      const until = normalizeObservationHistoryTimestamp(query.until);
+      if (
+        (query.revocationStatus !== undefined && !OBSERVATION_HISTORY_STATUSES.includes(query.revocationStatus)) ||
+        (query.location !== undefined &&
+          (typeof query.location !== "string" || !query.location.trim() || query.location.length > 256)) ||
+        since === null || until === null || (since && until && since > until)
+      ) {
+        return res.status(400).json({
+          error: "Invalid observation history query",
+          code: CERTOPS_EVIDENCE_INVALID,
+        });
       }
       const result = await evidenceReader({
         workspaceId: req.workspace.id,
         subjectType: "managed_certificate",
-        subjectId: req.params.certId,
+        subjectId: certId,
         observationsOnly: true,
         currentCertificateFingerprintOnly: true,
         expectedFingerprint: certificate.fingerprintSha256,
-        limit: req.query.limit,
-        offset: req.query.offset,
-        sortBy: req.query.sortBy,
-        sortDirection: req.query.sortDirection,
+        limit: query.limit,
+        offset: query.offset,
+        sortBy: query.sortBy,
+        sortDirection: query.sortDirection,
         revocationStatus: query.revocationStatus,
         location: query.location?.trim(),
-        since: query.since,
-        until: query.until,
+        since,
+        until,
       });
-      return res.json({ items: result.items.map((item) => observationHistoryItem(item, includeTopology)), pagination: result.pagination });
+      return res.json({
+        items: result.items.map((item) => observationHistoryItem(item, includeTopology)),
+        pagination: result.pagination,
+      });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
-      logger.error("CertOps certificate observations list failed", { code: err.code || null, workspaceId: req.workspace?.id });
-      return res.status(500).json({ error: "Failed to list certificate observations", code: "INTERNAL_ERROR" });
+      logger.error("CertOps certificate observations list failed", {
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list certificate observations",
+        code: "INTERNAL_ERROR",
+      });
     }
   };
 }

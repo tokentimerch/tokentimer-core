@@ -49,8 +49,10 @@ it("validates filters and denies viewer location queries before reading evidence
   await handler({ ...req, authz: { workspaceRole: "viewer" }, query: { location: "host" } }, denied);
   assert.equal(denied.statusCode, 403); assert.equal(calls.length, 0);
   const accepted = response();
-  await handler({ ...req, query: { revocationStatus: "disabled", location: " host ", since: "2026-01-01T01:00:00+01:00", until: "2026-01-02T00:00:00Z" } }, accepted);
+  await handler({ ...req, query: { revocationStatus: "disabled", location: " host ", since: "2026-01-01T23:00:00+23:00", until: "2026-01-02T00:00:00Z" } }, accepted);
   assert.equal(accepted.statusCode, 200); assert.equal(calls[0].location, "host"); assert.equal(calls[0].revocationStatus, "disabled");
+  assert.equal(calls[0].since, "2026-01-01T00:00:00.000Z");
+  assert.equal(calls[0].until, "2026-01-02T00:00:00.000Z");
 });
 
 

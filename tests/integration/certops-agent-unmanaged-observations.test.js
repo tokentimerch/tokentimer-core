@@ -483,6 +483,37 @@ describe("Quota-blocked agent observations on real PostgreSQL", function () {
     assert.equal(grouped.items[0].observedRevocation.verdict, "revoked");
   });
 
+  it("projects a revoked issuing CA by exact fingerprint and retains it after an unavailable check", async () => {
+    const principal = await agent(0);
+    const issuerFingerprint = "a".repeat(64);
+    await db.query(`INSERT INTO certops_certificate_identities(workspace_id,fingerprint_sha256,common_name)
+      VALUES($1,$2,'Synthetic issuing CA')`, [principal.workspaceId, issuerFingerprint]);
+    const base = Date.now();
+    const report = (verdict, offset) => {
+      const item = observation("/etc/ssl/issuer-revocation.pem");
+      item.metadata.push(
+        { name: "observedRevocationVerdict", value: verdict },
+        { name: "observedChainStatus", value: verdict === "unknown" ? "unknown" : "valid" },
+        { name: "observedRevocationCheckedAt", value: new Date(base + offset).toISOString() },
+      );
+      if (verdict !== "unknown") item.metadata.push(
+        { name: "observedRevocationValidUntil", value: new Date(base + 3600000).toISOString() },
+        { name: "observedRevokedIssuerFingerprintSha256", value: issuerFingerprint },
+      );
+      return item;
+    };
+    await send(principal, 1, [report("issuer_revoked", -60000)]);
+    let listed = await listCertificateIdentities({ workspaceId: principal.workspaceId, client: db });
+    const issuer = listed.items.find(item => item.fingerprintSha256 === issuerFingerprint);
+    assert.equal(issuer.observedRevocation.verdict, "revoked");
+    assert.equal(issuer.observedRevocation.derivedFromIssuerChain, true);
+    assert.equal(issuer.lifecycleStatus, "active");
+    assert.equal(listed.items.find(item => item.fingerprintSha256 === fingerprint).observedRevocation.verdict, "issuer_revoked");
+    await send(principal, 2, [report("unknown", -1000)]);
+    listed = await listCertificateIdentities({ workspaceId: principal.workspaceId, client: db });
+    assert.equal(listed.items.find(item => item.fingerprintSha256 === issuerFingerprint).observedRevocation.lastVerified.verdict, "revoked");
+  });
+
   it("rolls back the sequence and retained observations on non-admission database failures", async () => {
     const principal = await agent();
     await db.query(`CREATE FUNCTION reject_unmanaged_evidence() RETURNS trigger LANGUAGE plpgsql AS $$

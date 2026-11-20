@@ -5,9 +5,32 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const reservedMigrationGaps = [123, 124];
+
 const { migrations, validateMigrationHistory } = require(
   path.resolve(__dirname, "../../apps/api/migrations/migrate.js"),
 );
+
+it("preserves the Store-only provider preview through its receipt deadline", () => {
+  const { composeMigrations } = require("../../apps/api/migrations/compose-migrations");
+  const names = new Map(migrations.map(({ version, name }) => [version, name]));
+  const identities = (rows) => rows.map(({ version, name }) => ({ version, name }));
+  const base = identities(migrations.filter(({ version }) => version < 78));
+  const previewVersions = [78, 79, 80, 83, 81, 82, 84, 85, 92, 93, 99, 100, 101, 86, 87, 88, 89, 90, 91,
+    94, 95, 96, 97, 98, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 126];
+  const preview = previewVersions.map((version, index) => ({ version: 78 + index, name: names.get(version) }));
+  const recorded = [...base, ...preview];
+  const added = [118, 119, 120, 121, 122, 125, 127].map((version, index) => ({ version: 119 + index, name: names.get(version) }));
+  const expected = [...recorded, ...added];
+  validateMigrationHistory(recorded);
+  assert.deepEqual(identities(composeMigrations(migrations, recorded)), expected);
+  validateMigrationHistory(expected);
+  assert.deepEqual(identities(composeMigrations(migrations, expected)), expected);
+
+  const nearMiss = [...recorded.slice(0, -2),
+    { version: 117, name: preview.at(-1).name }, { version: 118, name: preview.at(-2).name }];
+  assert.throws(() => validateMigrationHistory(nearMiss), /Unsupported Core migration history/);
+});
 
 describe("operational notifications migration", () => {
   it("appends v56 after the unchanged historical v1-v55 migrations", () => {
@@ -37,9 +60,11 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 74).name, "certops_material_distribution");
     assert.equal(migrations.find((entry) => entry.version === 75).name, "certops_distribution_review");
     assert.equal(migrations.find((entry) => entry.version === 76).name, "certops_distribution_transfer");
-    assert.equal(migrations.at(-1).version, 125);
+    assert.equal(migrations.at(-1).version, 127);
     assert.equal(migrations.find((entry) => entry.version === 114).name, "distribution_pagerduty_recovery");
-    assert.equal(migrations.find((entry) => entry.version === 115).name, "certops_observed_revocation");
+    assert.equal(migrations.find((entry) => entry.version === 115).name, "store_issuance_explicit_renewal_consent");
+    assert.equal(migrations.find((entry) => entry.version === 116).name, "certops_acme_store_enrollment_identity");
+    assert.equal(migrations.find((entry) => entry.version === 117).name, "certops_adcs_expected_identity_receipts");
     assert.equal(migrations.find(entry => entry.version === 82).name, "auto_sync_system_metrics");
     assert.equal(
       migrations.find((entry) => entry.version === 78).name,
@@ -53,17 +78,19 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 106).name, "operator_issuance");
     assert.equal(migrations.find((entry) => entry.version === 107).name, "certops_issuance_job_identity");
     assert.equal(migrations.find((entry) => entry.version === 108).name, "certops_issuance_identity_transfer");
+
     assert.equal(migrations.find((entry) => entry.version === 98).name, "certops_manual_rollout_authority");
     assert.equal(migrations.find((entry) => entry.version === 109).name, "certops_period_creator_delete");
     assert.equal(migrations.find((entry) => entry.version === 112).name, "certops_retirement_dossiers");
     assert.equal(migrations.find((entry) => entry.version === 113).name, "certops_material_reconciliation");
-    assert.equal(migrations.find((entry) => entry.version === 116).name, "store_issuance_explicit_renewal_consent");
     assert.equal(migrations.find((entry) => entry.version === 110).name, "recipient_member_verification");
     assert.equal(migrations.find((entry) => entry.version === 111).name, "auto_sync_owner_username");
-    assert.equal(migrations.find((entry) => entry.version === 117).name, "certops_acme_store_enrollment_identity");
-    assert.equal(migrations.find((entry) => entry.version === 118).name, "certops_adcs_expected_identity_receipts");
-    assert.equal(migrations.find((entry) => entry.version === 122).name, "certops_enrollment_jobs_index");
-    assert.equal(migrations.at(-1).name, "certops_adcs_preflight_lookup_index");
+    assert.equal(migrations.find(entry => entry.version === 113).name, "certops_material_reconciliation");
+    assert.equal(migrations.find(entry => entry.version === 114).name, "distribution_pagerduty_recovery");
+    assert.equal(migrations.find((entry) => entry.version === 125).name, "certops_adcs_preflight_lookup_index");
+    assert.equal(migrations.find((entry) => entry.version === 126).name, "certops_adcs_receipt_deadline");
+    assert.equal(migrations.find(entry => entry.version === 122).name, "certops_observed_revocation");
+    assert.equal(migrations.at(-1).name, "auto_sync_creation_expiration");
     assert.equal(migrations.find(entry => entry.version === 95).name, "remove_pagerduty_rest_lookup");
     assert.throws(() => validateMigrationHistory([
       ...migrations.filter(entry => entry.version <= 78).map(({version, name}) => ({version, name})),
@@ -73,7 +100,7 @@ describe("operational notifications migration", () => {
     assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      [...Array.from({ length: 122 }, (_, index) => index + 1), 125],
+      [...Array.from({ length: 122 }, (_, index) => index + 1), 125, 126, 127],
     );
     assert.equal(migrations.find(entry => entry.version === 73).name, "certops_job_alert_context");
     assert.match(migrations.find(entry => entry.version === 72).sql, /ON DELETE SET NULL \(issuer_id\)/);
@@ -450,11 +477,12 @@ describe("CertOps inventory migration", () => {
     const expectedTailVersions = Array.from(
       { length: Math.max(...tailVersions) - 10 },
       (_, index) => 11 + index,
-    ).filter((version) => (notificationCount === 4 || !notificationVersions.includes(version)) && ![123, 124].includes(version));
+    ).filter((version) => !reservedMigrationGaps.includes(version) &&
+        (notificationCount === 4 || !notificationVersions.includes(version)));
     assert.deepEqual(
       tailVersions,
       expectedTailVersions,
-      "migration versions from 11 onward may omit only PR #140 and secure-agent reserved slots",
+      "migration versions from 11 onward may omit only explicit reserved slots",
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -1910,7 +1938,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     assert.doesNotMatch(migration.sql, /DROP COLUMN/i);
   });
 
-  it("keeps migration versions ordered with explicit reserved gaps", () => {
+  it("keeps migration versions ordered with only explicit reserved gaps", () => {
     const versions = migrations.map((entry) => entry.version);
     const sorted = [...versions].sort((a, b) => a - b);
     assert.deepEqual(versions, sorted, "migrations array must be declared in version order");
@@ -1918,9 +1946,10 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const notificationCount = notificationVersions.filter((version) => sorted.includes(version)).length;
     assert.ok(notificationCount === 0 || notificationCount === 4);
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
-      .filter((version) => (notificationCount === 4 || !notificationVersions.includes(version)) && ![123, 124].includes(version));
+      .filter((version) => !reservedMigrationGaps.includes(version) &&
+        (notificationCount === 4 || !notificationVersions.includes(version)));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 125);
+    assert.equal(sorted[sorted.length - 1], 127);
   });
 });
 

@@ -101,9 +101,9 @@ Top level:
 | `declaredTargetSelectors` | string[] | `[]` | Target names this agent accepts. A non-empty list is sent again on every heartbeat, so adding a DNS name and restarting the agent publishes it. An empty list does not clear the stored names. |
 | `declaredCommandProfileNames` | string[] | `[]` | Sent at registration and on every heartbeat (a list, even an empty one), so adding or removing a profile and restarting the agent updates the control plane. An agent older than 0.18.0 sends it only at registration. |
 | `policy` | object or null | null | Agent-local allowlists (below). Null means every allowlist is empty: default deny. |
-| `discovery` | object or null | null | Filesystem discovery is off until `discovery.directories` is configured; there is no default directory. The default interval is 60 minutes. Windows store discovery is separate. |
-| `windowsDiscovery` | object or null | enabled | Windows defaults to `LocalMachine\My` every 30 minutes and also observes stores referenced by IIS/HTTP.sys bindings. Change `windowsDiscovery.intervalMs` to a positive integer in milliseconds and restart the agent to adjust this interval. For GPO-distributed CA certificates, set `stores` to `["My", "Root", "CA"]` to include root and intermediate stores. |
-| `observedRevocation` | object or null | enabled in new installer configurations; no origins | Add approved CRL/OCSP HTTP(S) origins to `allowedOrigins` and restart the agent. If the CA publishes a delta CRL, its advertised HTTP(S) origin must also be allowed; LDAP-only locations and restricted CRL scopes are unsupported. Missing, invalid or stale data remains unknown or stale. An empty list makes no requests; an absent block or `enabled: false` disables checks. Upgrade the control plane and console before agents. Checks follow discovery intervals. Revocation checks read system trust with Node 22.15–22.x, 23.10–23.x, or 24.x; otherwise provide `trustAnchorFiles`. Optional `intermediateFiles` add PEM intermediates. Root trust anchors are not revocation-checked. |
+| `discovery` | object or null | null | Filesystem discovery is off until `discovery.directories` is configured. The default interval is 60 minutes. |
+| `windowsDiscovery` | object or null | enabled | Windows scans `LocalMachine\\My` every 30 minutes and also observes stores referenced by IIS or HTTP.sys bindings. For GPO-distributed CA certificates, use `stores: ["My", "Root", "CA"]`. |
+| `observedRevocation` | object or null | disabled for existing configurations without the block | New installers enable monitoring with an empty allowlist. Add approved HTTP(S) responder origins to `allowedOrigins` and restart the agent. Checks follow the discovery cadence and reuse results within each scan. Optional PEM files provide `trustAnchorFiles` and `intermediateFiles`. |
 | `execution` | object or null | null | Null is treated as `{ enabled: false }` (observe-only mode). |
 | `caBundlePath` | string or null | null | Path to a PEM CA bundle trusted for the agent-to-control-plane HTTPS channel (private-CA control planes). Env override: `TOKENTIMER_AGENT_CA_BUNDLE`. Fail-loud at startup: a missing/unreadable file, a file without a `BEGIN CERTIFICATE` block, or a file containing private key material aborts before any network call. When set, the bundle replaces the default trust store for control-plane requests (it does not extend it); plain `http` URLs are unaffected. When unset, Node's default CA trust applies; the [Windows installer](install-windows.md) enables system CA trust on supported Node versions. |
 | `dnsProviders` | object or null | null | Native DNS-01 solver configuration (see "DNS-01 providers" in [DNS and ACME](dns-and-acme.md)). Maps provider id to `{ credentialsFile: <absolute path>, ...non-secret options }`, plus a reserved `zoneProviderMap` key (zone to provider id). Credentials never live in `config.json`, only the path to a 0600 credentials file does. Fail-loud validation: unknown provider ids, relative paths, and `zoneProviderMap` entries naming unconfigured providers abort startup. |
@@ -158,9 +158,20 @@ the agent configuration and restart the agent:
 
 Revocation checks connect directly to each responder; they do not use proxy environment variables or follow redirects. DNS answers containing loopback or link-local addresses are refused, as are responses larger than 8 MiB. Publish a directly reachable HTTP(S) endpoint and allow its origin.
 
+HTTP(S) base and delta CRLs are supported. Allow both advertised origins.
+LDAP-only locations and restricted CRL scopes are unsupported. The agent uses
+Node’s system trust API when available. If system trust is unavailable, supply
+PEM trust anchors. Root trust anchors themselves have no revocation check.
+Upgrade the control plane and console before agents.
+
 Each reported observation is retained as workspace evidence; the inventory shows
 the latest result and, when a check fails, the last verified result. Evidence
 has no separate revocation retention setting and is deleted with the workspace.
+
+For unknown or stale results, check allowed responder origins, network reachability,
+CA trust and published CRL/OCSP validity. Correct the cause and wait for the next
+scan; restart after changing local configuration. A retained revoked finding
+remains visible until a fresh verified result supersedes it.
 
 If IIS returns HTTP 404.11 for an AD CS delta CRL URL containing `+`, allow
 double escaping only on the dedicated CRL publication directory and verify the

@@ -532,6 +532,10 @@ describe("CertOps route hardening", () => {
         "/api/v1/workspaces/:id/certops/certificates/:certId/instances",
       ],
       [
+        "get",
+        "/api/v1/workspaces/:id/certops/certificates/:certId/observations",
+      ],
+      [
         "post",
         "/api/v1/workspaces/:id/certops/certificates/:certId/retire",
       ],

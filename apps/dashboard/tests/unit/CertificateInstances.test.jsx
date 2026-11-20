@@ -77,10 +77,8 @@ describe('CertificateInstances', () => {
           chainStatus: 'unknown',
           checkedAt: good.checkedAt,
           lastVerified: {
+            ...good,
             verdict: 'issuer_revoked',
-            chainStatus: 'valid',
-            checkedAt: good.checkedAt,
-            validUntil: good.validUntil,
           },
         },
         Date.parse('2026-01-01T00:30:00Z')

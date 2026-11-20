@@ -27,3 +27,21 @@ it('does not expose the action to users without management access', () => {
   expect(mocks.get).not.toHaveBeenCalled();
   expect(screen.queryByRole('button', { name: 'Recover on original agent' })).toBeNull();
 });
+it('shows the verified recovery on historical jobs without making them actionable', () => {
+  render(
+    <ChakraProvider>
+      <AcmeStoreRecovery
+        job={{
+          id: 'job-1',
+          status: 'orphaned_unknown_effect',
+          reconciliationReason: 'installation_verified_by_acme_continuation',
+          resultMetadata: { reconciliationJobId: 'recovery-1' },
+        }}
+      />
+    </ChakraProvider>
+  );
+  expect(screen.getByText('Recovery verified on the original agent by job recovery-1.')).toBeInTheDocument();
+  expect(screen.queryByText(/outcome is uncertain/)).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Recover on original agent' })).toBeNull();
+  expect(mocks.get).not.toHaveBeenCalled();
+});

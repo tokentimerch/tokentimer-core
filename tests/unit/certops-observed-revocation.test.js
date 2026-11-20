@@ -3,6 +3,30 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { normalizeObservedRevocation } = require("../../apps/api/services/certops/observedRevocation");
 
+test("the published response schema accepts every normalized observation state", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const { createRequire } = require("node:module");
+  const yaml = createRequire(require.resolve("mocha/package.json"))("js-yaml");
+  const Ajv = require("ajv");
+  const ajv = new Ajv({ allErrors: true, strict: false });
+  require("ajv-formats")(ajv);
+  const spec = yaml.load(fs.readFileSync(path.join(__dirname, "../../packages/contracts/openapi/openapi.yaml"), "utf8"));
+  const validate = ajv.compile(spec.components.schemas.CertOpsManagedCertificate.properties.observedRevocation);
+  const verified = normalizeObservedRevocation({ ...valid, observedRevocationVerdict: "issuer_revoked", observedRevokedIssuerFingerprintSha256: "a".repeat(64), observedRevocationRevision: "1" }, serverAt);
+  const samples = [
+    normalizeObservedRevocation(valid, serverAt),
+    verified,
+    normalizeObservedRevocation({ observedRevocationState: "disabled", observedRevocationRevision: "2" }, serverAt),
+    normalizeObservedRevocation({ observedRevocationState: "not_configured" }, serverAt),
+    normalizeObservedRevocation({ observedRevocationVerdict: "malformed" }, serverAt),
+    { ...normalizeObservedRevocation({ observedRevocationState: "disabled" }, serverAt), lastVerified: verified },
+    { ...verified, verdict: "revoked", derivedFromIssuerChain: true },
+  ];
+  for (const sample of samples) assert.equal(validate(sample), true, JSON.stringify(validate.errors));
+  assert.equal(validate({ ...verified, unexpectedCredential: "must-not-be-published" }), false);
+});
+
 const serverAt = "2026-01-01T00:30:00Z";
 const valid = { observedRevocationVerdict: "revoked", observedChainStatus: "valid", observedRevocationCheckedAt: "2026-01-01T00:00:00Z", observedRevocationValidUntil: "2026-01-01T01:00:00Z" };
 

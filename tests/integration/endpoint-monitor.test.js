@@ -51,15 +51,16 @@ describe("Endpoint Monitor CRUD", function () {
   // --- POST create ---
 
   it("POST /domains - should create an endpoint monitor", async () => {
+    const monitoredUrl = `${endpoint.url}/ready?probe=canary#section`;
     const res = await request(BASE)
       .post(`/api/v1/workspaces/${workspaceId}/domains`)
       .set("Cookie", session.cookie)
-      .send({ url: endpoint.url })
+      .send({ url: monitoredUrl })
       .expect(201);
 
     expect(res.body).to.have.property("id");
     expect(res.body).to.have.property("url");
-    expect(res.body.url).to.equal(endpoint.url);
+    expect(res.body.url).to.equal(monitoredUrl);
     expect(res.body).to.have.property("health_check_enabled");
     expect(res.body).to.have.property("check_interval");
 
@@ -176,6 +177,23 @@ describe("Endpoint Monitor CRUD", function () {
       .expect(200);
 
     expect(res.body).to.have.property("success", true);
+
+    const audit = await TestUtils.execQuery(
+      `SELECT action, metadata FROM audit_events
+        WHERE workspace_id = $1 AND metadata->>'monitor_id' = $2
+          AND action IN ('DOMAIN_MONITOR_CREATED', 'DOMAIN_MONITOR_UPDATED',
+                         'DOMAIN_MONITOR_HEALTH_CHECK', 'DOMAIN_MONITOR_DELETED')`,
+      [workspaceId, domainId],
+    );
+    expect([...new Set(audit.rows.map((row) => row.action))]).to.have.members([
+      "DOMAIN_MONITOR_CREATED",
+      "DOMAIN_MONITOR_UPDATED",
+      "DOMAIN_MONITOR_HEALTH_CHECK",
+      "DOMAIN_MONITOR_DELETED",
+    ]);
+    for (const row of audit.rows) {
+      expect(row.metadata.url).to.equal(new URL(endpoint.url).origin);
+    }
   });
 
   it("GET /domains - list should be empty after delete", async () => {

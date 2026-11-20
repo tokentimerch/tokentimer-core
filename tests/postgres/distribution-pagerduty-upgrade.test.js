@@ -8,7 +8,7 @@ after(()=>pool.end());
 test("upgrade preserves accepted PagerDuty triggers and verifies historical destinations before recovery",async()=>{
   const index=migrations.findIndex(entry=>entry.version===114);
   assert.notEqual(index,-1);
-  const pending=migrations.splice(index,1);
+  const pending=migrations.splice(index);
   try {
     await runMigrations();
     const f=await require("../helpers/distribution-lifecycle-fixture.cjs").fixture();

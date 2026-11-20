@@ -6123,9 +6123,9 @@ function ImportTokensButton({ label = 'Import' }) {
     };
   }, [onOpen]);
 
-  const onImported = newOnes => {
+  const onImported = (newOnes, deletedCount = 0) => {
     try {
-      if (Array.isArray(newOnes) && newOnes.length > 0) {
+      if ((Array.isArray(newOnes) && newOnes.length > 0) || deletedCount > 0) {
         // Broadcast event so parent can refresh facets
         window.dispatchEvent(new CustomEvent('tt:tokens-imported'));
         // Also notify dashboard listeners to trigger a reload from backend
