@@ -73,7 +73,7 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
     }
     if (!row) fail("CERTOPS_BINDING_NOT_FOUND",404);
     await require("../audit").writeAudit({ client, actorUserId, workspaceId, action: "CERTOPS_CONSUMER_BINDING_CHANGED",
-      targetType: "certops_consumer_binding", targetId: bindingId, metadata: { groupId, authorizationRevision: row.authorization_revision } });
+      targetType: "certops_consumer_binding", targetId: bindingId, metadata: { bindingId, groupId, authorizationRevision: row.authorization_revision } });
     return row;
   });
 }
@@ -149,7 +149,7 @@ async function setRolloutState({ workspaceId, groupId, rolloutId, state, actorUs
     if (!row) fail("CERTOPS_ROLLOUT_NOT_FOUND",404);
     if (state === "deploying") await material.enqueueDistributionEvent(client,workspaceId,"distribution_rollout_requested",`${rolloutId}:resume:${crypto.randomUUID()}`,{ groupId,rolloutId });
     await require("../audit").writeAudit({ client,actorUserId,workspaceId,action:"CERTOPS_ROLLOUT_STATE_CHANGED",
-      targetType:"certops_distribution_rollout",targetId:rolloutId,metadata:{ groupId,state } });
+      targetType:"certops_distribution_rollout",targetId:rolloutId,metadata:{ groupId, rolloutId, materialVersionId: row.material_version_id, state } });
     return row;
   });
 }
@@ -365,7 +365,7 @@ async function retryDistributionJob({ workspaceId,jobId,actorUserId }) {
       WHERE workspace_id=$1 AND id=$2`,[workspaceId,jobId,status]);
     if(job.payload.materialDeployment)await client.query(`UPDATE certops_consumer_deployments SET stage='pending',failure_code=NULL
       WHERE workspace_id=$1 AND (job_id=$2 OR staging_job_id=$2) AND stage<>'orphaned_unknown_effect'`,[workspaceId,jobId]);
-    await require("../audit").writeAudit({client,workspaceId,actorUserId,action:"CERTOPS_MATERIAL_JOB_RETRY_REQUESTED",targetType:"certificate_job",targetId:jobId,metadata:{materialVersionId:intent.materialVersionId,status}});
+    await require("../audit").writeAudit({client,workspaceId,actorUserId,action:"CERTOPS_MATERIAL_JOB_RETRY_REQUESTED",targetType:"certificate_job",targetId:jobId,metadata:{jobId, materialVersionId:intent.materialVersionId, previousStatus:job.status, status}});
     return {jobId,status,materialVersionId:intent.materialVersionId};
   });
 }

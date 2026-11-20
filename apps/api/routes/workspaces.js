@@ -876,7 +876,7 @@ router.patch(
         action: "MEMBER_ROLE_CHANGED",
         targetType: "workspace",
         workspaceId: ws.id,
-        metadata: { role: nextRole },
+        metadata: { role: nextRole, previous_role: currentRole || null },
       });
       return res.json({ user_id: targetUserId, role: nextRole });
     } catch (err) {
@@ -927,8 +927,8 @@ router.delete(
           .status(403)
           .json({ error: "Forbidden: cannot remove admin", code: "FORBIDDEN" });
       }
-      await pool.query(
-        "DELETE FROM workspace_memberships WHERE user_id=$1 AND workspace_id=$2",
+      const removed = await pool.query(
+        "DELETE FROM workspace_memberships WHERE user_id=$1 AND workspace_id=$2 RETURNING role",
         [targetUserId, ws.id],
       );
       await writeAudit({
@@ -937,7 +937,7 @@ router.delete(
         action: "MEMBER_REMOVED",
         targetType: "workspace",
         workspaceId: ws.id,
-        metadata: {},
+        metadata: { removed_role: removed.rows[0]?.role || null },
       });
       return res.status(204).send();
     } catch (err) {
