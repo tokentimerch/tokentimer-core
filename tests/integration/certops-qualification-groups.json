@@ -40,7 +40,14 @@
           "does not qualify a preflight that checked a different template",
           "does not qualify a preflight that pinned a different CA key",
           "stops qualifying evidence once the issuer is re-confirmed with a different template",
-          "requires a new preflight job created after re-confirmation even when nothing changed"
+          "requires a new preflight job created after re-confirmation even when nothing changed",
+          "deduplicates concurrent dispatch across independent PostgreSQL transactions",
+          "persists bounded retries across calls and deduplicates exhaustion alerts",
+          "blocks unsafe results and a changed CA key without creating automatic retries",
+          "recovers a stranded pending check and interrupted read-only execution with the same bounded policy",
+          "retains workspace pause and current issuer-version admission fences",
+          "selects an eligible alternate agent after enrollment capability disappears",
+          "continues the actual renewal sweep automatically after success, once, retaining approval"
         ]
       },
       {

@@ -57,6 +57,9 @@ describe("AD CS automatic renewal readiness (real database)", function () {
     await TestUtils.execQuery("DELETE FROM workspaces WHERE id = $1", [workspaceId]);
     await TestUtils.execQuery("DELETE FROM users WHERE id = $1", [ownerId]);
   });
+  beforeEach(async () => {
+    await pool.query("DELETE FROM certificate_jobs WHERE workspace_id=$1",[workspaceId]);
+  });
 
   // Each scenario gets its own issuer and agent so earlier evidence cannot
   // change which preflight is the latest one.
@@ -88,6 +91,9 @@ describe("AD CS automatic renewal readiness (real database)", function () {
         JSON.stringify([REFERENCE]),
       ],
     );
+    await pool.query(`UPDATE certops_agents SET agent_version='0.18.0',
+      supported_operations='["adcs-preflight","renew"]',declared_capabilities='["adcs-enroll-v1"]',
+      capabilities_updated_at=NOW() WHERE id=$1`,[agent.rows[0].id]);
     return { issuerId, agentId: agent.rows[0].id };
   }
 
@@ -262,5 +268,180 @@ describe("AD CS automatic renewal readiness (real database)", function () {
     await addPreflight({ issuerId, agentId, verdict: verdict() });
     const after = await runGate(issuerId);
     expect(after.error?.code).to.not.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
+  });
+
+  async function refreshInput(context) {
+    const row=(await pool.query(`SELECT confirmed_at FROM certificate_issuer_versions
+      WHERE workspace_id=$1 AND issuer_id=$2 AND version=1`,[workspaceId,context.issuerId])).rows[0];
+    return { client:pool,workspaceId,...context,caConfig:CA,template:TEMPLATE,
+      automatic:true,confirmedAt:row.confirmed_at,env:{CERTOPS_ENABLED:"true"} };
+  }
+
+  async function dueCertificateForIncident(context) {
+    const domain=`incident-${crypto.randomBytes(4).toString("hex")}.example.com`;
+    const {provisionSurvivorSource}=require("../e2e/helpers/certops-adcs-local-rules");
+    const certificateId=await provisionSurvivorSource({fixture:{workspaceId,pool},agentRowId:context.agentId,
+      domain,site:"Incident",port:18443,ownedCertificateIds:[]});
+    const target={type:"windows-iis",reference:domain,store:"My",binding:{site:"Incident",port:18443,sniHost:domain}};
+    const profile=(await pool.query(`INSERT INTO certificate_profiles(workspace_id,name,status,source,source_ref,
+      issuer_id,renew_before_days,key_mode,public_metadata,created_by)
+      VALUES($1,$2,'active','manual',$2,$3,30,'os-store-managed',$4::jsonb,$5) RETURNING id`,
+      [workspaceId,domain,context.issuerId,JSON.stringify({renewalProfile:{target,sanPolicy:{sans:[domain]},keyAlgorithm:"rsa",keySize:2048}}),ownerId])).rows[0].id;
+    await pool.query("UPDATE certops_agents SET declared_target_selectors=$2::jsonb WHERE id=$1",[context.agentId,JSON.stringify([domain])]);
+    await pool.query(`UPDATE managed_certificates SET status='active',profile_id=$2,not_after=NOW()+INTERVAL '2 days',fingerprint_sha256=$3 WHERE id=$1`,
+      [certificateId,profile,crypto.randomBytes(32).toString("hex")]);
+    await pool.query(`UPDATE certops_management_periods SET renewal_profile_id=$2,automation_enabled=TRUE
+      WHERE managed_certificate_id=$1 AND ended_at IS NULL`,[certificateId,profile]);
+    return certificateId;
+  }
+
+  it("deduplicates concurrent dispatch across independent PostgreSQL transactions", async () => {
+    const {dispatchPreflight}=require("../../apps/api/services/certops/certificateEnrollments");
+    const context=await scenario();
+    const input=await refreshInput(context);
+    const results=await Promise.all(Array.from({length:6},()=>dispatchPreflight(input)));
+    expect(results.filter(Boolean)).to.have.length(1);
+    const jobs=await pool.query(`SELECT id FROM certificate_jobs WHERE workspace_id=$1
+      AND subject_id=$2 AND operation='adcs-preflight'`,[workspaceId,context.issuerId]);
+    expect(jobs.rows).to.have.length(1);
+  });
+
+  it("persists bounded retries across calls and deduplicates exhaustion alerts", async () => {
+    const {dispatchPreflight}=require("../../apps/api/services/certops/certificateEnrollments");
+    const input=await refreshInput(await scenario());
+    for(let attempt=0;attempt<5;attempt++) {
+      const job=await dispatchPreflight(input);
+      expect(job?.id).to.be.a("string");
+      await pool.query(`UPDATE certificate_jobs SET status='failed',completed_at=NOW(),updated_at=NOW() WHERE id=$1`,[job.id]);
+      if(attempt<4) expect(await dispatchPreflight(input)).to.equal(null);
+      await pool.query(`UPDATE certificate_jobs SET completed_at=NOW()-INTERVAL '4 hours' WHERE id=$1`,[job.id]);
+    }
+    expect(await dispatchPreflight(input)).to.equal(null);
+    expect(await dispatchPreflight(input)).to.equal(null);
+    const certificateId=await dueCertificateForIncident(input);
+    const {reconcileIssuerPreflightIncident}=require("../../apps/api/services/certops/adcsPreflightIncidents");
+    try {
+      await reconcileIssuerPreflightIncident({db:pool,workspaceId,issuerId:input.issuerId,env:{CERTOPS_ENABLED:"true"}});
+      await reconcileIssuerPreflightIncident({db:pool,workspaceId,issuerId:input.issuerId,env:{CERTOPS_ENABLED:"true"}});
+      const notification=await pool.query(`SELECT metadata->>'code' AS code FROM operational_notifications
+        WHERE workspace_id=$1 AND dedupe_key=$2 AND resolved_at IS NULL`,[workspaceId,`adcs-preflight:${input.issuerId}`]);
+      expect(notification.rows).to.deep.equal([{code:"CERTOPS_PREFLIGHT_RETRIES_EXHAUSTED"}]);
+      // An operator can deliberately check again after restoring connectivity.
+      expect((await dispatchPreflight({...input,automatic:false})).id).to.be.a("string");
+    } finally {
+      await pool.query("UPDATE certops_management_periods SET automation_enabled=FALSE WHERE managed_certificate_id=$1",[certificateId]);
+      await reconcileIssuerPreflightIncident({db:pool,workspaceId,issuerId:input.issuerId,env:{CERTOPS_ENABLED:"true"}});
+    }
+  });
+
+  it("blocks unsafe results and a changed CA key without creating automatic retries", async () => {
+    const {dispatchPreflight}=require("../../apps/api/services/certops/certificateEnrollments");
+    for(const patch of [{templateCheck:"unsafe"},{caCheck:"unsafe"},{caKeySha256s:[OTHER_KEY]}]) {
+      const input=await refreshInput(await scenario());
+      const job=await dispatchPreflight(input);
+      await pool.query(`UPDATE certificate_jobs SET status='succeeded',completed_at=NOW(),result_metadata=$2::jsonb WHERE id=$1`,
+        [job.id,JSON.stringify({preflightVerdict:{...verdict(),...patch}})]);
+      expect(await dispatchPreflight(input)).to.equal(null);
+      expect((await pool.query(`SELECT count(*)::int AS n FROM certificate_jobs
+        WHERE workspace_id=$1 AND subject_id=$2`,[workspaceId,input.issuerId])).rows[0].n).to.equal(1);
+    }
+  });
+
+  it("recovers a stranded pending check and interrupted read-only execution with the same bounded policy", async () => {
+    const {dispatchPreflight}=require("../../apps/api/services/certops/certificateEnrollments");
+    for(const status of ["pending","orphaned_unknown_effect"]) {
+      const context=await scenario();await backdateConfirmation(context.issuerId,3);
+      const input=await refreshInput(context),job=await dispatchPreflight(input);
+      await pool.query(`UPDATE certificate_jobs SET status=$2,created_at=NOW()-INTERVAL '2 hours',
+        completed_at=NOW()-INTERVAL '2 hours',updated_at=NOW()-INTERVAL '2 hours' WHERE id=$1`,[job.id,status]);
+      if(status==="pending") {
+        expect(await dispatchPreflight(input)).to.equal(null);
+        await pool.query(`UPDATE certificate_jobs SET completed_at=NOW()-INTERVAL '20 minutes' WHERE id=$1`,[job.id]);
+      }
+      const recovered=await dispatchPreflight(input);
+      expect(recovered?.id).to.be.a("string");expect(recovered.id).not.to.equal(job.id);
+      expect(await dispatchPreflight(input)).to.equal(null);
+    }
+  });
+
+  it("retains workspace pause and current issuer-version admission fences", async () => {
+    const {dispatchPreflight}=require("../../apps/api/services/certops/certificateEnrollments");
+    const context=await scenario(),input=await refreshInput(context);
+    await pool.query("UPDATE workspaces SET certops_paused=TRUE WHERE id=$1",[workspaceId]);
+    try { await dispatchPreflight(input);throw new Error("expected pause refusal"); }
+    catch(error) { expect(error.code).to.equal("CERTOPS_WORKSPACE_PAUSED"); }
+    finally { await pool.query("UPDATE workspaces SET certops_paused=FALSE WHERE id=$1",[workspaceId]); }
+    await pool.query(`UPDATE certificate_issuer_versions SET confirmed_at=clock_timestamp() WHERE workspace_id=$1 AND issuer_id=$2`,[workspaceId,context.issuerId]);
+    try { await dispatchPreflight(input);throw new Error("expected version refusal"); }
+    catch(error) { expect(error.code).to.equal("CERTOPS_ISSUER_REVALIDATION_REQUIRED"); }
+  });
+
+  it("selects an eligible alternate agent after enrollment capability disappears", async () => {
+    const context=await scenario();
+    await pool.query("UPDATE certops_agents SET declared_capabilities='[]' WHERE id=$1",[context.agentId]);
+    const result=await runGate(context.issuerId,{automaticPreflight:true});
+    expect(result.error?.code).to.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
+    const jobs=(await pool.query("SELECT assigned_agent_id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2",[workspaceId,context.issuerId])).rows;
+    expect(jobs).to.have.length(1);
+    expect(jobs[0].assigned_agent_id).not.to.equal(context.agentId);
+  });
+
+  it("continues the actual renewal sweep automatically after success, once, retaining approval", async () => {
+    const {runRenewalSchedulerSweep}=require("../../apps/api/services/certops/renewalScheduler");
+    const context=await scenario();
+    const domain=`renew-${crypto.randomBytes(4).toString("hex")}.example.com`;
+    const target={type:"windows-iis",reference:domain,store:"My",binding:{site:"Refresh",port:18443,sniHost:domain}};
+    await pool.query("UPDATE certops_agents SET declared_target_selectors=$2::jsonb WHERE id=$1",[context.agentId,JSON.stringify([domain])]);
+    const {provisionSurvivorSource}=require("../e2e/helpers/certops-adcs-local-rules");
+    const certificateId=await provisionSurvivorSource({fixture:{workspaceId,pool},agentRowId:context.agentId,domain,site:"Refresh",port:18443,ownedCertificateIds:[]});
+    const profile=(await pool.query(`INSERT INTO certificate_profiles(workspace_id,name,status,source,source_ref,
+      issuer_id,renew_before_days,key_mode,public_metadata,created_by)
+      VALUES($1,$2,'active','manual',$2,$3,10,'os-store-managed',$4::jsonb,$5) RETURNING id`,
+      [workspaceId,domain,context.issuerId,JSON.stringify({renewalProfile:{target,sanPolicy:{sans:[domain]},keyAlgorithm:"rsa",keySize:2048}}),ownerId])).rows[0].id;
+    await pool.query(`UPDATE managed_certificates SET status='active',profile_id=$2,not_after=NOW()+INTERVAL '2 days',fingerprint_sha256=$3 WHERE id=$1`,
+      [certificateId,profile,crypto.randomBytes(32).toString("hex")]);
+    await pool.query(`UPDATE certops_management_periods SET renewal_profile_id=$2,automation_enabled=TRUE
+      WHERE managed_certificate_id=$1 AND ended_at IS NULL`,[certificateId,profile]);
+    const sweep=()=>runRenewalSchedulerSweep({dbPool:pool,env:{CERTOPS_ENABLED:"true"},auditWriter:async()=>{}});
+    await pool.query("UPDATE certops_agents SET declared_capabilities='[]'::jsonb WHERE id=$1",[context.agentId]);
+    expect((await sweep()).skippedNotAgentDeployable).to.equal(1);
+    expect((await pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2",[workspaceId,context.issuerId])).rows).to.have.length(0);
+    const unavailable=await pool.query("SELECT severity,metadata->>'code' AS code FROM operational_notifications WHERE workspace_id=$1 AND metadata->>'issuerId'=$2 AND resolved_at IS NULL",[workspaceId,context.issuerId]);
+    expect(unavailable.rows).to.deep.equal([{severity:"critical",code:"CERTOPS_ADCS_AGENT_INELIGIBLE"}]);
+    await pool.query("UPDATE certops_agents SET declared_capabilities='[\"adcs-enroll-v1\"]'::jsonb WHERE id=$1",[context.agentId]);
+    const first=await sweep();expect(first.skippedAdcsAgentNotPrepared,JSON.stringify(first)).to.equal(1);
+    expect((await pool.query("SELECT id FROM certificate_enrollments WHERE certificate_id=$1",[certificateId])).rows).to.have.length(0);
+    const check=(await pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='adcs-preflight'",[workspaceId,context.issuerId])).rows[0];
+    await pool.query(`UPDATE certificate_jobs SET status='succeeded',completed_at=NOW(),result_metadata=result_metadata || $2::jsonb WHERE id=$1`,
+      [check.id,JSON.stringify({preflightVerdict:verdict()})]);
+    const issuerPage=await require("../../apps/api/services/certops/certificateEnrollments").listIssuers({client:pool,workspaceId,limit:100,env:{CERTOPS_ENABLED:"true"}});
+    expect(issuerPage.items.find(i=>i.id===context.issuerId).preflightRefresh.find(a=>a.agentId===context.agentId).state).to.equal("fresh");
+    const summary=await require("../../apps/api/services/onboarding/certopsReality").loadAdcsReality(pool,workspaceId,{agentId:context.agentId});
+    expect(summary.issuers.find(i=>i.id===context.issuerId).checkedAfterPin).to.equal(true);
+    await pool.query("UPDATE workspaces SET certops_require_approval_always=TRUE WHERE id=$1",[workspaceId]);
+    try {
+      // Cross the TTL after scheduler selection, inside final admission. The
+      // failed transaction rolls the fixture clock change back for the next sweep.
+      const racingPool={query:pool.query.bind(pool),get idleCount(){return pool.idleCount;},connect:async()=>{
+        const tx=await pool.connect();return {release:()=>tx.release(),query:async(sql,params)=>{
+          const result=await tx.query(sql,params);
+          if(sql.includes("certificate_issuer_versions v") && sql.includes("FOR UPDATE OF i")) {
+            await tx.query("UPDATE certificate_jobs SET created_at=NOW()-INTERVAL '25 hours' WHERE id=$1",[check.id]);
+          }
+          return result;
+        }};
+      }};
+      const raced=await runRenewalSchedulerSweep({dbPool:racingPool,env:{CERTOPS_ENABLED:"true"},auditWriter:async()=>{}});
+      expect(raced.created).to.equal(0);expect(raced.skippedAdcsAgentNotPrepared).to.equal(1);
+      const resumed=await sweep();expect(resumed.created).to.equal(1);
+      await sweep();
+      const enrollments=(await pool.query("SELECT snapshot_bytes,current_job_id FROM certificate_enrollments WHERE certificate_id=$1",[certificateId])).rows;
+      expect(enrollments).to.have.length(1);
+      expect(JSON.parse(enrollments[0].snapshot_bytes.toString()).caKeySha256).to.equal(KEY);
+      expect((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1",[enrollments[0].current_job_id])).rows[0].status).to.equal("pending_approval");
+      expect((await pool.query("SELECT resolved_at FROM operational_notifications WHERE workspace_id=$1 AND dedupe_key=$2",
+        [workspaceId,`adcs-preflight:${context.issuerId}`])).rows[0].resolved_at).not.to.equal(null);
+      expect((await pool.query("SELECT id FROM operational_notifications WHERE workspace_id=$1 AND metadata->>'issuerId'=$2 AND resolved_at IS NULL",[workspaceId,context.issuerId])).rows).to.have.length(0);
+    } finally { await pool.query("UPDATE workspaces SET certops_require_approval_always=FALSE WHERE id=$1",[workspaceId]); }
   });
 });

@@ -207,6 +207,7 @@ describe("loadAdcsReality issuer facts", () => {
       installedIisEnrollments: 0,
       revalidationRequired: false,
       checkedAfterPin: null,
+      preflightExpiresAt: null,
     });
     assert.equal(issuers[1].checked, false);
     assert.deepEqual(issuers[1].reasons, []);

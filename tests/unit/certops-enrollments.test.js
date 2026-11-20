@@ -1426,18 +1426,20 @@ describe("enrollment rows", () => {
 
   it("deduplicates automatic preflight requests inside the workspace lock", async () => {
     let created = false;
+    const confirmedAt = new Date();
     const queries = [];
     const db = { async query(sql) {
       queries.push(sql);
       if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: false }] };
-      if (sql.includes("SELECT id FROM certificate_jobs")) return { rows: [{ id: JOB_ID }] };
+      if (sql.includes("FROM certificate_issuers i JOIN")) return { rows: [{ version:1,ca_config:"ca.example.com\\CA",template:"WebServer",ca_key_sha256:"ab".repeat(32),confirmed_at:confirmedAt }] };
+      if (sql.includes("FROM certificate_jobs") && sql.includes("ORDER BY preflight_seq")) return { rows: [{ id:JOB_ID,status:"pending" }] };
       return { rows: [] };
     } };
     const result = await dispatchPreflight({
       client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
       agentId: "22222222-2222-4222-8222-222222222222",
       caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
-      env: { CERTOPS_ENABLED: "true" }, confirmedAt: new Date(),
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt,
       createJob: async () => { created = true; },
     });
     assert.equal(result, null);
@@ -1460,8 +1462,10 @@ describe("enrollment rows", () => {
   });
 
   it("schedules one automatic read-only preflight using the existing issuer path", async () => {
+    const confirmedAt = new Date();
     const db = { async query(sql) {
       if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: false }] };
+      if (sql.includes("FROM certificate_issuers i JOIN")) return { rows: [{ version:1,ca_config:"ca.example.com\\CA",template:"WebServer",ca_key_sha256:"ab".repeat(32),confirmed_at:confirmedAt }] };
       if (sql.includes("SELECT id FROM certificate_jobs")) return { rows: [] };
       if (sql.includes("SELECT count(*)")) return { rows: [{ n: 0 }] };
       if (sql.includes("RETURNING preflight_seq")) return { rows: [{ preflight_seq: 1 }] };
@@ -1472,7 +1476,7 @@ describe("enrollment rows", () => {
       client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
       agentId: "22222222-2222-4222-8222-222222222222",
       caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
-      env: { CERTOPS_ENABLED: "true" }, confirmedAt: new Date(), audit: async () => {},
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt, audit: async () => {},
       createJob: async (options) => { request = options; return { id: JOB_ID }; },
     });
     assert.equal(job.id, JOB_ID);
@@ -1614,7 +1618,8 @@ describe("enrollment rows", () => {
         throw new Error(sql);
       },
     };
-    const issuers = await listIssuers({ client: db, workspaceId: WORKSPACE });
+    const issuers = await listIssuers({ client: db, workspaceId: WORKSPACE,
+      readinessLoader: async () => ({ checks: [], agents: [] }) });
     assert.equal(issuers.items[0].revalidationRequired, true);
     assert.equal(issuers.items[0].lastPreflight.caCertificates[0].certificateB64, undefined);
     assert.equal(issuers.items[0].lastPreflight.caCertificates[0].keySha256, "ab".repeat(32));
@@ -1631,6 +1636,8 @@ describe("enrollment rows", () => {
       async query(sql, params) {
         if (sql.includes("ORDER BY i.name")) {
           assert.equal(params[1], 1);
+          assert.match(sql, /jsonb_agg\(history ORDER BY history.preflight_seq DESC NULLS LAST,history.created_at DESC,history.id DESC\)/);
+          assert.match(sql, /LIMIT 100/);
           return { rows: [] };
         }
         if (sql.includes("count(*)")) return { rows: [{ n: 0 }] };

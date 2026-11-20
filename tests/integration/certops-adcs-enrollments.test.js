@@ -224,6 +224,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
     const key = renewalIdempotencyKey(certificateId, expiry);
     assert.equal(key, renewalIdempotencyKey(certificateId, expiry.toISOString()));
     const input = enrollmentInput({ certificateId, source: "automation", target, authorizedDnsNames: ["retry.example.com"], idempotencyKey: key, env: { CERTOPS_ENABLED: "true" } });
+    await require("./helpers/adcs-ready-agent.cjs").prepareAdcsAgent({db:pool,workspaceId,issuerId,agentId:agentRowId,reference:target.reference});
     const first = await createEnrollment(input);
     // A real bearer-authenticated HTTP result must survive ingestion/redaction
     // as the exact attestation bound to the dispatched claim and nonce.
@@ -279,8 +280,8 @@ describe("CertOps AD CS enrollments (real database)", function () {
       VALUES($1,$2,'active','manual',$2,$3,30,'os-store-managed',$4::jsonb,$5) RETURNING id`,[workspaceId,`retry-${crypto.randomUUID()}`,issuerId,JSON.stringify({renewalProfile}),ownerId])).rows[0].id;
     await pool.query("UPDATE managed_certificates SET profile_id=$2,not_after=$3,deployed_agent_id=$4 WHERE id=$1",[certificateId,profileId,expiry,agentRowId]);
     const agentBefore = (await pool.query("SELECT platform,declared_target_selectors,supported_operations,declared_capabilities,capabilities_updated_at FROM certops_agents WHERE id=$1",[agentRowId])).rows[0];
-    await pool.query(`UPDATE certops_agents SET platform='win32',declared_target_selectors=$2::jsonb,supported_operations='["adcs-preflight"]'::jsonb,
-      declared_capabilities='["iis-explicit-ip-v1"]'::jsonb,capabilities_updated_at=NOW() WHERE id=$1`,[agentRowId,JSON.stringify(["retry.example.com"])]);
+    await pool.query(`UPDATE certops_agents SET platform='win32',declared_target_selectors=$2::jsonb,supported_operations='["adcs-preflight","renew"]'::jsonb,
+      declared_capabilities='["iis-explicit-ip-v1","adcs-enroll-v1"]'::jsonb,capabilities_updated_at=NOW() WHERE id=$1`,[agentRowId,JSON.stringify(["retry.example.com"])]);
     const preflightId = (await pool.query(`INSERT INTO certificate_jobs(workspace_id,operation,status,executor_kind,mode,subject_type,subject_id,payload,assigned_agent_id,result_metadata)
       VALUES($1,'adcs-preflight','succeeded','agent','real','external',$2,'{}'::jsonb,$3,$4::jsonb) RETURNING id`,[workspaceId,issuerId,agentRowId,JSON.stringify({preflightVerdict:{templateCheck:"safe",caCheck:"safe",caConfig:CA,template:TEMPLATE,caKeySha256s:[KEY]}})])).rows[0].id;
     const sourceRow=(await pool.query("SELECT source,source_ref,fingerprint_sha256 FROM managed_certificates WHERE id=$1",[certificateId])).rows[0];
@@ -405,6 +406,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
     await pool.query("INSERT INTO certops_management_associations(workspace_id,period_id,identity_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",[workspaceId,period,identity]);
     const key=`superseded-test:${crypto.randomUUID()}`;
     const input=enrollmentInput({certificateId,source:"automation",target,authorizedDnsNames:[domain],idempotencyKey:key,env:{CERTOPS_ENABLED:"true"}});
+    await require("./helpers/adcs-ready-agent.cjs").prepareAdcsAgent({db:pool,workspaceId,issuerId,agentId:agentRowId,reference:target.reference});
     const first=await createEnrollment(input);
     await pool.query("UPDATE certificate_enrollments SET state='cancelled' WHERE id=$1",[first.enrollmentId]);
     await pool.query("UPDATE certificate_jobs SET status='cancelled',error_code='CERTOPS_AUTOMATION_SUPERSEDED_BEFORE_CLAIM',completed_at=NOW() WHERE id=$1",[first.jobId]);
@@ -732,7 +734,9 @@ describe("CertOps AD CS enrollments (real database)", function () {
   });
 
   it("keeps concurrent preflights inside the hourly limit and stores the agent result", async () => {
-    for (let i = 0; i < 19; i += 1) {
+    const recent=Number((await pool.query(`SELECT count(*)::int AS n FROM certificate_jobs
+      WHERE workspace_id=$1 AND operation='adcs-preflight' AND created_at>NOW()-INTERVAL '1 hour'`,[workspaceId])).rows[0].n);
+    for (let i = recent; i < 19; i += 1) {
       await TestUtils.execQuery(
         `INSERT INTO certificate_jobs
            (workspace_id, operation, status, executor_kind, mode, subject_type, subject_id, payload, requested_by_user_id)

@@ -138,6 +138,7 @@ function createSchedulerPool({
     async query(sql, params) {
       const normalized = normalizeSql(sql);
       scanQueries.push({ sql: normalized, params });
+      if (normalized.includes("FROM operational_notifications")) return {rows:[]};
       // Checked before the generic COUNT(*) branch: the auto-renew-disabled
       // count is also a COUNT(*) query, so ordering here matters.
       if (normalized.includes("disabled_count")) {

@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const reservedMigrationGaps = [123, 124, 125];
+const reservedMigrationGaps = [123, 124];
 
 const { migrations, validateMigrationHistory } = require(
   path.resolve(__dirname, "../../apps/api/migrations/migrate.js"),
@@ -20,7 +20,7 @@ it("preserves the Store-only provider preview through its receipt deadline", () 
     94, 95, 96, 97, 98, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 126];
   const preview = previewVersions.map((version, index) => ({ version: 78 + index, name: names.get(version) }));
   const recorded = [...base, ...preview];
-  const added = [118, 119, 120, 121, 122, 127].map((version, index) => ({ version: 119 + index, name: names.get(version) }));
+  const added = [118, 119, 120, 121, 122, 125, 127].map((version, index) => ({ version: 119 + index, name: names.get(version) }));
   const expected = [...recorded, ...added];
   validateMigrationHistory(recorded);
   assert.deepEqual(identities(composeMigrations(migrations, recorded)), expected);
@@ -87,6 +87,7 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 111).name, "auto_sync_owner_username");
     assert.equal(migrations.find(entry => entry.version === 113).name, "certops_material_reconciliation");
     assert.equal(migrations.find(entry => entry.version === 114).name, "distribution_pagerduty_recovery");
+    assert.equal(migrations.find((entry) => entry.version === 125).name, "certops_adcs_preflight_lookup_index");
     assert.equal(migrations.find((entry) => entry.version === 126).name, "certops_adcs_receipt_deadline");
     assert.equal(migrations.find(entry => entry.version === 122).name, "certops_observed_revocation");
     assert.equal(migrations.at(-1).name, "auto_sync_creation_expiration");
@@ -99,7 +100,7 @@ describe("operational notifications migration", () => {
     assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      [...Array.from({ length: 122 }, (_, index) => index + 1), 126, 127],
+      [...Array.from({ length: 122 }, (_, index) => index + 1), 125, 126, 127],
     );
     assert.equal(migrations.find(entry => entry.version === 73).name, "certops_job_alert_context");
     assert.match(migrations.find(entry => entry.version === 72).sql, /ON DELETE SET NULL \(issuer_id\)/);

@@ -3429,6 +3429,20 @@ describe("agentDispatch.ingestResult", () => {
   });
 
   describe("result_metadata / certificate_job_log population (Bug 2: every real agent result used to leave both at their insert-time defaults)", () => {
+    it("preserves server-owned preflight version context across agent result ingestion", async () => {
+      const context={issuerVersion:2,caKeySha256:"ab".repeat(32),confirmedAt:"2026-11-16T10:00:00Z"};
+      let metadata;
+      const dbPool=createMockPool((sql,params)=>{
+        if(sql.includes("FOR UPDATE")) return {rows:[lockedJobRow({status:"running",mode:"real",operation:"adcs-preflight",result_metadata:{preflightContext:context}})]};
+        if(sql.includes("UPDATE certificate_jobs")) {
+          metadata=JSON.parse(params[6]);return {rows:[{id:42,status:"failed",error_code:params[2],completed_at:new Date()}]};
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      await ingestResult({dbPool,agent:agentFixture(),body:resultBody({status:"failed",errorMessage:"CA temporarily unavailable"}),
+        deps:{consumeNonce:async()=>({consumed:true})}});
+      assert.deepEqual(metadata.preflightContext,context);
+    });
     it("populates result_metadata from the generic resultBody fields and writes a certificate_job_log row on failure", async () => {
       let updateParams = null;
       const dbPool = createMockPool((sql, params) => {

@@ -62,6 +62,7 @@ const { validateAdcsRenewalProfile } = require("./adcsRenewalRules");
 const {
   loadCurrentAdcsIssuerVersion,
   loadQualifyingAdcsAgents,
+  findEligibleAdcsPreflightAgent,
 } = require("./adcsPreflightGate");
 
 const {
@@ -286,7 +287,15 @@ async function findCertificatesDueForRenewal({
   adaptive = true,
   batchSize = DEFAULT_BATCH_SIZE,
   terminalStatuses,
+  workspaceId = null,
+  issuerId = null,
+  issuerIds = null,
 } = {}) {
+  const params = [String(thresholdDays),terminalStatuses,batchSize,AUTO_RENEW_DISABLED_PROFILE_STATUSES];
+  let scope = "";
+  if (workspaceId != null) { params.push(workspaceId); scope += ` AND mc.workspace_id=$${params.length}`; }
+  if (issuerId != null) { params.push(issuerId); scope += ` AND cp.issuer_id=$${params.length}`; }
+  if (issuerIds != null) { params.push(issuerIds); scope += ` AND cp.issuer_id=ANY($${params.length}::uuid[])`; }
   const result = await db.query(
     `SELECT mc.id,
             mc.workspace_id,
@@ -363,14 +372,10 @@ async function findCertificatesDueForRenewal({
              AND cj.subject_id = mc.id::text
              AND NOT (cj.status = ANY($2::text[]))
         )
-      ORDER BY mc.not_after ASC
+      ${scope}
+      ORDER BY mc.not_after ASC,mc.id
       LIMIT $3`,
-    [
-      String(thresholdDays),
-      terminalStatuses,
-      batchSize,
-      AUTO_RENEW_DISABLED_PROFILE_STATUSES,
-    ],
+    params,
   );
   return result.rows;
 }
@@ -514,6 +519,9 @@ async function createAutomaticAdcsRenewal({
     issuerId: certificate.profile_issuer_id,
     reference: fields.target.reference,
     version,
+    target: fields.target,
+    ownerId: fields.target.type === "windows-cert-store" || explicitIp ? certificate.deployed_agent_id : null,
+    env,
   });
   const storeOnly = fields.target.type === "windows-cert-store";
   if (storeOnly && !certificate.deployed_agent_id) {
@@ -525,38 +533,29 @@ async function createAutomaticAdcsRenewal({
     ? eligibleAgents.find(candidate => String(candidate.id) === String(certificate.deployed_agent_id))
     : eligibleAgents[0];
   if (!agent) {
-    const declared = await dbPool.query(
-      `SELECT id
-         FROM certops_agents
-        WHERE workspace_id = $1
-          AND status = 'active'
-          AND platform = 'win32'
-          AND declared_target_selectors @> jsonb_build_array($2::text)
-          AND supported_operations @> '["adcs-preflight"]'::jsonb
-          AND ($3::uuid IS NULL OR id = $3::uuid)
-        ORDER BY last_seen_at DESC NULLS LAST, id
-        LIMIT 1`,
-      [certificate.workspace_id, fields.target.reference, storeOnly || explicitIp ? certificate.deployed_agent_id : null],
-    );
-    if (declared.rows[0]?.id && version?.confirmed_at && version?.ca_key_sha256 && version?.ca_config && version?.template) {
+    const candidate = await findEligibleAdcsPreflightAgent({db:dbPool,
+      workspaceId:certificate.workspace_id,reference:fields.target.reference,target:fields.target,
+      ownerId:storeOnly || explicitIp ? certificate.deployed_agent_id : null,env});
+    if (version?.confirmed_at && version?.ca_key_sha256 && version?.ca_config && version?.template) {
       await preflightDispatcher({
         client: dbPool,
         workspaceId: certificate.workspace_id,
         issuerId: certificate.profile_issuer_id,
-        agentId: declared.rows[0].id,
+        agentId: candidate?.id || certificate.deployed_agent_id || null,
         caConfig: version.ca_config,
         template: version.template,
         automatic: true,
         confirmedAt: version.confirmed_at,
+        ...(!candidate ? { unavailableTarget:fields.target.reference } : {}),
         env,
       });
     }
     const error = new Error(
-      declared.rows[0]
+      candidate
         ? (storeOnly ? "the owning agent needs a fresh safe AD CS preflight" : "no agent has a safe adcs-preflight for this CA within the preflight freshness window")
         : "no active Windows agent that supports AD CS preflight declares this renewal target",
     );
-    error.code = declared.rows[0]
+    error.code = candidate
       ? CERTOPS_ADCS_AGENT_NOT_PREPARED
       : CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
     throw error;
@@ -974,6 +973,14 @@ async function runRenewalSchedulerSweep({
       }
     }
 
+    // Reconcile once per issuer after committed admissions, including open
+    // incidents whose last certificate was stopped, renewed or removed.
+    try {
+      await require("./adcsPreflightIncidents").reconcilePendingPreflightIncidents({db:dbPool,env,certificates:dueCertificates});
+    } catch(error) {
+      summary.errors.push({error:"AD CS preflight incident reconciliation failed"});
+      logger?.warn?.("certops-preflight-incidents-failed",{code:error.code || "incident_projection_failed"});
+    }
     return summary;
   } finally {
     if (summary.lockAcquired) {

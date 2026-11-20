@@ -127,6 +127,7 @@ describe("automatic AD CS claim dispatch on PostgreSQL", function () {
     expiry=(await db.query("SELECT not_after FROM managed_certificates WHERE id=$1",[certificateId])).rows[0].not_after;
     const idempotencyKey=require("../../apps/api/services/certops/renewalScheduler").renewalIdempotencyKey(certificateId,expiry);
     // Simulate an older job created before the management period gained an identity.
+    await require("./helpers/adcs-ready-agent.cjs").prepareAdcsAgent({db,workspaceId,issuerId,agentId:agentRowId,reference:domain});
     await db.query("UPDATE certops_management_periods SET current_identity_id=NULL WHERE id=$1",[periodId]);
     const created=await require("../../apps/api/services/certops/certificateEnrollments").createEnrollment({client:db,workspaceId,profileId,certificateId,agentId:agentRowId,target,authorizedDnsNames:[domain],keyAlgorithm:"rsa",keySize:2048,source:"automation",idempotencyKey,env:{CERTOPS_ENABLED:"true"}});
     jobId=created.jobId;
@@ -153,7 +154,7 @@ describe("automatic AD CS claim dispatch on PostgreSQL", function () {
   async function dispatch(env = {}) {
     return require("./helpers/authenticated-agent-dispatch").claimJobs({dbPool:db,
       agent:{id:agentRowId,workspaceId,agentId,agentVersion:"0.18.0",protocolVersion:"1.0.0",status:"active"},
-      envelope:{agentId,protocolVersion:"1.0.0"},body:{supportedActions:["renew"],maxJobs:1},env:{CERTOPS_ENABLED:"true",CERTOPS_AGENT_LOG_STORAGE_ENABLED:"false",...env},
+      envelope:{agentId,protocolVersion:"1.0.0"},body:{supportedActions:["renew","adcs-preflight"],maxJobs:1},env:{CERTOPS_ENABLED:"true",CERTOPS_AGENT_LOG_STORAGE_ENABLED:"false",...env},
       deps:{enforceAgentSequence:async()=>({sequence:1}),signJobForDispatch:async({job,envelopeVersion})=>({...job,envelopeVersion})}});
   }
   it("does not dispatch while concurrent profile or period changes are uncommitted",async()=>{
@@ -204,7 +205,7 @@ describe("automatic AD CS claim dispatch on PostgreSQL", function () {
     await db.query("UPDATE certificate_jobs SET next_attempt_at=NULL WHERE id=$1",[jobId]);
   });
   it("supersedes stale never-started work, audits it and replans once through the real scheduler",async()=>{
-    await db.query("UPDATE certops_agents SET supported_operations='[\"adcs-preflight\"]'::jsonb WHERE id=$1",[agentRowId]);
+    await db.query("UPDATE certops_agents SET supported_operations='[\"adcs-preflight\",\"renew\",\"continue-enrollment\"]'::jsonb WHERE id=$1",[agentRowId]);
     await db.query(`INSERT INTO certificate_jobs(workspace_id,operation,status,executor_kind,mode,subject_type,subject_id,payload,assigned_agent_id,result_metadata)
       VALUES($1,'adcs-preflight','succeeded','agent','real','external',$2,'{}'::jsonb,$3,$4::jsonb)`,[workspaceId,issuerId,agentRowId,JSON.stringify({preflightVerdict:{templateCheck:"safe",caCheck:"safe",caConfig:"ca.example.test\\CA",template:"Template",caKeySha256s:["ab".repeat(32)]}})]);
     const scheduler=require("../../apps/api/services/certops/renewalScheduler");

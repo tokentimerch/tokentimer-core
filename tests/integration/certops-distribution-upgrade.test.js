@@ -26,6 +26,7 @@ describe("Core distribution and lifecycle migration histories", function () {
     'store_issuance_explicit_renewal_consent', 'certops_acme_store_enrollment_identity',
     'certops_adcs_expected_identity_receipts', 'certops_windows_iis_consent', 'certops_material_adcs_operation_union',
     'certops_iis_absence_proofs', 'certops_enrollment_jobs_index', 'certops_observed_revocation',
+    'certops_adcs_preflight_lookup_index',
     'certops_adcs_receipt_deadline',
     'auto_sync_creation_expiration',
   ];

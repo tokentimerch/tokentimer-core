@@ -51,6 +51,7 @@ are reservations, not no-op migrations. They do not install another feature.
 | 120 | certops_iis_absence_proofs | Reconcile proven IIS observations |
 | 121 | certops_enrollment_jobs_index | Index enrollment jobs |
 | 122 | certops_observed_revocation | Observed certificate revocation (#541) |
+| 125 | certops_adcs_preflight_lookup_index | Index issuer and agent preflight history (#714) |
 | 126 | certops_adcs_receipt_deadline | Immutable AD CS receipt admission deadline |
 | 127 | auto_sync_creation_expiration | Auto-sync creation metric expiration (#780) |
 
@@ -64,6 +65,8 @@ qualify the corresponding runtime feature or production artifact.
 
 A recognized #780 preview keeps its previously applied expiration row, including
 version 115 on a standard preview database. New installs use version 127.
+
+Canonical installs use version 125 for the AD CS preflight index. A recognized retirement preview keeps its applied index at 122 and appends any missing recovery and credential migrations.
 
 The integrated Windows Store and IIS preview previously used 115 for observed revocation and 116–122 for Store and IIS. The runner preserves those recorded pairs and appends only missing definitions.
 

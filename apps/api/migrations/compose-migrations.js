@@ -10,6 +10,7 @@ const REVIEW = "certops_distribution_review";
 const TRANSFER = "certops_distribution_transfer";
 const OBSERVED_REVOCATION = "certops_observed_revocation";
 const ADCS_RECEIPT_DEADLINE = "certops_adcs_receipt_deadline";
+const ADCS_PREFLIGHT_INDEX = "certops_adcs_preflight_lookup_index";
 const storePreviewMigrations = [
   "store_issuance_explicit_renewal_consent",
   "certops_acme_store_enrollment_identity",
@@ -78,8 +79,9 @@ function reviewedFeatureOrders(names, rows) {
   if (rows.some((row) => row.name === ADCS_RECEIPT_DEADLINE)) {
     // Earlier Store previews applied the receipt deadline before these independent definitions.
     previousOrders.push(
-      names.filter((name) => name !== OBSERVED_REVOCATION && !iisPreviewMigrations.includes(name)),
+      names.filter((name) => name !== OBSERVED_REVOCATION && name !== ADCS_PREFLIGHT_INDEX && !iisPreviewMigrations.includes(name)),
       names.filter((name) => name !== "agent_credential_rotations" && name !== "agent_credential_rotation_ack"),
+      names.filter((name) => name !== ADCS_PREFLIGHT_INDEX && name !== "agent_credential_rotations" && name !== "agent_credential_rotation_ack"),
     );
   }
   for (const oldOrder of previousOrders) {
@@ -140,6 +142,14 @@ function composeMigrations(migrations, recorded = []) {
     .slice()
     .sort((a, b) => a.version - b.version);
   const byName = new Map(extensions.map((entry) => [entry.name, entry]));
+  // A reviewed #714 preview may have applied its index before PagerDuty
+  // recovery and the reserved #614 tails. Keep that exact append order.
+  const afterPreflightIndex = (names) => {
+    const tails = new Set(["distribution_pagerduty_recovery", "agent_credential_rotations", "agent_credential_rotation_ack"]);
+    const retained = names.filter(name => !tails.has(name));
+    const position = retained.indexOf(ADCS_PREFLIGHT_INDEX);
+    return position < 0 ? names : [...retained.slice(0,position+1), ...names.filter(name=>tails.has(name)), ...retained.slice(position+1)];
+  };
   // The expiration preview applied its schema immediately after PagerDuty recovery.
   // Recognize that ordering when the ledger already contains the preview identity.
   const expiration = byName.get("auto_sync_creation_expiration");
@@ -182,7 +192,8 @@ function composeMigrations(migrations, recorded = []) {
       return [...applied, ...appendNames.filter((name) => !applied.includes(name))];
     }));
     recognizedRetirementPreview = oldRows.every((row) => row.version < 70 || oldIdentity.get(row.name) === row.version) &&
-      [...reviewedFeatureOrders(appendNames, appendedRows), ...storePrefixes].some((appended) =>
+      [...reviewedFeatureOrders(appendNames, appendedRows), ...storePrefixes]
+        .flatMap((names) => [names, afterPreflightIndex(names)]).some((appended) =>
         appendedRows.every((row, index) => row.version === 110 + index && row.name === appended[index]));
     if (!recognizedRetirementPreview) throw new Error("Unsupported Core retirement preview migration history");
   }
@@ -383,7 +394,8 @@ function composeMigrations(migrations, recorded = []) {
         ...names.filter((name) => !independentFeatureNames.has(name)),
         ...names.filter((name) => independentFeatureNames.has(name)),
       ]);
-      return [...reviewedOrders, ...independentAppends].flatMap((names) => reviewedFeatureOrders(names, rows)).some((names) => {
+      return [...reviewedOrders, ...independentAppends].flatMap((names) => reviewedFeatureOrders(names, rows))
+        .flatMap((names) => [names, afterPreflightIndex(names)]).some((names) => {
         const applied = new Set(rows.map((row) => row.name));
         const lastApplied = Math.max(-1, ...names.map((name, index) => applied.has(name) ? index : -1));
         const skipped = names.slice(0, lastApplied + 1).filter((name) => !applied.has(name));
