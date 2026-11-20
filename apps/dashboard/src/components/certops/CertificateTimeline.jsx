@@ -42,11 +42,13 @@ export default function CertificateTimeline({
   const expandedBg = dashboard.bg.nested;
   const { agents } = useCertOpsAgents();
   const agentsById = useMemo(() => indexAgentsByAnyId(agents), [agents]);
-  const { enabled, jobs, pagination, loading, error } = useCertOpsJobs({
-    subjectType,
-    subjectId,
-    limit,
-  });
+  const { enabled, jobs, pagination, loading, error, refresh } = useCertOpsJobs(
+    {
+      subjectType,
+      subjectId,
+      limit,
+    }
+  );
   const [expandedId, setExpandedId] = useState(null);
   const initializedSubjectRef = useRef(null);
 
@@ -110,7 +112,12 @@ export default function CertificateTimeline({
             bg={compact ? 'transparent' : expandedBg}
             borderRadius={compact ? 0 : 'md'}
           >
-            <EvidenceTimeline jobId={job.id} compact={compact} embedded />
+            <EvidenceTimeline
+              jobId={job.id}
+              onJobChanged={refresh}
+              compact={compact}
+              embedded
+            />
           </Box>
         );
         return (
