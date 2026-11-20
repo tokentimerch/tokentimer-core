@@ -37,7 +37,10 @@ describe("Independent PR migration and preview compatibility",function(){
         })));
       }else execute(upgrade);
       const after=(await client.query("SELECT * FROM migrations ORDER BY version")).rows;
-      assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);assert.equal(after.length,115);
+      assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);
+      assert.equal(after.length, 116);
+      assert.equal(after.filter(row => row.name === "auto_sync_creation_expiration").length, 1);
+      assert.equal((await client.query("SELECT expiration FROM auto_sync_creation_stats LIMIT 0")).rowCount, 0);
       assert.equal(after.filter(row=>row.name==="certops_retirement_dossiers").length,1);
       assert.equal(after.filter(row=>row.name==="certops_material_reconciliation").length,1);
       const canonicalTail=["pagerduty_resolution_reason","pagerduty_operator_actions","remove_pagerduty_rest_lookup","certops_consumer_staging","certops_review_authority_epochs","certops_manual_rollout_authority"];

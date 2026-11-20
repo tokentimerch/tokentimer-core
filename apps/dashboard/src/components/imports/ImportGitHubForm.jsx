@@ -291,9 +291,12 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     );
   };
 
-  const importGithubSelected = async () => {
+  const importGithubSelected = async ({
+    onComplete = onImportComplete,
+    onFailure = onError,
+  } = {}) => {
     if (!previewReady || isScanning) {
-      onError?.('Run a scan with the current settings before importing.');
+      onFailure?.('Run a scan with the current settings before importing.');
       return;
     }
     try {
@@ -305,11 +308,11 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
           ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
       if (!workspaceId) {
-        onError && onError('Please select a workspace first.');
+        onFailure?.('Please select a workspace first.');
         return;
       }
 
-      await integrationAPI.import({
+      const result = await integrationAPI.import({
         workspaceId,
         items: selected,
         filterRules: sanitizeFilterRules(filterRules),
@@ -327,9 +330,9 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
               }
             : undefined,
       });
-      onImportComplete && onImportComplete(selected);
+      onComplete?.(result);
     } catch (e) {
-      onError && onError(e?.message || 'GitHub import failed');
+      onFailure?.(e?.message || 'GitHub import failed');
     }
   };
 
@@ -489,7 +492,8 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
             colorScheme='red'
             isDisabled={!lastScanId}
           >
-            Remove previously imported tokens no longer found at the source
+            Remove previously imported items missing from this scan, including
+            items excluded by filters
           </Checkbox>
           {!lastScanId ? (
             <Text fontSize='xs' color={helpTextColor} pl={6}>

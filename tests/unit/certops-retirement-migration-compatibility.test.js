@@ -5,7 +5,7 @@ const { migrations, validateMigrationHistory } = require("../../apps/api/migrati
 const { composeMigrations } = require("../../apps/api/migrations/compose-migrations");
 const ledger = migrations.map(({ version, name }) => ({ version, name }));
 const preview = [...ledger.filter((row) => row.version <= 108), { version: 109, name: "certops_retirement_dossiers" }];
-const appended = [{ version: 110, name: "certops_period_creator_delete" }, { version: 111, name: "recipient_member_verification" }, { version: 112, name: "auto_sync_owner_username" }, {version:113,name:"certops_material_reconciliation"}, {version:114,name:"distribution_pagerduty_recovery"}, {version:115,name:"certops_observed_revocation"}];
+const appended = [{ version: 110, name: "certops_period_creator_delete" }, { version: 111, name: "recipient_member_verification" }, { version: 112, name: "auto_sync_owner_username" }, {version:113,name:"certops_material_reconciliation"}, {version:114,name:"distribution_pagerduty_recovery"}, {version:115,name:"certops_observed_revocation"}, { version: 116, name: "auto_sync_creation_expiration" }];
 test("retirement preview preserves identities through partial released-main upgrades", () => {
   for (let count = 0; count <= appended.length; count++) {
     const rows = [...preview, ...appended.slice(0, count)];
@@ -15,6 +15,21 @@ test("retirement preview preserves identities through partial released-main upgr
     validateMigrationHistory(plan);
     assert.deepEqual(composeMigrations(migrations, plan).map(({version,name}) => ({version,name})), plan);
   }
+});
+test("an applied expiration preview keeps its migration identity while adding observed revocation", () => {
+  const originalExpiration = { version: 115, name: "auto_sync_creation_expiration" };
+  const observedRevocation = { version: 116, name: "certops_observed_revocation" };
+  const priorTails = [ledger.filter((row) => row.version <= 114), [...preview, ...appended.slice(0, 5)]];
+  for (const prior of priorTails) {
+    const recorded = [...prior, originalExpiration];
+    validateMigrationHistory(recorded);
+    const plan = composeMigrations(migrations, recorded).map(({ version, name }) => ({ version, name }));
+    assert.deepEqual(plan, [...recorded, observedRevocation]);
+    validateMigrationHistory(plan);
+    assert.deepEqual(composeMigrations(migrations, plan).map(({ version, name }) => ({ version, name })), plan);
+  }
+  assert.throws(() => validateMigrationHistory([...ledger.filter((row) => row.version <= 113), originalExpiration]),
+    /Unsupported Core migration history/);
 });
 test("released main retains identities before appending retirement", () => {
   const rows = ledger.filter((row) => row.version <= 111);

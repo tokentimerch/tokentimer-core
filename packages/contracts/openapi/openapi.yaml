@@ -4206,7 +4206,7 @@ paths:
             schema:
               $ref: "#/components/schemas/IntegrationImportRequest"
       responses:
-        "200":
+        "201":
           description: Import result
           content:
             application/json:
@@ -4448,7 +4448,7 @@ paths:
             schema:
               $ref: "#/components/schemas/IntegrationImportRequest"
       responses:
-        "200":
+        "201":
           description: Import result
           content:
             application/json:
@@ -4814,7 +4814,7 @@ paths:
                         type: array
                         default: []
                         uniqueItems: true
-                        items: { type: string, enum: [asset_name, project, group, owner_username] }
+                        items: { type: string, enum: [asset_name, project, group, owner_username, expiration] }
                   items:
                     type: array
                     items:
@@ -4948,7 +4948,8 @@ paths:
                       - project
                       - group
                       - owner_username
-                  maxItems: 7
+                      - expiration
+                  maxItems: 8
       responses:
         "200":
           description: Saved effective defaults
@@ -13977,19 +13978,19 @@ components:
         enabled: { type: boolean, nullable: true }
         labels:
           type: array
-          items: { type: string, enum: [configuration_name, monitoring_group, kind, asset_name, project, group, owner_username] }
+          items: { type: string, enum: [configuration_name, monitoring_group, kind, asset_name, project, group, owner_username, expiration] }
         locked: { type: boolean }
         source: { type: string, nullable: true, enum: [env, database, null] }
         extra_labels:
           type: array
-          description: Permitted high-cardinality labels. Empty AUTO_SYNC_METRICS_EXTRA_LABELS uses saved System Settings permissions; a nonempty list restricts labels and none denies them. Owner permission never selects owner_username; effective global or connection selection must also include it.
-          items: { type: string, enum: [asset_name, project, group, owner_username] }
+          description: Permitted high-cardinality labels. Empty AUTO_SYNC_METRICS_EXTRA_LABELS uses saved System Settings permissions; a nonempty list restricts labels and none denies them. The effective global or connection selection must also include owner_username or expiration to expose the respective label.
+          items: { type: string, enum: [asset_name, project, group, owner_username, expiration] }
         extra_labels_locked: { type: boolean }
         labels_locked: { type: boolean, description: Complete label selection is controlled by AUTO_SYNC_METRICS_LABELS. }
     AutoSyncMetricSettings:
       type: object
       additionalProperties: false
-      description: Connection metric settings, overridden independently by active system metric or monitoring-group overrides. Configuration ID is always included; changing these settings does not restart a scan. Names, project/group and owner_username labels can multiply time series and expose metadata to metrics readers. No credential values are exported. Environment settings take precedence over saved system defaults. Extra labels are off by default. owner_username is the best-effort GitLab PAT owner, not the importing user; it requires deployment permission and label selection, applies only to new inventory creations, does not enrich existing inventory retroactively and does not describe expiry.
+      description: Connection metric settings, overridden independently by active system metric or monitoring-group overrides. Configuration ID is always included. Extra labels are off by default and can multiply time series and expose metadata to metrics readers. Environment settings take precedence over saved system defaults. owner_username is the best-effort GitLab PAT owner. expiration is the verified expiry date or UTC timestamp from the source scan, when available. Both labels require permission and selection and describe newly created inventory as observed by auto-sync.
       properties:
         inherit_system:
           type: boolean
@@ -14001,10 +14002,10 @@ components:
         labels:
           type: array
           uniqueItems: true
-          maxItems: 7
+          maxItems: 8
           items:
             type: string
-            enum: [configuration_name, monitoring_group, kind, asset_name, project, group, owner_username]
+            enum: [configuration_name, monitoring_group, kind, asset_name, project, group, owner_username, expiration]
         monitoring_group:
           type: string
           maxLength: 64
@@ -17900,10 +17901,23 @@ components:
     IntegrationImportResponse:
       type: object
       properties:
+        created_count: { type: integer, minimum: 0 }
+        updated_count: { type: integer, minimum: 0 }
+        error_count: { type: integer, minimum: 0 }
+        deleted_count: { type: integer, minimum: 0 }
+        cleanup_status:
+          type: string
+          enum: [completed, partial, skipped_import_errors, skipped_incomplete, skipped_unavailable, failed]
+          description: Outcome of requested one-time cleanup. Omitted when no one-time cleanup was requested. Partial means only complete scan scopes were processed.
         created:
-          type: integer
+          type: array
+          items: { type: object, additionalProperties: true }
         updated:
-          type: integer
+          type: array
+          items: { type: object, additionalProperties: true }
+        deleted:
+          type: array
+          items: { type: object, additionalProperties: true }
         errors:
           type: array
           items:

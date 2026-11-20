@@ -185,103 +185,114 @@ function isServiceAccount(username) {
   return serviceKeywords.some((keyword) => lowerUsername.includes(keyword));
 }
 
-// Returns `{ projects, truncated }` -- see listRepositories in
-// githubIntegration.js for why enumeration truncation must be reported
-// explicitly rather than silently swallowed.
-async function listProjects({ baseUrl, token, maxItems = 2000 }) {
-  const projects = [];
-  let page = 1;
-  const perPage = Math.min(100, maxItems);
-  let truncated = false;
-
-  while (projects.length < maxItems) {
-    try {
-      const data = await gitlabRequest({
-        baseUrl,
-        token,
-        method: "GET",
-        path: "/api/v4/projects",
-        params: {
-          page,
-          per_page: perPage,
-          simple: true,
-          // NOTE: Do not combine with owned:true. GitLab's ProjectsFinder checks
-          // owned before membership/min_access_level (see app/finders/projects_finder.rb
-          // collection_with_user): when owned is present it short-circuits to
-          // current_user.owned_projects and membership/min_access_level are never
-          // applied. That silently excludes group/subgroup projects where the user
-          // has Maintainer access but is not the literal project owner, which is
-          // exactly where token-management endpoints (project/deploy/trigger tokens)
-          // are commonly used. membership + min_access_level alone already covers
-          // owned projects too, since owners are members of their own projects.
-          membership: true, // Include projects user is a member of
-          min_access_level: 40, // Maintainer level or above (needed for token management)
-        },
-      });
-
-      if (!Array.isArray(data)) break;
-      if (data.length === 0) break;
-
-      projects.push(...data);
-      if (projects.length >= maxItems && data.length === perPage) {
-        truncated = true;
-        break;
-      }
-      if (data.length < perPage) break;
-      page++;
-    } catch (e) {
-      if (e.status === 404 || e.status === 403) {
-        truncated = true;
-        break;
-      }
-      throw e;
-    }
-  }
-
-  return { projects: projects.slice(0, maxItems), truncated };
+function readListHeader(headers, name) {
+  return headers?.get?.(name) ?? Object.entries(headers || {})
+    .find(([key]) => key.toLowerCase() === name)?.[1];
 }
 
-// Returns `{ groups, truncated }` -- see listProjects above.
-async function listGroups({ baseUrl, token, maxItems = 2000 }) {
-  const groups = [];
-  let page = 1;
-  const perPage = Math.min(100, maxItems);
-  let truncated = false;
-
-  while (groups.length < maxItems) {
-    try {
-      const data = await gitlabRequest({
-        baseUrl,
-        token,
-        method: "GET",
-        path: "/api/v4/groups",
-        params: {
-          page,
-          per_page: perPage,
-          min_access_level: 40, // Maintainer level or above (needed for token management)
-        },
-      });
-
-      if (!Array.isArray(data)) break;
-      if (data.length === 0) break;
-
-      groups.push(...data);
-      if (groups.length >= maxItems && data.length === perPage) {
-        truncated = true;
-        break;
-      }
-      if (data.length < perPage) break;
-      page++;
-    } catch (e) {
-      if (e.status === 404 || e.status === 403) {
-        truncated = true;
-        break;
-      }
-      throw e;
-    }
+function paginationNumber(value) {
+  if (value == null) return undefined;
+  if (!/^\d+$/.test(String(value)) || !Number.isSafeInteger(Number(value))) {
+    throw new Error("GitLab returned invalid pagination headers");
   }
+  return Number(value);
+}
 
-  return { groups: groups.slice(0, maxItems), truncated };
+function linkNextPage(link) {
+  if (typeof link !== "string") return undefined;
+  let page;
+  for (const [, target, attributes] of link.matchAll(/<([^>]+)>([^<]*)/g)) {
+    if (!/;\s*rel\s*=\s*(?:"next"|next)(?:\s|,|;|$)/i.test(attributes)) continue;
+    // Only consume the page number. The next request still uses the original
+    // validated host, endpoint and filters, never a URL supplied by the server.
+    const nextPage = new URL(target, "https://gitlab.invalid").searchParams.get("page");
+    if (nextPage == null) throw new Error("GitLab returned an invalid next-page link");
+    const advertisedPage = paginationNumber(nextPage);
+    if (page != null && page !== advertisedPage) throw new Error("GitLab returned conflicting next-page links");
+    page = advertisedPage;
+  }
+  return page;
+}
+
+// Retain already seen items when a list fails partway through. `truncated`
+// reports a scan limit; `error` reports a page that could not be trusted.
+async function collectGitLabList({ baseUrl, token, path, params = {}, maxItems = 2000 }) {
+  const items = [];
+  const seen = new Set();
+  const perPage = Math.min(100, maxItems);
+  let expectedPages;
+  let expectedTotal;
+  let promisedThrough = 0;
+  try {
+    for (let page = 1; page <= 100; page++) {
+      const { data, headers } = await gitlabRequest({ baseUrl, token, path,
+        params: { ...params, page, per_page: perPage }, includeResponse: true });
+      if (!Array.isArray(data)) throw new Error("GitLab listing returned an invalid page");
+      let invalidItems = false;
+      for (const item of data.slice(0, perPage)) {
+        const id = item?.id;
+        if ((typeof id !== "number" && typeof id !== "string") ||
+          !/^[1-9]\d*$/.test(String(id)) || seen.has(String(id))) {
+          invalidItems = true;
+          continue;
+        }
+        seen.add(String(id));
+        if (items.length < maxItems) items.push(item);
+      }
+
+      const pageHeader = paginationNumber(readListHeader(headers, "x-page"));
+      const pageSize = paginationNumber(readListHeader(headers, "x-per-page")) ?? perPage;
+      const nextHeader = readListHeader(headers, "x-next-page");
+      const nextPage = nextHeader === "" ? undefined : paginationNumber(nextHeader);
+      const nextLink = linkNextPage(readListHeader(headers, "link"));
+      const totalPages = paginationNumber(readListHeader(headers, "x-total-pages"));
+      const total = paginationNumber(readListHeader(headers, "x-total"));
+      const inconsistentTotals =
+        (expectedPages != null && totalPages != null && expectedPages !== totalPages) ||
+        (expectedTotal != null && total != null && expectedTotal !== total);
+      expectedPages ??= totalPages;
+      expectedTotal ??= total;
+      const hasNext = nextPage != null || nextLink != null || page < expectedPages || seen.size < expectedTotal;
+      const confirmsEnd = nextHeader === "" || page >= expectedPages || seen.size === expectedTotal;
+      if (
+        invalidItems || inconsistentTotals || pageSize < 1 || pageSize > perPage || data.length > pageSize ||
+        (pageHeader != null && pageHeader !== page) ||
+        (nextPage != null && nextPage !== page + 1) || (nextLink != null && nextLink !== page + 1) ||
+        (hasNext && confirmsEnd) || (!data.length && (hasNext || page <= promisedThrough)) || seen.size > expectedTotal ||
+        (data.length && expectedPages != null && page > expectedPages)
+      ) {
+        throw new Error("GitLab pagination did not advance reliably");
+      }
+      if (!hasNext && (confirmsEnd || !data.length)) {
+        return { items, truncated: seen.size > items.length };
+      }
+      if (hasNext) promisedThrough = page + 1;
+      // A short headerless page leaves coverage unknown. Keep scanning while
+      // the raw-item and page budgets allow an exhaustion check.
+      if (items.length === maxItems && (hasNext || seen.size > items.length)) return { items, truncated: true };
+    }
+    return { items, truncated: true };
+  } catch (error) {
+    return { items, truncated: false, error };
+  }
+}
+
+async function listProjects({ baseUrl, token, maxItems = 2000 }) {
+  const { items: projects, ...coverage } = await collectGitLabList({ baseUrl, token,
+    path: "/api/v4/projects", maxItems, params: {
+      simple: true,
+      // `owned:true` overrides membership filtering and omits group projects
+      // where the user is a Maintainer rather than the owner.
+      membership: true,
+      min_access_level: 40,
+    } });
+  return { projects, ...coverage };
+}
+
+async function listGroups({ baseUrl, token, maxItems = 2000 }) {
+  const { items: groups, ...coverage } = await collectGitLabList({ baseUrl, token,
+    path: "/api/v4/groups", maxItems, params: { min_access_level: 40 } });
+  return { groups, ...coverage };
 }
 
 async function* listPersonalAccessTokens({
@@ -355,140 +366,41 @@ async function* listPersonalAccessTokens({
 }
 
 async function listUsers({ baseUrl, token, maxItems = 500, onError }) {
-  const users = [];
-  let page = 1;
-  const perPage = Math.min(100, maxItems);
-
-  while (users.length < maxItems) {
-    try {
-      const data = await gitlabRequest({
-        baseUrl,
-        token,
-        method: "GET",
-        path: "/api/v4/users",
-        params: {
-          page,
-          per_page: perPage,
-          active: true, // Only active users
-        },
-      });
-
-      if (!Array.isArray(data)) break;
-      if (data.length === 0) break;
-
-      users.push(...data);
-      if (data.length < perPage) break;
-      page++;
-    } catch (e) {
-      onError?.(e);
-      // Keep proven owners when a later enrichment page is unavailable.
-      break;
-    }
-  }
-
-  return users.slice(0, maxItems);
+  const { items, error } = await collectGitLabList({ baseUrl, token,
+    path: "/api/v4/users", maxItems, params: { active: true } });
+  if (error) onError?.(error);
+  return items;
 }
 
-async function listProjectAccessTokens({ baseUrl, token, projectId, state }) {
-  try {
-    const params = {};
-    if (state) params.state = state;
-    const data = await gitlabRequest({
-      baseUrl,
-      token,
-      method: "GET",
-      path: `/api/v4/projects/${projectId}/access_tokens`,
-      params,
-    });
-    return Array.isArray(data) ? data : [];
-  } catch (e) {
-    if (e.status === 404 || e.status === 403) return [];
-    throw e;
-  }
+function listProjectAccessTokens({ baseUrl, token, projectId, state, maxItems }) {
+  return collectGitLabList({ baseUrl, token, maxItems,
+    path: `/api/v4/projects/${projectId}/access_tokens`, params: state ? { state } : {} });
 }
 
-async function listGroupAccessTokens({ baseUrl, token, groupId, state }) {
-  try {
-    const params = {};
-    if (state) params.state = state;
-    const data = await gitlabRequest({
-      baseUrl,
-      token,
-      method: "GET",
-      path: `/api/v4/groups/${groupId}/access_tokens`,
-      params,
-    });
-    return Array.isArray(data) ? data : [];
-  } catch (e) {
-    if (e.status === 404 || e.status === 403) return [];
-    throw e;
-  }
+function listGroupAccessTokens({ baseUrl, token, groupId, state, maxItems }) {
+  return collectGitLabList({ baseUrl, token, maxItems,
+    path: `/api/v4/groups/${groupId}/access_tokens`, params: state ? { state } : {} });
 }
 
-async function listDeployTokens({ baseUrl, token, projectId }) {
-  try {
-    const data = await gitlabRequest({
-      baseUrl,
-      token,
-      method: "GET",
-      path: `/api/v4/projects/${projectId}/deploy_tokens`,
-    });
-    return Array.isArray(data) ? data : [];
-  } catch (e) {
-    if (e.status === 404 || e.status === 403) return [];
-    throw e;
-  }
+function listDeployTokens({ baseUrl, token, projectId, maxItems }) {
+  return collectGitLabList({ baseUrl, token, maxItems, path: `/api/v4/projects/${projectId}/deploy_tokens` });
 }
 
-async function listPipelineTriggers({
-  baseUrl,
-  token,
-  projectId,
-  maxItems = 1000,
-}) {
-  // GitLab paginates this endpoint like any other list endpoint (default
-  // page size 20), so a project with many trigger tokens needs more than
-  // one request to see all of them.
-  // Note: unlike the other per-project token helpers in this file, this one
-  // lets 401/403/404 propagate instead of swallowing them, so the trigger
-  // token scan below can count permission-denied projects separately from
-  // projects that genuinely have zero triggers.
-  const triggers = [];
-  let page = 1;
-  const perPage = Math.min(100, maxItems);
-
-  while (triggers.length < maxItems) {
-    const data = await gitlabRequest({
-      baseUrl,
-      token,
-      method: "GET",
-      path: `/api/v4/projects/${projectId}/triggers`,
-      params: { page, per_page: perPage },
-    });
-
-    if (!Array.isArray(data) || data.length === 0) break;
-
-    triggers.push(...data);
-    if (data.length < perPage) break;
-    page++;
-  }
-  return triggers.slice(0, maxItems);
+function listPipelineTriggers({ baseUrl, token, projectId, maxItems = 1000 }) {
+  return collectGitLabList({ baseUrl, token, maxItems, path: `/api/v4/projects/${projectId}/triggers` });
 }
 
-async function listSSHKeys({ baseUrl, token, userId = null }) {
-  try {
-    const path = userId ? `/api/v4/users/${userId}/keys` : "/api/v4/user/keys";
-    const data = await gitlabRequest({
-      baseUrl,
-      token,
-      method: "GET",
-      path,
-    });
-    return Array.isArray(data) ? data : [];
-  } catch (e) {
-    if (e.status === 404 || e.status === 403) return [];
-    throw e;
+function listSSHKeys({ baseUrl, token, userId = null, maxItems }) {
+  const path = userId ? `/api/v4/users/${userId}/keys` : "/api/v4/user/keys";
+  return collectGitLabList({ baseUrl, token, maxItems, path });
+}
+
+function listWarning(error) {
+  if (!error) return {};
+  if ([401, 403, 404].includes(error.status)) {
+    return { note: `A GitLab list was unavailable or access was denied (HTTP ${error.status}).`, status: error.status };
   }
+  return { error: error.message, status: error.status };
 }
 
 async function scanGitLab({
@@ -546,6 +458,8 @@ async function scanGitLab({
 
   const items = [];
   const summary = [];
+  const cleanupParentIds = {};
+  let gitLabPatCoverage;
   const BATCH_SIZE = 10; // Concurrency limit for parallel API calls
   let currentUser = null;
 
@@ -591,7 +505,7 @@ async function scanGitLab({
     // We only scan projects where user has min_access_level=40 (Maintainer) to reduce 401/403 errors
     if (include.tokens && filters.includeProjectTokens) {
       try {
-        const { projects, truncated: projectsListTruncated } =
+        const { projects, truncated: projectsListTruncated, error: projectsListError } =
           await listProjects({
             baseUrl: normalizedUrl,
             token,
@@ -602,6 +516,8 @@ async function scanGitLab({
         let projectsWithTokens = 0;
         let projectsFailed = 0;
         let projectsSkippedByCap = 0;
+        let tokenListsTruncated = false;
+        let listError = projectsListError;
         let skippedRevoked = 0;
         let skippedExpired = 0;
 
@@ -618,20 +534,32 @@ async function scanGitLab({
 
           await Promise.all(
             batch.map(async (project) => {
-              if (items.length >= maxItems) return;
+              if (items.length >= maxItems) {
+                projectsSkippedByCap++;
+                return;
+              }
               projectsScanned++;
               try {
-                const projectTokens = await listProjectAccessTokens({
+                const { items: projectTokens, truncated, error } = await listProjectAccessTokens({
                   baseUrl: normalizedUrl,
                   token,
                   projectId: project.id,
                   state: filters.includeRevoked ? undefined : "active",
+                  maxItems,
                 });
+                if (error) {
+                  projectsFailed++;
+                  listError ??= error;
+                }
+                tokenListsTruncated ||= truncated;
 
                 if (projectTokens.length > 0) projectsWithTokens++;
 
                 for (const pt of projectTokens) {
-                  if (items.length >= maxItems) break;
+                  if (items.length >= maxItems) {
+                    tokenListsTruncated = true;
+                    break;
+                  }
 
                   // Skip revoked/inactive tokens unless includeRevoked filter is enabled
                   if (
@@ -665,6 +593,7 @@ async function scanGitLab({
                     type: "api_key",
                     description: pt.description || null,
                     expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                    metric_expiration: pt.expires_at,
                     location: `gitlab:projects/${project.id}/access_tokens/${pt.id}`,
                     project_id: project.id,
                     project_name: project.name || project.path_with_namespace,
@@ -679,12 +608,13 @@ async function scanGitLab({
                   });
                   projectTokensCount++;
                 }
-              } catch (_e) {
+              } catch (error) {
                 // A project we could see but couldn't read tokens for
                 // (401/403/404) means this sub-scope did not actually see
                 // every project's tokens -- count it so "complete" reflects
                 // that, instead of silently treating it as "no tokens".
                 projectsFailed++;
+                listError ??= error;
               }
             }),
           );
@@ -699,8 +629,9 @@ async function scanGitLab({
         });
         const truncated =
           projectsListTruncated ||
-          projectsSkippedByCap > 0 ||
-          items.length >= maxItems;
+          tokenListsTruncated ||
+          projectsSkippedByCap > 0;
+        cleanupParentIds["gitlab-project-token"] = projects.map(project => String(project.id));
         summary.push({
           type: "project_access_tokens",
           sourceKind: "gitlab-project-token",
@@ -709,7 +640,8 @@ async function scanGitLab({
           skippedExpired,
           projectsFailed,
           truncated,
-          complete: projectsFailed === 0 && !truncated,
+          ...listWarning(listError),
+          complete: !listError && !truncated,
         });
       } catch (e) {
         // Feature may not be available on older self-hosted instances
@@ -719,14 +651,16 @@ async function scanGitLab({
           );
           summary.push({
             type: "project_access_tokens",
+            sourceKind: "gitlab-project-token",
             note: "Not available (GitLab 13.9+ required)",
+            complete: false,
           });
         } else {
           logger.warn("Project access tokens scan failed", {
             error: e.message,
             status: e.status,
           });
-          summary.push({ type: "project_access_tokens", error: e.message });
+          summary.push({ type: "project_access_tokens", sourceKind: "gitlab-project-token", error: e.message, complete: false });
         }
       }
     }
@@ -737,7 +671,7 @@ async function scanGitLab({
     // Cloud: Always available | Self-hosted: May not be available on older versions or free tier
     if (include.tokens && filters.includeGroupTokens) {
       try {
-        const { groups, truncated: groupsListTruncated } = await listGroups({
+        const { groups, truncated: groupsListTruncated, error: groupsListError } = await listGroups({
           baseUrl: normalizedUrl,
           token,
           maxItems: 1000,
@@ -747,6 +681,8 @@ async function scanGitLab({
         let groupsWithTokens = 0;
         let groupsFailed = 0;
         let groupsSkippedByCap = 0;
+        let tokenListsTruncated = false;
+        let listError = groupsListError;
         let skippedRevoked = 0;
         let skippedExpired = 0;
 
@@ -763,20 +699,32 @@ async function scanGitLab({
 
           await Promise.all(
             batch.map(async (group) => {
-              if (items.length >= maxItems) return;
+              if (items.length >= maxItems) {
+                groupsSkippedByCap++;
+                return;
+              }
               groupsScanned++;
               try {
-                const groupTokens = await listGroupAccessTokens({
+                const { items: groupTokens, truncated, error } = await listGroupAccessTokens({
                   baseUrl: normalizedUrl,
                   token,
                   groupId: group.id,
                   state: filters.includeRevoked ? undefined : "active",
+                  maxItems,
                 });
+                if (error) {
+                  groupsFailed++;
+                  listError ??= error;
+                }
+                tokenListsTruncated ||= truncated;
 
                 if (groupTokens.length > 0) groupsWithTokens++;
 
                 for (const gt of groupTokens) {
-                  if (items.length >= maxItems) break;
+                  if (items.length >= maxItems) {
+                    tokenListsTruncated = true;
+                    break;
+                  }
 
                   // Skip revoked/inactive tokens unless includeRevoked filter is enabled
                   if (
@@ -810,6 +758,7 @@ async function scanGitLab({
                     type: "api_key",
                     description: gt.description || null,
                     expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                    metric_expiration: gt.expires_at,
                     location: `gitlab:groups/${group.id}/access_tokens/${gt.id}`,
                     group_id: group.id,
                     group_name: group.name || group.full_path,
@@ -823,12 +772,13 @@ async function scanGitLab({
                   });
                   groupTokensCount++;
                 }
-              } catch (_e) {
+              } catch (error) {
                 // A group we could see but couldn't read tokens for
                 // (401/403/404) means this sub-scope did not actually see
                 // every group's tokens -- count it so "complete" reflects
                 // that, instead of silently treating it as "no tokens".
                 groupsFailed++;
+                listError ??= error;
               }
             }),
           );
@@ -843,8 +793,9 @@ async function scanGitLab({
         });
         const truncated =
           groupsListTruncated ||
-          groupsSkippedByCap > 0 ||
-          items.length >= maxItems;
+          tokenListsTruncated ||
+          groupsSkippedByCap > 0;
+        cleanupParentIds["gitlab-group-token"] = groups.map(group => String(group.id));
         summary.push({
           type: "group_access_tokens",
           sourceKind: "gitlab-group-token",
@@ -853,7 +804,8 @@ async function scanGitLab({
           skippedExpired,
           groupsFailed,
           truncated,
-          complete: groupsFailed === 0 && !truncated,
+          ...listWarning(listError),
+          complete: !listError && !truncated,
         });
       } catch (e) {
         // Feature may not be available on older self-hosted instances
@@ -863,14 +815,16 @@ async function scanGitLab({
           );
           summary.push({
             type: "group_access_tokens",
+            sourceKind: "gitlab-group-token",
             note: "Not available (GitLab 14.7+ required)",
+            complete: false,
           });
         } else {
           logger.warn("Group access tokens scan failed", {
             error: e.message,
             status: e.status,
           });
-          summary.push({ type: "group_access_tokens", error: e.message });
+          summary.push({ type: "group_access_tokens", sourceKind: "gitlab-group-token", error: e.message, complete: false });
         }
       }
     }
@@ -885,6 +839,7 @@ async function scanGitLab({
       try {
         let patsFound = 0;
         const isAdmin = currentUser?.is_admin === true;
+        gitLabPatCoverage = "own";
 
         let skippedRevoked = 0; // Declare at function scope for admin scanning
         let skippedExpired = 0; // Track expired tokens that are skipped
@@ -895,6 +850,7 @@ async function scanGitLab({
         let unclassifiedUserPATs = 0; // Unknown owners cannot satisfy the user-exclusion filter.
         let ownerClassificationIncomplete = false;
         let ownScanError;
+        let observedOtherOwner = false;
 
         // Build a set of bot user IDs from group and project tokens to avoid duplicates
         // Group/project access tokens create bot users whose PATs would be counted separately
@@ -1011,6 +967,9 @@ async function scanGitLab({
                   patsTruncated = true;
                   break adminPatPages;
                 }
+                if (Number.isSafeInteger(pat.user_id) && pat.user_id > 0 && pat.user_id !== currentUser.id) {
+                  observedOtherOwner = true;
+                }
 
                 // Skip PATs that belong to bot users (group/project token bot accounts)
                 // This prevents double counting the same token as both group/project token and PAT
@@ -1080,6 +1039,8 @@ async function scanGitLab({
                   // filter rules match against for the "description" field.
                   description: pat.description || null,
                   expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                  metric_expiration: pat.expires_at,
+                  gitlab_pat_owned_by_principal: pat.user_id === currentUser.id,
                   location: username
                     ? `gitlab:users/${username}/personal_access_tokens/${pat.id}`
                     : `gitlab:personal_access_tokens/${pat.id}`,
@@ -1093,14 +1054,6 @@ async function scanGitLab({
                 });
                 patsFound++;
               }
-
-              if (items.length >= maxItems) {
-                // Stopped early with more PATs potentially unseen on this
-                // page or later pages -- this sub-scope did not see the
-                // whole instance.
-                patsTruncated = true;
-                break adminPatPages;
-              }
             }
           } catch (e) {
             logger.warn("Admin PAT scanning failed", {
@@ -1112,6 +1065,25 @@ async function scanGitLab({
             // silently reporting complete: true with whatever partial
             // results we gathered before the failure.
             adminScanFailed = true;
+          }
+          if (!adminScanFailed && !patsTruncated && !ownerClassificationIncomplete) {
+            // The account's is_admin flag can remain true when this PAT lacks
+            // Admin Mode privileges. Confirm effective access before using
+            // absence to clean up another user's PAT.
+            if (observedOtherOwner) {
+              gitLabPatCoverage = "all";
+            } else {
+              try {
+                const settings = await gitlabRequest({ baseUrl: normalizedUrl, token,
+                  path: "/api/v4/application/settings", timeout: 5000 });
+                if (typeof settings?.signup_enabled === "boolean" &&
+                    Number.isSafeInteger(settings.default_projects_limit)) {
+                  gitLabPatCoverage = "all";
+                }
+              } catch (_) {
+                // Without effective admin proof, only this principal's PATs are covered.
+              }
+            }
           }
         } else {
           // Regular user mode: Only scan own PATs
@@ -1169,6 +1141,8 @@ async function scanGitLab({
                     type: "api_key",
                     description: pat.description || null,
                     expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                    metric_expiration: pat.expires_at,
+                    gitlab_pat_owned_by_principal: pat.user_id === currentUser.id,
                     location: `gitlab:personal_access_tokens/${pat.id}`,
                     scopes: pat.scopes || [],
                     created_at: pat.created_at || null,
@@ -1249,7 +1223,7 @@ async function scanGitLab({
     // We only scan projects where user has min_access_level=40 to reduce permission errors
     if (include.tokens && filters.includeDeployTokens) {
       try {
-        const { projects, truncated: projectsListTruncated } =
+        const { projects, truncated: projectsListTruncated, error: projectsListError } =
           await listProjects({
             baseUrl: normalizedUrl,
             token,
@@ -1260,6 +1234,8 @@ async function scanGitLab({
         let projectsWithTokens = 0;
         let projectsFailed = 0;
         let projectsSkippedByCap = 0;
+        let tokenListsTruncated = false;
+        let listError = projectsListError;
 
         logger.info("Scanning GitLab deploy tokens", {
           totalProjects: projects.length,
@@ -1274,19 +1250,31 @@ async function scanGitLab({
 
           await Promise.all(
             batch.map(async (project) => {
-              if (items.length >= maxItems) return;
+              if (items.length >= maxItems) {
+                projectsSkippedByCap++;
+                return;
+              }
               projectsScanned++;
               try {
-                const deployTokens = await listDeployTokens({
+                const { items: deployTokens, truncated, error } = await listDeployTokens({
                   baseUrl: normalizedUrl,
                   token,
                   projectId: project.id,
+                  maxItems,
                 });
+                if (error) {
+                  projectsFailed++;
+                  listError ??= error;
+                }
+                tokenListsTruncated ||= truncated;
 
                 if (deployTokens.length > 0) projectsWithTokens++;
 
                 for (const dt of deployTokens) {
-                  if (items.length >= maxItems) break;
+                  if (items.length >= maxItems) {
+                    tokenListsTruncated = true;
+                    break;
+                  }
 
                   // GitLab hides revoked/deleted deploy tokens in its UI but
                   // the API still returns them with revoked: true (their
@@ -1318,6 +1306,7 @@ async function scanGitLab({
                     category: "key_secret",
                     type: "api_key",
                     expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                    metric_expiration: dt.expires_at,
                     location: `gitlab:projects/${project.id}/deploy_tokens/${dt.id}`,
                     project_id: project.id,
                     project_name: project.name || project.path_with_namespace,
@@ -1328,12 +1317,13 @@ async function scanGitLab({
                   });
                   deployTokensCount++;
                 }
-              } catch (_e) {
+              } catch (error) {
                 // A project we could see but couldn't read tokens for
                 // (401/403/404) means this sub-scope did not actually see
                 // every project's tokens -- count it so "complete" reflects
                 // that, instead of silently treating it as "no tokens".
                 projectsFailed++;
+                listError ??= error;
               }
             }),
           );
@@ -1346,15 +1336,17 @@ async function scanGitLab({
         });
         const truncated =
           projectsListTruncated ||
-          projectsSkippedByCap > 0 ||
-          items.length >= maxItems;
+          tokenListsTruncated ||
+          projectsSkippedByCap > 0;
+        cleanupParentIds["gitlab-deploy-token"] = projects.map(project => String(project.id));
         summary.push({
           type: "deploy_tokens",
           sourceKind: "gitlab-deploy-token",
           found: deployTokensCount,
           projectsFailed,
           truncated,
-          complete: projectsFailed === 0 && !truncated,
+          ...listWarning(listError),
+          complete: !listError && !truncated,
         });
       } catch (e) {
         logger.warn("Deploy tokens scan failed", {
@@ -1376,7 +1368,7 @@ async function scanGitLab({
     // never expire.
     if (include.tokens && filters.includeTriggerTokens) {
       try {
-        const { projects, truncated: projectsListTruncated } =
+        const { projects, truncated: projectsListTruncated, error: projectsListError } =
           await listProjects({
             baseUrl: normalizedUrl,
             token,
@@ -1385,8 +1377,10 @@ async function scanGitLab({
         let triggerTokensCount = 0;
         let projectsScanned = 0;
         let projectsWithTriggers = 0;
-        let projectsSkipped = 0; // Permission-denied (401/403/404) or not-found projects
+        let projectsSkipped = 0;
         let projectsSkippedByCap = 0;
+        let tokenListsTruncated = false;
+        let listError = projectsListError;
 
         logger.info("Scanning GitLab pipeline trigger tokens", {
           totalProjects: projects.length,
@@ -1401,19 +1395,31 @@ async function scanGitLab({
 
           await Promise.all(
             batch.map(async (project) => {
-              if (items.length >= maxItems) return;
+              if (items.length >= maxItems) {
+                projectsSkippedByCap++;
+                return;
+              }
               projectsScanned++;
               try {
-                const triggers = await listPipelineTriggers({
+                const { items: triggers, truncated, error } = await listPipelineTriggers({
                   baseUrl: normalizedUrl,
                   token,
                   projectId: project.id,
+                  maxItems: Math.min(maxItems, 1000),
                 });
+                if (error) {
+                  projectsSkipped++;
+                  listError ??= error;
+                }
+                tokenListsTruncated ||= truncated;
 
                 if (triggers.length > 0) projectsWithTriggers++;
 
                 for (const trigger of triggers) {
-                  if (items.length >= maxItems) break;
+                  if (items.length >= maxItems) {
+                    tokenListsTruncated = true;
+                    break;
+                  }
 
                   items.push({
                     source: "gitlab-trigger-token",
@@ -1441,20 +1447,9 @@ async function scanGitLab({
                   });
                   triggerTokensCount++;
                 }
-              } catch (e) {
-                if ([401, 403, 404].includes(e.status)) {
-                  // Expected: user may see project but can't access its
-                  // triggers (needs Maintainer role). Silently skip, but
-                  // count it so a systemic permission issue is visible in
-                  // the logs even though it never surfaces to the user.
-                  projectsSkipped++;
-                } else {
-                  logger.debug("Unexpected error scanning trigger tokens", {
-                    projectId: project.id,
-                    error: e.message,
-                    status: e.status,
-                  });
-                }
+              } catch (error) {
+                projectsSkipped++;
+                listError ??= error;
               }
             }),
           );
@@ -1465,6 +1460,9 @@ async function scanGitLab({
           projectsSkipped,
           tokensFound: triggerTokensCount,
         });
+        const truncated = projectsListTruncated || tokenListsTruncated ||
+          projectsSkippedByCap > 0;
+        cleanupParentIds["gitlab-trigger-token"] = projects.map(project => String(project.id));
         summary.push({
           type: "pipeline_trigger_tokens",
           sourceKind: "gitlab-trigger-token",
@@ -1472,15 +1470,9 @@ async function scanGitLab({
           projectsScanned,
           projectsSkipped,
           projectsSkippedByCap,
-          truncated:
-            projectsListTruncated ||
-            projectsSkippedByCap > 0 ||
-            items.length >= maxItems,
-          complete:
-            projectsSkipped === 0 &&
-            !projectsListTruncated &&
-            projectsSkippedByCap === 0 &&
-            items.length < maxItems,
+          truncated,
+          ...listWarning(listError),
+          complete: !listError && !truncated,
         });
       } catch (e) {
         logger.warn("Pipeline trigger tokens scan failed", {
@@ -1500,13 +1492,18 @@ async function scanGitLab({
     if (include.keys && filters.includeSSHKeys) {
       try {
         // Always use the user endpoint (no userId) - admin endpoint requires elevated privileges
-        const sshKeys = await listSSHKeys({
+        const { items: sshKeys, truncated: listTruncated, error } = await listSSHKeys({
           baseUrl: normalizedUrl,
           token,
-          userId: null,
+          maxItems,
         });
+        let keysFound = 0;
+        let keysListTruncated = listTruncated;
         for (const key of sshKeys) {
-          if (items.length >= maxItems) break;
+          if (items.length >= maxItems) {
+            keysListTruncated = true;
+            break;
+          }
           const expiresAt = key.expires_at
             ? tryParseDate(key.expires_at)
             : null;
@@ -1524,16 +1521,21 @@ async function scanGitLab({
             category: "key_secret",
             type: "ssh_key",
             expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+            metric_expiration: key.expires_at,
             location: `gitlab:user/keys/${key.id}`,
             created_at: key.created_at || null,
             last_used_at: key.last_used_at || null,
           });
+          keysFound++;
         }
+        const truncated = keysListTruncated;
         summary.push({
           type: "ssh_keys",
           sourceKind: "gitlab-ssh-key",
-          found: sshKeys.length,
-          complete: true,
+          found: keysFound,
+          truncated,
+          ...listWarning(error),
+          complete: !error && !truncated,
         });
       } catch (e) {
         summary.push({
@@ -1674,7 +1676,8 @@ async function scanGitLab({
     ...resultsByType,
   });
 
-  return { items, summary, host, ownerKey: currentUser?.id ? String(currentUser.id) : null };
+  return { items, summary, cleanupParentIds, gitLabPatCoverage, host,
+    ownerKey: currentUser?.id ? String(currentUser.id) : null };
 }
 
 module.exports = {
@@ -1687,8 +1690,10 @@ if (process.env.NODE_ENV === "test") {
   module.exports._test = {
     gitlabRequest,
     listProjects,
+    listGroups,
     listPersonalAccessTokens,
     listProjectAccessTokens,
+    listGroupAccessTokens,
     listDeployTokens,
     listPipelineTriggers,
     listSSHKeys,

@@ -48,6 +48,7 @@ const reservations = Object.freeze({
   123: "agent_credential_rotations",
   124: "agent_credential_rotation_ack",
   126: "certops_adcs_receipt_deadline",
+  127: "auto_sync_creation_expiration",
 });
 
 function validateMigrationReservations(migrations) {

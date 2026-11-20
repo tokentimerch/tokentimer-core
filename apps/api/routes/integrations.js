@@ -72,6 +72,36 @@ const {
 const { bindImportItemsToScan } = require("../services/scanBinding");
 
 const router = require("express").Router();
+
+function publicScanResult(result) {
+  for (const item of result.items || []) {
+    delete item.metric_expiration;
+    delete item.gitlab_pat_owned_by_principal;
+  }
+  delete result.cleanupParentIds;
+  delete result.gitLabPatCoverage;
+  return result;
+}
+
+function gitHostingCleanupSubScopes(result) {
+  return (result.summary || [])
+    // GitHub's PAT note describes an unsupported feature, not a scanned scope.
+    .filter(scope => !(scope?.type === "personal_access_tokens" && scope.note && !scope.sourceKind && !scope.error))
+    .map(scope => {
+      const parents = result.cleanupParentIds?.[scope.sourceKind];
+      const dimensions = {};
+      if (Array.isArray(parents)) dimensions.sourceObjectParentIds = parents;
+      if (scope.sourceKind === "gitlab-pat" && result.gitLabPatCoverage) {
+        dimensions.gitLabPatCoverage = result.gitLabPatCoverage;
+      }
+      return {
+        sourceKind: scope.sourceKind,
+        dimensions,
+        complete: scope.complete === true,
+        reason: scope.error ? "error" : scope.truncated ? "truncated" : null,
+      };
+    });
+}
 router.use((req, _res, next) => {
   req.integrationScanStartedAt = new Date();
   next();
@@ -320,11 +350,11 @@ router.post(
             items: result.items.map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: {
+              dimensions: metricSourceDimensions(item, {
                 mount: item.mount,
                 path: item.path,
                 category: item.category,
-              },
+              }),
             })),
             subScopes: (result.summary || []).map((s) => ({
               sourceKind: s.sourceKind,
@@ -341,7 +371,7 @@ router.post(
         });
       }
 
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({
@@ -876,12 +906,15 @@ router.post(
       // contract) rather than a client-reconstructed scope.
       let cleanupDeleted = [];
       let autoCleanupResult = null;
+      let cleanupStatus;
       await recordAutoSyncImportErrors(autoSyncRun, errors.length);
       if (effectiveCleanup && effectiveCleanup.enabled === true) {
+        if (!req.isWorkerCall && errors.length) cleanupStatus = "skipped_import_errors";
         try {
           if (autoSyncRun) {
             if (errors.length === 0) autoCleanupResult = await reconcileAutoSyncRun(autoSyncRun, req.body?.auto_sync_scan_ids);
-          } else if (!req.isWorkerCall) {
+          } else if (!req.isWorkerCall && errors.length === 0) {
+            // Require a successful import before using its scan for manual cleanup.
             // Unfenced legacy workers may import before activation, but never delete inventory.
             const cleanupResult = await cleanupObsoleteTokens({
               workspaceId,
@@ -890,6 +923,7 @@ router.post(
               reason: "import_cleanup",
             });
             cleanupDeleted = cleanupResult.deleted;
+            cleanupStatus = cleanupResult.status;
           }
         } catch (cleanupErr) {
           logger.error("Obsolete token cleanup failed", {
@@ -902,6 +936,7 @@ router.post(
               code: "AUTO_SYNC_RECONCILIATION_FAILED",
             });
           }
+          if (!req.isWorkerCall) cleanupStatus = "failed";
         }
       }
 
@@ -939,6 +974,7 @@ router.post(
         detached_count: autoCleanupResult?.detached || 0,
         cleanup_complete: autoCleanupResult?.complete ?? null,
         scan_complete: autoSyncRun?.scanComplete ?? null,
+        ...(cleanupStatus ? { cleanup_status: cleanupStatus } : {}),
         deleted: cleanupDeleted,
         created,
         updated,
@@ -1022,7 +1058,7 @@ router.post(
       }
       if (
         maxItems !== undefined &&
-        (!Number.isFinite(maxItems) || maxItems < 1 || maxItems > 2000)
+        (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 2000)
       ) {
         return res
           .status(400)
@@ -1074,14 +1110,11 @@ router.post(
             items: (result.items || []).map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: metricSourceDimensions(item),
+              dimensions: { ...metricSourceDimensions(item),
+                ...(item.sourceKind === "gitlab-pat" && item.gitlab_pat_owned_by_principal === true
+                  ? { gitlab_pat_owned_by_principal: true } : {}) },
             })),
-            subScopes: (result.summary || []).map((s) => ({
-              sourceKind: s.sourceKind,
-              dimensions: {},
-              complete: s.complete === true,
-              reason: s.error ? "error" : s.truncated ? "truncated" : null,
-            })),
+            subScopes: gitHostingCleanupSubScopes(result),
           });
           result.scan_id = scan.scanId;
         }
@@ -1091,7 +1124,7 @@ router.post(
         });
       }
 
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({
@@ -1246,7 +1279,7 @@ router.post(
       }
       if (
         maxItems !== undefined &&
-        (!Number.isFinite(maxItems) || maxItems < 1 || maxItems > 2000)
+        (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 2000)
       ) {
         return res
           .status(400)
@@ -1303,12 +1336,7 @@ router.post(
               sourceObjectId: item.sourceObjectId,
               dimensions: metricSourceDimensions(item),
             })),
-            subScopes: (result.summary || []).map((s) => ({
-              sourceKind: s.sourceKind,
-              dimensions: {},
-              complete: s.complete === true,
-              reason: s.error ? "error" : s.truncated ? "truncated" : null,
-            })),
+            subScopes: gitHostingCleanupSubScopes(result),
           });
           result.scan_id = scan.scanId;
         }
@@ -1318,7 +1346,7 @@ router.post(
         });
       }
 
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({
@@ -1622,7 +1650,7 @@ router.post(
         });
       }
 
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({
@@ -1837,7 +1865,7 @@ router.post(
             items: (result.items || []).map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: {},
+              dimensions: metricSourceDimensions(item, {}),
             })),
             subScopes: (result.summary || []).map((s) => ({
               sourceKind: s.sourceKind,
@@ -1854,7 +1882,7 @@ router.post(
         });
       }
 
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({
@@ -1972,7 +2000,7 @@ router.post(
             items: (result.items || []).map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: item.dimensions || {},
+              dimensions: metricSourceDimensions(item, item.dimensions || {}),
             })),
             subScopes: (result.summary || [])
               .filter((s) => s && s.sourceKind)
@@ -1991,7 +2019,7 @@ router.post(
         });
       }
 
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({
@@ -2176,8 +2204,8 @@ router.post(
             items: (result.items || []).map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: item.servicePrincipalType
-                ? { servicePrincipalType: item.servicePrincipalType } : {},
+              dimensions: metricSourceDimensions(item, item.servicePrincipalType
+                ? { servicePrincipalType: item.servicePrincipalType } : {}),
             })),
             subScopes: (result.summary || []).map((s) => {
               // Manual cleanup cannot delete principals outside the selected class.
@@ -2202,7 +2230,7 @@ router.post(
         });
       }
 
-      res.json(withQuota(result));
+      res.json(withQuota(publicScanResult(result)));
       try {
         if (req && req.user) {
           await writeAudit({
@@ -2882,12 +2910,15 @@ router.post(
       // contract) rather than a client-reconstructed scope.
       let cleanupDeleted = [];
       let autoCleanupResult = null;
+      let cleanupStatus;
       await recordAutoSyncImportErrors(autoSyncRun, errors.length);
       if (effectiveCleanup && effectiveCleanup.enabled === true) {
+        if (!req.isWorkerCall && errors.length) cleanupStatus = "skipped_import_errors";
         try {
           if (autoSyncRun) {
             if (errors.length === 0) autoCleanupResult = await reconcileAutoSyncRun(autoSyncRun, req.body?.auto_sync_scan_ids);
-          } else if (!req.isWorkerCall) {
+          } else if (!req.isWorkerCall && errors.length === 0) {
+            // Require a successful import before using its scan for manual cleanup.
             // Unfenced legacy workers may import before activation, but never delete inventory.
             const cleanupResult = await cleanupObsoleteTokens({
               workspaceId,
@@ -2896,6 +2927,7 @@ router.post(
               reason: "import_cleanup",
             });
             cleanupDeleted = cleanupResult.deleted;
+            cleanupStatus = cleanupResult.status;
           }
         } catch (cleanupErr) {
           logger.error("Obsolete token cleanup failed", {
@@ -2908,6 +2940,7 @@ router.post(
               code: "AUTO_SYNC_RECONCILIATION_FAILED",
             });
           }
+          if (!req.isWorkerCall) cleanupStatus = "failed";
         }
       }
 
@@ -2945,6 +2978,7 @@ router.post(
         detached_count: autoCleanupResult?.detached || 0,
         cleanup_complete: autoCleanupResult?.complete ?? null,
         scan_complete: autoSyncRun?.scanComplete ?? null,
+        ...(cleanupStatus ? { cleanup_status: cleanupStatus } : {}),
         deleted: cleanupDeleted,
         created,
         updated,
