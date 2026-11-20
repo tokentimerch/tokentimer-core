@@ -189,4 +189,4 @@ Total skips found: 178
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 672 | keeps a same-request idempotent manual-job replay to one audit | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 774 | keeps machine event and evidence ingestion available for pre-existing work while paused | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 904 | serializes real PostgreSQL pause and manual-job races in both commit orders | dynamic (this.skip() / t.skip()) | `prerequisite` |
-| `tests/postgres/material-reconciliation.test.js` | 768 | real login approval and Linux agent inspect installed legacy evidence through lost-ack recovery | test(..., { skip }) option-object | `platform` |
+| `tests/postgres/material-reconciliation.test.js` | 774 | real login approval and Linux agent inspect installed legacy evidence through lost-ack recovery | test(..., { skip }) option-object | `platform` |
