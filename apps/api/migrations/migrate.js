@@ -5434,6 +5434,12 @@ migrations.push({
     ON certificate_jobs(workspace_id, enrollment_id) WHERE enrollment_id IS NOT NULL`,
 });
 
+migrations.push({
+  version: 126,
+  name: "certops_adcs_receipt_deadline",
+  sql: fs.readFileSync(require("path").join(__dirname, "126-certops-adcs-receipt-deadline.sql"), "utf8"),
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);

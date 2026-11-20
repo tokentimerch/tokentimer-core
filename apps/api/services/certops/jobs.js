@@ -2119,7 +2119,7 @@ async function createCertificateJob(options) {
       throw serviceError("AD CS proof requires a transaction and a bound receipt", CERTOPS_JOB_INVALID);
     }
     const intent = await db.query(`SELECT i.id FROM certops_adcs_proof_recovery_intents i
-      JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id
+      JOIN certops_adcs_expected_identity_receipts r ON r.workspace_id=i.workspace_id AND r.id=i.receipt_id AND r.committed_seen_at IS NOT NULL
       JOIN certificate_enrollments e ON e.workspace_id=i.workspace_id AND e.id=i.enrollment_id
       WHERE i.workspace_id=$1 AND i.id=$2::uuid AND i.enrollment_id=$3::uuid AND i.agent_id=$4::uuid
         AND e.certificate_id::text=$5 AND e.deploy_target=$6::jsonb AND i.state='transport_unavailable' AND i.proof_job_id IS NULL`,

@@ -845,6 +845,77 @@ test("terminal enrollment wins a concurrent proof recovery preparation", async (
   } finally { await writer.query("ROLLBACK").catch(() => {}); await reader.query("ROLLBACK").catch(() => {}); writer.release(); reader.release(); }
 });
 
+test("expected identity committed after claim expiry cannot authorize proof recovery after lease renewal", async () => {
+  const f = await fixture();
+  const crypto = require("node:crypto");
+  const raw = "expected-expiry-" + randomUUID();
+  const publicId = (await pool.query("UPDATE certops_agents SET credential_hash=$2 WHERE id=$1 RETURNING agent_id", [f.agentId, crypto.createHash("sha256").update(raw).digest("hex")])).rows[0].agent_id;
+  const agent = require("../../apps/api/services/certops/agentCredentialFence").bindAuthenticatedCredential({ id: f.agentId, workspaceId: f.workspaceId, agentId: publicId }, raw);
+  const target = { type: "windows-cert-store", reference: TARGET.reference, store: "My" };
+  const recovery = require("../../apps/api/services/certops/adcsProofRecovery");
+  const issue = require("../../apps/api/services/certops/issuance").createCertificateIssuanceJob;
+  const client = await pool.connect();
+  let job, receipt;
+  try {
+    await client.query("BEGIN");
+    job = (await issue({ client, workspaceId: f.workspaceId, operation: "issue", source: "api", mode: "real", idempotencyKey: randomUUID(), assignedAgentId: f.agentId, requestedByUserId: f.actor, payload: { issuerId: f.issuerId, target } })).job;
+    const claim = randomUUID();
+    await client.query("UPDATE certificate_jobs SET status='running',claimed_by_agent_id=$2,claim_id=$3,attempt_count=1,lease_expires_at=clock_timestamp()+interval '3 seconds' WHERE id=$1", [job.id, f.agentId, claim]);
+    const metadata = { step: "adcs.expected-identity", enrollmentId: job.enrollmentId, destinationSha256: crypto.createHash("sha256").update(JSON.stringify(target)).digest("hex"), fingerprintSha256: "ab".repeat(32), csrSpkiSha256: "cd".repeat(32), leafSpkiSha256: "cd".repeat(32) };
+    const evidence = (await client.query("INSERT INTO certificate_evidence(workspace_id,job_id,evidence_type,claim_id,attempt_count,created_by_agent_id,metadata) VALUES($1,$2,'validation.passed',$3,1,$4,$5::jsonb) RETURNING id", [f.workspaceId, job.id, claim, f.agentId, JSON.stringify(metadata)])).rows[0].id;
+    receipt = await recovery.recordAdcsExpectedIdentityTx({ client, agent, jobId: job.id, evidenceId: evidence });
+    await client.query("SELECT pg_sleep(4)");
+    await client.query("COMMIT");
+    await require("../../apps/api/services/certops/agentDispatch").renewJobLease({ dbPool: pool, agent,
+      envelope: {}, jobId: job.id, claimId: claim,
+      deps: { enforceAgentSequence: async () => {}, extendJobNonceExpiry: async () => ({ expiresAt: new Date(Date.now()+60000).toISOString() }) } });
+    await client.query("BEGIN");
+    await assert.rejects(recovery.witnessCommittedAdcsIdentityTx({ client, agent, jobId: job.id, receiptId: receipt.receiptId }), /not observed within the original claim/);
+    await client.query("ROLLBACK");
+  } finally { await client.query("ROLLBACK").catch(() => {}); client.release(); }
+  await pool.query("UPDATE certificate_jobs SET status='orphaned_unknown_effect',needs_operator_reconciliation=true WHERE id=$1", [job.id]);
+  const tx = await pool.connect();
+  try {
+    await tx.query("BEGIN");
+    const result = await recovery.prepareAdcsProofRecoveryTx({ client: tx, workspaceId: f.workspaceId, enrollmentId: job.enrollmentId, originalJobId: job.id, actorUserId: f.actor, reason: "Inspect", audit: async () => {} });
+    assert.equal(result.state, "expected_identity_unavailable");
+    await tx.query("COMMIT");
+  } finally { tx.release(); }
+});
+
+test("AD CS receipt deadline upgrade preserves identities and refuses an unproven or late witness", async () => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`CREATE TEMP TABLE certops_adcs_expected_identity_receipts(
+      id uuid, fingerprint_sha256 text, origin_xid bigint, committed_seen_at timestamptz) ON COMMIT DROP`);
+    const id = randomUUID();
+    await client.query(`INSERT INTO certops_adcs_expected_identity_receipts
+      VALUES($1,$2,txid_current()-1,clock_timestamp())`, [id, "ab".repeat(32)]);
+    const sql = require("node:fs").readFileSync(require("node:path").join(__dirname,
+      "../../apps/api/migrations/126-certops-adcs-receipt-deadline.sql"), "utf8");
+    await client.query(sql);
+    await client.query(sql); // An interrupted migration can be retried safely.
+    const receipt = (await client.query("SELECT * FROM certops_adcs_expected_identity_receipts")).rows[0];
+    assert.equal(receipt.id, id);
+    assert.equal(receipt.fingerprint_sha256, "ab".repeat(32));
+    assert.equal(receipt.committed_seen_at, null);
+    assert.equal(receipt.receipt_claim_expires_at, null);
+    for (const change of [
+      "committed_seen_at=clock_timestamp()",
+      "receipt_claim_expires_at='2026-11-16T12:00:00Z',committed_seen_at='2026-11-16T12:00:00Z'",
+      "receipt_claim_expires_at='2026-11-16T12:00:00Z',committed_seen_at='2026-11-16T12:00:00.000001Z'",
+      "origin_xid=NULL,receipt_claim_expires_at='2026-11-16T12:00:00Z',committed_seen_at='2026-11-16T11:59:59Z'",
+    ]) {
+      await client.query("SAVEPOINT invalid_witness");
+      await assert.rejects(client.query(`UPDATE certops_adcs_expected_identity_receipts SET ${change}`), { code: "23514" });
+      await client.query("ROLLBACK TO SAVEPOINT invalid_witness");
+    }
+    await client.query(`UPDATE certops_adcs_expected_identity_receipts
+      SET receipt_claim_expires_at='2026-11-16T12:00:00Z',committed_seen_at='2026-11-16T11:59:59.999999Z'`);
+  } finally { await client.query("ROLLBACK"); client.release(); }
+});
+
 test("AD CS proof recovery binds the original live identity, verifies installation and preserves workspace deletion", async () => {
   const f = await fixture();
   const crypto = require("node:crypto");
@@ -874,10 +945,37 @@ test("AD CS proof recovery binds the original live identity, verifies installati
     await client.query("UPDATE certificate_enrollments SET state='cancelled' WHERE id=$1", [job.enrollmentId]);
     assert.equal((await recovery.recordAdcsExpectedIdentityTx({ client, agent, jobId: job.id, evidenceId })).created, true);
     await client.query("ROLLBACK TO SAVEPOINT terminal_receipt");
+    await client.query("UPDATE certificate_jobs SET lease_expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1", [job.id]);
     const first = await recovery.recordAdcsExpectedIdentityTx({ client, agent, jobId: job.id, evidenceId });
     assert.equal(first.created, true);
     assert.deepEqual(await recovery.recordAdcsExpectedIdentityTx({ client, agent, jobId: job.id, evidenceId }), { receiptId: first.receiptId, created: false });
+    await assert.rejects(recovery.witnessCommittedAdcsIdentityTx({ client, agent, jobId: job.id, receiptId: first.receiptId }), /not observed within the original claim/);
     await client.query("COMMIT");
+    await client.query("BEGIN");
+    for (const mutation of ["claim", "attempt", "credential", "legacy"]) {
+      await client.query("SAVEPOINT invalid_commit_witness");
+      if (mutation === "claim") await client.query("UPDATE certificate_jobs SET claim_id=$2 WHERE id=$1", [job.id, randomUUID()]);
+      if (mutation === "attempt") await client.query("UPDATE certificate_jobs SET attempt_count=attempt_count+1 WHERE id=$1", [job.id]);
+      if (mutation === "legacy") await client.query("UPDATE certops_adcs_expected_identity_receipts SET receipt_claim_expires_at=NULL WHERE id=$1", [first.receiptId]);
+      if (mutation === "credential") await client.query("UPDATE certops_agents SET credential_hash=$2 WHERE id=$1", [f.agentId, "ef".repeat(32)]);
+      await assert.rejects(recovery.witnessCommittedAdcsIdentityTx({ client, agent, jobId: job.id, receiptId: first.receiptId }),
+        mutation === "credential" ? { code: "CERTOPS_AGENT_CREDENTIAL_INVALID" } : /not observed within the original claim/);
+      await client.query("ROLLBACK TO SAVEPOINT invalid_commit_witness");
+    }
+    await recovery.witnessCommittedAdcsIdentityTx({ client, agent, jobId: job.id, receiptId: first.receiptId });
+    const witnessBefore = (await client.query("SELECT committed_seen_at,receipt_claim_expires_at FROM certops_adcs_expected_identity_receipts WHERE id=$1", [first.receiptId])).rows[0];
+    await client.query(`SELECT pg_sleep(GREATEST(0,extract(epoch FROM (receipt_claim_expires_at-clock_timestamp())))+0.05)
+      FROM certops_adcs_expected_identity_receipts WHERE id=$1`, [first.receiptId]);
+    await client.query("COMMIT");
+    // A lost ACK can be replayed after renewal only because the original
+    // committed witness already proves receipt admission before its deadline.
+    await require("../../apps/api/services/certops/agentDispatch").renewJobLease({ dbPool: pool, agent,
+      jobId: job.id, claimId: claim, deps: { enforceAgentSequence: async () => {},
+        extendJobNonceExpiry: async () => ({ expiresAt: new Date(Date.now()+60000).toISOString() }) } });
+    await client.query("BEGIN");
+    await recovery.witnessCommittedAdcsIdentityTx({ client, agent, jobId: job.id, receiptId: first.receiptId });
+    await client.query("COMMIT");
+    assert.deepEqual((await client.query("SELECT committed_seen_at,receipt_claim_expires_at FROM certops_adcs_expected_identity_receipts WHERE id=$1", [first.receiptId])).rows[0], witnessBefore);
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
   await pool.query("UPDATE certificate_jobs SET status='orphaned_unknown_effect',needs_operator_reconciliation=true,lease_expires_at=NOW()-interval '1 minute' WHERE id=$1", [job.id]);
   const afterExpiry = await pool.connect();
@@ -903,6 +1001,18 @@ test("AD CS proof recovery binds the original live identity, verifies installati
     assert.equal(intent.state, "transport_unavailable");
     assert.equal(intent.created, true);
     assert.equal((await recovery.prepareAdcsProofRecoveryTx(request)).created, false);
+    await resultTx.query("SAVEPOINT missing_commit_witness");
+    await resultTx.query("UPDATE certops_adcs_expected_identity_receipts SET committed_seen_at=NULL WHERE workspace_id=$1", [f.workspaceId]);
+    await assert.rejects(recovery.queueAdcsProofRecoveryTx({ client: resultTx, workspaceId: f.workspaceId, intentId: intent.intentId, actorUserId: f.actor }), { code: "CERTOPS_ADCS_PROOF_INVALID" });
+    await assert.rejects(require("../../apps/api/services/certops/jobs").createCertificateJob({
+      client: resultTx, transactionOwned: true, workspaceId: f.workspaceId,
+      operation: "adcs-installation-proof", allowAdcsProofOnly: true, adcsProofIntentId: intent.intentId,
+      enrollmentId: job.enrollmentId, assignedAgentId: f.agentId, subjectType: "managed_certificate",
+      subjectId: String(job.subjectId), source: "api", mode: "real", requestedByUserId: f.actor,
+      idempotencyKey: randomUUID(), returnOutcome: true,
+      payload: { schemaVersion: 1, certificateId: String(job.subjectId), target, keyMode: "os-store-managed" },
+    }), { code: "CERTOPS_JOB_INVALID" });
+    await resultTx.query("ROLLBACK TO SAVEPOINT missing_commit_witness");
     assert.equal(Number((await resultTx.query("SELECT count(*) FROM certificate_jobs WHERE workspace_id=$1", [f.workspaceId])).rows[0].count), before);
     await resultTx.query(`UPDATE certops_agents SET declared_capabilities=$2::jsonb,capabilities_updated_at=NOW() WHERE id=$1`,
       [f.agentId, JSON.stringify(["windows-store-only-adcs-v1", "adcs-enroll-v1", "evidence-claim-binding-v1", "adcs-store-proof-only-v1"])]);
@@ -917,6 +1027,11 @@ test("AD CS proof recovery binds the original live identity, verifies installati
     assert.equal(queued.job.operation, "adcs-installation-proof");
     proofJobId = queued.job.id;
     assert.equal((await recovery.queueAdcsProofRecoveryTx({ client: resultTx, workspaceId: f.workspaceId, intentId: intent.intentId, actorUserId: f.actor })).created, false);
+    await resultTx.query("SAVEPOINT missing_replay_witness");
+    await resultTx.query("UPDATE certops_adcs_expected_identity_receipts SET committed_seen_at=NULL WHERE workspace_id=$1", [f.workspaceId]);
+    await assert.rejects(recovery.queueAdcsProofRecoveryTx({ client: resultTx, workspaceId: f.workspaceId, intentId: intent.intentId, actorUserId: f.actor }), { code: "CERTOPS_ADCS_PROOF_INVALID" });
+    assert.equal(await recovery.loadAdcsProofJobBindingTx({ client: resultTx, workspaceId: f.workspaceId, jobId: proofJobId, agentId: f.agentId }), null);
+    await resultTx.query("ROLLBACK TO SAVEPOINT missing_replay_witness");
     for (const terminal of ["cancelled", "expired", "abandoned"]) {
       await resultTx.query("SAVEPOINT terminal_after_queue");
       await resultTx.query("UPDATE certificate_enrollments SET state=$2 WHERE id=$1", [job.enrollmentId, terminal]);

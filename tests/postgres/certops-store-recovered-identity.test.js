@@ -23,7 +23,8 @@ test("recovered store issuance binds the original job to its verified identity",
       CREATE TEMP TABLE certops_management_associations(workspace_id uuid,period_id uuid,identity_id uuid);
       CREATE TEMP TABLE certops_issuance_job_identities(workspace_id uuid,job_id uuid PRIMARY KEY,identity_id uuid);
       CREATE TEMP TABLE certificate_enrollments(workspace_id uuid,id uuid,agent_id uuid,certificate_id uuid,current_job_id uuid);
-      CREATE TEMP TABLE certops_adcs_expected_identity_receipts(workspace_id uuid,id uuid,enrollment_id uuid,agent_id uuid,original_job_id uuid,fingerprint_sha256 text);
+      CREATE TEMP TABLE certops_adcs_expected_identity_receipts(workspace_id uuid,id uuid,enrollment_id uuid,agent_id uuid,original_job_id uuid,fingerprint_sha256 text,
+        committed_seen_at timestamptz DEFAULT clock_timestamp(),receipt_claim_expires_at timestamptz DEFAULT (clock_timestamp()+interval '1 minute'));
       CREATE TEMP TABLE certops_adcs_proof_recovery_intents(workspace_id uuid,id uuid,receipt_id uuid,enrollment_id uuid,agent_id uuid,proof_job_id uuid);
       CREATE TEMP TABLE certops_acme_store_enrollments(workspace_id uuid,agent_id uuid,certificate_id uuid,original_job_id uuid,current_job_id uuid,state text,fingerprint_sha256 text)`);
     const workspaceId = randomUUID(), otherWorkspace = randomUUID(), agent = randomUUID(), otherAgent = randomUUID();
@@ -36,7 +37,7 @@ test("recovered store issuance binds the original job to its verified identity",
       "INSERT INTO certificate_jobs VALUES ($1,$2,'issue',NULL,$3,'managed_certificate',$4,$5,$6)",
       [workspaceId, id, agent, certificate, enrollment, period]);
     await client.query("INSERT INTO certificate_enrollments VALUES ($1,$2,$3,$4,$5)", [workspaceId, enrollment, agent, certificate, originalAdcs]);
-    await client.query("INSERT INTO certops_adcs_expected_identity_receipts VALUES ($1,$2,$3,$4,$5,$6)", [workspaceId, receipt, enrollment, agent, originalAdcs, fingerprint]);
+    await client.query("INSERT INTO certops_adcs_expected_identity_receipts(workspace_id,id,enrollment_id,agent_id,original_job_id,fingerprint_sha256) VALUES ($1,$2,$3,$4,$5,$6)", [workspaceId, receipt, enrollment, agent, originalAdcs, fingerprint]);
     await client.query("INSERT INTO certops_adcs_proof_recovery_intents VALUES ($1,$2,$3,$4,$5,$6)", [workspaceId, randomUUID(), receipt, enrollment, agent, proof]);
     await client.query("INSERT INTO certops_acme_store_enrollments VALUES ($1,$2,$3,$4,$5,'installed',$6)", [workspaceId, agent, certificate, originalAcme, continuation, fingerprint]);
     for (const job of [
@@ -47,6 +48,12 @@ test("recovered store issuance binds the original job to its verified identity",
       const invoke = (overrides = {}) => _test.preserveRecoveredIssuanceIdentity({ client, workspaceId, job: { ...job, ...overrides }, fingerprint });
       await invoke();
       await invoke(); // idempotent replay must retain the same identity.
+      if (job.enrollment_id) {
+        await client.query("SAVEPOINT missing_commit_witness");
+        await client.query("UPDATE certops_adcs_expected_identity_receipts SET committed_seen_at=NULL WHERE id=$1", [receipt]);
+        await assert.rejects(invoke(), /unavailable or ambiguous/);
+        await client.query("ROLLBACK TO SAVEPOINT missing_commit_witness");
+      }
       await assert.rejects(invoke({ assigned_agent_id: otherAgent }), /unavailable or ambiguous/);
       await assert.rejects(_test.preserveRecoveredIssuanceIdentity({ client, workspaceId: otherWorkspace, job, fingerprint }), /unavailable or ambiguous/);
       await assert.rejects(invoke({ subject_id: randomUUID() }), /unavailable or ambiguous/);

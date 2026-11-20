@@ -51,5 +51,6 @@ are reservations, not no-op migrations. They do not install another feature.
 | 120 | certops_iis_absence_proofs | Reconcile proven IIS observations |
 | 121 | certops_enrollment_jobs_index | Index enrollment jobs |
 | 122 | certops_observed_revocation | Observed certificate revocation (#541) |
+| 126 | certops_adcs_receipt_deadline | Immutable AD CS receipt admission deadline |
 
 The integrated Windows Store and IIS preview previously used 115 for observed revocation and 116–122 for Store and IIS. The runner preserves those recorded pairs and appends only missing definitions.

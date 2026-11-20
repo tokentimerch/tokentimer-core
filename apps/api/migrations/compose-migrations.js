@@ -9,17 +9,21 @@ const DISTRIBUTION = "certops_material_distribution";
 const REVIEW = "certops_distribution_review";
 const TRANSFER = "certops_distribution_transfer";
 const OBSERVED_REVOCATION = "certops_observed_revocation";
-// Exact version/name pairs from the integrated Windows Store/IIS preview.
-const legacyCombinedTail = [
-  OBSERVED_REVOCATION,
+const ADCS_RECEIPT_DEADLINE = "certops_adcs_receipt_deadline";
+const storePreviewMigrations = [
   "store_issuance_explicit_renewal_consent",
   "certops_acme_store_enrollment_identity",
   "certops_adcs_expected_identity_receipts",
+  ADCS_RECEIPT_DEADLINE,
+];
+const iisPreviewMigrations = [
   "certops_windows_iis_consent",
   "certops_material_adcs_operation_union",
   "certops_iis_absence_proofs",
   "certops_enrollment_jobs_index",
 ];
+// Exact version/name pairs from the integrated Windows Store/IIS preview.
+const legacyCombinedTail = [OBSERVED_REVOCATION, ...storePreviewMigrations.slice(0, 3), ...iisPreviewMigrations];
 const legacyCombinedVersions = new Map(legacyCombinedTail.map((name, index) => [name, 115 + index]));
 // These independent, unapplied schemas may arrive after an observation preview.
 const independentFeatureNames = new Set(Object.entries(require("./migration-reservations.cjs").reservations)
@@ -66,11 +70,19 @@ function reviewedFeatureOrders(names, rows) {
   const firstStore = legacy.findIndex((name) => legacyCombinedVersions.has(name));
   legacy.splice(firstStore, 0, OBSERVED_REVOCATION);
   orders.push(legacy);
-  for (const oldOrder of [
+  const previousOrders = [
     names.filter((name) => name === OBSERVED_REVOCATION || !legacyCombinedVersions.has(name)),
     names.filter((name) => name !== OBSERVED_REVOCATION),
     legacy,
-  ]) {
+  ];
+  if (rows.some((row) => row.name === ADCS_RECEIPT_DEADLINE)) {
+    // Earlier Store previews applied the receipt deadline before these independent definitions.
+    previousOrders.push(
+      names.filter((name) => name !== OBSERVED_REVOCATION && !iisPreviewMigrations.includes(name)),
+      names.filter((name) => name !== "agent_credential_rotations" && name !== "agent_credential_rotation_ack"),
+    );
+  }
+  for (const oldOrder of previousOrders) {
     const mismatch = rows.findIndex((row, index) => row.name !== oldOrder[index]);
     const applied = oldOrder.slice(0, mismatch < 0 ? rows.length : mismatch);
     if (applied.some((name) => legacyCombinedVersions.has(name))) {
@@ -143,8 +155,23 @@ function composeMigrations(migrations, recorded = []) {
       .filter((entry) => entry.version >= 109 && entry.name !== "certops_retirement_dossiers")
       .map((entry) => entry.name);
     const appendedRows = rows.filter((row) => row.version > 109);
+    // Preserve compact Store-only preview ledgers when adding the IIS definitions.
+    const storeTail = storePreviewMigrations.filter((name) => byName.has(name));
+    const baseAppend = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation"];
+    const recovery = byName.has("distribution_pagerduty_recovery") ? ["distribution_pagerduty_recovery"] : [];
+    const observed = byName.has(OBSERVED_REVOCATION) ? [OBSERVED_REVOCATION] : [];
+    const storeOrders = [
+      [...baseAppend, ...recovery, ...observed, ...storeTail],
+      [...baseAppend, ...recovery, ...storeTail.slice(0, 3), ...observed, ...storeTail.slice(3)],
+      ...Array.from({ length: storeTail.length + 1 }, (_, count) =>
+        [...baseAppend, ...storeTail.slice(0, count), ...recovery, ...storeTail.slice(count), ...observed]),
+    ];
+    const storePrefixes = storeOrders.flatMap((order) => Array.from({ length: order.length + 1 }, (_, length) => {
+      const applied = order.slice(0, length);
+      return [...applied, ...appendNames.filter((name) => !applied.includes(name))];
+    }));
     recognizedRetirementPreview = oldRows.every((row) => row.version < 70 || oldIdentity.get(row.name) === row.version) &&
-      reviewedFeatureOrders(appendNames, appendedRows).some((appended) =>
+      [...reviewedFeatureOrders(appendNames, appendedRows), ...storePrefixes].some((appended) =>
         appendedRows.every((row, index) => row.version === 110 + index && row.name === appended[index]));
     if (!recognizedRetirementPreview) throw new Error("Unsupported Core retirement preview migration history");
   }
@@ -362,6 +389,7 @@ function composeMigrations(migrations, recorded = []) {
       );
   }
   const dependencies = {
+    [ADCS_RECEIPT_DEADLINE]: ["certops_adcs_expected_identity_receipts"],
     recipient_member_verification: ["recipient_channel_verification"],
     certops_issuance_identity_transfer: ["certops_issuance_job_identity"],
     certops_issuance_job_identity: ["operator_issuance"],

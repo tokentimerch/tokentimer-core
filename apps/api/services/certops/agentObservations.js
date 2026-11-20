@@ -1179,6 +1179,7 @@ async function persistAgentJobEvidenceBatch({
     });
 
     const created = [];
+    const expectedIdentityReceipts = [];
     for (const item of evidenceItems) {
       if (!item || typeof item !== "object" || Array.isArray(item)) {
         throw observationError("evidence item is invalid");
@@ -1245,14 +1246,24 @@ async function persistAgentJobEvidenceBatch({
       });
       if (clientMeta.step === "adcs.expected-identity") {
         if (item.eventType !== "validation.passed" || !evidence?.id) throw observationError("AD CS expected identity requires persisted claim evidence");
-        await (deps.recordAdcsExpectedIdentityTx || require("./adcsProofRecovery").recordAdcsExpectedIdentityTx)({
+        const receipt = await (deps.recordAdcsExpectedIdentityTx || require("./adcsProofRecovery").recordAdcsExpectedIdentityTx)({
           client, agent, jobId, evidenceId: String(evidence.id),
         });
+        expectedIdentityReceipts.push(receipt.receiptId);
       }
       if (evidence) created.push(evidence);
     }
 
     await client.query("COMMIT");
+    if (expectedIdentityReceipts.length) {
+      await client.query("BEGIN");
+      for (const receiptId of expectedIdentityReceipts) {
+        await (deps.witnessCommittedAdcsIdentityTx || require("./adcsProofRecovery").witnessCommittedAdcsIdentityTx)({
+          client, agent, jobId, receiptId,
+        });
+      }
+      await client.query("COMMIT");
+    }
     return { ok: true, evidenceCount: created.length, items: created };
   } catch (error) {
     try {
