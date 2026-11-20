@@ -37,7 +37,9 @@
           "does not qualify a preflight that checked a different template",
           "does not qualify a preflight that pinned a different CA key",
           "stops qualifying evidence once the issuer is re-confirmed with a different template",
-          "requires a new preflight job created after re-confirmation even when nothing changed"
+          "requires a new preflight job created after re-confirmation even when nothing changed",
+          "queues one approvable and audited preflight for concurrent due renewals",
+          "rechecks issuer and agent authority and rolls back a failed audit"
         ]
       },
       {
