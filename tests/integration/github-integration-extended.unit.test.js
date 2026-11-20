@@ -49,6 +49,7 @@ function buildAxiosMock({ userId, sshKeyId = 501, repoId = 900 }) {
     if (pathname === "/user") {
       return { data: { id: userId, login: `user-${userId}` } };
     }
+    if (config.params?.page > 1) return { data: [] };
     if (pathname === "/user/keys") {
       return { data: [{ id: sshKeyId, title: "laptop" }] };
     }
@@ -65,7 +66,7 @@ function buildAxiosMock({ userId, sshKeyId = 501, repoId = 900 }) {
       };
     }
     if (pathname === `/repos/user-${userId}/repo/actions/secrets`) {
-      return { data: { secrets: [{ name: "DEPLOY_SECRET" }] } };
+      return { data: { total_count: 1, secrets: [{ name: "DEPLOY_SECRET" }] } };
     }
     if (pathname === `/repos/user-${userId}/repo/keys`) {
       return { data: [{ id: 700, title: "ci-deploy-key" }] };
@@ -250,5 +251,132 @@ describe("GitHub integration host and owner attribution", () => {
     );
     expect(seen).to.include("/api/v3/user");
     expect(seen).to.include("/api/v3/user/keys");
+  });
+});
+
+describe("GitHub paginated scan coverage", () => {
+  const firstRepo = { id: 100, name: "alpha", full_name: "octo/alpha", owner: { login: "octo" } };
+  const nextRepo = { id: 200, name: "beta", full_name: "octo/beta", owner: { login: "octo" } };
+  const options = {
+    baseUrl: "https://ghe.example.com/api/v3",
+    token: "synthetic-scan-token",
+    include: { tokens: false, sshKeys: true, deployKeys: true, secrets: true },
+  };
+  const next = { link: '<?page=2>; rel="next"' };
+  const prev = { link: '<?page=1>; rel="prev"' };
+  const secretsPath = "/repos/octo/alpha/actions/secrets";
+  const keysPath = "/repos/octo/alpha/keys";
+  const getScope = (result, sourceKind) => result.summary.find(entry => entry.sourceKind === sourceKind);
+  const httpError = status => Object.assign(new Error(`HTTP ${status}`), { response: { status, data: {} } });
+
+  function scanner(respond) {
+    return requireWithMocks(resolveGithubModule(), { axios: async config => {
+      const apiPath = githubApiPathname(config.url);
+      if (apiPath === "/user") return { data: { id: 7, login: "octo" } };
+      return respond(apiPath, config.params.page, config);
+    } });
+  }
+
+  it("visits subsequent repository, secret, deploy-key and user-key pages on the original endpoint", async () => {
+    const calls = [];
+    const github = scanner((apiPath, page, config) => {
+      calls.push({ apiPath, page });
+      expect(new URL(config.url).origin).to.equal("https://ghe.example.com");
+      expect(new URL(config.url).pathname).to.equal(`/api/v3${apiPath}`);
+      expect(config.headers.Authorization).to.equal(`token ${options.token}`);
+      expect(config.params.per_page).to.equal(100);
+      if (apiPath === "/user/repos") {
+        expect(config.params.sort).to.equal("updated");
+        expect(config.params.direction).to.equal("desc");
+        return { data: page === 1 ? [firstRepo] : [nextRepo], headers: page === 1
+          ? { link: '<?page=2>; rel="next", <?page=2>; rel="last"' } : prev };
+      }
+      if (apiPath === "/user/keys") return { data: [{ id: page + 20 }], headers: page === 1 ? next : prev };
+      if (apiPath === secretsPath) {
+        return { data: { total_count: 2, secrets: [{ name: `SECRET_${page}` }] }, headers: page === 1
+          ? { Link: '<https://other.example/repositories/100/actions/secrets?per_page=1&page=2>; rel="next"' }
+          : prev };
+      }
+      if (apiPath === keysPath) return { data: [{ id: page + 30 }], headers: page === 1 ? next : prev };
+      if (apiPath === "/repos/octo/beta/actions/secrets") return { data: { total_count: 1, secrets: [{ name: "BETA" }] } };
+      if (apiPath === "/repos/octo/beta/keys") return { data: [] };
+      throw new Error(`Unexpected fixture path ${apiPath}`);
+    });
+    const result = await github.scanGitHub(options);
+    expect(result.items.map(item => item.sourceObjectId)).to.have.members([
+      "21", "22", "100:SECRET_1", "100:SECRET_2", "200:BETA", "100:31", "100:32",
+    ]);
+    expect(result.summary.every(scope => scope.complete)).to.equal(true);
+    expect(calls.filter(call => call.apiPath === "/user/repos").map(call => call.page)).to.deep.equal([1, 2]);
+    expect(calls.some(call => call.apiPath === secretsPath && call.page === 2)).to.equal(true);
+  });
+
+  for (const [failedPage, status] of [[1, 403], [2, 404], [2, 503]]) {
+    it(`preserves observations and reports incomplete when secret page ${failedPage} returns HTTP ${status}`, async () => {
+      const github = scanner((apiPath, page) => {
+        if (apiPath === "/user/repos") return { data: page === 1 ? [firstRepo] : [] };
+        if (apiPath === "/user/keys" || apiPath === keysPath) return { data: [] };
+        if (apiPath !== secretsPath || page === failedPage) throw httpError(status);
+        return { data: { total_count: 2, secrets: [{ name: "OBSERVED" }] }, headers: next };
+      });
+      const result = await github.scanGitHub(options);
+      expect(result.items.map(item => item.sourceObjectId)).to.deep.equal(failedPage === 1 ? [] : ["100:OBSERVED"]);
+      expect(getScope(result, "github-secret")).to.include({ complete: false, status });
+      expect(getScope(result, "github-deploy-key").complete).to.equal(true);
+    });
+  }
+
+  it("retains nested results from a partial repository list while blocking both repo scopes", async () => {
+    const github = scanner((apiPath, page) => {
+      if (apiPath === "/user/repos") {
+        if (page === 2) throw httpError(403);
+        return { data: [firstRepo], headers: next };
+      }
+      if (apiPath === secretsPath) return { data: { total_count: 1, secrets: [{ name: "OBSERVED" }] } };
+      if (apiPath === keysPath) return { data: page === 1 ? [{ id: 31 }] : [] };
+      return { data: [] };
+    });
+    const result = await github.scanGitHub(options);
+    expect(result.items.map(item => item.sourceObjectId)).to.have.members(["100:OBSERVED", "100:31"]);
+    for (const kind of ["github-secret", "github-deploy-key"]) {
+      expect(getScope(result, kind)).to.include({ complete: false, status: 403 });
+    }
+  });
+
+  for (const [label, secondPage] of [
+    ["a duplicate secret", { data: { total_count: 2, secrets: [{ name: "OBSERVED" }] } }],
+    ["an empty page contradicting total_count", { data: { total_count: 2, secrets: [] } }],
+    ["a malformed list", { data: { total_count: 2, secrets: {} } }],
+    ["conflicting next links", { data: { total_count: 3, secrets: [{ name: "FIRST" }] },
+      headers: { link: '<?page=3>; rel="next", <?page=4>; rel="next"' } }],
+  ]) {
+    it(`retains observed secrets and blocks completeness after ${label}`, async () => {
+      const github = scanner((apiPath, page) => {
+        if (apiPath === "/user/repos") return { data: page === 1 ? [firstRepo] : [] };
+        if (apiPath === secretsPath) return page === 1
+          ? { data: { total_count: 2, secrets: [{ name: "OBSERVED" }] } } : secondPage;
+        return { data: [] };
+      });
+      const result = await github.scanGitHub(options);
+      expect(result.items.map(item => item.sourceObjectId)).to.include("100:OBSERVED");
+      const coverage = getScope(result, "github-secret");
+      expect(coverage.complete).to.equal(false);
+      if (label === "conflicting next links") expect(coverage.error).to.match(/conflicting pagination links/);
+    });
+  }
+
+  it("stops at the SSH item limit while a subsequent page is still advertised", async () => {
+    const pages = [];
+    const github = scanner((apiPath, page, config) => {
+      expect(apiPath).to.equal("/user/keys");
+      expect(config.params.per_page).to.equal(1);
+      pages.push(page);
+      return { data: [{ id: 1 }], headers: next };
+    });
+    const result = await github.scanGitHub({ ...options, maxItems: 1,
+      include: { sshKeys: true, secrets: false, deployKeys: false } });
+    expect(result.items.map(item => item.sourceObjectId)).to.deep.equal(["1"]);
+    expect(getScope(result, "github-ssh-key")).to.include({ complete: false, truncated: true });
+    expect(pages).to.deep.equal([1]);
   });
 });

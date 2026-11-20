@@ -294,6 +294,7 @@ async function putPolicy({
       targetType: "certops_distribution_group",
       targetId: groupId,
       metadata: {
+        groupId,
         revision: row.revision,
         scopeHash: scope.hash,
         mode: policy.mode,
@@ -466,6 +467,7 @@ async function onMaterialPublished({ client, workspaceId, payload }) {
     targetType: "certops_distribution_group",
     targetId: group.id,
     metadata: {
+      groupId: group.id,
       materialVersionId: payload.materialVersionId,
       outcome,
       policyRevision: payload.policyRevision || 0,

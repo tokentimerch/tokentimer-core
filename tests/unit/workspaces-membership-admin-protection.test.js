@@ -1,13 +1,19 @@
 "use strict";
-/** Execute the actual checked-in membership POST handler with controlled DB,
- * audit and email boundaries. No user, external API or email is contacted. */
+/** Execute the checked-in membership handlers with controlled DB,
+ * audit and email boundaries. No external API or email is contacted. */
 const test = require("node:test"),
   assert = require("node:assert/strict"),
   fs = require("node:fs"),
   path = require("node:path"),
   vm = require("node:vm"),
   Module = require("node:module");
-function fixture({ target = 2, owner = 9, existingRole = "admin" } = {}) {
+function fixture({
+  target = 2,
+  owner = 9,
+  existingRole = "admin",
+  method = "post",
+  auditFails = false,
+} = {}) {
   const filename = path.resolve(
       __dirname,
       "../../apps/api/routes/workspaces.js",
@@ -18,6 +24,7 @@ function fixture({ target = 2, owner = 9, existingRole = "admin" } = {}) {
       role: existingRole,
       queries: [],
       audits: [],
+      auditQueryCounts: [],
       emails: [],
       metrics: 0,
     };
@@ -32,14 +39,30 @@ function fixture({ target = 2, owner = 9, existingRole = "admin" } = {}) {
       },
     },
   );
+  let beforeTransaction;
   const pool = {
     async connect() {
-      return { query: pool.query.bind(pool), release() {} };
+      return client;
     },
     async query(sql, args) {
       state.queries.push({ sql, args });
+      if (sql === "BEGIN") beforeTransaction = state.role;
+      if (sql === "ROLLBACK") state.role = beforeTransaction;
       if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) || sql.includes("pg_advisory_xact_lock"))
         return { rowCount: 0, rows: [] };
+      if (sql.startsWith("SELECT role FROM workspace_memberships")) {
+        assert.match(sql, /FOR UPDATE$/);
+        const rows = state.role ? [{ role: state.role }] : [];
+        return { rowCount: rows.length, rows };
+      }
+      if (sql.startsWith("UPDATE workspace_memberships SET role")) {
+        state.role = args[0];
+        return { rowCount: 1, rows: [] };
+      }
+      if (sql.startsWith("DELETE FROM workspace_memberships")) {
+        state.role = null;
+        return { rowCount: 1, rows: [] };
+      }
       if (sql.includes("SELECT id FROM users WHERE id IN"))
         return { rowCount: 3, rows: [{ id: owner }, { id: 1 }, { id: target }] };
       if (sql.includes("SELECT created_by,plan FROM workspaces"))
@@ -62,6 +85,7 @@ function fixture({ target = 2, owner = 9, existingRole = "admin" } = {}) {
       throw Error("Unexpected route query");
     },
   };
+  const client = { query: pool.query.bind(pool), release() {} };
   const noop = () => {},
     middleware = () => noop,
     actual = Module.createRequire(filename),
@@ -70,7 +94,12 @@ function fixture({ target = 2, owner = 9, existingRole = "admin" } = {}) {
       "../db/database": { pool },
       "../utils/logger": { logger: { error: noop, warn: noop, debug: noop } },
       "../services/audit": {
-        writeAudit: async (value) => state.audits.push(value),
+        writeAudit: async (value) => {
+          if (method !== "post") assert.equal(value.client, client);
+          if (auditFails) throw Error("audit insert failed");
+          state.auditQueryCounts.push(state.queries.length);
+          state.audits.push(value);
+        },
         normalizeAuditAction: (value) => value,
         auditActionSql: (value) => value,
       },
@@ -114,9 +143,9 @@ function fixture({ target = 2, owner = 9, existingRole = "admin" } = {}) {
     filename,
     path.dirname(filename),
   );
-  const route = routes.find(
-    (row) =>
-      row.method === "post" && row.route === "/api/v1/workspaces/:id/members",
+  const membersPath = "/api/v1/workspaces/:id/members";
+  const route = routes.find((row) =>
+    row.method === method && row.route === (method === "post" ? membersPath : membersPath + "/:userId"),
   );
   assert.ok(route);
   const response = {
@@ -129,6 +158,7 @@ function fixture({ target = 2, owner = 9, existingRole = "admin" } = {}) {
       this.body = value;
       return this;
     },
+    send() { return this; },
   };
   return {
     state,
@@ -143,6 +173,7 @@ function fixture({ target = 2, owner = 9, existingRole = "admin" } = {}) {
             name: "Owned workspace",
             plan: "oss",
           },
+          params: { userId: String(target) },
           body: { email: "target@example.test", role: "viewer" },
         },
         response,
@@ -200,6 +231,54 @@ test("ordinary member updates preserve audit, invitation cleanup and notificatio
   );
   assert.match(mutation.sql, /RETURNING\s+user_id/);
 });
+
+test("role changes audit the locked prior role before commit", async () => {
+  const value = fixture({ method: "patch", existingRole: "workspace_manager" });
+  await value.run();
+  assert.equal(value.response.statusCode, 200);
+  assert.equal(value.state.role, "viewer");
+  const [audit] = value.state.audits;
+  assert.equal(audit.action, "MEMBER_ROLE_CHANGED");
+  assert.deepEqual(audit.metadata, { role: "viewer", previous_role: "workspace_manager" });
+  assert.equal(value.state.queries[value.state.auditQueryCounts[0]].sql, "COMMIT");
+
+  await value.run();
+  assert.equal(value.response.statusCode, 200);
+  assert.equal(value.state.audits.length, 1);
+});
+
+test("reports a missing member without writing a role change", async () => {
+  const value = fixture({ method: "patch", existingRole: null });
+  await value.run();
+  assert.equal(value.response.statusCode, 404);
+  assert.equal(value.state.audits.length, 0);
+});
+
+test("removal records the actual removed role and a replay produces no event", async () => {
+  const value = fixture({ method: "delete", existingRole: "workspace_manager" });
+  await value.run();
+  assert.equal(value.response.statusCode, 204);
+  assert.equal(value.state.role, null);
+  const [audit] = value.state.audits;
+  assert.equal(audit.action, "MEMBER_REMOVED");
+  assert.deepEqual(audit.metadata, { removed_role: "workspace_manager" });
+  assert.equal(value.state.queries[value.state.auditQueryCounts[0]].sql, "COMMIT");
+
+  await value.run();
+  assert.equal(value.response.statusCode, 204);
+  assert.equal(value.state.audits.length, 1);
+});
+
+for (const method of ["patch", "delete"]) {
+  test(method + " rolls back a membership mutation when its audit insert fails", async () => {
+    const value = fixture({ method, existingRole: "workspace_manager", auditFails: true });
+    await value.run();
+    assert.equal(value.response.statusCode, 500);
+    assert.equal(value.state.role, "workspace_manager");
+    assert.equal(value.state.queries.at(-1).sql, "ROLLBACK");
+    assert.equal(value.state.audits.length, 0);
+  });
+}
 
 async function acceptInvitation({ existingRole, owner = false }) {
   const filename = path.resolve(

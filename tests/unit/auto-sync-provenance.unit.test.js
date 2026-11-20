@@ -62,7 +62,7 @@ describe("auto-sync provenance transaction boundaries", () => {
         id: scanId, source_instance: "https://gitlab.example",
         source_owner_key: "group", started_at: new Date("2026-01-01"),
         completed_at: new Date("2026-01-01"),
-        cleanup_scope: { subScopes: [{ sourceKind: "gitlab-pat", complete: true }] },
+        cleanup_scope: { subScopes: [{ sourceKind: "gitlab-pat", dimensions: { gitLabPatCoverage: "all" }, complete: true }] },
       };
       const client = fakeClient((sql) => {
         if (sql.includes("FROM auto_sync_configs c")) {

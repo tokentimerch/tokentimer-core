@@ -81,6 +81,22 @@ function validateCleanupRequest(cleanup) {
   return null;
 }
 
+const PARENT_SCOPED_KINDS = new Set([
+  "github-secret", "github-deploy-key", "gitlab-project-token", "gitlab-group-token",
+  "gitlab-deploy-token", "gitlab-trigger-token",
+]);
+
+function isCompleteCleanupScope(scope) {
+  if (scope?.complete !== true) return false;
+  if (scope.sourceKind === "gitlab-pat") {
+    return ["all", "own"].includes(scope.dimensions?.gitLabPatCoverage);
+  }
+  if (!PARENT_SCOPED_KINDS.has(scope.sourceKind)) return true;
+  // Scans persisted before parent coverage was recorded cannot prove absence.
+  const parents = scope.dimensions?.sourceObjectParentIds;
+  return Array.isArray(parents) && parents.every(id => typeof id === "string" && /^[1-9]\d*$/.test(id));
+}
+
 // A sub-scope's dimension filter narrows which candidate tokens fall inside
 // it. Only keys the scan actually recorded are compared; a key absent from
 // the sub-scope's dimensions means "not narrowed on this axis" for that
@@ -107,6 +123,13 @@ function buildDimensionFilterSql(dimensions, paramOffset) {
       clauses.push(`(t.source_dimensions->>'category') = ANY($${p}::text[])`);
       params.push(list.map((v) => String(v)));
       p++;
+    } else if (key === "sourceObjectParentIds") {
+      // The stable source ID carries the numeric parent before its first colon.
+      clauses.push(`(strpos(t.source_object_id, ':') > 0 AND split_part(t.source_object_id, ':', 1) = ANY($${p}::text[]))`);
+      params.push(value);
+      p++;
+    } else if (key === "gitLabPatCoverage") {
+      if (value === "own") clauses.push(`(t.source_dimensions->>'gitlab_pat_owned_by_principal') = 'true'`);
     } else {
       clauses.push(`(t.source_dimensions->>'${key.replace(/[^a-zA-Z0-9_]/g, "")}') = $${p}`);
       params.push(String(value));
@@ -122,7 +145,7 @@ function buildDimensionFilterSql(dimensions, paramOffset) {
  * rediscovered by that scan -- all inside one transaction with the scan
  * claim, the delete, and the audit write.
  *
- * @returns {Promise<{deleted: Array<{id:number,name:string,location:string}>}>}
+ * @returns {Promise<{deleted: Array<{id:number,name:string,location:string}>, status?: string}>}
  */
 async function cleanupObsoleteTokens({
   workspaceId,
@@ -154,13 +177,13 @@ async function cleanupObsoleteTokens({
         provider: cleanup.provider,
         scanId: cleanup.scanId,
       });
-      return { deleted: [] };
+      return { deleted, status: "skipped_unavailable" };
     }
 
     const subScopes = Array.isArray(scan.cleanup_scope?.subScopes)
       ? scan.cleanup_scope.subScopes
       : [];
-    const completeSubScopes = subScopes.filter((s) => s && s.complete === true);
+    const completeSubScopes = subScopes.filter(isCompleteCleanupScope);
     if (completeSubScopes.length === 0) {
       // The scan was claimed (consumed) even though it drove no deletions,
       // by design: a scan that produced nothing usable for cleanup should
@@ -172,7 +195,7 @@ async function cleanupObsoleteTokens({
         provider: cleanup.provider,
         scanId: cleanup.scanId,
       });
-      return { deleted: [] };
+      return { deleted, status: "skipped_incomplete" };
     }
 
     for (const subScope of completeSubScopes) {
@@ -265,7 +288,7 @@ async function cleanupObsoleteTokens({
     }
 
     await client.query("COMMIT");
-    return { deleted };
+    return { deleted, status: completeSubScopes.length === subScopes.length ? "completed" : "partial" };
   } catch (err) {
     try {
       await client.query("ROLLBACK");
@@ -283,4 +306,5 @@ module.exports = {
   validateCleanupRequest,
   cleanupObsoleteTokens,
   buildDimensionFilterSql,
+  isCompleteCleanupScope,
 };

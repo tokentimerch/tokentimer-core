@@ -1,4 +1,4 @@
-const { normalizeMetricSettings, deploymentMetricLabelOptions, readSystemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, HIGH_CARDINALITY_LABELS } = require("../services/autoSyncMetricLabels");
+const { normalizeMetricSettings, deploymentMetricLabelOptions, readSystemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, HIGH_CARDINALITY_LABELS, EXPLICIT_SELECTION_LABELS } = require("../services/autoSyncMetricLabels");
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
@@ -93,6 +93,19 @@ async function membershipIdsForAssetWrite(client, workspaceId, body) {
 }
 
 const router = require("express").Router();
+
+function domainMonitorAuditFields(monitor) {
+  let origin = null;
+  try {
+    const url = new URL(monitor.url);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      origin = url.origin;
+    }
+  } catch {
+    // Legacy malformed URLs can still be identified by their monitor ID.
+  }
+  return { monitor_id: monitor.id, url: origin };
+}
 
 function autoSyncNotificationHref(provider, configId, workspaceId) {
   const href = `/dashboard?import=${encodeURIComponent(provider || "")}&autoSyncManage=1`;
@@ -305,9 +318,9 @@ router.put("/api/v1/admin/auto-sync/metrics", getApiLimiter(), requireAuth, asyn
     if (currentPolicy.labels_locked) delete payload.labels;
     else if (options.extra_labels_locked) {
       const previous = await systemSettings.getJsonSetting(pool, "auto_sync_metrics", "labels");
-      // Owner permission allows selection; older asset labels retain deployment defaults.
+      // Explicit selections remain editable within the deployment allowlist.
       const editable = label => !HIGH_CARDINALITY_LABELS.includes(label) ||
-        (label === "owner_username" && options.extra_labels.includes(label));
+        (EXPLICIT_SELECTION_LABELS.includes(label) && options.extra_labels.includes(label));
       payload.labels = [...body.labels.filter(editable),
         ...(Array.isArray(previous.value) ? previous.value.filter(label => !editable(label)) : [])];
     }
@@ -367,8 +380,8 @@ router.get(
          FROM auto_sync_configs WHERE workspace_id = $1 ORDER BY provider, LOWER(connection_key), id`,
         [req.workspace.id],
       );
-      const metricPolicy = await readSystemMetricPolicy(pool);
-      res.json({ metric_label_policy: { extra_labels: metricPolicy.labels.filter(label => HIGH_CARDINALITY_LABELS.includes(label)), system: metricPolicy }, items: result.rows.map((row) => ({
+      const { extra_labels, ...metricPolicy } = await readSystemMetricPolicy(pool);
+      res.json({ metric_label_policy: { extra_labels, system: metricPolicy }, items: result.rows.map((row) => ({
         ...row, last_sync_error: sanitizePublicAutoSyncError(row.last_sync_error),
       })) });
     } catch (e) {
@@ -521,7 +534,12 @@ router.post(
           targetId: null,
           channel: null,
           workspaceId: req.workspace.id,
-          metadata: { provider },
+          metadata: {
+            config_id: result.rows[0].id,
+            provider,
+            enabled: result.rows[0].enabled,
+            frequency: result.rows[0].frequency,
+          },
         });
       } catch (_err) {
         logger.warn("Audit write failed (AUTO_SYNC_CREATED)", {
@@ -715,6 +733,9 @@ router.put(
           channel: null,
           workspaceId: req.workspace.id,
           metadata: {
+            config_id: result.rows[0].id,
+            frequency: result.rows[0].frequency,
+            scan_version: result.rows[0].scan_version,
             provider: result.rows[0].provider,
             enabled: result.rows[0].enabled,
           },
@@ -808,7 +829,7 @@ router.delete(
           targetId: null,
           channel: null,
           workspaceId: req.workspace.id,
-          metadata: { provider: result.rows[0].provider },
+          metadata: { provider: result.rows[0].provider, config_id: req.params.configId },
         });
       } catch (_err) {
         logger.warn("Audit write failed (AUTO_SYNC_DELETED)", {
@@ -875,7 +896,7 @@ router.post(
           targetId: req.params.configId,
           channel: null,
           workspaceId: req.workspace.id,
-          metadata: { provider: result.rows[0].provider },
+          metadata: { provider: result.rows[0].provider, config_id: result.rows[0].id },
         });
       } catch (_err) {
         logger.warn("Audit write failed (AUTO_SYNC_TRIGGERED)", {
@@ -2091,25 +2112,24 @@ router.post(
           targetId: null,
           channel: null,
           workspaceId: req.workspace.id,
-          metadata: existingMonitor
-            ? {
-                url: normalizedUrl,
-                fields_updated: [
-                  "ssl_issuer",
-                  "ssl_subject",
-                  "ssl_valid_from",
-                  "ssl_valid_to",
-                  "ssl_serial",
-                  "ssl_fingerprint",
-                  "health_check_enabled",
-                  "check_interval",
-                  "alert_after_failures",
-                ],
-              }
-            : {
-                url: normalizedUrl,
-                ssl_detected: !!sslData.ssl_valid_to,
-              },
+          metadata: {
+            ...domainMonitorAuditFields(domainRow),
+            ...(existingMonitor
+              ? {
+                  fields_updated: [
+                    "ssl_issuer",
+                    "ssl_subject",
+                    "ssl_valid_from",
+                    "ssl_valid_to",
+                    "ssl_serial",
+                    "ssl_fingerprint",
+                    "health_check_enabled",
+                    "check_interval",
+                    "alert_after_failures",
+                  ],
+                }
+              : { ssl_detected: !!sslData.ssl_valid_to }),
+          },
         });
       } catch (_err) {
         logger.warn("Audit write failed (DOMAIN_MONITOR_CREATED)", {
@@ -2162,7 +2182,13 @@ router.put(
           targetId: req.params.domainId,
           channel: null,
           workspaceId: req.workspace.id,
-          metadata: { url: result.rows[0].url },
+          metadata: {
+            ...domainMonitorAuditFields(result.rows[0]),
+            fields_updated: [
+              ...(health_check_enabled != null ? ["health_check_enabled"] : []),
+              ...(check_interval != null ? ["check_interval"] : []),
+            ],
+          },
         });
       } catch (_err) {
         logger.warn("Audit write failed (DOMAIN_MONITOR_UPDATED)", {
@@ -2192,7 +2218,7 @@ router.delete(
       try {
         await client.query("BEGIN");
         result = await client.query(
-          "DELETE FROM domain_monitors WHERE id = $1 AND workspace_id = $2 RETURNING url",
+          "DELETE FROM domain_monitors WHERE id = $1 AND workspace_id = $2 RETURNING id, url",
           [req.params.domainId, req.workspace.id],
         );
         await client.query("COMMIT");
@@ -2214,7 +2240,7 @@ router.delete(
           targetId: null,
           channel: null,
           workspaceId: req.workspace.id,
-          metadata: { url: result.rows[0].url },
+          metadata: domainMonitorAuditFields(result.rows[0]),
         });
       } catch (_err) {
         logger.warn("Audit write failed (DOMAIN_MONITOR_DELETED)", {
@@ -2307,7 +2333,12 @@ router.post(
           targetId: domain.id,
           channel: null,
           workspaceId: req.workspace.id,
-          metadata: { url: domain.url, status, statusCode, responseMs },
+          metadata: {
+            ...domainMonitorAuditFields(domain),
+            status,
+            statusCode,
+            responseMs,
+          },
         });
       } catch (_err) {
         logger.warn("Audit write failed (DOMAIN_MONITOR_HEALTH_CHECK)", {

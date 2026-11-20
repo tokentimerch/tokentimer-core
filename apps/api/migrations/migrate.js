@@ -5009,6 +5009,18 @@ migrations.push({
   sql: fs.readFileSync(require("path").join(__dirname, "114-distribution-pagerduty-recovery.sql"), "utf8"),
 });
 
+migrations.push({
+  version: 122,
+  name: "certops_observed_revocation",
+  sql: fs.readFileSync(require("path").join(__dirname, "122-certops-observed-revocation.sql"), "utf8"),
+});
+
+migrations.push({
+  version: 127,
+  name: "auto_sync_creation_expiration",
+  sql: fs.readFileSync(require("path").join(__dirname, "127-auto-sync-creation-expiration.sql"), "utf8"),
+});
+
 const { composeMigrations } = require("./compose-migrations");
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored
