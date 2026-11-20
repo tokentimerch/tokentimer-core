@@ -3071,6 +3071,13 @@ async function ingestResult({
           agent,
         });
       }
+      if (job.operation === "continue-enrollment" && !job.enrollment_id &&
+          job.payload?.target?.type === "windows-cert-store" &&
+          (provisioned?.promoted || refreshed?.refreshed)) {
+        await require("./acmeStorePersistence").reconcileAcmeStoreRecoveryTx({
+          client, workspaceId: agent.workspaceId, jobId: String(job.id), agentId: String(agent.id), audit: auditWriter,
+        });
+      }
       if (job.operation === "adcs-installation-proof") {
         if (!provisioned?.promoted && !refreshed?.refreshed) {
           throw serviceError("Proof-only result could not reconcile the certificate", CERTOPS_AGENT_RESULT_STATUS_INVALID);

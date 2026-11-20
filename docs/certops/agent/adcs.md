@@ -206,8 +206,6 @@ reconciliation. Cleanup never deletes an unproven key to clear a failed job.
 
 ## Uncertain submission
 
-Installation-proof recovery requires an authenticated certificate-identity receipt observed committed before its recorded claim deadline. A later lease renewal cannot restore that authority. Older preview receipts without this witness remain available for investigation but cannot authorize proof-only jobs; keep the agent's protected state and use an admissible, audited reconciliation. This does not remove an installed certificate or prove service activation.
-
 If the agent restarts after it has started submit and before it has a trustworthy result, the enrollment is **Submission uncertain**. The error is `ADCS_DISPOSITION_UNKNOWN`. It is not resubmitted.
 
 On that enrollment, enter the RequestId from the CA and choose **Reconcile**. A supplied RequestId is accepted only when a retrieve returns a certificate for the key already on the host. Or choose **Abandon**, then **Free the key**. Abandon deletes the key on the host. A certificate the CA issues later for that request has no key on the agent.
@@ -223,6 +221,8 @@ enrollment when the CA cannot produce a valid certificate for it.
 The CA database is not readable by the computer account unless you grant CA Read. Leave that right unset. It exposes every request, not only this computer's. Without it, reconciliation is the RequestId you supply, or a retrieve of this computer's own requests. A request the CA issues immediately has no recorded RequestId, because the signed CMC response carries only a pend token for pending requests and the agent does not read localized console text. Find it on the CA by the certificate's serial number or thumbprint. Only pending and uncertain enrollments need a RequestId.
 
 ## Installation recovery
+
+For proof-only recovery of an uncertain Store installation, preserve the original agent, journal and key. With a human session, CSRF token and `certops.issuer.manage`, send `POST /api/v1/workspaces/:id/certops/enrollments/:enrollmentId/recover-installation-proof` with `orphanedJobId` and a printable `reason` of up to 500 characters. The qualified original agent inspects the Store using a receipt witnessed after commit and before the original claim deadline. Check the returned job status. Repeated requests reuse an active inspection. After a failed inspection, retry on the same agent. `completed` returns the earlier terminal inspection. `expected_identity_unavailable` requires audited reconciliation. For `transport_unavailable`, retry when the qualified agent is available. Verify any dependent IIS listener separately.
 
 Before investigating a stalled approval or recovery, verify the API and the production CertOps worker are both running. With the Core Compose deployment, use the same Compose files and environment as the installation: `docker compose ps api worker-certops` and `docker compose logs --since 15m worker-certops`. Start the complete stack with `docker compose up -d`; do not launch a second scheduler with a manual Node command. The default sweep runs once a minute, while CA polling follows the enrollment's frozen `pollInterval`. Kubernetes deployments use the CertOps CronJob instead; see [maintenance sweeps](../../CONFIGURATION.md#certops-maintenance-sweeps-worker).
 

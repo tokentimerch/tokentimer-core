@@ -290,7 +290,8 @@ router.post(
         catch (error) { if (error.code !== "CERTOPS_ADCS_PROOF_AGENT_UNAVAILABLE") throw error; }
       }
       await client.query("COMMIT");
-      return res.status(queued?.created ? 201 : 200).json({ ...intent, ...(queued ? { state: "queued", job: queued.job } : {}) });
+      const state = queued?.state || (intent.intentId ? "transport_unavailable" : intent.state);
+      return res.status(queued?.created ? 201 : 200).json({ ...intent, state, ...(queued ? { job: queued.job } : {}) });
     } catch (error) {
       await client.query("ROLLBACK");
       return fail(res, error);
@@ -327,10 +328,10 @@ router.post(
     try {
       client = await require("../db/database").pool.connect();
       await client.query("BEGIN");
-      // Match dispatch lock ordering; the primitive rechecks the binding under lock.
+      // Match dispatch lock ordering and take the final agent lock mode up front.
       await client.query(`SELECT a.id FROM certops_agents a JOIN certops_acme_store_enrollments e
         ON e.workspace_id=a.workspace_id AND e.agent_id=a.id
-        WHERE e.workspace_id=$1 AND e.id=$2::uuid FOR SHARE OF a`, [req.workspace.id, req.params.enrollmentId]);
+        WHERE e.workspace_id=$1 AND e.id=$2::uuid FOR UPDATE OF a`, [req.workspace.id, req.params.enrollmentId]);
       await require("../services/certops/workspaceKillSwitch").lockWorkspaceForCertOpsSideEffect({ client, workspaceId: req.workspace.id, env: process.env });
       const result = await require("../services/certops/acmeStorePersistence").continueAcmeStoreEnrollmentTx({ client,
         workspaceId: req.workspace.id, enrollmentId: req.params.enrollmentId, orphanedJobId: body.orphanedJobId,
