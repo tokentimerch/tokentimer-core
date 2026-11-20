@@ -28,23 +28,23 @@ Total skips found: 192
 | `packages/agent/scripts/windows-upgrade-recovery.test.js` | 135 | recovery refuses any quarantined launcher intent and enumeration errors | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/windows-upgrade-recovery.test.js` | 165 | launcher authorization fails closed on missing or unrelated intent | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/windows-upgrade-recovery.test.js` | 204 | launcher authorization rejects an invalid inherited handle before package Node is used | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 248 | launcher intent ACL validation rejects a user-owned marker | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 276 | launcher-associated recovery refuses replay even if its markers disappeared | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 311 | upgrade journal persists the authorized launcher transaction | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 353 | launcher-backed health failure preserves application and backup | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 376 | launcher-backed healthy upgrade retains recovery journal and backup | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 399 | launcher-backed activation failure preserves both staged directories | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 431 | uninstall refuses an existing recovery barrier even without launcher markers | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 465 | uninstall fails closed on journal access error but permits the absent case | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 500 | rejects an oversized recovery record before touching the existing application | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 523 | installer Node helper rejects inherited preloads and restores the caller environment | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 557 | runtime package marker selects bundled Node and rejects incomplete bundles | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 633 | service health requires the expected child to survive a second observation | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 662 | bundled bootstrap rejects ancestor permissions that can alter a reparse point | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 703 | bundled bootstrap rejects a user-owned extraction directory | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 734 | recovery refuses a journal with inherited, unprotected ACL | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 769 | validated bundled runtime stays locked against replacement during bootstrap | test(..., { skip }) option-object | `platform` |
-| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 774 | validated bundled runtime stays locked against replacement during bootstrap | dynamic (this.skip() / t.skip()) | `prerequisite` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 249 | launcher intent ACL validation rejects a user-owned marker | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 277 | launcher-associated recovery refuses replay even if its markers disappeared | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 312 | upgrade journal persists the authorized launcher transaction | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 354 | launcher-backed health failure preserves application and backup | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 377 | launcher-backed healthy upgrade retains recovery journal and backup | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 400 | launcher-backed activation failure preserves both staged directories | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 432 | uninstall refuses an existing recovery barrier even without launcher markers | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 467 | uninstall fails closed on journal access error but permits the absent case | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 503 | rejects an oversized recovery record before touching the existing application | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 526 | installer Node helper rejects inherited preloads and restores the caller environment | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 560 | runtime package marker selects bundled Node and rejects incomplete bundles | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 636 | service health requires the expected child to survive a second observation | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 665 | bundled bootstrap rejects ancestor permissions that can alter a reparse point | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 706 | bundled bootstrap rejects a user-owned extraction directory | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 737 | recovery refuses a journal with inherited, unprotected ACL | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 772 | validated bundled runtime stays locked against replacement during bootstrap | test(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/windows-upgrade-recovery.test.js` | 777 | validated bundled runtime stays locked against replacement during bootstrap | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/acme/acme.test.js` | 278 | POSIX hook executes non-executable archive bytes with spaces and quotes in the path | test(..., { skip }) option-object | `platform` |
 | `packages/agent/src/acme/acme.test.js` | 796 | acme.sh wrapper uses the explicit runtime and never falls back to PATH | dynamic (this.skip() / t.skip()) | `prerequisite` |
 | `packages/agent/src/config/config.test.js` | 121 | sets 0700 permissions on non-win32 platforms | it(..., { skip }) option-object | `platform` |

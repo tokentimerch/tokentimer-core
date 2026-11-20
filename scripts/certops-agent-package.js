@@ -60,7 +60,7 @@ function verifyBundledRuntimeEvidence(evidence, artifact) {
   assert.equal(artifact.runtimeNodeSha256, RUNTIMES.amd64.sha256);
   assert.equal(evidence?.serviceAccount, "LocalSystem");
   assert.equal(evidence?.childCount, 1);
-  assert.equal(evidence?.childPath?.toLowerCase(), "c:\\programdata\\tokentimeragent\\app\\runtime\\amd64\\node.exe");
+  assert.equal(evidence?.childPath?.toLowerCase(), "c:\\program files\\tokentimeragent\\app\\runtime\\amd64\\node.exe");
   assert.equal(evidence?.childSha256?.toLowerCase(), artifact.runtimeNodeSha256);
   return true;
 }

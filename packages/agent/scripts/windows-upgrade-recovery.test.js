@@ -173,8 +173,8 @@ $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SO
 if ($errors.Count) { throw 'installer parse failed' }
 $f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-AuthorizedLauncherOrNoIntent'},$true))
 if ($f.Count -ne 1) { throw 'missing authorization gate' }
-$body=$f[0].Extent.Text.Replace('[Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)', '$env:TT542_ROOT')
-Invoke-Expression $body
+Invoke-Expression $f[0].Extent.Text
+function Get-NativeProgramFiles { $env:TT542_ROOT }
 function Assert-ProtectedIntentDirectory { param($Directory) }
 $PackageDir=Join-Path $env:TT542_ROOT ('TokenTimer-Staging-' + ('a' * 32))
 $env:TEMP=Join-Path $env:TT542_ROOT ('TokenTimer-Staging-' + ('b' * 32))
@@ -217,7 +217,8 @@ $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
 $f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-AuthorizedLauncherOrNoIntent'},$true))
 if ($errors.Count -or $f.Count -ne 1) { throw 'missing authorization gate' }
-$body=$f[0].Extent.Text.Replace('[Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)', '$env:TT542_ROOT'); Invoke-Expression $body
+Invoke-Expression $f[0].Extent.Text
+function Get-NativeProgramFiles { $env:TT542_ROOT }
 function Assert-ProtectedIntentDirectory { param($Directory) }
 function Assert-ProtectedIntentMarker { param($Path) }
 function Get-PackageDirectoryIdentity { param($Directory) [IO.File]::WriteAllText((Join-Path $env:TT542_ROOT 'node-executed'),'unsafe'); return '1:1' }
@@ -324,7 +325,7 @@ $StateDir=$env:TT542_ROOT; $AppDir=$env:TT542_ROOT
 $script:PreviousServicePath='old-path'; $script:PreviousServiceDisplayName='old-service'; $script:PreviousServiceStartMode='Manual'
 $script:PreviousServiceEnvironment=$null; $script:AuthorizedLauncherTransaction='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 $script:HasBundledRuntime=$true; $runtimeArch='amd64'; $pinnedHash='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-$runtimeManifest=[pscustomobject]@{version='24.18.0';architecture='amd64';sha256=$pinnedHash}
+$runtimeManifest=[pscustomobject]@{version='24.22.3';architecture='amd64';sha256=$pinnedHash}
 function Get-PackageDirectoryIdentity { param($Directory) return '1:2' }
 function Assert-UpgradeRecoveryAcl { param($JournalPath,$Kind) }
 function Invoke-PlatformAcl { param($TargetPath,$Kind) }
@@ -342,7 +343,7 @@ if (-not $refused -or (Test-Path -LiteralPath (Join-Path $StateDir 'upgrade-reco
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const record = JSON.parse(fs.readFileSync(path.join(root, "snapshot.json"), "utf8"));
     assert.equal(record.launcherIntent, "a".repeat(32));
-    assert.deepEqual(record.identityContract, { scheme: "node-fs-win32-v1", nodeVersion: "24.18.0", architecture: "amd64", nodeSha256: "b".repeat(64) });
+    assert.deepEqual(record.identityContract, { scheme: "node-fs-win32-v1", nodeVersion: "24.22.3", architecture: "amd64", nodeSha256: "b".repeat(64) });
   } finally {
     if (path.dirname(fs.realpathSync(root)).toLowerCase() !== tempParent.toLowerCase()) throw new Error("Unsafe fixture cleanup");
     fs.rmSync(root, { recursive: true, force: true });
@@ -437,10 +438,11 @@ test("uninstall refuses an existing recovery barrier even without launcher marke
 $ErrorActionPreference='Stop'
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
-$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if ($script:Uninstall)')},$true))
+$f=@($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.StartsWith('if ($script:Uninstall)') })
 if ($errors.Count -or $f.Count -ne 1) { throw 'missing uninstall branch' }
 $script:Uninstall=$true; $script:DryRun=$false; $StateDir=$env:TT542_ROOT
 function Test-IsAdministrator { return $true }
+function Get-NativeProgramFiles { $env:TT542_ROOT }
 function Assert-ProtectedIntentDirectory { param($Directory) }
 function Assert-NoQuarantinedLauncherIntent { param($LauncherParent) }
 function Fail([string]$Message) { throw $Message }
@@ -468,10 +470,11 @@ $ErrorActionPreference='Stop'
 Import-Module Microsoft.PowerShell.Management -ErrorAction Stop
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $env:TT542_SOURCE 'install-agent.ps1'),[ref]$tokens,[ref]$errors)
-$f=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if ($script:Uninstall)')},$true))
+$f=@($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.StartsWith('if ($script:Uninstall)') })
 if ($errors.Count -or $f.Count -ne 1) { throw 'missing uninstall branch' }
 $script:Uninstall=$true; $script:DryRun=$false; $StateDir=$env:TEMP; $ServiceName='TokenTimerAgent-fixture-no-service'
 function Test-IsAdministrator { return $true }
+function Get-NativeProgramFiles { $env:TEMP }
 function Assert-ProtectedIntentDirectory { param($Directory) }
 function Assert-NoQuarantinedLauncherIntent { param($LauncherParent) }
 function Test-Path { param($LiteralPath,$ErrorAction) if ($env:TT542_MODE -eq 'error') { throw 'simulated access denied' }; return $false }
@@ -767,9 +770,9 @@ Assert-UpgradeRecoveryAcl -JournalPath $env:TT542_JOURNAL
 
 // skip-reason: platform
 test("validated bundled runtime stays locked against replacement during bootstrap", { skip: process.platform !== "win32", timeout: 30000 }, async (t) => {
-  const expectedHash = "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de";
+  const expectedHash = "86fc4785327db5f5c7558dc6156c543b433c313e813a222e088086222ab4afa6";
   const actualHash = crypto.createHash("sha256").update(fs.readFileSync(process.execPath)).digest("hex");
-  if (process.version !== "v24.18.0" || process.arch !== "x64" || actualHash !== expectedHash) {
+  if (process.version !== "v24.22.3" || process.arch !== "x64" || actualHash !== expectedHash) {
     // skip-reason: prerequisite
     t.skip("test requires the pinned Windows Node runtime fixture");
     return;
@@ -785,7 +788,7 @@ test("validated bundled runtime stays locked against replacement during bootstra
     const runtime = path.join(runtimeDir, "node.exe");
     fs.copyFileSync(process.execPath, runtime);
     fs.writeFileSync(path.join(bundle, "package.json"), JSON.stringify({ engines: { node: ">=22.0.0 <25.0.0" }, windowsBundledRuntime: true }));
-    fs.writeFileSync(path.join(bundle, "runtime", "manifest.json"), JSON.stringify({ version: "24.18.0", architecture: "amd64", path: "runtime/amd64/node.exe", sha256: expectedHash }));
+    fs.writeFileSync(path.join(bundle, "runtime", "manifest.json"), JSON.stringify({ version: "24.22.3", architecture: "amd64", path: "runtime/amd64/node.exe", sha256: expectedHash }));
     const script = String.raw`
 $ErrorActionPreference='Stop'
 function Fail([string]$Message) { throw $Message }

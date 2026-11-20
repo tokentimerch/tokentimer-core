@@ -20,8 +20,8 @@ const maxEntries = 20000
 var segment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 var dos = regexp.MustCompile(`^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$`)
 var runtimePins = map[string]string{
-	"amd64": "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de",
-	"arm64": "c7225670c3f477778e18c43a55867f7a0d76468221245e5981ab80eb953c8102",
+	"amd64": "86fc4785327db5f5c7558dc6156c543b433c313e813a222e088086222ab4afa6",
+	"arm64": "172e320db179ce416fc012b96b9917dacfb442beb081de57c4deaed7b5a24644",
 }
 
 func digest(b []byte) string {

@@ -1010,8 +1010,8 @@ try {
     $script:NodeExe = Join-Path $PackageDir ("runtime\$runtimeArch\node.exe")
     $script:InstalledNodeExe = Join-Path $AppDir ("runtime\$runtimeArch\node.exe")
     if (-not (Test-Path -LiteralPath $script:NodeExe -PathType Leaf)) { throw "packaged runtime is missing" }
-    $pinnedHash = if ($runtimeArch -eq 'amd64') { '9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de' } else { 'c7225670c3f477778e18c43a55867f7a0d76468221245e5981ab80eb953c8102' }
-    if ($runtimeManifest.version -cne '24.18.0' -or $runtimeManifest.sha256 -cne $pinnedHash) { throw "runtime manifest does not match the release pin" }
+    $pinnedHash = if ($runtimeArch -eq 'amd64') { '86fc4785327db5f5c7558dc6156c543b433c313e813a222e088086222ab4afa6' } else { '172e320db179ce416fc012b96b9917dacfb442beb081de57c4deaed7b5a24644' }
+    if ($runtimeManifest.version -cne '24.22.3' -or $runtimeManifest.sha256 -cne $pinnedHash) { throw "runtime manifest does not match the release pin" }
     $script:NodeRuntimeLock = [IO.File]::Open($script:NodeExe, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
     $sha = [Security.Cryptography.SHA256]::Create()
     try { $runtimeHash = [BitConverter]::ToString($sha.ComputeHash($script:NodeRuntimeLock)).Replace('-', '').ToLowerInvariant() }

@@ -1,5 +1,6 @@
 # CI preflight only: this does not qualify an archive or authorize publication.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'windows-signing-chain-cache.ps1')
 $profile = $env:TT_SIGNING_PROFILE_EKU
 $issuerPin = $env:TT_SIGNING_ISSUER_SHA256
 if ($profile -notmatch '^1\.3\.6\.1\.4\.1\.311\.97\.(?:[0-9]+\.){2,}[0-9]+$' -or
@@ -7,9 +8,14 @@ if ($profile -notmatch '^1\.3\.6\.1\.4\.1\.311\.97\.(?:[0-9]+\.){2,}[0-9]+$' -or
     throw 'Independently configured publisher profile and issuer pin are required'
 }
 $paths = @($env:TT_SIGNING_FILES -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ })
-if ($paths.Count -ne 9 -or @($paths | Select-Object -Unique).Count -ne 9) { throw 'Unexpected signing target count' }
 if ($env:TT_SIGNING_ARCHITECTURE -cnotin @('amd64', 'arm64') -or $env:TT_SIGNING_NODE_EXPECTED -cnotmatch '^[a-f0-9]{64}$' -or
     $env:TT_SIGNING_NODE_SHA256 -cne $env:TT_SIGNING_NODE_EXPECTED) { throw 'Upstream runtime pin unavailable' }
+$selector = Join-Path $PSScriptRoot 'windows-signing-targets.cjs'
+$expected = @(node -e 'for (const file of require(process.argv[1]).collect(process.argv[2], process.argv[3])) console.log(file);' $selector $env:TT_SIGNING_PACKAGE_ROOT $env:TT_SIGNING_ARCHITECTURE)
+if ($LASTEXITCODE -ne 0 -or $expected.Count -eq 0 -or $paths.Count -ne $expected.Count) { throw 'Unexpected signing target count' }
+for ($i = 0; $i -lt $paths.Count; $i++) {
+    if ($paths[$i] -cne $expected[$i]) { throw 'Signing targets differ from the verified package stage' }
+}
 $runtime = Join-Path $env:TT_SIGNING_PACKAGE_ROOT "runtime/$($env:TT_SIGNING_ARCHITECTURE)/node.exe"
 if ((Get-FileHash -LiteralPath $runtime -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:TT_SIGNING_NODE_EXPECTED) { throw 'Third-party runtime changed during signing' }
 foreach ($file in $paths) {
@@ -21,10 +27,7 @@ foreach ($file in $paths) {
     if ($usages -cnotcontains '1.3.6.1.5.5.7.3.3' -or $usages -cnotcontains $profile) { throw 'Wrong publisher profile' }
     $chain = New-Object Security.Cryptography.X509Certificates.X509Chain
     try {
-        $chain.ChainPolicy.RevocationMode = [Security.Cryptography.X509Certificates.X509RevocationMode]::Offline
-        $chain.ChainPolicy.RevocationFlag = [Security.Cryptography.X509Certificates.X509RevocationFlag]::ExcludeRoot
-        $chain.ChainPolicy.VerificationFlags = [Security.Cryptography.X509Certificates.X509VerificationFlags]::NoFlag
-        if (-not $chain.Build($signature.SignerCertificate)) { throw 'Publisher chain or cached revocation unavailable' }
+        Assert-WindowsSigningChain -Chain $chain -Certificate $signature.SignerCertificate
         $matched = $false
         $sha = [Security.Cryptography.SHA256]::Create()
         try {

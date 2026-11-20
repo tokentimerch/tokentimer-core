@@ -32,8 +32,8 @@ class GenerationTests(unittest.TestCase):
         node, license_bytes = b"node fixture", b"license fixture"
         z = io.BytesIO()
         with zipfile.ZipFile(z, "w") as archive:
-            archive.writestr("node-v24.18.0-win-x64/node.exe", node)
-            archive.writestr("node-v24.18.0-win-x64/LICENSE", license_bytes)
+            archive.writestr("node-v24.22.3-win-x64/node.exe", node)
+            archive.writestr("node-v24.22.3-win-x64/LICENSE", license_bytes)
         self.upstream = z.getvalue()
         t = io.BytesIO()
         with tarfile.open(fileobj=t, mode="w:gz") as archive:

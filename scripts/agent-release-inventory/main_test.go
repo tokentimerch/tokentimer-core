@@ -62,6 +62,7 @@ func completePackage(arch string) []fixture {
 		"package/bin/tokentimer-agent-host-amd64.exe", "package/bin/tokentimer-agent-host-arm64.exe",
 		"package/bin/tokentimer-adcs-chain-amd64.exe", "package/bin/tokentimer-adcs-chain-arm64.exe",
 		"package/bin/tokentimer-adcs-cmc-amd64.exe", "package/bin/tokentimer-adcs-cmc-arm64.exe",
+		"package/bin/tokentimer-observed-revocation-windows-amd64.exe", "package/bin/tokentimer-observed-revocation-windows-arm64.exe",
 	}
 	entries := make([]fixture, 0, len(names))
 	for _, name := range names {
@@ -89,23 +90,37 @@ func TestRequiredBundledFiles(t *testing.T) {
 		t.Run(arch, func(t *testing.T) {
 			entries := completePackage(arch)
 			bom := []byte(fmt.Sprintf(`{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[{"name":"node","licenses":[{"license":{"id":"MIT"}}],"hashes":[{"alg":"SHA-256","content":"%s"}]},%s]}`, checksum([]byte("node")), componentsForPackage(entries)))
-			buildArchive := func(entries []fixture) error {
-				_, err := build("tokentimer-agent-1.2.3-windows-"+arch+".tgz", archive(t, entries...), bom, "agent.cdx.json", "1.2.3", arch, strings.Repeat("a", 40))
-				return err
+			buildArchive := func(entries []fixture, sbom []byte) (inventory, error) {
+				return build("tokentimer-agent-1.2.3-windows-"+arch+".tgz", archive(t, entries...), sbom, "agent.cdx.json", "1.2.3", arch, strings.Repeat("a", 40))
 			}
-			if err := buildArchive(entries); err != nil {
+			result, err := buildArchive(entries, bom)
+			if err != nil {
 				t.Fatal(err)
 			}
 			for i, entry := range entries {
 				t.Run(entry.name, func(t *testing.T) {
 					missing := append(append([]fixture{}, entries[:i]...), entries[i+1:]...)
-					if err := buildArchive(missing); err == nil || !strings.Contains(err.Error(), entry.name) {
+					if _, err := buildArchive(missing, bom); err == nil || !strings.Contains(err.Error(), entry.name) {
 						t.Fatalf("missing file accepted: %v", err)
 					}
 					empty := append([]fixture{}, entries...)
 					empty[i].data = ""
-					if err := buildArchive(empty); err == nil || !strings.Contains(err.Error(), entry.name) {
+					if _, err := buildArchive(empty, bom); err == nil || !strings.Contains(err.Error(), entry.name) {
 						t.Fatalf("empty file accepted: %v", err)
+					}
+					if strings.Contains(entry.name, "tokentimer-observed-revocation-windows-") {
+						digest := checksum([]byte(entry.data))
+						found := false
+						for _, file := range result.Files {
+							found = found || (file.Path == entry.name && file.SHA256 == digest)
+						}
+						if !found {
+							t.Fatalf("inventory lacks revocation helper: %s", entry.name)
+						}
+						wrongDigest := bytes.Replace(bom, []byte(digest), []byte(strings.Repeat("0", 64)), 1)
+						if _, err := buildArchive(entries, wrongDigest); err == nil || !strings.Contains(err.Error(), entry.name) {
+							t.Fatalf("incorrect revocation helper digest accepted: %v", err)
+						}
 					}
 				})
 			}

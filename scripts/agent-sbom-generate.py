@@ -1,8 +1,9 @@
 """Generate and validate an experimental Windows agent SBOM from staged bytes.
 
 The caller must obtain the archive and tool hashes from independent trusted
-sources. Run only on an isolated, unprivileged Linux build runner; same-UID
-processes are trusted. This helper does not sign, publish, or prove transitive
+sources. The Linux runner must be isolated and unprivileged. The Windows pilot
+requires its own protected runner stage. Processes running as that runner
+identity are trusted. This helper does not sign, publish, or prove transitive
 completeness.
 """
 import argparse
@@ -75,7 +76,25 @@ def verify_tool(path, expected):
     return data
 
 
-def generate(archive, archive_sha, node_zip, architecture, syft, syft_sha, validator, validator_sha):
+def trusted_windows_stage(path):
+    if sys.platform != "win32":
+        raise ValueError("The Windows pilot stage is only used on Windows")
+    resolved = Path(path).absolute()
+    powershell = Path(os.environ["PILOT_PWSH"])
+    if not powershell.is_absolute() or powershell.name.lower() != "pwsh.exe":
+        raise ValueError("An absolute trusted PowerShell executable is required")
+    helper = Path(__file__).with_name("windows-signing-pilot-stage.ps1")
+    result = subprocess.run(
+        [str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(helper),
+         "-RunnerTemp", os.environ["RUNNER_TEMP"], "-VerifyStage", str(resolved)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15, check=False,
+    )
+    if result.returncode:
+        raise ValueError("Windows pilot stage failed its owner and ACL checks")
+    return resolved
+
+
+def generate(archive, archive_sha, node_zip, architecture, syft, syft_sha, validator, validator_sha, *, windows_stage=None):
     if not isinstance(archive, bytes) or not SHA256.fullmatch(archive_sha) or hashlib.sha256(archive).hexdigest() != archive_sha:
         raise ValueError("Candidate digest mismatch")
     syft_bytes = verify_tool(syft, syft_sha)
@@ -87,9 +106,11 @@ def generate(archive, archive_sha, node_zip, architecture, syft, syft_sha, valid
                            "metadata": {"component": {"type": "file", "version": "sha256:" + archive_sha}},
                            "components": []}).encode()
     ENRICH.enrich(archive, archive_sha, node_zip, baseline, architecture)
-    parent = trusted_temp_parent()
+    parent = trusted_temp_parent() if windows_stage is None else trusted_windows_stage(windows_stage)
     with tempfile.TemporaryDirectory(prefix="agent-sbom-", dir=parent) as tmp:
-        assert_private_workspace(tmp)
+        if windows_stage is None:
+            assert_private_workspace(tmp)
+        # On Windows the freshly created child inherits the verified private parent ACL.
         root = Path(tmp)
         package = root / "candidate.tgz"
         scanner_output = root / "scanned.cdx.json"
@@ -121,10 +142,13 @@ def generate(archive, archive_sha, node_zip, architecture, syft, syft_sha, valid
         return data
 
 
-def write_new_output(path, data):
-    """Atomically link a complete, synced owner-only file without replacement."""
+def write_new_output(path, data, *, windows_stage=None):
+    """Atomically link a complete, synced file without replacement."""
     target = Path(path).absolute()
-    assert_trusted_output_parent(target.parent)
+    if windows_stage is None:
+        assert_trusted_output_parent(target.parent)
+    elif target.parent != trusted_windows_stage(windows_stage):
+        raise ValueError("Windows SBOM output must be a direct child of the protected stage")
     fd, temporary = tempfile.mkstemp(prefix=".agent-sbom-output-", dir=target.parent)
     try:
         with os.fdopen(fd, "wb") as output:
@@ -134,11 +158,12 @@ def write_new_output(path, data):
         # link is atomic and fails if any target already exists, unlike rename
         # on POSIX, which can replace an existing file.
         os.link(temporary, target, follow_symlinks=False)
-        directory = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        if windows_stage is None:
+            directory = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
     finally:
         os.unlink(temporary)
 
@@ -147,11 +172,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("archive", "archive-sha256", "node-zip", "architecture", "syft", "syft-sha256", "validator", "validator-sha256", "out"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--windows-stage", type=Path)
     args = parser.parse_args()
     data = generate(read_bounded(args.archive, ENRICH.MAX_ARCHIVE), args.archive_sha256,
                     read_bounded(args.node_zip, ENRICH.MAX_ARCHIVE), args.architecture,
-                    args.syft, args.syft_sha256, args.validator, args.validator_sha256)
-    write_new_output(args.out, data)
+                    args.syft, args.syft_sha256, args.validator, args.validator_sha256,
+                    windows_stage=args.windows_stage)
+    write_new_output(args.out, data, windows_stage=args.windows_stage)
 
 
 if __name__ == "__main__":

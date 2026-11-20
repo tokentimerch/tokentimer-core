@@ -33,7 +33,7 @@ function Get-Acl {
  return $obj
 }
 function Assert-AuthorizedLauncherIdentities {$script:identities++}
-function Invoke-PackagedNode {param($NodeArguments) $script:launches++;return 'v24.18.0'}
+function Invoke-PackagedNode {param($NodeArguments) $script:launches++;return 'v24.22.3'}
 foreach($case in @('file-link','parent-link','file-owner','parent-owner','file-write','parent-write','file-empty','parent-empty')){
  $script:case=$case;$script:launches=0;$script:identities=0;$rejected=$false
  try{& $snippet}catch{$rejected=$true}

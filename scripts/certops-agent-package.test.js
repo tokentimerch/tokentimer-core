@@ -35,9 +35,15 @@ test("bundled AD CS fixture requires the pinned runtime, metadata and license", 
 
 test("bundled AD CS receipt requires the real LocalSystem child and matching pinned bytes", () => {
   const artifact = { archiveKind: "windows-bundled-amd64", runtimeNodeSha256: RUNTIMES.amd64.sha256 };
-  const evidence = { serviceAccount: "LocalSystem", childCount: 1, childPath: "C:\\ProgramData\\TokenTimerAgent\\app\\runtime\\amd64\\node.exe", childSha256: RUNTIMES.amd64.sha256.toUpperCase() };
+  const evidence = { serviceAccount: "LocalSystem", childCount: 1, childPath: "C:\\Program Files\\TokenTimerAgent\\app\\runtime\\amd64\\node.exe", childSha256: RUNTIMES.amd64.sha256.toUpperCase() };
   assert.equal(verifyBundledRuntimeEvidence(evidence, artifact), true);
-  for (const change of [{ serviceAccount: "Other" }, { childCount: 0 }, { childPath: "C:\\Program Files\\nodejs\\node.exe" }, { childSha256: "0".repeat(64) }]) {
+  for (const change of [
+    { serviceAccount: "Other" },
+    { childCount: 0 },
+    { childPath: "C:\\Program Files\\nodejs\\node.exe" },
+    { childPath: "C:\\ProgramData\\TokenTimerAgent\\app\\runtime\\amd64\\node.exe" },
+    { childSha256: "0".repeat(64) },
+  ]) {
     assert.throws(() => verifyBundledRuntimeEvidence({ ...evidence, ...change }, artifact));
   }
   assert.throws(() => verifyBundledRuntimeEvidence(evidence, { ...artifact, runtimeNodeSha256: "0".repeat(64) }));

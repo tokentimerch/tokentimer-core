@@ -14,6 +14,7 @@ const OWNED = Object.freeze([
     `bin/tokentimer-adcs-chain-${arch}.exe`,
     `bin/tokentimer-adcs-cmc-${arch}.exe`,
     `bin/tokentimer-agent-host-${arch}.exe`,
+    `bin/tokentimer-observed-revocation-windows-${arch}.exe`,
   ]),
 ]);
 

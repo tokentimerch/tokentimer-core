@@ -21,10 +21,10 @@ MAX_EXPANDED = 512 * 1024 * 1024
 MAX_ENTRIES = 10000
 MAX_JSON = 16 * 1024 * 1024
 POLICY = {
-    "amd64": ("x64", "0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821", "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de"),
-    "arm64": ("arm64", "f274669adb93b1fd0fbf8f21fd078609e9dcc84333d4f2718d2dde3f9a161a01", "c7225670c3f477778e18c43a55867f7a0d76468221245e5981ab80eb953c8102"),
+    "amd64": ("x64", "e612af99f626ab415ea225af6bce5c971feb448cb5cae250bb1c3fa50c5f7d9f", "86fc4785327db5f5c7558dc6156c543b433c313e813a222e088086222ab4afa6"),
+    "arm64": ("arm64", "b3cc74a295b39d4f273271e96f58c06dd2b35757ca12abec64c7d0598b434f14", "172e320db179ce416fc012b96b9917dacfb442beb081de57c4deaed7b5a24644"),
 }
-NODE_VERSION = "24.18.0"
+NODE_VERSION = "24.22.3"
 SHA256 = re.compile(r"[a-f0-9]{64}\Z")
 SEGMENT = re.compile(r"[A-Za-z0-9._-]+\Z")
 RESERVED = frozenset(("CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))))

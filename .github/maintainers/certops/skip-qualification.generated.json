@@ -281,9 +281,20 @@
       "workflowJob": "backend_quality"
     },
     {
+      "id": "74cfe41e50437545307f",
+      "file": "packages/agent/scripts/installer-smoke.test.js",
+      "line": 223,
+      "name": "selects the protected bundled root and refuses an occupied legacy or bundled slot",
+      "kind": "it(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "windows-elevated",
+      "workflow": ".github/workflows/certops-qualification.yml",
+      "workflowJob": "windows"
+    },
+    {
       "id": "a496aa9e81eb1ebc257e",
       "file": "packages/agent/scripts/installer-smoke.test.js",
-      "line": 373,
+      "line": 461,
       "name": "reaches Running and survives a Stop-Service / Start-Service cycle",
       "environment": "windows-elevated",
       "workflow": ".github/workflows/certops-qualification.yml",
@@ -379,7 +390,7 @@
     {
       "id": "37f5b1994b9e008e9c0b",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 248,
+      "line": 249,
       "name": "launcher intent ACL validation rejects a user-owned marker",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -389,7 +400,7 @@
     {
       "id": "986110b88c8c5a84c4cb",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 276,
+      "line": 277,
       "name": "launcher-associated recovery refuses replay even if its markers disappeared",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -399,7 +410,7 @@
     {
       "id": "510353baf0a2b162d7d4",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 311,
+      "line": 312,
       "name": "upgrade journal persists the authorized launcher transaction",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -409,7 +420,7 @@
     {
       "id": "fba59215143685f149fb",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 353,
+      "line": 354,
       "name": "launcher-backed health failure preserves application and backup",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -419,7 +430,7 @@
     {
       "id": "f35cc299a49e02804ffc",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 376,
+      "line": 377,
       "name": "launcher-backed healthy upgrade retains recovery journal and backup",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -429,7 +440,7 @@
     {
       "id": "a9f0bb5cd5f906cd2ee3",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 399,
+      "line": 400,
       "name": "launcher-backed activation failure preserves both staged directories",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -439,7 +450,7 @@
     {
       "id": "8ab337c13acfbddaff43",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 431,
+      "line": 432,
       "name": "uninstall refuses an existing recovery barrier even without launcher markers",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -449,7 +460,7 @@
     {
       "id": "071598b6ec94fb078b1b",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 465,
+      "line": 467,
       "name": "uninstall fails closed on journal access error but permits the absent case",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -459,7 +470,7 @@
     {
       "id": "953f939ea68a34332613",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 500,
+      "line": 503,
       "name": "rejects an oversized recovery record before touching the existing application",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -469,7 +480,7 @@
     {
       "id": "f391783eec0f41b05b73",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 523,
+      "line": 526,
       "name": "installer Node helper rejects inherited preloads and restores the caller environment",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -479,7 +490,7 @@
     {
       "id": "b166f90b3ddb3472a9ec",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 557,
+      "line": 560,
       "name": "runtime package marker selects bundled Node and rejects incomplete bundles",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -489,7 +500,7 @@
     {
       "id": "e206633c7ffba2503490",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 633,
+      "line": 636,
       "name": "service health requires the expected child to survive a second observation",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -499,7 +510,7 @@
     {
       "id": "8a6e5fa21999c27b909a",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 662,
+      "line": 665,
       "name": "bundled bootstrap rejects ancestor permissions that can alter a reparse point",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -509,7 +520,7 @@
     {
       "id": "6f5c2bc6d58a2f302b18",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 703,
+      "line": 706,
       "name": "bundled bootstrap rejects a user-owned extraction directory",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -519,7 +530,7 @@
     {
       "id": "97a7e8b69c71ba14dbcd",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 734,
+      "line": 737,
       "name": "recovery refuses a journal with inherited, unprotected ACL",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -529,7 +540,7 @@
     {
       "id": "78715685e64f31f1566b",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 769,
+      "line": 772,
       "name": "validated bundled runtime stays locked against replacement during bootstrap",
       "kind": "test(..., { skip }) option-object",
       "reason": "platform",
@@ -539,7 +550,7 @@
     {
       "id": "b622704734dee294a540",
       "file": "packages/agent/scripts/windows-upgrade-recovery.test.js",
-      "line": 774,
+      "line": 777,
       "name": "validated bundled runtime stays locked against replacement during bootstrap",
       "environment": "windows-elevated",
       "workflowJob": "windows_agent_quality"

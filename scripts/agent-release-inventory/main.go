@@ -138,7 +138,8 @@ func verifySBOMCoverage(items []sbomItem, files []entry, arch string) error {
 }
 
 // Require the core files of both architecture packages before binding the SBOM.
-// This inventory is specific to bundled Windows archives, not generic tarballs.
+// This inventory is for the current bundled Windows preflight. Historical
+// generic tarballs are verified separately against their own source manifest.
 func verifyRequiredFiles(files []entry, arch string) error {
 	required := []string{
 		"package/package.json", "package/LICENSE", "package/README.md",
@@ -148,7 +149,7 @@ func verifyRequiredFiles(files []entry, arch string) error {
 		"package/runtime/manifest.json", "package/runtime/" + arch + "/node.exe",
 	}
 	for _, target := range []string{"amd64", "arm64"} {
-		for _, family := range []string{"tokentimer-agent-host", "tokentimer-adcs-chain", "tokentimer-adcs-cmc"} {
+		for _, family := range []string{"tokentimer-agent-host", "tokentimer-adcs-chain", "tokentimer-adcs-cmc", "tokentimer-observed-revocation-windows"} {
 			required = append(required, "package/bin/"+family+"-"+target+".exe")
 		}
 	}

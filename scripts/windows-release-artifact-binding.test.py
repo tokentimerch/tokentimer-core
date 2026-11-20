@@ -114,7 +114,8 @@ class CandidateBindingTests(unittest.TestCase):
                  "package/src/windows-material/connector.ps1", "package/runtime/LICENSE",
                  "package/runtime/manifest.json", "package/runtime/amd64/node.exe"]
         names += [f"package/bin/{family}-{arch}.exe" for arch in ("amd64", "arm64")
-                  for family in ("tokentimer-agent-host", "tokentimer-adcs-chain", "tokentimer-adcs-cmc")]
+                  for family in ("tokentimer-agent-host", "tokentimer-adcs-chain", "tokentimer-adcs-cmc",
+                                 "tokentimer-observed-revocation-windows")]
         files = [(name, name.encode(), tarfile.REGTYPE) for name in names]
         archive = make_archive(files)
         packages = []

@@ -8,10 +8,10 @@ const os = require("node:os");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 
-const VERSION = "24.18.0";
+const VERSION = "24.22.3";
 const RUNTIMES = Object.freeze({
-  amd64: { upstream: "x64", zipSha256: "0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821", sha256: "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de" },
-  arm64: { upstream: "arm64", zipSha256: "f274669adb93b1fd0fbf8f21fd078609e9dcc84333d4f2718d2dde3f9a161a01", sha256: "c7225670c3f477778e18c43a55867f7a0d76468221245e5981ab80eb953c8102" },
+  amd64: { upstream: "x64", zipSha256: "e612af99f626ab415ea225af6bce5c971feb448cb5cae250bb1c3fa50c5f7d9f", sha256: "86fc4785327db5f5c7558dc6156c543b433c313e813a222e088086222ab4afa6" },
+  arm64: { upstream: "arm64", zipSha256: "b3cc74a295b39d4f273271e96f58c06dd2b35757ca12abec64c7d0598b434f14", sha256: "172e320db179ce416fc012b96b9917dacfb442beb081de57c4deaed7b5a24644" },
 });
 
 function digest(bytes) { return crypto.createHash("sha256").update(bytes).digest("hex"); }
