@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- **Container runtimes.** Upgrade Core images for Node.js 22.23.5 and the Go 1.26.11 rebuild of subfinder. [Node.js security release](https://nodejs.org/en/blog/release/v22.23.5) · [Go release history](https://go.dev/doc/devel/release)
+
 ## [0.20.0] - 2026-11-19
 
 ### Added
