@@ -241,9 +241,12 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     });
   };
 
-  const importAzureSelected = async () => {
+  const importAzureSelected = async ({
+    onComplete = onImportComplete,
+    onFailure = onError,
+  } = {}) => {
     if (!previewReady || isScanning) {
-      onError?.('Run a scan with the current settings before importing.');
+      onFailure?.('Run a scan with the current settings before importing.');
       return;
     }
     try {
@@ -255,7 +258,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
           ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
       if (!workspaceId) {
-        onError && onError('Please select a workspace first.');
+        onFailure?.('Please select a workspace first.');
         return;
       }
 
@@ -277,9 +280,9 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
               }
             : undefined,
       });
-      onImportComplete?.(result);
+      onComplete?.(result);
     } catch (e) {
-      onError && onError(e?.message || 'Azure import failed');
+      onFailure?.(e?.message || 'Azure import failed');
     }
   };
 

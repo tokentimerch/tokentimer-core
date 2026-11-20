@@ -96,11 +96,20 @@ vi.mock('../../src/components/imports/ImportVaultForm', () => ({
 vi.mock('../../src/components/imports/ImportGitLabForm', () => ({
   default: React.forwardRef(function GitLabMock(props, _ref) {
     gitlabFormProps.push(props.initialScanParams);
+    React.useImperativeHandle(_ref, () => ({
+      importSelected: ({ onComplete, onFailure }) =>
+        integrationAPI
+          .import({ workspaceId: props.workspaceId })
+          .then(onComplete, error => onFailure(error.message)),
+    }));
     return (
       <div>
         gitlab-form
         <button onClick={() => props.onError('GitLab scan failed')}>
           Fail GitLab scan
+        </button>
+        <button onClick={() => props.onSelectionChange(1)}>
+          Select GitLab item
         </button>
         {props.errorContent}
       </div>
@@ -177,9 +186,9 @@ function renderModal(openRequest, extraProps = {}) {
     <ChakraProvider>
       <ImportTokensModal
         isOpen
-        {...extraProps}
         onClose={vi.fn()}
         onImported={vi.fn()}
+        {...extraProps}
         openRequest={openRequest}
         onOpenRequestHandled={vi.fn()}
       />
@@ -827,10 +836,7 @@ describe('Entra identity selection and saved filters', () => {
     scan_id: 'entra-preview',
     filterSummary: { matchedCount: 1, excludedCount: 2 },
   };
-  const scanEntra = async () => {
-    apiGetMock.mockResolvedValue({ data: {} });
-    azureADAPI.scan.mockResolvedValue(preview);
-    render(renderModal({ provider: 'azure-ad' }));
+  const selectEntraPreview = async () => {
     fireEvent.change(
       await screen.findByPlaceholderText(/Paste (?:access )?token/),
       {
@@ -845,6 +851,13 @@ describe('Entra identity selection and saved filters', () => {
         screen.getByRole('button', { name: 'Import selected' })
       ).toBeEnabled()
     );
+  };
+
+  const scanEntra = async () => {
+    apiGetMock.mockResolvedValue({ data: {} });
+    azureADAPI.scan.mockResolvedValue(preview);
+    render(renderModal({ provider: 'azure-ad' }));
+    await selectEntraPreview();
   };
 
   it('imports a verified Entra preview with its original scan id', async () => {
@@ -871,8 +884,80 @@ describe('Entra identity selection and saved filters', () => {
     expect(
       await screen.findByText(/Ordinary principal · Name is required/)
     ).toHaveTextContent('Obsolete-item cleanup was skipped.');
-    expect(screen.getByRole('button', { name: 'Import selected' })).toBeEnabled();
+    expect(
+      screen.getByRole('button', { name: 'Import selected' })
+    ).toBeEnabled();
   });
+
+  it.each(['azure-ad', 'gitlab'])(
+    'keeps a late %s import out of the reopened preview while refreshing inventory',
+    async provider => {
+      let finishOld, finishCurrent;
+      integrationAPI.import
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              finishOld = resolve;
+            })
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              finishCurrent = resolve;
+            })
+        );
+      apiGetMock.mockResolvedValue({ data: {} });
+      azureADAPI.scan.mockResolvedValue(preview);
+      const onClose = vi.fn();
+      const onImported = vi.fn();
+      const openRequest = { provider };
+      const modal = isOpen =>
+        renderModal(openRequest, { isOpen, onClose, onImported });
+      const { rerender } = render(modal(true));
+      const selectItems = async () => {
+        if (provider === 'azure-ad') await selectEntraPreview();
+        else
+          fireEvent.click(
+            await screen.findByRole('button', { name: 'Select GitLab item' })
+          );
+      };
+      await selectItems();
+      fireEvent.click(screen.getByRole('button', { name: 'Import selected' }));
+      await waitFor(() =>
+        expect(integrationAPI.import).toHaveBeenCalledTimes(1)
+      );
+      fireEvent.click(screen.getAllByRole('button', { name: 'Close' }).at(-1));
+      expect(onClose).toHaveBeenCalledTimes(1);
+
+      rerender(modal(false));
+      rerender(modal(true));
+      await selectItems();
+      const importButton = screen.getByRole('button', {
+        name: 'Import selected',
+      });
+      fireEvent.click(importButton);
+      await waitFor(() =>
+        expect(integrationAPI.import).toHaveBeenCalledTimes(2)
+      );
+
+      await act(async () =>
+        finishOld({
+          created: [{ id: 51 }],
+          deleted_count: 1,
+          error_count: 1,
+          cleanup_status: 'partial',
+          errors: [{ item: 'Previous preview', error: 'Old warning' }],
+        })
+      );
+      expect(onImported).toHaveBeenCalledWith([{ id: 51 }], 1);
+      expect(screen.queryByText(/Old warning/)).toBeNull();
+      expect(importButton).toBeDisabled();
+
+      await act(async () => finishCurrent({ created: [{ id: 52 }] }));
+      expect(onImported).toHaveBeenCalledWith([{ id: 52 }], 0);
+      expect(importButton).toBeEnabled();
+    }
+  );
 
   it.each(['identity', 'rules', 'scope', 'credentials'])(
     'invalidates an Entra preview after changing %s',

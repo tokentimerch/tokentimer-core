@@ -384,9 +384,12 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
     });
   };
 
-  const importAwsSelected = async () => {
+  const importAwsSelected = async ({
+    onComplete = onImportComplete,
+    onFailure = onError,
+  } = {}) => {
     if (!previewReady || isScanning) {
-      onError?.('Run a scan with the current settings before importing.');
+      onFailure?.('Run a scan with the current settings before importing.');
       return;
     }
     try {
@@ -398,7 +401,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
           ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
       if (!workspaceId) {
-        onError && onError('Please select a workspace first.');
+        onFailure?.('Please select a workspace first.');
         return;
       }
 
@@ -420,9 +423,9 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
               }
             : undefined,
       });
-      onImportComplete?.(result);
+      onComplete?.(result);
     } catch (e) {
-      onError && onError(e?.message || 'AWS import failed');
+      onFailure?.(e?.message || 'AWS import failed');
     }
   };
 

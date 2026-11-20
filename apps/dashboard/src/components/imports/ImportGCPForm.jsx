@@ -225,9 +225,12 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     });
   };
 
-  const importGcpSelected = async () => {
+  const importGcpSelected = async ({
+    onComplete = onImportComplete,
+    onFailure = onError,
+  } = {}) => {
     if (!previewReady || isScanning) {
-      onError?.('Run a scan with the current settings before importing.');
+      onFailure?.('Run a scan with the current settings before importing.');
       return;
     }
     try {
@@ -239,7 +242,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
           ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
       if (!workspaceId) {
-        onError && onError('Please select a workspace first.');
+        onFailure?.('Please select a workspace first.');
         return;
       }
 
@@ -261,9 +264,9 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
               }
             : undefined,
       });
-      onImportComplete?.(result);
+      onComplete?.(result);
     } catch (e) {
-      onError && onError(e?.message || 'GCP import failed');
+      onFailure?.(e?.message || 'GCP import failed');
     }
   };
 

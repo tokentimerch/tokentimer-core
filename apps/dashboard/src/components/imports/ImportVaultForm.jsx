@@ -436,14 +436,17 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     });
   };
 
-  const importVaultSelected = async () => {
+  const importVaultSelected = async ({
+    onComplete = onImportComplete,
+    onFailure = onError,
+  } = {}) => {
     const selectionError = validateSelection();
     if (selectionError) {
-      onError?.(selectionError);
+      onFailure?.(selectionError);
       return;
     }
     if (!previewReady || isScanning) {
-      onError?.('Run a scan with the current settings before importing.');
+      onFailure?.('Run a scan with the current settings before importing.');
       return;
     }
     try {
@@ -455,7 +458,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
           ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
       if (!workspaceId) {
-        onError && onError('Please select a workspace first.');
+        onFailure?.('Please select a workspace first.');
         return;
       }
       const result = await vaultAPI.import({
@@ -479,9 +482,9 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
               }
             : undefined,
       });
-      onImportComplete?.(result);
+      onComplete?.(result);
     } catch (e) {
-      onError && onError(e?.message || 'Vault import failed');
+      onFailure?.(e?.message || 'Vault import failed');
     }
   };
 

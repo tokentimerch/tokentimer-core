@@ -291,9 +291,12 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     );
   };
 
-  const importGithubSelected = async () => {
+  const importGithubSelected = async ({
+    onComplete = onImportComplete,
+    onFailure = onError,
+  } = {}) => {
     if (!previewReady || isScanning) {
-      onError?.('Run a scan with the current settings before importing.');
+      onFailure?.('Run a scan with the current settings before importing.');
       return;
     }
     try {
@@ -305,7 +308,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
           ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
       if (!workspaceId) {
-        onError && onError('Please select a workspace first.');
+        onFailure?.('Please select a workspace first.');
         return;
       }
 
@@ -327,9 +330,9 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
               }
             : undefined,
       });
-      onImportComplete?.(result);
+      onComplete?.(result);
     } catch (e) {
-      onError && onError(e?.message || 'GitHub import failed');
+      onFailure?.(e?.message || 'GitHub import failed');
     }
   };
 
