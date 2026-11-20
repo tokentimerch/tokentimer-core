@@ -8,6 +8,10 @@ const ALERT = "certops_job_alert_context";
 const DISTRIBUTION = "certops_material_distribution";
 const REVIEW = "certops_distribution_review";
 const TRANSFER = "certops_distribution_transfer";
+// These independent, unapplied schemas may arrive after an observation preview.
+const independentFeatureNames = new Set(Object.entries(require("./migration-reservations.cjs").reservations)
+  .filter(([version]) => Number(version) >= 115 && Number(version) <= 126 && Number(version) !== 122)
+  .map(([, name]) => name));
 const canonical = [
   ENROLLMENT,
   EVIDENCE,
@@ -97,7 +101,9 @@ function composeMigrations(migrations, recorded = []) {
     const oldRows = recorded.filter((row) => row.version <= 109);
     const oldComposed = composeMigrations(oldRegistry, oldRows);
     const oldIdentity = new Map(oldComposed.map((entry) => [entry.name, entry.version]));
-    const appended = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation", "distribution_pagerduty_recovery"];
+    const appended = extensions
+      .filter((entry) => entry.version >= 109 && entry.name !== "certops_retirement_dossiers")
+      .map((entry) => entry.name);
     recognizedRetirementPreview = oldRows.every((row) => row.version < 70 || oldIdentity.get(row.name) === row.version) &&
       rows.filter((row) => row.version > 109).every((row, index) => row.version === 110 + index && row.name === appended[index]);
     if (!recognizedRetirementPreview) throw new Error("Unsupported Core retirement preview migration history");
@@ -250,12 +256,19 @@ function composeMigrations(migrations, recorded = []) {
       const companionOrders = Array.from({ length: independent.length + 1 }, (_entry, cut) =>
         [...prefix, ...independent.slice(0, cut), ...companions, ...independent.slice(cut)],
       );
-      return [ordinary, ...companionOrders].some((names) => {
+      // A previously applied observation preview can receive the independent
+      // Store/IIS/rotation definitions later. Preserve its complete prefix.
+      const reviewedOrders = [ordinary, ...companionOrders];
+      const independentAppends = reviewedOrders.map((names) => [
+        ...names.filter((name) => !independentFeatureNames.has(name)),
+        ...names.filter((name) => independentFeatureNames.has(name)),
+      ]);
+      return [...reviewedOrders, ...independentAppends].some((names) => {
         const applied = new Set(rows.map((row) => row.name));
         const lastApplied = Math.max(-1, ...names.map((name, index) => applied.has(name) ? index : -1));
         const skipped = names.slice(0, lastApplied + 1).filter((name) => !applied.has(name));
         const orderedApplied = names.filter((name) => applied.has(name));
-        const matches = skipped.every((name) => name.startsWith("operator_") || ["certops_issuance_job_identity", "certops_issuance_identity_transfer"].includes(name)) &&
+        const matches = skipped.every((name) => independentFeatureNames.has(name) || name.startsWith("operator_") || ["certops_issuance_job_identity", "certops_issuance_identity_transfer"].includes(name)) &&
           rows.every((row, index) => row.name === orderedApplied[index]);
         if (matches) contiguousOrder = [...orderedApplied, ...names.filter((name) => !applied.has(name))];
         return matches;

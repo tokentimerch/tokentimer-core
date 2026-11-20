@@ -495,6 +495,19 @@ async function listCertificateEvidence(options) {
   const offset = normalizeOffset(options.offset);
   const params = [workspaceId];
   const conditions = ["workspace_id = $1"];
+  const sortExpressions = {
+    source: ["lower(coalesce(nullif(metadata->>'agentId', ''), nullif(metadata->>'source', ''), 'Unavailable'))"],
+    observedAt: ["coalesce(observed_at, created_at)"],
+    location: ["lower(coalesce(nullif(metadata->>'targetHost', ''), ''))", "lower(coalesce(nullif(metadata->>'locationSlot', ''), nullif(metadata->>'filePath', ''), ''))"],
+  };
+  let orderBy = "created_at DESC, id ASC";
+  if (options.sortBy !== undefined || options.sortDirection !== undefined) {
+    if (typeof options.sortBy !== "string" || !Object.hasOwn(sortExpressions, options.sortBy) || !["asc", "desc"].includes(options.sortDirection)) {
+      throw serviceError("observation sort is invalid", CERTOPS_EVIDENCE_INVALID);
+    }
+    const direction = options.sortDirection === "asc" ? "ASC" : "DESC";
+    orderBy = `${sortExpressions[options.sortBy].map((expression) => `${expression} ${direction}`).join(", ")}, id ASC`;
+  }
 
   if (options.jobId !== undefined && options.jobId !== null && options.jobId !== "") {
     const jobId = normalizeRequiredId(options.jobId, CERTOPS_JOB_INVALID);
@@ -520,12 +533,48 @@ async function listCertificateEvidence(options) {
     conditions.push(`subject_id = $${params.length}`);
   }
 
+  if (options.observationsOnly === true) {
+    conditions.push("job_id IS NULL", "evidence_type = 'certificate.observed'");
+  }
+  // Subject association alone can include historical mis-associations. Only
+  // display observations for the current public certificate fingerprint.
+  if (options.currentCertificateFingerprintOnly === true) {
+    conditions.push(`EXISTS (SELECT 1 FROM managed_certificates mc
+      WHERE mc.workspace_id = certificate_evidence.workspace_id
+        AND mc.id::text = certificate_evidence.subject_id
+        AND mc.fingerprint_sha256 IS NOT NULL
+        AND lower(mc.fingerprint_sha256) = lower(certificate_evidence.metadata->>'fingerprintSha256'))`);
+  }
+  if (options.expectedFingerprint) {
+    params.push(options.expectedFingerprint);
+    conditions.push(`lower(metadata->>'fingerprintSha256') = lower($${params.length})`);
+  }
+
+  if (options.revocationStatus) {
+    if (options.revocationStatus === "unavailable") {
+      conditions.push("coalesce(nullif(metadata->>'observedRevocationVerdict', ''), nullif(metadata->>'observedRevocationState', '')) IS NULL");
+    } else {
+      params.push(options.revocationStatus);
+      conditions.push(`coalesce(nullif(metadata->>'observedRevocationVerdict', ''), nullif(metadata->>'observedRevocationState', '')) = $${params.length}`);
+    }
+  }
+  if (options.location) {
+    params.push(`%${options.location.replace(/[%_\\]/g, "\\$&")}%`);
+    conditions.push(`(metadata->>'targetHost' ILIKE $${params.length} OR metadata->>'locationSlot' ILIKE $${params.length} OR metadata->>'filePath' ILIKE $${params.length})`);
+  }
+  for (const [key, operator] of [["since", ">="], ["until", "<="]]) {
+    if (options[key]) {
+      params.push(options[key]);
+      conditions.push(`coalesce(observed_at, created_at) ${operator} $${params.length}::timestamptz`);
+    }
+  }
+
   params.push(limit, offset);
   const result = await db.query(
     `SELECT ${SAFE_EVIDENCE_SELECT_FIELDS}
        FROM certificate_evidence
       WHERE ${conditions.join(" AND ")}
-      ORDER BY created_at DESC, id ASC
+      ORDER BY ${orderBy}
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );
@@ -537,6 +586,7 @@ async function listCertificateEvidence(options) {
 }
 
 module.exports = {
+  OBSERVATION_HISTORY_QUERY_VERSION: 2,
   CERTOPS_EVIDENCE_INVALID,
   CERTOPS_EVIDENCE_NOT_FOUND,
   CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE,

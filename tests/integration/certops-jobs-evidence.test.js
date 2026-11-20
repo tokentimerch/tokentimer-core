@@ -139,6 +139,60 @@ describe("CertOps jobs and evidence persistence", function () {
     await TestUtils.execQuery(JOBS_EVIDENCE_MIGRATION.sql);
   });
 
+  it("sorts observation history before pagination with stable ties", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair("observation-sort");
+    try {
+      const rows = [
+        { source: "zebra", targetHost: "host-b", locationSlot: "two", observed: "2026-01-02T00:00:00Z" },
+        { agentId: "Alpha", targetHost: "host-a", filePath: "one", observed: "2026-01-01T00:00:00Z" },
+        { agentId: "alpha", targetHost: "host-a", locationSlot: "one", observed: "2026-01-01T00:00:00Z" },
+      ];
+      const ids = [];
+      for (const row of rows) {
+        const result = await TestUtils.execQuery(
+          `INSERT INTO certificate_evidence (workspace_id, evidence_type, subject_type, subject_id, metadata, observed_at)
+           VALUES ($1, 'certificate.observed', 'managed_certificate', 'sort-test', $2::jsonb, $3) RETURNING id`,
+          [workspaceA, JSON.stringify(row), row.observed],
+        );
+        ids.push(result.rows[0].id);
+      }
+      const ties = ids.slice(1).sort();
+      for (const sortBy of ["source", "observedAt", "location"]) {
+        for (const [sortDirection, expected] of [["asc", [...ties, ids[0]]], ["desc", [ids[0], ...ties]]]) {
+          const actual = [];
+          for (let offset = 0; offset < 3; offset += 1) {
+            const page = await listCertificateEvidence({ workspaceId: workspaceA, subjectId: "sort-test", observationsOnly: true, sortBy, sortDirection, limit: 1, offset });
+            actual.push(...page.items.map((item) => item.id));
+          }
+          expect(actual).to.deep.equal(expected);
+        }
+      }
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("filters observation history before sorting and pagination within its workspace", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair("observation-filter");
+    try {
+      const insert = async (workspace, metadata, observed, created) => (await TestUtils.execQuery(
+        `INSERT INTO certificate_evidence (workspace_id, evidence_type, subject_type, subject_id, metadata, observed_at, created_at)
+         VALUES ($1, 'certificate.observed', 'managed_certificate', 'filter-test', $2::jsonb, $3, $4) RETURNING id`,
+        [workspace, JSON.stringify(metadata), observed, created],
+      )).rows[0].id;
+      const match = await insert(workspaceA, { fingerprintSha256: "abc", observedRevocationState: "disabled", targetHost: "Host%One" }, null, "2026-01-02T00:00:00Z");
+      await insert(workspaceA, { fingerprintSha256: "abc", observedRevocationState: "disabled", targetHost: "HostXOne" }, "2026-01-02T00:00:00Z", "2026-01-01T00:00:00Z");
+      await insert(workspaceA, { fingerprintSha256: "other", observedRevocationState: "disabled", targetHost: "Host%One" }, "2026-01-02T00:00:00Z", "2026-01-01T00:00:00Z");
+      await insert(workspaceB, { fingerprintSha256: "abc", observedRevocationState: "disabled", targetHost: "Host%One" }, "2026-01-02T00:00:00Z", "2026-01-01T00:00:00Z");
+      const result = await listCertificateEvidence({ workspaceId: workspaceA, subjectId: "filter-test", observationsOnly: true, expectedFingerprint: "abc", revocationStatus: "disabled", location: "%", since: "2026-01-02T00:00:00Z", until: "2026-01-02T00:00:00Z", sortBy: "observedAt", sortDirection: "asc", limit: 1, offset: 0 });
+      expect(result.items.map((item) => item.id)).to.deep.equal([match]);
+      const next = await listCertificateEvidence({ workspaceId: workspaceA, subjectId: "filter-test", observationsOnly: true, expectedFingerprint: "abc", revocationStatus: "disabled", location: "%", limit: 1, offset: 1 });
+      expect(next.items).to.have.length(0);
+      const legacyPage = await listCertificateEvidence({ workspaceId: workspaceA, subjectId: "filter-test", observationsOnly: true, limit: "101", offset: "-1" });
+      expect(legacyPage.pagination).to.deep.equal({ limit: 100, offset: 0 });
+    } finally { await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]); }
+  });
+
   it("creates the job, log, and evidence tables with safe columns and indexes", async () => {
     const tables = await TestUtils.execQuery(
       `SELECT table_name

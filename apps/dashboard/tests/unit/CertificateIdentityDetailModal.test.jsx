@@ -10,6 +10,13 @@ import {
 import { beforeEach, expect, it, vi } from 'vitest';
 import CertificateIdentityDetailModal from '../../src/components/certops/CertificateIdentityDetailModal.jsx';
 
+vi.mock('../../src/components/certops/useCertOps.js', () => ({
+  useCertOpsCanManage: () => false,
+}));
+vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
+  useWorkspace: () => ({ workspaceId: 'workspace-1' }),
+}));
+
 const {
   getCertificateMock,
   getIdentityMock,
