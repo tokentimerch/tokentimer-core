@@ -137,25 +137,66 @@ async function loadAcmeStoreBindingTx({ client, workspaceId, jobId, agentId }) {
   return { enrollmentId: String(row.id), originalJobId: String(row.original_job_id), requestB64: bytes.toString("base64"), requestSha256: row.request_sha256 };
 }
 
-// This primitive is deliberately not exposed by a route. The future caller must
-// authorize the operator and hold the enclosing transaction through audit commit.
+async function readAcmeStoreRecoveryBinding({ client, workspaceId, jobId, enrollmentId }) {
+  const scope = enrollmentId
+    ? "e.id=$3::uuid FOR UPDATE OF e,j,original,a"
+    : "(e.current_job_id=j.id OR e.original_job_id=j.id)";
+  const parameters = enrollmentId ? [workspaceId, jobId, enrollmentId] : [workspaceId, jobId];
+  return (await client.query(`SELECT e.id,e.state,e.agent_id,e.certificate_id,e.original_job_id,e.current_job_id,
+      j.id AS job_id,j.status,j.needs_operator_reconciliation,j.claim_id,j.claimed_by_agent_id,
+      j.assigned_agent_id,j.operation,j.mode,j.executor_kind,j.subject_id,j.subject_type,
+      original.operation AS original_operation,original.payload AS original_payload,
+      original.subject_id AS original_subject_id,a.status AS agent_status,
+      CASE WHEN j.claim_id IS NULL AND j.claimed_by_agent_id IS NULL AND j.lease_expires_at IS NULL
+        AND j.completed_at IS NOT NULL
+        AND j.error_code='effects_unknown'
+        AND j.reconciliation_reason='lease_expired_after_side_effect_window_agent_unresponsive'
+      THEN EXISTS (
+        SELECT 1 FROM certificate_job_log l
+        WHERE l.workspace_id=j.workspace_id AND l.job_id=j.id AND l.event_type='job.failed'
+          AND l.status='orphaned_unknown_effect' AND l.metadata->>'sweep'='lease-reaper'
+          AND l.metadata->>'outcome'=j.status AND l.metadata->>'errorCode'=j.error_code
+          AND l.metadata->>'reconciliationReason'=j.reconciliation_reason
+      ) ELSE FALSE END AS lease_reaped
+    FROM certops_acme_store_enrollments e
+    JOIN certificate_jobs j ON j.workspace_id=e.workspace_id AND j.id=$2::uuid
+    JOIN certificate_jobs original ON original.workspace_id=e.workspace_id AND original.id=e.original_job_id
+    JOIN certops_agents a ON a.workspace_id=e.workspace_id AND a.id=e.agent_id
+    WHERE e.workspace_id=$1::uuid AND ${scope}`, parameters)).rows[0];
+}
+
+function hasUncertainAcmeStoreOutcome(row) {
+  return row?.status === "orphaned_unknown_effect" && row.needs_operator_reconciliation === true;
+}
+
+function isRecoverableAcmeStoreOrphan(row) {
+  if (!hasUncertainAcmeStoreOutcome(row) || row.agent_status !== "active" ||
+      row.assigned_agent_id !== row.agent_id || row.mode !== "real" || row.executor_kind !== "agent" ||
+      row.subject_type !== "managed_certificate" || row.subject_id !== row.certificate_id ||
+      !["issue", "renew"].includes(row.original_operation) || row.original_subject_id !== row.certificate_id) {
+    return false;
+  }
+  const expectedOperation = row.job_id === row.original_job_id ? row.original_operation : "continue-enrollment";
+  // The worker clears the expired claim and records its own terminal event in the same transaction.
+  const ownerClaim = Boolean(row.claim_id && row.claimed_by_agent_id === row.agent_id);
+  return row.operation === expectedOperation && (ownerClaim || row.lease_reaped === true);
+}
+
+async function lookupAcmeStoreRecoveryByJob({ client, workspaceId, jobId }) {
+  const row = await readAcmeStoreRecoveryBinding({ client, workspaceId, jobId });
+  if (!row) return null;
+  return { enrollmentId: String(row.id), state: row.state,
+    outcomeUncertain: hasUncertainAcmeStoreOutcome(row),
+    recoveryAvailable: row.current_job_id === row.job_id && isRecoverableAcmeStoreOrphan(row) };
+}
+
+// The recovery route authorizes the operator and holds its transaction through audit commit.
 async function continueAcmeStoreEnrollmentTx({ client, workspaceId, enrollmentId, orphanedJobId, actorUserId, reason, acknowledgeUnknownEffect, audit }) {
   transaction(client); [workspaceId, enrollmentId, orphanedJobId].forEach(id);
   if (acknowledgeUnknownEffect !== true || !Number.isInteger(actorUserId) || actorUserId <= 0 ||
       typeof reason !== "string" || !reason.trim() || reason.length > 500 || /[\u0000-\u001f\u007f]/.test(reason)) fail("explicit acknowledgement, operator and printable reason required");
-  const row = (await client.query(`SELECT e.*,j.status AS orphan_status,j.needs_operator_reconciliation,
-      j.claim_id AS orphan_claim_id,j.assigned_agent_id AS orphan_agent_id,
-      original.operation AS original_operation,original.payload AS original_payload,
-      original.subject_id AS original_subject_id,a.status AS agent_status
-    FROM certops_acme_store_enrollments e
-    JOIN certificate_jobs j ON j.workspace_id=e.workspace_id AND j.id=$3::uuid
-    JOIN certificate_jobs original ON original.workspace_id=e.workspace_id AND original.id=e.original_job_id
-    JOIN certops_agents a ON a.workspace_id=e.workspace_id AND a.id=e.agent_id
-    WHERE e.workspace_id=$1::uuid AND e.id=$2::uuid FOR UPDATE OF e,j,original,a`,
-  [workspaceId, enrollmentId, orphanedJobId])).rows[0];
-  if (!row || row.orphan_status !== "orphaned_unknown_effect" || row.needs_operator_reconciliation !== true ||
-      !row.orphan_claim_id || String(row.orphan_agent_id) !== String(row.agent_id) || row.agent_status !== "active" ||
-      !["issue", "renew"].includes(row.original_operation) || String(row.original_subject_id) !== String(row.certificate_id)) fail("the exact uncertain owner enrollment is required");
+  const row = await readAcmeStoreRecoveryBinding({ client, workspaceId, jobId: orphanedJobId, enrollmentId });
+  if (!isRecoverableAcmeStoreOrphan(row)) fail("the exact uncertain owner enrollment is required");
   const recoveryKey = `acme-recovery:${enrollmentId}:${orphanedJobId}`;
   if (String(row.current_job_id) !== orphanedJobId) {
     const prior = (await client.query(`SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 AND idempotency_key=$3
@@ -179,4 +220,4 @@ async function continueAcmeStoreEnrollmentTx({ client, workspaceId, enrollmentId
   return { jobId: outcome.job.id, created: true };
 }
 
-module.exports = { createAcmeStoreEnrollmentTx, applyAcmeStoreReceiptTx, loadAcmeStoreBindingTx, continueAcmeStoreEnrollmentTx };
+module.exports = { createAcmeStoreEnrollmentTx, applyAcmeStoreReceiptTx, loadAcmeStoreBindingTx, lookupAcmeStoreRecoveryByJob, continueAcmeStoreEnrollmentTx };
