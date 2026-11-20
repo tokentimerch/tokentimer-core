@@ -58,7 +58,7 @@ async function requestCleanup({workspaceId,groupId,materialVersionId,actorUserId
       payload:{schemaVersion:1,keyMode:"vault-managed",target:{type:"endpoint",reference:group.id},materialCleanup:intent}});
     await client.query("UPDATE certops_material_cleanups SET job_id=$3 WHERE workspace_id=$1 AND id=$2",[workspaceId,id,job.id]);
     await lifecycle.notifyApproval(client,workspaceId,job);
-    await writeAudit({client,workspaceId,actorUserId,action:existing?"CERTOPS_MATERIAL_CLEANUP_REAUTHORIZED":"CERTOPS_MATERIAL_CLEANUP_REQUESTED",targetType:"certops_material_cleanup",targetId:id,metadata:{materialVersionId,jobId:job.id,previousJobId:existing?.job_id || null,policyRevision:policy.revision}});
+    await writeAudit({client,workspaceId,actorUserId,action:existing?"CERTOPS_MATERIAL_CLEANUP_REAUTHORIZED":"CERTOPS_MATERIAL_CLEANUP_REQUESTED",targetType:"certops_material_cleanup",targetId:id,metadata:{cleanupId:id,groupId:group.id,materialVersionId,jobId:job.id,previousJobId:existing?.job_id || null,policyRevision:policy.revision}});
     return {cleanupId:id,jobId:job.id,status:job.status,state:existing?.state || "planned",duplicate:false};
   });
 }
@@ -87,7 +87,7 @@ async function resolveCleanupDefaults({client,workspaceId,operation,subjectId,pa
       // Atomic with claim. This permanent fence survives lease loss, cancellation
       // and uncertain effects; SQL triggers prohibit all later material reuse.
       await client.query("UPDATE certops_material_cleanups SET state='fenced',fenced_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2",[workspaceId,request.id]);
-      await writeAudit({client,workspaceId,action:"CERTOPS_MATERIAL_CLEANUP_FENCED",targetType:"certops_material_cleanup",targetId:request.id,metadata:{materialVersionId:intent.materialVersionId,jobId}});
+      await writeAudit({client,workspaceId,action:"CERTOPS_MATERIAL_CLEANUP_FENCED",targetType:"certops_material_cleanup",targetId:request.id,metadata:{cleanupId:request.id,groupId:group.id,materialVersionId:intent.materialVersionId,jobId,agentId:assignedAgentId}});
     }
   }
   return {autoAssignedAgentId:assignedAgentId};
@@ -105,7 +105,7 @@ async function acceptCleanupReceipt({client,workspaceId,agentId,job,receipt}){
     Date.parse(receipt.observedAt)>Date.now()+30000 || Date.now()-Date.parse(receipt.observedAt)>300000)fail("CERTOPS_MATERIAL_CLEANUP_RECEIPT_MISMATCH");
   if(request.state==="soft_deleted")return {duplicate:true};
   await client.query("UPDATE certops_material_cleanups SET state='soft_deleted',completed_at=clock_timestamp(),receipt=$3 WHERE workspace_id=$1 AND id=$2",[workspaceId,request.id,receipt]);
-  await writeAudit({client,workspaceId,action:"CERTOPS_MATERIAL_CLEANUP_COMPLETED",targetType:"certops_material_cleanup",targetId:request.id,metadata:receipt});
+  await writeAudit({client,workspaceId,action:"CERTOPS_MATERIAL_CLEANUP_COMPLETED",targetType:"certops_material_cleanup",targetId:request.id,metadata:{...receipt,jobId:job.id,agentId}});
   return {duplicate:false};
 }
 async function assertCommittedCleanupReceipt({client,workspaceId,job,receipt}){

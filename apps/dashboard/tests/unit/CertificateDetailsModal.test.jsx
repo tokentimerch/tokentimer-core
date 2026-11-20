@@ -12,6 +12,13 @@ import { MemoryRouter } from 'react-router';
 import CertificateDetailsModal from '../../src/components/certops/CertificateDetailsModal.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
+vi.mock('../../src/components/certops/useCertOps.js', () => ({
+  useCertOpsCanManage: () => false,
+}));
+vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
+  useWorkspace: () => ({ workspaceId: 'workspace-1' }),
+}));
+
 vi.mock('../../src/components/PagerDutyIncidentActions.jsx', () => ({
   default: () => null,
 }));

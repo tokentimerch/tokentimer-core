@@ -129,7 +129,7 @@ GitHub and GitLab keep assets under repositories, projects or groups the scan co
 
 ## Deployment activation and rollback
 
-Apply migration 111 for owner labels and migration 115 for expiration labels
+Apply migration 111 for owner labels and migration 127 for expiration labels
 before the new API reads or writes statistics. Upgrade every API and dashboard
 replica before selecting these labels so all replicas recognize the settings.
 

@@ -1344,7 +1344,7 @@ describe("PostgreSQL selectable auto-sync metrics", { concurrency: false }, () =
         __dirname, "../../apps/api/migrations/111-auto-sync-owner-username.sql"), "utf8");
       await client.query(sql);
       await client.query(require("node:fs").readFileSync(require("node:path").join(
-        __dirname, "../../apps/api/migrations/115-auto-sync-creation-expiration.sql"), "utf8"));
+        __dirname, "../../apps/api/migrations/127-auto-sync-creation-expiration.sql"), "utf8"));
       const upgraded = (await client.query("SELECT * FROM pg_temp.auto_sync_creation_stats")).rows[0];
       assert.equal(upgraded.owner_username, "");
       assert.equal(upgraded.expiration, "");

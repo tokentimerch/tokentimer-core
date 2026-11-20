@@ -586,14 +586,14 @@ describe("secret redaction", () => {
 });
 
 describe("auto-sync audit rows", () => {
-  it("AUTO_SYNC_CREATED metadata is only the provider, never credentials", () => {
+  it("AUTO_SYNC_CREATED records the config and schedule context without credentials", () => {
     const adminSrc = fs.readFileSync(
       path.resolve(__dirname, "../../apps/api/routes/admin.js"),
       "utf8",
     );
     assert.match(
       adminSrc,
-      /action: "AUTO_SYNC_CREATED"[\s\S]{0,500}metadata: \{ provider \}/,
+      /action: "AUTO_SYNC_CREATED"[\s\S]{0,500}metadata:\s*\{\s*config_id: result\.rows\[0\]\.id,\s*provider,\s*enabled: result\.rows\[0\]\.enabled,\s*frequency: result\.rows\[0\]\.frequency,\s*\}/,
     );
     assert.doesNotMatch(adminSrc, /tokenPrefix/);
     assert.doesNotMatch(

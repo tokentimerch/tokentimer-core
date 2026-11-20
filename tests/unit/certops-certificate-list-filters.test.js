@@ -91,7 +91,9 @@ function createMemoryClient(rows, profileStatusById = {}) {
       const normalized = String(sql).replace(/\s+/g, " ").trim();
       client.queries.push({ sql: normalized, params });
 
-      const whereStart = sql.indexOf("WHERE ");
+      const fromStart = sql.indexOf("FROM managed_certificates mc");
+      assert.ok(fromStart >= 0, `expected the outer certificate query in: ${normalized}`);
+      const whereStart = sql.indexOf("WHERE ", fromStart);
       assert.ok(whereStart >= 0, `expected a WHERE clause in: ${normalized}`);
       let where = sql.slice(whereStart + "WHERE ".length);
       const orderIndex = where.indexOf("ORDER BY");
