@@ -33,6 +33,16 @@ Windows state is protected and checked with `icacls` ACLs. Only the agent identi
 
 For a protected config that even an elevated editor cannot change, follow [Windows configuration maintenance](../windows-maintenance.md). Never delete enrolled identity or keys to get past an access error.
 
+### Unattended classic installation
+
+Verify the classic archive against its published checksum before extracting it. From the extracted directory, run an elevated RMM job or a Group Policy startup script scoped to the target computers. Inject a distinct, unexpired, single-use token per host into the installer process as `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN`. Restrict any host-local token file to SYSTEM and Administrators. Keep tokens out of SYSVOL, command arguments and logs.
+
+```powershell
+powershell.exe -NoProfile -NonInteractive -File .\scripts\install-agent.ps1 --api-url $ApiUrl --workspace-id $WorkspaceId
+```
+
+Clear the environment variable and remove any staged token file after the installer exits. Pause the rollout on any nonzero exit. Advance after exit `0`, a running service and a fresh, compatible heartbeat in the intended workspace.
+
 ## Verify
 
 Confirm the service is Running and the fleet panel shows registration and a fresh heartbeat. Keep execution disabled while configuring [local policy](configuration.md). Set `execution.enabled: true` with `execution.dryRun: true`, restart, and verify a signed job with `mode: "dry_run"`. Its signed payload must retain `dry_run` and its terminal status must be `dry_run_complete`, never `succeeded`. The local `dryRun` switch refuses real mutating jobs; it does not convert them into previews. A signed no-op checks dispatch/reporting, not later DNS, deployment or reload permissions. For AD CS, keep local dry-run enabled through the [read-only check, trusted pin and fresh post-pin check](adcs.md#operator-sequence); switch it off and restart before enrollment. For other mutating work, review the intended operation's local policy and destinations before switching it off. The [complete public Windows guide](https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install-windows) includes troubleshooting and the permission model.
