@@ -708,7 +708,7 @@ describe("Import cleanup scan lifecycle (real database)", function () {
       provider: "gitlab",
       identityContext: { host: instance, ownerKey: "7" },
       items: [],
-      subScopes: [{ sourceKind: "gitlab-pat", dimensions: {}, complete: true }],
+      subScopes: [{ sourceKind: "gitlab-pat", dimensions: { gitLabPatCoverage: "all" }, complete: true }],
     });
 
     const first = await cleanupObsoleteTokens({
