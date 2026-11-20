@@ -1,6 +1,6 @@
 # Build context must be the repo root.
 # Prefer deploy/compose/Dockerfile.api for production Compose/CI images.
-FROM golang:1.26.10-alpine3.23 AS subfinder-builder
+FROM golang:1.26.11-alpine3.23 AS subfinder-builder
 
 RUN apk update && apk upgrade --no-cache && \
     apk add --no-cache ca-certificates git
@@ -24,7 +24,7 @@ RUN go get \
     grep -Eq 'github.com/andybalholm/brotli[[:space:]]+v1[.]2[.]7([[:space:]]|$)' /tmp/subfinder-build-info && \
     grep -Eq 'github.com/klauspost/compress[[:space:]]+v1[.]20[.]2([[:space:]]|$)' /tmp/subfinder-build-info
 
-FROM node:22.23.4-slim
+FROM node:22.23.5-slim
 
 WORKDIR /app
 

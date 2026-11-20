@@ -757,18 +757,18 @@ done
 if helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --set-string config.certopsMaterialCleanupEnabled=invalid >/dev/null 2>&1; then
   fail "accepted invalid cleanup boolean"
 fi
-echo "==> verify explicit owner label permission and selection"
-owner_defaults="$(helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --show-only templates/configmap.yaml)"
-assert_contains "${owner_defaults}" 'AUTO_SYNC_METRICS_EXTRA_LABELS: ""' "owner label permission defaults empty"
-assert_contains "${owner_defaults}" 'AUTO_SYNC_METRICS_LABELS: ""' "owner label selection defaults empty"
-owner_custom="$(helm template "${RELEASE_NAME}" "${CHART}" \
+echo "==> verify explicit owner and expiration label permission and selection"
+metric_label_defaults="$(helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --show-only templates/configmap.yaml)"
+assert_contains "${metric_label_defaults}" 'AUTO_SYNC_METRICS_EXTRA_LABELS: ""' "extra label permission defaults empty"
+assert_contains "${metric_label_defaults}" 'AUTO_SYNC_METRICS_LABELS: ""' "extra label selection defaults empty"
+metric_label_custom="$(helm template "${RELEASE_NAME}" "${CHART}" \
   --set config.adminEmail=ci@example.com \
   --set monitoring.metrics.autoSyncEnabled=true \
-  --set 'monitoring.metrics.extraLabels={owner_username}' \
-  --set 'monitoring.metrics.autoSyncLabels={kind,owner_username}' \
+  --set 'monitoring.metrics.extraLabels={owner_username,expiration}' \
+  --set 'monitoring.metrics.autoSyncLabels={kind,owner_username,expiration}' \
   --show-only templates/configmap.yaml)"
-assert_contains "${owner_custom}" 'AUTO_SYNC_METRICS_EXTRA_LABELS: "owner_username"' "explicit owner label permission"
-assert_contains "${owner_custom}" 'AUTO_SYNC_METRICS_LABELS: "kind,owner_username"' "explicit owner label selection"
+assert_contains "${metric_label_custom}" 'AUTO_SYNC_METRICS_EXTRA_LABELS: "owner_username,expiration"' "explicit owner and expiration label permission"
+assert_contains "${metric_label_custom}" 'AUTO_SYNC_METRICS_LABELS: "kind,owner_username,expiration"' "explicit owner and expiration label selection"
 for setting in extraLabels autoSyncLabels; do
   for invalid in '{unknown}' '{owner_username,owner_username}' '{none,owner_username}'; do
     if helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com \

@@ -1,4 +1,8 @@
-import { CertificateLifecycleBadge } from './certops/CertOpsBadge.jsx';
+import {
+  CertificateLifecycleBadge,
+  ObservedRevocationBadge,
+  hasObservedRevocationContext,
+} from './certops/CertOpsBadge.jsx';
 import { useCallback } from 'react';
 import {
   formatContactGroupNames,
@@ -537,6 +541,9 @@ function AssetStatusPills({ token, getStatusMeta }) {
         <Tooltip label='Managed certificate lifecycle status'>
           <CertificateLifecycleBadge certificate={managed} />
         </Tooltip>
+      ) : null}
+      {hasObservedRevocationContext(managed) ? (
+        <ObservedRevocationBadge result={managed.observedRevocation} />
       ) : null}
     </>
   );
