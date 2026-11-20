@@ -46,7 +46,7 @@ test("the prior 114/115 rotation ledger keeps its exact identities", () => {
 
 test("the 114/115 rotation preview retains its ledger as reserved features arrive", () => {
   const { reservations } = require("../../apps/api/migrations/migration-reservations.cjs");
-  const legacy = migrations.filter(entry => entry.name !== "distribution_pagerduty_recovery").map((entry) => entry.name === "agent_credential_rotations" ? { ...entry, version: 114 }
+  const legacy = migrations.filter(entry => !["distribution_pagerduty_recovery", "certops_observed_revocation"].includes(entry.name)).map((entry) => entry.name === "agent_credential_rotations" ? { ...entry, version: 114 }
     : entry.name === "agent_credential_rotation_ack" ? { ...entry, version: 115 } : entry);
   const base = legacy.filter(({ version }) => version >= 70 && version <= 77);
   const provider = ["certops_installed_file_distribution", "auto_sync_provider_stats", "auto_sync_run_metrics", "certops_material_providers"]
@@ -78,7 +78,7 @@ test("reviewed rotation preview remains exact and rejects gaps or swapped rows",
   const original = migrations.filter(x => x.version <= 85 || [92, 93].includes(x.version));
   const names = ["operator_connections", "operator_enrollment_grants", "operator_action_requests"];
   const prior = [...original, ...names.map((name, i) => ({ ...migrations.find(x => x.name === name), version: 94 + i }))];
-  const legacy = migrations.filter(x => !["certops_retirement_dossiers", "certops_material_reconciliation", "distribution_pagerduty_recovery"].includes(x.name));
+  const legacy = migrations.filter(x => !["certops_retirement_dossiers", "certops_material_reconciliation", "distribution_pagerduty_recovery", "certops_observed_revocation"].includes(x.name));
   const history = composeMigrations(legacy, prior).map(({ version, name }) => ({ version, name }));
   assert.equal(history.find(x => x.name === "agent_credential_rotations").version, 110);
   assert.equal(history.find(x => x.name === "agent_credential_rotation_ack").version, 111);

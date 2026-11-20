@@ -51,15 +51,18 @@ are reservations, not no-op migrations. They do not install another feature.
 | 119 | certops_material_adcs_operation_union | Reserved AD CS operation union |
 | 120 | certops_iis_absence_proofs | Reserved IIS absence proof |
 | 121 | certops_enrollment_jobs_index | Reserved enrollment jobs index |
-| 122 | certops_observed_revocation | Reserved observed revocation |
+| 122 | certops_observed_revocation | Observed certificate revocation |
 | 123 | agent_credential_rotations | Credential rotation preparation and receipt |
 | 124 | agent_credential_rotation_ack | Credential rotation acknowledgement |
+| 126 | certops_adcs_receipt_deadline | Reserved AD CS receipt deadline |
 
 A ledger based on the released numbering that records `agent_credential_rotations` or `agent_credential_rotation_ack` at version 109 or 110 is ambiguous and is rejected before migration SQL. Preserve the database and arrange a separately reviewed recovery; do not edit or relabel its ledger.
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.
 Recognized applied previews retain their names, numbers, SQL and timestamps.
+For example, a retirement preview with revocation already applied at 115
+keeps that row and appends missing rotation migrations after it.
 Only missing definitions are assigned; duplicate feature definitions must be
 removed when composing branches. Unknown, conflicting or unrecognized histories
 fail before DDL and require reviewed recovery. Database compatibility does not

@@ -8,6 +8,10 @@ const ALERT = "certops_job_alert_context";
 const DISTRIBUTION = "certops_material_distribution";
 const REVIEW = "certops_distribution_review";
 const TRANSFER = "certops_distribution_transfer";
+// These independent, unapplied schemas may arrive after an observation preview.
+const independentFeatureNames = new Set(Object.entries(require("./migration-reservations.cjs").reservations)
+  .filter(([version]) => Number(version) >= 115 && Number(version) <= 126 && Number(version) !== 122)
+  .map(([, name]) => name));
 const canonical = [
   ENROLLMENT,
   EVIDENCE,
@@ -120,11 +124,19 @@ function composeMigrations(migrations, recorded = []) {
     // Keep the canonical default. Recognize only ordered Store prefixes and
     // the intact rotation pair around recovery, then append newer definitions.
     const appendOrders = [[...baseAppend, ...canonicalTail]];
+    const revocation = otherTail.filter(name => name === "certops_observed_revocation");
+    const remainingTail = otherTail.filter(name => !revocation.includes(name));
     for (let count = 0; count <= store.length; count++) {
       const tail = [...store.slice(0, count), ...recovery, ...store.slice(count)];
       for (let cut = 0; cut <= tail.length; cut++) {
         appendOrders.push([...baseAppend, ...tail.slice(0, cut), ...rotations, ...tail.slice(cut), ...otherTail]);
       }
+      // Store previews could have been extended by the canonical remainder.
+      appendOrders.push([...baseAppend, ...store.slice(0, count),
+        ...canonicalTail.filter(name => !store.slice(0, count).includes(name))]);
+    }
+    if (revocation.length && recovery.length) {
+      appendOrders.push([...baseAppend, ...recovery, ...revocation, ...store, ...rotations, ...remainingTail]);
     }
     appendOrders.sort((left, right) => {
       for (let index = 0; index < left.length; index++) {
@@ -170,7 +182,8 @@ function composeMigrations(migrations, recorded = []) {
         const companions = remaining.filter((name) => lifecycle.has(name));
         // A prior MCP preview could have applied agent rotation before the
         // retirement features existed. Preserve that reviewed append order.
-        const laterRetirement = new Set(["certops_retirement_dossiers", "certops_material_reconciliation", "distribution_pagerduty_recovery"]);
+        const laterRetirement = new Set(["certops_retirement_dossiers", "certops_material_reconciliation",
+          "distribution_pagerduty_recovery", "certops_observed_revocation"]);
         const beforeRetirement = [...independent.filter((name) => !laterRetirement.has(name)), ...independent.filter((name) => laterRetirement.has(name))];
         const historicalOrders = [independent, beforeRetirement].flatMap((ordered) =>
           Array.from({ length: ordered.length + 1 }, (_entry, cut) =>
@@ -352,12 +365,27 @@ function composeMigrations(migrations, recorded = []) {
       const companionOrders = Array.from({ length: independent.length + 1 }, (_entry, cut) =>
         [...prefix, ...independent.slice(0, cut), ...companions, ...independent.slice(cut)],
       );
-      return [ordinary, ...companionOrders].some((names) => {
+      // A previously applied observation preview can receive the independent
+      // Store/IIS/rotation definitions later. Preserve its complete prefix.
+      const reviewedOrders = [ordinary, ...companionOrders];
+      const independentAppends = reviewedOrders.map((names) => [
+        ...names.filter((name) => !independentFeatureNames.has(name)),
+        ...names.filter((name) => independentFeatureNames.has(name)),
+      ]);
+      // The composed rotation/revocation preview could exist before the
+      // reserved Store and IIS schemas became available.
+      const deferred = new Set(Object.entries(require("./migration-reservations.cjs").reservations)
+        .filter(([version]) => (Number(version) >= 115 && Number(version) <= 121) || Number(version) === 126)
+        .map(([, name]) => name));
+      const deferredAppends = reviewedOrders.map(names => [
+        ...names.filter(name => !deferred.has(name)), ...names.filter(name => deferred.has(name)),
+      ]);
+      return [...reviewedOrders, ...independentAppends, ...deferredAppends].some((names) => {
         const applied = new Set(rows.map((row) => row.name));
         const lastApplied = Math.max(-1, ...names.map((name, index) => applied.has(name) ? index : -1));
         const skipped = names.slice(0, lastApplied + 1).filter((name) => !applied.has(name));
         const orderedApplied = names.filter((name) => applied.has(name));
-        const matches = skipped.every((name) => name.startsWith("operator_") || ["certops_issuance_job_identity", "certops_issuance_identity_transfer"].includes(name)) &&
+        const matches = skipped.every((name) => independentFeatureNames.has(name) || name.startsWith("operator_") || ["certops_issuance_job_identity", "certops_issuance_identity_transfer"].includes(name)) &&
           rows.every((row, index) => row.name === orderedApplied[index]);
         if (matches) contiguousOrder = [...orderedApplied, ...names.filter((name) => !applied.has(name))];
         return matches;

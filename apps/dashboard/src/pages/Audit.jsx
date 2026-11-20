@@ -93,8 +93,7 @@ function dateInputToAuditDateParam(value, boundary = 'start') {
   return date.toISOString();
 }
 
-// Exhaustive list of all possible audit actions
-// This allows filtering for any action type, even if not present in the current loaded events
+// Suggestions for the exact-action filter. Operators can also enter any action name.
 const ALL_ACTION_TYPES = [
   // Authentication
   'LOGIN_SUCCESS',
@@ -344,6 +343,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     }
   });
   const [actionFilter, setActionFilter] = useState('');
+  const [actionInput, setActionInput] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [auditPage, setAuditPage] = useState(1);
@@ -579,9 +579,13 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     ev => ev.action !== 'ACCOUNT_DELETION_FEEDBACK'
   );
 
-  // Use the exhaustive predefined list of all action types instead of only those in loaded events
-  // This allows filtering for any action, even if not present in the current 500 loaded events
-  const uniqueActions = ALL_ACTION_TYPES;
+  function applyActionFilter(value) {
+    const action = value.trim();
+    setActionInput(action);
+    if (action === actionFilter) return;
+    setAuditPage(1);
+    setActionFilter(action);
+  }
 
   function toTitle(v) {
     return String(v || '')
@@ -1413,11 +1417,16 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       const md = ev?.metadata || {};
       const parts = [];
       if (md.url) parts.push(`URL: ${md.url}`);
+      if (md.monitor_id) parts.push(`Monitor ID: ${md.monitor_id}`);
       if (md.ssl_detected != null)
         parts.push(`SSL: ${md.ssl_detected ? 'Yes' : 'No'}`);
-      if (md.status_code != null) parts.push(`Status: ${md.status_code}`);
-      if (md.response_time_ms != null)
-        parts.push(`Response: ${md.response_time_ms}ms`);
+      if (md.status) parts.push(`Status: ${md.status}`);
+      const statusCode = md.statusCode ?? md.status_code;
+      const responseMs = md.responseMs ?? md.response_time_ms ?? md.response_ms;
+      if (statusCode != null) parts.push(`HTTP status: ${statusCode}`);
+      if (responseMs != null) parts.push(`Response time: ${responseMs} ms`);
+      if (Array.isArray(md.fields_updated) && md.fields_updated.length)
+        parts.push(`Fields updated: ${md.fields_updated.join(', ')}`);
       if (md.ssl_valid != null)
         parts.push(`SSL valid: ${md.ssl_valid ? 'Yes' : 'No'}`);
       if (md.error) parts.push(`Error: ${md.error}`);
@@ -1432,9 +1441,14 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       const md = ev?.metadata || {};
       const parts = [];
       if (md.email) parts.push(`Email: ${md.email}`);
-      if (md.role) parts.push(`Role: ${md.role}`);
-      if (md.old_role && md.new_role)
-        parts.push(`Role: ${md.old_role} -> ${md.new_role}`);
+      const previousRole = md.previous_role ?? md.old_role;
+      const role = md.role ?? md.new_role;
+      if (previousRole && role) {
+        parts.push(`Role: ${previousRole} -> ${role}`);
+      } else if (role) {
+        parts.push(`Role: ${role}`);
+      }
+      if (md.removed_role) parts.push(`Removed role: ${md.removed_role}`);
       if (md.workspace_name) parts.push(`Workspace: ${md.workspace_name}`);
       if (md.recipient_type)
         parts.push(
@@ -1625,8 +1639,19 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       return [
         ['Certificate ID', md.managedCertificateId],
         ['Management period ID', md.periodId],
+        ['Identity ID', md.identityId],
+        ['Renewal profile ID', md.renewalProfileId],
+        [
+          'Automation',
+          md.automationEnabled == null
+            ? null
+            : md.automationEnabled
+              ? 'enabled'
+              : 'disabled',
+        ],
+        ['Running jobs', md.runningJobs],
       ]
-        .filter(([, value]) => value)
+        .filter(([, value]) => value !== undefined && value !== null)
         .map(([label, value]) => ({ label, value: String(value) }));
     }
     if (
@@ -2032,9 +2057,28 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       return ''; // Hide from view as per user request
     }
 
-    // Fallback: if metadata exists but no specific formatter matched, return empty
-    // This prevents JSON from being displayed
-    return '';
+    const md = ev?.metadata || {};
+    return [
+      ['Certificate ID', md.managedCertificateId ?? md.managed_certificate_id],
+      ['Job ID', md.jobId ?? md.job_id],
+      ['Group ID', md.groupId],
+      ['Rollout ID', md.rolloutId],
+      ['Incident ID', md.incidentId ?? md.incident_id],
+      ['Material version ID', md.materialVersionId],
+      ['Cleanup ID', md.cleanupId],
+      ['Connection ID', md.connection_id],
+      ['Enrollment ID', md.enrollmentId ?? md.enrollment_id],
+      ['Contact ID', md.contact_id],
+      ['Workflow ID', md.workflow_id],
+      ['Outcome', md.outcome],
+      ['Status', md.status ?? md.state],
+      ['Code', md.code],
+    ]
+      .filter(
+        ([, value]) => typeof value === 'string' || typeof value === 'number'
+      )
+      .map(([label, value]) => `${label}: ${value}`)
+      .join(' | ');
   }
 
   function getMetadataEntries(ev) {
@@ -2512,25 +2556,38 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                     {...fieldStyles}
                   />
                 </InputGroup>
-                <Select
-                  placeholder='All actions'
-                  value={actionFilter}
+                <Input
+                  aria-label='Exact audit action'
+                  placeholder='All actions (exact name)'
+                  list='audit-action-suggestions'
+                  value={actionInput}
                   onChange={e => {
-                    setAuditPage(1);
-                    setActionFilter(e.target.value);
+                    const { value } = e.target;
+                    setActionInput(value);
+                    if (!value || ALL_ACTION_TYPES.includes(value))
+                      applyActionFilter(value);
+                  }}
+                  onBlur={e => applyActionFilter(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      applyActionFilter(e.currentTarget.value);
+                    }
                   }}
                   size='sm'
                   maxW={{ base: '100%', md: '240px' }}
                   h={AUDIT_CONTROL_HEIGHT}
-                  title='Filter by specific action type'
                   {...fieldStyles}
-                >
-                  {uniqueActions.map(a => (
-                    <option key={a} value={a}>
-                      {toTitle(a)}
-                    </option>
+                />
+                <datalist id='audit-action-suggestions'>
+                  {ALL_ACTION_TYPES.map(action => (
+                    <option
+                      key={action}
+                      value={action}
+                      label={toTitle(action)}
+                    />
                   ))}
-                </Select>
+                </datalist>
                 {canViewOrganizationAudit ? (
                   <Select
                     value={scope}

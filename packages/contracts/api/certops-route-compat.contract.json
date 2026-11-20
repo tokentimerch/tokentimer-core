@@ -68,6 +68,10 @@
   "guarantees": {
     "stableRoutes": [
       {
+        "path": "/api/v1/workspaces/{id}/certops/certificates/{certId}/observations",
+        "method": "GET"
+      },
+      {
         "path": "/api/v1/workspaces/{id}/certops/certificates",
         "method": "GET"
       },

@@ -7,20 +7,26 @@ const ledger = migrations.map(({ version, name }) => ({ version, name }));
 const preview = [...ledger.filter((row) => row.version <= 108), { version: 109, name: "certops_retirement_dossiers" }];
 const appended = [{ version: 110, name: "certops_period_creator_delete" }, { version: 111, name: "recipient_member_verification" }, { version: 112, name: "auto_sync_owner_username" }, {version:113,name:"certops_material_reconciliation"}, {version:114,name:"distribution_pagerduty_recovery"}, {version:115,name:"agent_credential_rotations"}, {version:116,name:"agent_credential_rotation_ack"}];
 test("retirement preview preserves identities through partial released-main upgrades", () => {
-  for (let count = 0; count <= appended.length; count++) {
-    const rows = [...preview, ...appended.slice(0, count)];
-    validateMigrationHistory(rows);
-    const plan = composeMigrations(migrations, rows).map(({ version, name }) => ({ version, name }));
-    assert.deepEqual(plan, [...preview, ...appended]);
-    validateMigrationHistory(plan);
-    assert.deepEqual(composeMigrations(migrations, plan).map(({version,name}) => ({version,name})), plan);
+  const observedFirst = [...appended.slice(0, 5), { version: 115, name: "certops_observed_revocation" }];
+  for (const history of [appended, observedFirst]) {
+    for (let count = 0; count <= history.length; count++) {
+      const rows = [...preview, ...history.slice(0, count)];
+      validateMigrationHistory(rows);
+      const plan = composeMigrations(migrations, rows).map(({ version, name }) => ({ version, name }));
+      assert.deepEqual(plan.slice(0, rows.length), rows);
+      assert.deepEqual(plan.slice(preview.length).map(row => row.name).sort(),
+        [...appended.map(row => row.name), "certops_observed_revocation"].sort());
+      validateMigrationHistory(plan);
+      assert.deepEqual(composeMigrations(migrations, plan).map(({version,name}) => ({version,name})), plan);
+    }
   }
 });
 
 test("retirement preview keeps an already applied rotation tail before recovery", () => {
   const oldAppend = [...appended.slice(0, 4),
     {version:114,name:"agent_credential_rotations"}, {version:115,name:"agent_credential_rotation_ack"}];
-  const expected = [...preview, ...oldAppend, {version:116,name:"distribution_pagerduty_recovery"}];
+  const expected = [...preview, ...oldAppend, {version:116,name:"distribution_pagerduty_recovery"},
+    {version:117,name:"certops_observed_revocation"}];
   for (const count of [5, 6, 7]) {
     const rows = expected.slice(0, preview.length + count);
     validateMigrationHistory(rows);

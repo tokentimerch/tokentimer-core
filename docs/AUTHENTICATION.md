@@ -331,7 +331,7 @@ these variables to operators.
      **never expire** (`workspace_invitations` has no `expires_at` column), so a
      leaked link stays redeemable until it is accepted or cancelled via
      `DELETE /api/v1/workspaces/:id/invitations/:invitationId`
-   - Review audit log for invitation history
+   - Review [workspace membership audit events](audit-events.md#workspaces-and-membership) for invitation history
 
 3. **Two-Factor Authentication**:
    - Encourage all users to enable 2FA

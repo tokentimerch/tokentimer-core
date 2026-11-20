@@ -30,10 +30,10 @@ async function withDatabase(run) {
         const original = fs.readFileSync(entry, "utf8");
         const marker = "migrations.sort((a, b) => a.version - b.version);";
         assert.equal(original.split(marker).length, 2);
-        const fixture = `const fixtureReservations=require("./migration-reservations.cjs").reservations; for(let v=115;v<=122;v++)migrations.push({version:v,name:fixtureReservations[v],sql:"SELECT 1"});\n`;
+        const fixture = `const fixtureReservations=require("./migration-reservations.cjs").reservations; for(let v=115;v<=121;v++)migrations.push({version:v,name:fixtureReservations[v],sql:"SELECT 1"});\n`;
         fs.writeFileSync(fixtureEntry, original.replace(marker, fixture + marker));
       }
-      const source = `const m=require(${JSON.stringify(independentFixtures ? fixtureEntry : entry)}); ${maxVersion ? `for(let i=m.migrations.length-1;i>=0;i--)if(m.migrations[i].version>${maxVersion})m.migrations.splice(i,1);` : ""} ${reviewedPreview ? `const {composeMigrations}=require("./apps/api/migrations/compose-migrations"); const original=m.migrations.filter(x=>x.version<=85||[92,93].includes(x.version)); const names=["operator_connections","operator_enrollment_grants","operator_action_requests"]; const prior=[...original,...names.map((name,i)=>({...m.migrations.find(x=>x.name===name),version:94+i}))]; const legacy=m.migrations.filter(x=>!["certops_retirement_dossiers","certops_material_reconciliation","distribution_pagerduty_recovery"].includes(x.name)); const preview=composeMigrations(legacy,prior); m.migrations.splice(0,m.migrations.length,...preview);` : ""} ${rotationPreview ? `const old=m.migrations.filter(x=>x.version<=85||(x.version>=92&&x.version<=95)||(x.version>=98&&x.version<=111)||["agent_credential_rotations","agent_credential_rotation_ack"].includes(x.name)).map(x=>x.name==="agent_credential_rotations"?{...x,version:112}:x.name==="agent_credential_rotation_ack"?{...x,version:113}:x); m.migrations.splice(0,m.migrations.length,...old);` : ""} ${retirementRotationPreview ? `const names=["certops_retirement_dossiers","certops_period_creator_delete","recipient_member_verification","auto_sync_owner_username","certops_material_reconciliation","agent_credential_rotations","agent_credential_rotation_ack"];const old=[...m.migrations.filter(x=>x.version<=108),...names.map((name,i)=>({...m.migrations.find(x=>x.name===name),version:109+i}))];m.migrations.splice(0,m.migrations.length,...old);` : ""} m.runMigrations().then(()=>process.exit(0),e=>{console.error(e);process.exit(1)});`;
+      const source = `const m=require(${JSON.stringify(independentFixtures ? fixtureEntry : entry)}); ${maxVersion ? `for(let i=m.migrations.length-1;i>=0;i--)if(m.migrations[i].version>${maxVersion})m.migrations.splice(i,1);` : ""} ${reviewedPreview ? `const {composeMigrations}=require("./apps/api/migrations/compose-migrations"); const original=m.migrations.filter(x=>x.version<=85||[92,93].includes(x.version)); const names=["operator_connections","operator_enrollment_grants","operator_action_requests"]; const prior=[...original,...names.map((name,i)=>({...m.migrations.find(x=>x.name===name),version:94+i}))]; const legacy=m.migrations.filter(x=>!["certops_retirement_dossiers","certops_material_reconciliation","distribution_pagerduty_recovery","certops_observed_revocation"].includes(x.name)); const preview=composeMigrations(legacy,prior); m.migrations.splice(0,m.migrations.length,...preview);` : ""} ${rotationPreview ? `const old=m.migrations.filter(x=>x.version<=85||(x.version>=92&&x.version<=95)||(x.version>=98&&x.version<=111)||["agent_credential_rotations","agent_credential_rotation_ack"].includes(x.name)).map(x=>x.name==="agent_credential_rotations"?{...x,version:112}:x.name==="agent_credential_rotation_ack"?{...x,version:113}:x); m.migrations.splice(0,m.migrations.length,...old);` : ""} ${retirementRotationPreview ? `const names=["certops_retirement_dossiers","certops_period_creator_delete","recipient_member_verification","auto_sync_owner_username","certops_material_reconciliation","agent_credential_rotations","agent_credential_rotation_ack"];const old=[...m.migrations.filter(x=>x.version<=108),...names.map((name,i)=>({...m.migrations.find(x=>x.name===name),version:109+i}))];m.migrations.splice(0,m.migrations.length,...old);` : ""} m.runMigrations().then(()=>process.exit(0),e=>{console.error(e);process.exit(1)});`;
       const result = spawnSync(process.execPath, ["-e", source], { env, encoding: "utf8", timeout: 90000, maxBuffer: 8 * 1024 * 1024 });
       if (independentFixtures) fs.rmSync(fixtureEntry, { force: true });
       const output = String(result.error || "") + result.stdout + result.stderr;
@@ -55,6 +55,7 @@ test("fresh database applies the canonical rotation pair and restarts unchanged"
     const before = await ledger(target);
     assert.deepEqual(before.filter(row => row.version >= 114).map(({ version, name }) => ({ version, name })), [
       { version: 114, name: "distribution_pagerduty_recovery" },
+      { version: 122, name: "certops_observed_revocation" },
       { version: 123, name: "agent_credential_rotations" },
       { version: 124, name: "agent_credential_rotation_ack" },
     ]);
@@ -80,6 +81,7 @@ test("previous canonical rotation 114/115 remains unchanged while recovery appen
     assert.deepEqual(after.slice(0, before.length), before);
     assert.deepEqual(after.slice(before.length).map(({version,name}) => ({version,name})), [
       {version:116,name:"distribution_pagerduty_recovery"},
+      {version:117,name:"certops_observed_revocation"},
     ]);
     migrate();
     assert.deepEqual(await ledger(target), after);
@@ -113,6 +115,7 @@ for (const version of [108, 111, 113, 114]) {
       assert.deepEqual(after.filter(row => row.version <= version), before);
       assert.deepEqual(after.filter(row => row.version >= 114).map(({ version: n, name }) => ({ version: n, name })), [
         { version: 114, name: "distribution_pagerduty_recovery" },
+        { version: 122, name: "certops_observed_revocation" },
         { version: 123, name: "agent_credential_rotations" },
         { version: 124, name: "agent_credential_rotation_ack" },
       ]);
@@ -137,6 +140,7 @@ test("reviewed noncanonical preview retains applied rotation identities on resta
       { version: 120, name: "certops_retirement_dossiers" },
       { version: 121, name: "certops_material_reconciliation" },
       { version: 122, name: "distribution_pagerduty_recovery" },
+      { version: 123, name: "certops_observed_revocation" },
     ]);
     migrate();
     assert.deepEqual(await ledger(target), after);
@@ -191,6 +195,7 @@ test("complete earlier rotation preview upgrades and replays without rewriting i
       { version: 122, name: "certops_retirement_dossiers" },
       { version: 123, name: "certops_material_reconciliation" },
       { version: 124, name: "distribution_pagerduty_recovery" },
+      { version: 125, name: "certops_observed_revocation" },
     ]);
     migrate();
     assert.deepEqual(await ledger(target), after);
@@ -209,6 +214,7 @@ test("retirement preview with applied rotation preserves real SQL and appends re
     assert.deepEqual(after.slice(0, before.length), before);
     assert.deepEqual(after.slice(before.length).map(({version,name}) => ({version,name})), [
       {version:116,name:"distribution_pagerduty_recovery"},
+      {version:117,name:"certops_observed_revocation"},
     ]);
     migrate();
     assert.deepEqual(await ledger(target), after);

@@ -170,8 +170,9 @@ Use `cert-manager` or connect an external executor with a machine token for supp
 
 - **Workspaces and role-based access** let you organize assets and control who
   can view or manage them.
-- **The audit log** records sign-ins, alert deliveries, integration scans, auto-sync
-  failures, and SSO membership changes. Filter events and export them as JSON or CSV.
+- **The [audit log](docs/audit-events.md)** records sign-ins, alert deliveries,
+  integration scans, auto-sync failures, and workspace membership changes.
+  Filter events and export them as JSON or CSV.
 
 [Watch the dashboard walkthrough](docs/assets/dashboard-overview.gif).
 

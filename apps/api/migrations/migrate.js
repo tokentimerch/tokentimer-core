@@ -5009,6 +5009,12 @@ migrations.push({
   sql: fs.readFileSync(require("path").join(__dirname, "114-distribution-pagerduty-recovery.sql"), "utf8"),
 });
 
+migrations.push({
+  version: 122,
+  name: "certops_observed_revocation",
+  sql: fs.readFileSync(require("path").join(__dirname, "122-certops-observed-revocation.sql"), "utf8"),
+});
+
 migrations.push({ version: 123, name: "agent_credential_rotations", sql: fs.readFileSync(require("path").join(__dirname, "123-agent-credential-rotations.sql"), "utf8") });
 migrations.push({ version: 124, name: "agent_credential_rotation_ack", sql: fs.readFileSync(require("path").join(__dirname, "124-agent-rotation-ack.sql"), "utf8") });
 

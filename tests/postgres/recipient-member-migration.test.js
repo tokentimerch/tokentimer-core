@@ -48,6 +48,7 @@ test("normal runner appends member verification to the released ledger and resta
     assert.equal(after.find(row => row.version === 111).name, "auto_sync_owner_username");
     assert.equal(after.find(row => row.version === 112).name, "certops_retirement_dossiers");
     assert.equal(after.find(row => row.version === 113).name, "certops_material_reconciliation");
+    assert.equal(after.find(row => row.version === 122).name, "certops_observed_revocation");
     assert.equal(after.find(row => row.version === 123).name, "agent_credential_rotations");
     assert.equal(after.at(-1).version, 124);
     assert.equal(after.at(-1).name, "agent_credential_rotation_ack");

@@ -39,6 +39,7 @@ function environmentFor(site) {
   if (site.file === "tests/postgres/material-reconciliation.test.js") return "core-material-reconciliation";
   if (site.file === "packages/agent/src/acme/acme.test.js" && site.name === "acme.sh wrapper uses the explicit runtime and never falls back to PATH") return "linux-filesystem";
   if (site.reason === "unimplemented") return "unsupported-feature";
+  if (site.file === "packages/agent/scripts/installer-revocation-default.test.js") return site.name.startsWith("Windows") ? "windows-elevated" : "linux-filesystem";
   if (["tests/e2e/windows-material-real.test.js", "tests/e2e/windows-material-custody-real.test.js"].includes(site.file)) return "windows-material-iis";
   if (site.file === "packages/agent/src/windows-material/pkcs12.test.js") return "windows-elevated";
   if (site.file === "tests/e2e/material-providers-real.test.js") return site.name.startsWith("real Azure") ? "distribution-azure-live" : "distribution-kv-live";

@@ -1,4 +1,8 @@
-import { CertificateLifecycleBadge } from './CertOpsBadge.jsx';
+import {
+  CertificateLifecycleBadge,
+  ObservedRevocationBadge,
+  hasObservedRevocationContext,
+} from './CertOpsBadge.jsx';
 import Section from '../DashboardDetailsSection.jsx';
 import AutoSyncProvenance from '../AutoSyncProvenance.jsx';
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
@@ -47,6 +51,7 @@ import {
 import CertificateDeployments from './CertificateDeployments.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
 import CertificateTimeline from './CertificateTimeline.jsx';
+import CertificateObservationHistory from './CertificateObservationHistory.jsx';
 import KeyLocalityBadge from './KeyLocalityBadge.jsx';
 import KeyLocalityList from './KeyLocalityList.jsx';
 import RenewalBadge from './RenewalBadge.jsx';
@@ -258,6 +263,7 @@ export default function CertificateDetailsModal({
   } = useDashboardModalProps();
   const editFieldId = useId();
   const [saving, setSaving] = useState(false);
+  const [hasObservationHistory, setHasObservationHistory] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState(() => createTokenEditData(token));
@@ -524,6 +530,11 @@ export default function CertificateDetailsModal({
                 <>
                   {certificate ? (
                     <CertificateLifecycleBadge certificate={certificate} />
+                  ) : null}
+                  {hasObservedRevocationContext(certificate) ? (
+                    <ObservedRevocationBadge
+                      result={certificate.observedRevocation}
+                    />
                   ) : null}
                   {hasKeyLocality ? (
                     <KeyLocalityBadge
@@ -1037,22 +1048,43 @@ export default function CertificateDetailsModal({
               />
             ) : null}
             {identityPanel || null}
-            {showObservedLocations && hasObservedLocations ? (
-              <Section
-                title='Observed locations'
-                enclosed
-                icon={MapPin}
-                description='Where this certificate has most recently been observed.'
-                contentBorder={false}
+            {showObservedLocations &&
+            !identityPanel &&
+            (hasObservedLocations || certificate?.id) ? (
+              <Box
+                display={
+                  hasObservedLocations || hasObservationHistory
+                    ? undefined
+                    : 'none'
+                }
               >
-                <Box data-detail-row>
-                  <CertificateInstances
-                    instances={instances}
-                    available={instancesAvailable}
-                    error={instancesError}
-                  />
-                </Box>
-              </Section>
+                <Section
+                  title='Observed locations'
+                  enclosed
+                  icon={MapPin}
+                  headerAction={
+                    <CertificateObservationHistory
+                      workspaceId={
+                        workspaceId || certOps.workspaceId || token.workspace_id
+                      }
+                      certificateId={certificate?.id}
+                      fingerprintSha256={certificate?.fingerprintSha256}
+                      enabled={isOpen}
+                      onAvailabilityChange={setHasObservationHistory}
+                    />
+                  }
+                  description='Where this certificate has most recently been observed.'
+                  contentBorder={false}
+                >
+                  <Box data-detail-row>
+                    <CertificateInstances
+                      instances={instances}
+                      available={instancesAvailable}
+                      error={instancesError}
+                    />
+                  </Box>
+                </Section>
+              </Box>
             ) : null}
 
             {certificate?.id ? (
