@@ -66,6 +66,7 @@ function fixture({ complete = true } = {}) {
         };
       },
     },
+    "../services/autoSyncMetricLabels": require(path.join(core, "apps/api/services/autoSyncMetricLabels")),
     "../services/entraIdentity": {
       legacyManagedIdentityLocation: noop,
     },
