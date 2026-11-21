@@ -8,7 +8,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `prerequisite`: needs the fixture or privilege supplied by its owning CI job
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 178
+Total skips found: 179
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -21,6 +21,7 @@ Total skips found: 178
 | `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 175 | actual installer filesystem branches preserve literal brackets and wildcard siblings | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 253 | installer rejects writable and unverified predecessor applications | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/install-agent-sh.test.js` | 36 | install-agent.sh polkit grants on re-run | describe(..., { skip }) option-object | `platform` |
+| `packages/agent/scripts/install-agent-sh.test.js` | 128 | install-agent.sh Linux systemd dry runs | describe(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/installer-revocation-default.test.js` | 30 | Linux installer writes the requested default only to a new config | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/installer-revocation-default.test.js` | 57 | Windows installer writes the requested default only to a new config | test(..., { skip }) option-object | `platform` |
 | `packages/agent/scripts/installer-smoke.test.js` | 373 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `prerequisite` |
