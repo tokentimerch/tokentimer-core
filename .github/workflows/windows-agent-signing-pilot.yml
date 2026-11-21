@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PILOT_SOURCE: '54d13375c9f8f4b60f183ec1da450700e9c0bd55'
+  PILOT_SOURCE: 'f4d1f2d8028b65130c126a75e8a6fec936d413ed'
   PILOT_VERSION: '0.20.0'
   PILOT_NODE_VERSION: '24.22.3'
   PILOT_GO_VERSION: '1.26.11'
@@ -29,7 +29,7 @@ env:
 
 jobs:
   build:
-    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == '54d13375c9f8f4b60f183ec1da450700e9c0bd55'
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == 'f4d1f2d8028b65130c126a75e8a6fec936d413ed'
     permissions:
       contents: read
     runs-on: ubuntu-24.04
@@ -86,7 +86,7 @@ jobs:
             curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
               "https://nodejs.org/dist/v$PILOT_NODE_VERSION/$file" -o "$runtime/$file"
           done
-          node packages/agent/scripts/pack-release.js --out-dir "$RUNNER_TEMP/agent-build" --windows-runtime-dir "$runtime"
+          node packages/agent/scripts/pack-release.js --out-dir "$RUNNER_TEMP/agent-build" --windows-runtime-dir "$runtime" --windows-store-iis-qualification
           # The full packer also rebuilds these tracked Linux binaries. The pilot
           # transfers the Windows archive only. Restore the unrelated build outputs
           # before the provenance check verifies the unchanged source checkout.
@@ -98,6 +98,19 @@ jobs:
           mkdir -m 700 "$output"
           archive="$output/$name"
           mv "$RUNNER_TEMP/agent-build/$name" "$archive"
+          # Bind the capability profile before the same-run signing handoff.
+          node - "$archive" <<'NODE'
+          const assert = require("node:assert/strict");
+          const { execFileSync } = require("node:child_process");
+          const base = require("./packages/agent/src/capabilities/qualified-capabilities.json").qualified;
+          const { renderGeneratedModule } = require("./packages/agent/scripts/build-qualified-capabilities.js");
+          const expected = [...base, "windows-store-only-adcs-v1", "windows-store-iis-consumers-v1"];
+          function read(name) {
+            return execFileSync("tar", ["-xOzf", process.argv[2], "package/src/capabilities/" + name], { encoding: "utf8" });
+          }
+          assert.deepEqual(JSON.parse(read("qualified-capabilities.json")).qualified, expected);
+          assert.equal(read("qualified-capabilities.generated.js"), renderGeneratedModule(expected));
+          NODE
           node scripts/verify-agent-native-package.js --archive "$archive" --go-version "$PILOT_GO_VERSION" \
             --source-sha "$PILOT_SOURCE" --out "$output/native-provenance.json"
           digest=$(sha256sum "$archive" | cut -d ' ' -f 1)
@@ -120,7 +133,7 @@ jobs:
           retention-days: 1
 
   sign-amd64:
-    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == '54d13375c9f8f4b60f183ec1da450700e9c0bd55'
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == 'f4d1f2d8028b65130c126a75e8a6fec936d413ed'
     needs: build
     environment: windows-agent-signing
     permissions:
@@ -175,7 +188,7 @@ jobs:
         shell: pwsh
         run: ./scripts/windows-signing-pilot.ps1 -Operation Extract -Stage $env:PILOT_STAGE
 
-      - name: Sign and verify only the eleven approved first-party files
+      - name: Sign and verify only the fourteen approved first-party files
         uses: ./.github/actions/windows-agent-sign
         with:
           package-root: ${{ steps.stage.outputs.path }}/files/package

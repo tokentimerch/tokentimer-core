@@ -12,7 +12,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$sourceCommit = '54d13375c9f8f4b60f183ec1da450700e9c0bd55'
+$sourceCommit = 'f4d1f2d8028b65130c126a75e8a6fec936d413ed'
 $goVersion = 'go1.26.11'
 $goArchiveSha256 = '71ae086f0137e665f855a811cc119152b6a783e0bbc1b906e709f46d80141eb0'
 $modulePath = 'packages/agent/reference/verified-extraction'
@@ -53,7 +53,12 @@ function Read-Policy([string]$Path) {
             }).Count -ne 0) {
             throw 'Policy does not target the exact reviewed amd64 pilot'
         }
-        $expectedPaths = @('scripts/install-agent.ps1','src/acme/windows-command.ps1','src/windows-material/connector.ps1')
+        $expectedPaths = @(
+            'scripts/install-agent.ps1','src/acme/windows-command.ps1','src/windows-material/connector.ps1',
+            'src/windows-cert-store/find-predecessor.ps1',
+            'src/windows-cert-store/inspect-pending-request.ps1',
+            'src/windows-cert-store/inspect-store.ps1'
+        )
         $expectedPaths += @(foreach ($arch in @('amd64','arm64')) {
             foreach ($family in @('tokentimer-adcs-chain','tokentimer-adcs-cmc','tokentimer-agent-host','tokentimer-observed-revocation-windows')) {
                 "bin/$family-$arch.exe"
@@ -62,7 +67,7 @@ function Read-Policy([string]$Path) {
         $leaves = @($document.RootElement.GetProperty('firstPartyLeaves').EnumerateObject())
         if ($leaves.Count -ne $expectedPaths.Count -or (Compare-Object $expectedPaths @($leaves.Name) -CaseSensitive) -or
             @($leaves | Where-Object { $_.Value.GetString() -cne $policy.publisherLeafSha256 }).Count -ne 0) {
-            throw 'All eleven authored files must match the measured CMS publisher leaf'
+            throw 'All fourteen authored files must match the measured CMS publisher leaf'
         }
         $expiry = [DateTimeOffset]::ParseExact($policy.publisherNotAfterUtc, 'o', [Globalization.CultureInfo]::InvariantCulture)
         if ($expiry.Offset -ne [TimeSpan]::Zero -or $expiry -le [DateTimeOffset]::UtcNow) {
