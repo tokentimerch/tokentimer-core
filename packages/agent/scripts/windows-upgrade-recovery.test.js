@@ -816,6 +816,8 @@ $ttFunction=@($ttAst.FindAll({ param($ttNode) $ttNode -is [Management.Automation
 if ($ttErrors.Count -or $ttFunction.Count -ne 1) { throw 'Missing Node helper' }
 Invoke-Expression $ttFunction[0].Extent.Text
 $PackageDir=$env:TT542_PACKAGE; $AppDir=Join-Path $PackageDir 'installed'; $arch='AMD64'
+$ScriptDir=$env:TT542_SOURCE
+$isElevated=$false
 $script:RequiresBundledRuntime=$true
 $script:AuthorizedLauncherTransaction=$null
 function Assert-AuthorizedLauncherIdentities { }
