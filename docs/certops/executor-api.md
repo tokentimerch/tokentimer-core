@@ -324,11 +324,29 @@ permanently redirects there) - Executor jobs panel + evidence timeline - for
 workspace managers/admins, with status badges, redaction markers, and audit
 links where available. See
 `apps/dashboard/src/components/certops/{JobStatusBadge,EvidenceTimeline,CertificateTimeline}.jsx`.
+Use **Timeline order** in an open job to switch between **Oldest first (default)**
+and **Newest first**. The browser remembers the choice across jobs and reloads.
+The jobs list and **Agent output** keep their own order.
 A job sitting at `pending_approval` shows inline **Approve**/**Reject**
 buttons on its row (manager/admin only, via `ApprovalDecisionModal.jsx` inside
 `apps/dashboard/src/pages/certops/CertOpsJobs.jsx`); see the
 approval policy enforced by the API: the requester cannot approve their own
 request; approval releases eligible work and rejection prevents execution.
+
+Workspace managers and admins can choose **Cancel job** for an agent job that
+is awaiting approval, assigned to an agent, or already held by an agent. The
+action stays available while the workspace is paused. Trust anchor jobs
+require an administrator. The session endpoint is
+`POST /api/v1/workspaces/{id}/certops/jobs/{jobId}/cancel`. It stops further
+control-plane execution for that job and records the actor in the timeline and
+audit log. A real job that may already have changed the host returns `orphaned_unknown_effect` with
+`needsOperatorReconciliation: true`. The agent may already have made changes,
+so verify the affected host before retrying. Other eligible jobs return
+`cancelled`. A retained late report is marked **Late report** in the timeline
+and the job status stays final. Terminal jobs return HTTP 409.
+Controller, external executor, AD CS enrollment and material distribution jobs
+return HTTP 409 here. Use the enrollment and distribution lifecycle controls
+to manage those workflows.
 
 ## 9. Kubernetes controller routes
 
