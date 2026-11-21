@@ -30,26 +30,26 @@ function section(file, start, end) {
   const from = content.indexOf(start);
   const to = content.indexOf(end, from);
   assert.ok(from >= 0 && to > from, `${file}: installer gate not found`);
-  return content.slice(from, to);
+  return content.slice(from, to).replace(/\r\n/g, "\n");
 }
 
 test("both installer gates accept supported versions and stop before installation for unsupported versions", () => {
-  const shell = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "sh";
+  const shell = process.platform === "win32" ? "C:/Program Files/Git/usr/bin/bash.exe" : "sh";
   const powershell = process.platform === "win32" ? "powershell.exe" : "pwsh";
   const shSource = section("install-agent.sh", "REQUIRED_RANGE=$(sed", "# Reject ineffective reload grants");
-  const psSource = section("install-agent.ps1", "$packageJsonText = Get-Content", "$nodeVersionMatch =");
+  const psSource = section("install-agent.ps1", "$nodeVersionRaw = (Invoke-PackagedNode", "if ($script:HasBundledRuntime -and $nodeVersionRaw");
   const env = { ...process.env, TT_REAL_NODE: process.execPath, TT_PACKAGE: packageRoot.replace(/\\/g, "/"), TT_SCRIPT: __dirname.replace(/\\/g, "/") };
   const available = (cmd) => !spawnSync(cmd, ["--version"], { encoding: "utf8" }).error;
   const gates = [];
   if (available(shell)) {
     gates.push({ name: "shell", run(version) {
-      const script = `PACKAGE_DIR="$TT_PACKAGE"\nSCRIPT_DIR="$TT_SCRIPT"\nnode() { if [ "$1" = -v ]; then printf '%s\\n' "$TT_VERSION"; else "$TT_REAL_NODE" "$@"; fi; }\nfail() { printf '%s\\n' "$1" >&2; exit 1; }\nlog() { printf '%s\\n' "$1"; }\n${shSource}\nprintf 'INSTALLATION WOULD BEGIN\\n'`;
+      const script = `PATH=/usr/bin:$PATH\nPACKAGE_DIR="$TT_PACKAGE"\nSCRIPT_DIR="$TT_SCRIPT"\nnode() { if [ "$1" = -v ]; then printf '%s\\n' "$TT_VERSION"; else "$TT_REAL_NODE" "$@"; fi; }\nfail() { printf '%s\\n' "$1" >&2; exit 1; }\nlog() { printf '%s\\n' "$1"; }\n${shSource}\nprintf 'INSTALLATION WOULD BEGIN\\n'`;
       return spawnSync(shell, ["-c", script], { encoding: "utf8", env: { ...env, TT_VERSION: version } });
     } });
   }
   if (available(powershell)) {
     gates.push({ name: "PowerShell", run(version) {
-      const script = `$ErrorActionPreference='Stop'\n$PackageDir=$env:TT_PACKAGE\n$ScriptDir=$env:TT_SCRIPT\nfunction Invoke-InstallerNode { param([string[]]$NodeArguments) if ($NodeArguments[0] -eq '-v') { $env:TT_VERSION } else { & $env:TT_REAL_NODE @NodeArguments } }\nfunction Fail { param($Message) throw $Message }\nfunction Write-Log { param($Message) Write-Output $Message }\n${psSource}\nWrite-Output 'INSTALLATION WOULD BEGIN'`;
+      const script = `$ErrorActionPreference='Stop'\n$PackageDir=$env:TT_PACKAGE\n$ScriptDir=$env:TT_SCRIPT\n$package=Get-Content -LiteralPath (Join-Path $PackageDir 'package.json') -Raw | ConvertFrom-Json\nfunction Invoke-PackagedNode { param([string[]]$NodeArguments) if ($NodeArguments[0] -eq '-v') { $global:LASTEXITCODE=0; $env:TT_VERSION } else { & $env:TT_REAL_NODE @NodeArguments } }\n${psSource}\nWrite-Output 'INSTALLATION WOULD BEGIN'`;
       return spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", env: { ...env, TT_VERSION: version } });
     } });
   }
@@ -63,7 +63,9 @@ test("both installer gates accept supported versions and stop before installatio
     for (const version of ["v21.99.99", "v25.0.0", "v24.0.0-rc.1"]) {
       const result = gate.run(version);
       assert.notEqual(result.status, 0, `${gate.name} ${version}`);
-      assert.match(result.stderr, /does not satisfy.*engines\.node/);
+      const reason = gate.name !== "PowerShell" ? /does not satisfy.*engines\.node/ :
+        version.includes("-") ? /unable to determine Node runtime version/ : /outside the supported Node engine range/;
+      assert.match(result.stderr, reason);
       assert.doesNotMatch(result.stdout, /INSTALLATION WOULD BEGIN/);
     }
   }
