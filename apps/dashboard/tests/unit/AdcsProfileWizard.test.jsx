@@ -28,6 +28,7 @@ vi.mock('../../src/components/certops/certopsAgentsApi', () => ({
 }));
 vi.mock('../../src/components/certops/certopsApi', () => ({
   listCertificates: vi.fn().mockResolvedValue({ items: [] }),
+  getWindowsRenewal: vi.fn().mockResolvedValue({ groups: [] }),
   replaceManagingSource: vi.fn(),
 }));
 vi.mock('../../src/components/certops/certopsRenewalApi', () => ({
