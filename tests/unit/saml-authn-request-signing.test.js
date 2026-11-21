@@ -25,6 +25,7 @@ describe("SAML AuthnRequest signing", () => {
     );
     assert.ok(cfg);
     assert.strictEqual(cfg.privateKey, undefined);
+    assert.strictEqual(cfg.authnRequestBinding, "HTTP-Redirect");
   });
 
   it("sets privateKey and authnRequestBinding when signing enabled", async () => {
@@ -44,10 +45,7 @@ describe("SAML AuthnRequest signing", () => {
       { signing_key: "-----BEGIN PRIVATE KEY-----\nK\n-----END PRIVATE KEY-----" },
     );
     assert.ok(cfg.privateKey);
-    assert.strictEqual(
-      cfg.authnRequestBinding,
-      "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
-    );
+    assert.strictEqual(cfg.authnRequestBinding, "HTTP-POST");
     assert.strictEqual(cfg.signatureAlgorithm, "sha256");
     assert.strictEqual(cfg.publicCert, "-----BEGIN CERTIFICATE-----\nSP\n-----END CERTIFICATE-----");
   });
@@ -66,9 +64,6 @@ describe("SAML AuthnRequest signing", () => {
       },
       { signing_key: "-----BEGIN PRIVATE KEY-----\nK\n-----END PRIVATE KEY-----" },
     );
-    assert.strictEqual(
-      cfg.authnRequestBinding,
-      "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
-    );
+    assert.strictEqual(cfg.authnRequestBinding, "HTTP-Redirect");
   });
 });

@@ -89,6 +89,10 @@ describe("SSO provider catalog", () => {
       assert.equal(hints.matchIssuerProviderHint("https://example.test/?from=okta.com"), null);
       assert.equal(hints.matchIssuerProviderHint("invalid issuer"), null);
       assert.equal(hints.matchIssuerProviderHint("https://demo.oktapreview.com")?.id, "okta");
+      assert.equal(
+        hints.matchIssuerProviderHint("https://issuer-cognito-idp.eu-central-1.amazonaws.com/pool")?.id,
+        "cognito",
+      );
     }
   });
 
@@ -96,7 +100,12 @@ describe("SSO provider catalog", () => {
     const openSourcePrefills = {
       gitlab: { authorization_url: "https://gitlab.example.com/oauth/authorize" },
       zitadel: { jwks_uri: "https://instance.zitadel.cloud/oauth/v2/keys" },
-      authentik: { token_url: "https://idp.example.com/application/o/tokentimer/token/" },
+      authentik: {
+        authorization_url: "https://idp.example.com/application/o/authorize/",
+        token_url: "https://idp.example.com/application/o/token/",
+        userinfo_url: "https://idp.example.com/application/o/userinfo/",
+        jwks_uri: "https://idp.example.com/application/o/tokentimer/jwks/",
+      },
     };
 
     for (const [id, prefill] of Object.entries(openSourcePrefills)) {

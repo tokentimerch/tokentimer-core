@@ -11,7 +11,9 @@
 
 const { sanitizeNextPath } = require("../sso/login-redirect.js");
 
-const { randomBytes } = require("node:crypto");
+const { createHash, randomBytes } = require("node:crypto");
+// Match the pinned node-saml POST form's onload handler.
+const postSubmitHash = createHash("sha256").update("document.forms[0].submit()").digest("base64");
 const { resolveSessionCookieOptions } = require("../session-cookie-options");
 const { isValidEmail } = require("../utils/emailAddress");
 const { extractFirst, extractAll } = require("../sso/claim-extractor");
@@ -419,6 +421,9 @@ function ensureMultiSamlStrategy(passport, MultiSamlStrategy) {
             return done(null, {
               ...runtime.strategyConfig,
               cacheProvider: req.samlBrowserCache || runtime.cacheProvider,
+              ...(req.samlRelayState
+                ? { additionalAuthorizeParams: { RelayState: req.samlRelayState } }
+                : {}),
             });
           } catch (err) {
             return done(err);
@@ -633,12 +638,14 @@ function samlRoutes(passport, express) {
       return res.redirect(`${APP_URL}/login?error=saml_failed`);
     }
     bindBrowser(req, res, runtime, true);
-    const safeNext = sanitizeNextPath(req.query?.next);
-    const authenticator = passport.authenticate(
-      "saml",
-      safeNext ? { additionalParams: { RelayState: safeNext } } : undefined,
-    );
-    authenticator(req, res, next);
+    if (runtime.strategyConfig.authnRequestBinding === "HTTP-POST") {
+      const idpOrigin = new URL(runtime.strategyConfig.entryPoint).origin;
+      res.setHeader("Content-Security-Policy",
+        `default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action ${idpOrigin}; script-src 'unsafe-hashes' 'sha256-${postSubmitHash}'`);
+    }
+    // Passport skips per-call parameters when it sends an AuthnRequest by POST.
+    req.samlRelayState = sanitizeNextPath(req.query?.next);
+    passport.authenticate("saml")(req, res, next);
   });
 
   router.post(

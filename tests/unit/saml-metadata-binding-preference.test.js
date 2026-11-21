@@ -33,7 +33,7 @@ describe("SAML metadata URL vs AuthnRequest binding preference", () => {
     assert.match(computed.callback_url, /\/callback$/);
   });
 
-  it("AuthnRequest binding preference does not alter metadata URL", async () => {
+  it("uses HTTP-POST for unsigned AuthnRequests without changing the metadata URL", async () => {
     const provider = {
       slug: "keycloak-saml",
       type: "saml",
@@ -41,20 +41,17 @@ describe("SAML metadata URL vs AuthnRequest binding preference", () => {
         entry_point: "https://idp/saml",
         issuer: "tokentimer-sp",
         cert: "-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----",
-        authn_request_binding: "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
+        authn_request_binding: "HTTP-POST",
       },
-      security: { sign_authn_requests: true },
+      security: { sign_authn_requests: false },
     };
     const cfg = await builders.buildSamlStrategyConfigFromProvider(
       pool,
       provider,
-      { signing_key: "-----BEGIN PRIVATE KEY-----\nK\n-----END PRIVATE KEY-----" },
     );
     const computed = buildComputedUrls(provider);
-    assert.strictEqual(
-      cfg.authnRequestBinding,
-      "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
-    );
+    assert.strictEqual(cfg.authnRequestBinding, "HTTP-POST");
+    assert.strictEqual(cfg.skipRequestCompression, true);
     assert.strictEqual(
       computed.metadata_url,
       "https://api.example.com/auth/saml/keycloak-saml/metadata",

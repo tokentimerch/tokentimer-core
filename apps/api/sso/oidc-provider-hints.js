@@ -130,9 +130,9 @@ const OIDC_PROVIDER_HINTS = [
     overrideWhen:
       "If discovery fails, copy endpoints from the authentik provider page.",
     endpoints: {
-      auth: "{issuer}/authorize/",
-      token: "{issuer}/token/",
-      userinfo: "{issuer}/userinfo/",
+      auth: "{origin}/application/o/authorize/",
+      token: "{origin}/application/o/token/",
+      userinfo: "{origin}/application/o/userinfo/",
       jwks: "{issuer}/jwks/",
     },
   },
@@ -170,7 +170,10 @@ function matchIssuerProviderHint(issuer) {
   if (isDomain("auth0.com")) {
     return OIDC_PROVIDER_HINTS.find((h) => h.id === "auth0") || null;
   }
-  if (host.startsWith("cognito-idp.") && isDomain("amazonaws.com")) {
+  if (
+    (host.startsWith("cognito-idp.") || host.startsWith("issuer-cognito-idp.")) &&
+    isDomain("amazonaws.com")
+  ) {
     return OIDC_PROVIDER_HINTS.find((h) => h.id === "cognito") || null;
   }
   if (host.includes("gitlab")) {
@@ -192,7 +195,9 @@ const OVERRIDE_FIELD_HELP =
  */
 function substituteIssuerInTemplate(template, issuer) {
   const base = String(issuer || "").trim().replace(/\/$/, "");
-  return String(template).replace(/\{issuer\}/g, base);
+  return String(template).replace(/\{(issuer|origin)\}/g, (_, key) =>
+    key === "origin" ? new URL(base).origin : base
+  );
 }
 
 /**

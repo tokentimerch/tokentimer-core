@@ -414,6 +414,9 @@ function createProviderStrategyConfig(factoryDeps = {}) {
     }
 
     const secondaryCert = pickConfigString(config, "secondary_cert");
+    const authnRequestBinding = pickConfigString(config, "authn_request_binding");
+    const usesHttpPost = authnRequestBinding === "HTTP-POST" ||
+      authnRequestBinding === "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST";
     const audience = pickConfigString(config, "audience");
     const nameIdFormat = pickConfigString(config, "name_id_format");
     const wantAuthnResponseSigned = config.want_authn_response_signed;
@@ -445,6 +448,8 @@ function createProviderStrategyConfig(factoryDeps = {}) {
       issuer,
       callbackUrl,
       idpCert,
+      authnRequestBinding: usesHttpPost ? "HTTP-POST" : "HTTP-Redirect",
+      skipRequestCompression: usesHttpPost,
       wantAssertionsSigned: true,
       wantAuthnResponseSigned: toBool(wantAuthnResponseSigned, false),
       acceptedClockSkewMs: security.clockSkewSec * 1000,
@@ -477,9 +482,6 @@ function createProviderStrategyConfig(factoryDeps = {}) {
     if (security.signAuthnRequests && isSet(signingKey)) {
       cfg.privateKey = signingKey;
       cfg.signatureAlgorithm = security.signatureAlgorithm;
-      cfg.authnRequestBinding =
-        pickConfigString(config, "authn_request_binding") ||
-        "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect";
       if (isSet(signingCert)) {
         cfg.publicCert = signingCert;
       }

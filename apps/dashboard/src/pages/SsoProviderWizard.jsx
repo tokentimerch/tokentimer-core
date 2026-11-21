@@ -204,6 +204,7 @@ export default function SsoProviderWizard({
             }
           : {
               entry_point: parsedSaml?.entryPoint || '',
+              authn_request_binding: parsedSaml?.authnRequestBinding,
               issuer: samlSpEntityId || defaultSamlSpEntityId(apiBase),
               cert: parsedSaml?.cert || '',
               secondary_cert: parsedSaml?.secondaryCert || '',

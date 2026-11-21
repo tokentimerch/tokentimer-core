@@ -42,7 +42,7 @@ const metadataXml = `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metada
   <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
     <KeyDescriptor use="signing"><KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><X509Data><X509Certificate>MIIBkTCB+wIJAKHBfpegPjMCMA0GCSqGSIb3DQEBCwUA</X509Certificate></X509Data></KeyInfo></KeyDescriptor>
     <KeyDescriptor><KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><X509Data><X509Certificate>TG9jYWwgcm9sbG92ZXIgZml4dHVyZQ==</X509Certificate></X509Data></KeyInfo></KeyDescriptor>
-    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.test/sso"/>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://idp.example.test/sso"/>
   </IDPSSODescriptor>
 </EntityDescriptor>`;
 
@@ -114,6 +114,9 @@ describe('Core provider administration', () => {
         })
       );
       if (protocol === 'saml') {
+        expect(api.post.mock.calls[0][1].config.authn_request_binding).toBe(
+          'HTTP-POST'
+        );
         expect(api.post.mock.calls[0][1].config.secondary_cert).toContain(
           'TG9jYWwgcm9sbG92ZXIgZml4dHVyZQ=='
         );
