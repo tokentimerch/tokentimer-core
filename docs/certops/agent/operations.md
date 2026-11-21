@@ -16,7 +16,8 @@ Check the agent log, protected journal, CA order and live endpoint. Record the o
 
 - **The result is awaiting delivery.** Restore connectivity or restart the same enrolled agent. Let its outbox deliver the original result while the control plane can still accept it.
 - **The job failed before making changes.** Fix the cause, confirm the original attempt is terminal and no issuance or deployment occurred, then submit new work.
-- **The certificate was issued.** Deploy the existing certificate when its key is usable. If it is already installed, finish the missing reload and verify the live endpoint. If the endpoint already serves it, re-scan and record the result.
+- **The certificate was issued for a file target.** Deploy the existing certificate when its key is usable. If it is already installed, finish the missing reload and verify the live endpoint. If the endpoint already serves it, re-scan and record the result.
+- **IIS issuance or binding was interrupted.** The agent rejects standalone `deploy` for `windows-iis`. Preserve the CA order, agent journal and CNG key. After the original attempt ends, inspect the machine store and existing binding. If the correct certificate is installed with its private key and the binding still serves the old certificate, use your approved IIS binding procedure on that host and verify the result over TLS. If you cannot confirm that the certificate and key match, reconcile the original request with the issuer before retrying. For AD CS, follow [installation recovery](adcs.md#installation-recovery).
 - **The effects are uncertain.** Hold new work for the affected certificate until you can reconcile the evidence.
 
 ### Replace a lost host
