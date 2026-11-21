@@ -23,6 +23,7 @@ const setup = new Pool(connection);
 const pool = new Pool({ ...connection, options: `-c search_path=${schema},public` });
 const oidc = { issuer: "https://idp.example.test", client_id: "tokentimer" };
 const saml = { issuer: "tokentimer", entry_point: "https://idp.example.test/saml", cert: "fixture" };
+const numericPeer = "2147483648";
 let schemaCreated;
 
 before(async () => {
@@ -64,12 +65,12 @@ after(async () => {
 
 it("admits OIDC and SAML together and serializes activations within each protocol", async () => {
   await registry.createProvider(pool, { type: "oidc", slug: "openid", config: oidc });
-  await registry.createProvider(pool, { type: "oidc", slug: "openid-peer", config: oidc });
+  await registry.createProvider(pool, { type: "oidc", slug: numericPeer, config: oidc });
   await registry.createProvider(pool, { type: "saml", slug: "assertion", config: saml });
   assert.deepEqual(await registry.enabledProviderRows(pool), []);
   const results = await Promise.allSettled([
     registry.updateProvider(pool, "openid", { enabled: true }),
-    registry.updateProvider(pool, "openid-peer", { enabled: true }),
+    registry.updateProvider(pool, numericPeer, { enabled: true }),
     registry.updateProvider(pool, "assertion", { enabled: true }),
   ]);
   assert.equal(results.filter(result => result.status === "fulfilled").length, 2);
@@ -81,11 +82,11 @@ it("requires explicit selection and local recovery, retaining peer links and aud
   await pool.query("UPDATE sso_providers SET enabled = TRUE");
   await pool.query(`
     INSERT INTO external_identities (user_id, provider_slug, protocol, subject_id)
-    VALUES (1, 'openid', 'oidc', 'previous-oidc'), (1, 'openid-peer', 'oidc', 'peer'),
+    VALUES (1, 'openid', 'oidc', 'previous-oidc'), (1, $1, 'oidc', 'peer'),
            (1, 'assertion', 'saml', 'previous-saml')
-  `);
+  `, [numericPeer]);
   await assert.rejects(
-    registry.updateProvider(pool, "openid-peer", { enabled: false }),
+    registry.updateProvider(pool, numericPeer, { enabled: false }),
     { code: "provider_selection_required" },
   );
   await registry.updateProvider(pool, "openid", { enabled: true, displayName: "Renamed" });
@@ -103,9 +104,11 @@ it("requires explicit selection and local recovery, retaining peer links and aud
   assert.deepEqual((await registry.enabledProviderRows(pool)).map(row => row.slug).sort(), ["assertion", "openid"]);
   assert.equal((await registry.listProviders(pool)).length, 3);
   assert.equal((await pool.query("SELECT * FROM external_identities")).rowCount, 3);
-  assert.equal((await pool.query(
-    "SELECT 1 FROM audit_events WHERE action = 'SSO_PROVIDER_DISABLED' AND metadata->>'slug' = 'openid-peer'",
-  )).rowCount, 1);
+  assert.deepEqual((await pool.query(
+    `SELECT target_id, metadata->>'selected_provider_slug' AS selected
+       FROM audit_events WHERE action = 'SSO_PROVIDER_DISABLED' AND metadata->>'slug' = $1`,
+    [numericPeer],
+  )).rows, [{ target_id: null, selected: "openid" }]);
 });
 
 it("allows one enabled provider per bootstrap protocol and shares the API transaction lock", async (t) => {
@@ -126,7 +129,7 @@ it("allows one enabled provider per bootstrap protocol and shares the API transa
   await reconcileSsoProvidersFromEnv(pool, { logger: {} });
   assert.deepEqual(await registry.enabledProviderRows(pool), []);
   const mixed = entries.map(entry => ({ ...entry, enabled: true }));
-  await writeFile(manifestPath, JSON.stringify({ providers: [...mixed, { ...mixed[0], slug: "openid-peer" }] }));
+  await writeFile(manifestPath, JSON.stringify({ providers: [...mixed, { ...mixed[0], slug: numericPeer }] }));
   await assert.rejects(reconcileSsoProvidersFromEnv(pool, { logger: {} }), { code: "active_provider_exists" });
   await writeFile(manifestPath, JSON.stringify({ providers: mixed }));
   await reconcileSsoProvidersFromEnv(pool, { logger: {} });
@@ -276,6 +279,27 @@ function useTestKeyring(t) {
 }
 
 const providersPath = "/api/admin/sso/providers";
+
+it("audits provider administration with a numeric slug as metadata", async (t) => {
+  useTestKeyring(t);
+  const api = adminProviderRoutes(t);
+  const slug = "2147483649";
+  const path = providersPath + "/" + slug;
+  await api.post(providersPath).send({ slug, type: "saml", config: saml }).expect(201);
+  await api.put(path).send({ displayName: "Numeric provider" }).expect(200);
+  const tested = await api.post(path + "/test").expect(200);
+  assert.ok(tested.body.checks.length > 0);
+  await api.delete(path).expect(200);
+
+  const { rows } = await pool.query(
+    `SELECT action, target_id FROM audit_events
+       WHERE target_type = 'sso_provider' AND metadata->>'slug' = $1 ORDER BY id`,
+    [slug],
+  );
+  assert.deepEqual(rows, ["CREATED", "UPDATED", "TESTED", "DELETED"].map(
+    (action) => ({ action: "SSO_PROVIDER_" + action, target_id: null }),
+  ));
+});
 
 async function mutationSnapshot(slug) {
   const { rows } = await pool.query(`

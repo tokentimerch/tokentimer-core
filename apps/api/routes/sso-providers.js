@@ -46,7 +46,7 @@ async function withProviderTransaction(operation) {
 function auditProvider(client, actorUserId, slug, action, metadata = {}) {
   return writeAudit({
     client, actorUserId, subjectUserId: null, action,
-    targetType: "sso_provider", targetId: slug, metadata: { slug, ...metadata },
+    targetType: "sso_provider", metadata: { slug, ...metadata },
   });
 }
 
@@ -266,18 +266,9 @@ router.post(
       const provider = await getProvider(pool, req.params.slug);
       if (!provider) return res.status(404).json({ error: "Not found", code: "not_found" });
       const result = await runProviderTest(pool, provider);
-      await writeAudit({
-        actorUserId: req.user.id,
-        subjectUserId: null,
-        action: "SSO_PROVIDER_TESTED",
-        targetType: "sso_provider",
-        targetId: provider.slug,
-        channel: null,
-        workspaceId: null,
-        metadata: {
-          ok: result.ok,
-          checks_summary: result.checks.map((c) => `${c.name}:${c.ok}`).join(","),
-        },
+      await auditProvider(null, req.user.id, provider.slug, "SSO_PROVIDER_TESTED", {
+        ok: result.ok,
+        checks_summary: result.checks.map((c) => `${c.name}:${c.ok}`).join(","),
       });
       res.json(result);
     } catch (err) {

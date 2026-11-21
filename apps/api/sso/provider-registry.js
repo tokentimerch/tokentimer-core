@@ -87,7 +87,7 @@ async function activateProvider(client, { slug, type, enabled }, { select, userI
     for (const peer of rows) {
       await writeAudit({
         client, actorUserId: userId, subjectUserId: null, action: "SSO_PROVIDER_DISABLED",
-        targetType: "sso_provider", targetId: peer.slug,
+        targetType: "sso_provider",
         metadata: { slug: peer.slug, type, selected_provider_slug: slug },
       });
     }
