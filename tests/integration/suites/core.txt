@@ -128,6 +128,7 @@ tests/integration/certops-diagnostic-agent-orphan-retirement.test.js
 tests/integration/certops-issuance-claim-gating.test.js
 tests/integration/certops-adcs-enrollments.test.js
 tests/integration/certops-agent-job-logs.test.js
+tests/integration/certops-agent-retirement-http-race.test.js
 tests/integration/certops-agent-health-alerts-worker-cron.test.js
 tests/integration/certops-renewal-path-health-real-topology.test.js
 tests/integration/certops-startup-encryption-keys.test.js

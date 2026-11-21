@@ -12,6 +12,7 @@
  */
 
 const { pool } = require("../../db/database");
+const { assertCurrentAgentCredential } = require("./agentCredentialFence");
 const crypto = require("node:crypto");
 const {
   consumeBootstrapToken,
@@ -456,7 +457,26 @@ async function registerAgent({
     );
     if (existingReplay) {
       try {
-        return registrationReplayResponse(existingReplay);
+        const replay = registrationReplayResponse(existingReplay);
+        // The original registration response is replayable only while its
+        // credential is still current. Serialize this check with credential
+        // replacement and retirement; a cached response must not resurrect a
+        // retired or superseded credential.
+        const current = await client.query(
+          `SELECT credential_hash, status
+             FROM certops_agents
+            WHERE workspace_id = $1 AND agent_id = $2
+            FOR UPDATE`,
+          [tokenRow.workspace_id, existingReplay.agent_id],
+        );
+        const hash = current.rows[0]?.credential_hash;
+        const candidate = crypto.createHash("sha256").update(replay.credential).digest();
+        if (current.rows[0]?.status === "retired" ||
+            typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash) ||
+            !crypto.timingSafeEqual(candidate, Buffer.from(hash, "hex"))) {
+          throw serviceError("Bootstrap token could not be consumed", CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED);
+        }
+        return replay;
       } catch (error) {
         // Corrupt/unreadable envelope: treat as replay-not-available so a
         // still-active token can mint fresh, and a spent token hard-rejects.
@@ -721,7 +741,7 @@ async function recordHeartbeat({
     : null;
 
   return await withTransaction(dbPool, async (client) => {
-    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
+    await (deps.assertCurrentAgentCredential || assertCurrentAgentCredential)({ client, agent });
     // Sequence enforcement runs after auth (route middleware) and before
     // the heartbeat write; a regression rejects the message with no
     // last_seen_at (or any other) update.
@@ -1001,12 +1021,26 @@ async function claimJobs({
   const nonceTtlSeconds = dispatchNonceTtlSeconds(env);
 
   return await withTransaction(dbPool, async (client) => {
-    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
+    await (deps.assertCurrentAgentCredential || assertCurrentAgentCredential)({ client, agent });
     // Sequence enforcement first (post-auth, pre-dispatch): a regression
     // rejects the poll before any workspace lock or job selection. Inside
     // the transaction, so a claim that later fails rolls the counter back
     // with everything else.
     await enforceSequence({ client, agentRowId: agent.id, envelope });
+    // Persisted in-progress rotations must block claims even if an operator
+    // later disables the feature flag. Older databases may not have the table;
+    // with the feature enabled that schema mismatch fails closed.
+    const rotationSchema = await client.query("SELECT to_regclass('certops_agent_credential_rotations') AS rotation_table");
+    if (!rotationSchema.rows[0]?.rotation_table) {
+      if (env.CERTOPS_AGENT_ROTATION_ALL_API_FENCED === "true") {
+        throw serviceError("Agent rotation schema unavailable", "CERTOPS_AGENT_ROTATION_SCHEMA_UNAVAILABLE");
+      }
+    } else {
+      const pendingRotation = await client.query(`SELECT 1 FROM certops_agent_credential_rotations
+        WHERE agent_id = $1 AND (state = 'committed' OR (state = 'pending' AND expires_at > NOW())) LIMIT 1`, [agent.id]);
+      // Existing external effects still require separate reconciliation.
+      if (pendingRotation.rows.length) return { jobs: [], logStreams: [] };
+    }
 
     // H8 hard floor: blocked agents must not claim or execute jobs.
     // "outdated" remains advisory and does not reject claims.
@@ -1965,7 +1999,7 @@ async function renewJobLease({
   }
 
   return await withTransaction(dbPool, async (client) => {
-    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
+    await (deps.assertCurrentAgentCredential || assertCurrentAgentCredential)({ client, agent });
     await enforceSequence({ client, agentRowId: agent.id, envelope });
 
     const locked = await client.query(
@@ -2807,7 +2841,7 @@ async function ingestResult({
     // hanging, but acquiring the lock in the same order here removes the
     // possibility entirely; enforceSequence's own lock on this row later
     // in the transaction is then a no-op re-entrant lock.
-    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
+    await (deps.assertCurrentAgentCredential || assertCurrentAgentCredential)({ client, agent });
 
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,

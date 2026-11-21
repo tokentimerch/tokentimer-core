@@ -599,6 +599,13 @@ jobs:
           DB_NAME: pr498_retirement_preview_ci_test
           CERTOPS_ENABLED: "true"
         run: node --test --test-force-exit tests/postgres/retirement-preview-migration-upgrade.test.js
+      - name: Validate OAuth retention migration history
+        env:
+          RV_TEST_DB_HOST: ${{ env.DB_HOST }}
+          RV_TEST_DB_PORT: ${{ env.DB_PORT }}
+          RV_TEST_DB_USER: ${{ env.DB_USER }}
+          RV_TEST_DB_PASSWORD: ${{ env.DB_PASSWORD }}
+        run: node --test --test-force-exit tests/postgres/operator-oauth-retention-history.test.js
       - name: Verify alert date serialization across host timezones
         run: node --test tests/postgres/alert-queue-timezones.test.js
       - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability
@@ -1081,6 +1088,14 @@ jobs:
         env:
           CERTOPS_WINDOWS_DISPOSABLE_HOST: '1'
         run: node scripts/certops-credential-weak-acl-support.js
+      - name: Check synthetic bundled installation policy
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          & ./scripts/certops-installer-fresh.test.ps1
+          if (-not $?) { throw 'Synthetic installer policy failed in Windows PowerShell' }
+          pwsh -NoProfile -NonInteractive -File ./scripts/certops-installer-fresh.test.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic installer policy failed in PowerShell 7' }
       - name: Exercise installer activation using owned temporary files
         if: runner.os == 'Windows'
         shell: powershell

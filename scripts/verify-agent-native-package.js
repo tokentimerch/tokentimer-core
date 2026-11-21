@@ -1,7 +1,7 @@
 "use strict";
 
 // Inspect the actual release archive, not unshipped working-tree binaries.
-// This gate binds six Windows PE hashes/build settings to the package checksum
+// This gate binds the Windows PE hashes/build settings to the package checksum
 // and observed source checkout; the separate Grype gate evaluates advisories.
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
@@ -9,16 +9,26 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { VERSION: NODE_VERSION, RUNTIMES } = require("../packages/agent/scripts/windows-runtime-package");
 
 const ARCHITECTURES = { amd64: 0x8664, arm64: 0xaa64 };
 const MODULE_PATHS = {
   "tokentimer-agent-host": "github.com/tokentimerch/tokentimer-core/packages/agent/windows-service-host",
   "tokentimer-adcs-chain": "tokentimer-adcs-chain",
   "tokentimer-adcs-cmc": "tokentimer-adcs-cmc",
+  "tokentimer-observed-revocation-windows": "tokentimer-observed-revocation/cmd/observed-revocation",
 };
-const EXPECTED_BINARIES = Object.keys(MODULE_PATHS)
+const REVOCATION_FAMILY = "tokentimer-observed-revocation-windows";
+const EXPECTED_BINARIES = Object.keys(MODULE_PATHS).filter(name => name !== REVOCATION_FAMILY)
   .flatMap((name) => Object.keys(ARCHITECTURES).map((arch) => "package/bin/" + name + "-" + arch + ".exe"))
   .sort();
+const REVOCATION_BINARIES = Object.keys(ARCHITECTURES).map(arch => `package/bin/${REVOCATION_FAMILY}-${arch}.exe`);
+
+function expectsRevocationHelpers(sourcePackage) {
+  const declared = REVOCATION_BINARIES.map(name => sourcePackage.files?.includes(name.slice("package/".length)) === true);
+  assert.equal(declared[0], declared[1], "Source must declare both Windows revocation architectures together");
+  return declared[0];
+}
 
 function parseArgs(argv) {
   const options = {};
@@ -34,13 +44,41 @@ function parseArgs(argv) {
   return options;
 }
 
-function assertBinaryEntries(entries) {
+function assertBinaryEntries(entries, runtimeArch = null, includeRevocationHelpers = false) {
   for (const name of entries) {
     assert.ok(name.startsWith("package/") && !name.includes("\\") && !name.split("/").includes(".."), "Unsafe archive path: " + name);
   }
   const binaries = entries.filter((name) => /\.exe$/i.test(name)).sort();
-  assert.deepEqual(binaries, EXPECTED_BINARIES, "Archive must contain exactly the six expected Windows binaries, with no duplicates");
+  const expected = includeRevocationHelpers ? [...EXPECTED_BINARIES, ...REVOCATION_BINARIES] : [...EXPECTED_BINARIES];
+  if (runtimeArch) {
+    assert.ok(Object.hasOwn(RUNTIMES, runtimeArch), "Unsupported packaged Node architecture");
+    expected.push(`package/runtime/${runtimeArch}/node.exe`);
+  }
+  assert.deepEqual(binaries, expected.sort(), "Archive must contain exactly the six expected Windows binaries, any required revocation helpers and approved runtime, with no duplicates");
   return binaries;
+}
+
+function assertPackageFlavor(metadata, runtimeArch = null) {
+  if (runtimeArch) {
+    assert.equal(metadata.windowsBundledRuntime, true, "Windows runtime archive must declare its bundled runtime flavor");
+  } else {
+    assert.equal(Object.hasOwn(metadata, "windowsBundledRuntime"), false, "Generic archive must retain legacy runtime behavior");
+  }
+}
+
+function installerMarkers(source) {
+  return source.match(/^\$script:RequiresBundledRuntime = \$(?:true|false)\r?$/gm) || [];
+}
+
+function assertInstallerFlavor(source, runtimeArch = null, sourceInstaller) {
+  const markers = installerMarkers(source);
+  if (!runtimeArch && markers.length === 0 && typeof sourceInstaller === "string" &&
+      installerMarkers(sourceInstaller).length === 0) {
+    assert.equal(source, sourceInstaller, "Legacy generic installer differs from its verified producer source");
+    return;
+  }
+  assert.equal(markers.length, 1, "Installer must declare exactly one bundled-runtime marker");
+  assert.equal(markers[0].trimEnd(), `$script:RequiresBundledRuntime = $${runtimeArch ? "true" : "false"}`, "Installer runtime flavor differs from archive flavor");
 }
 
 function assertPeArchitecture(bytes, architecture) {
@@ -72,7 +110,7 @@ function parseBuildInfo(output, expectedGoVersion, architecture, expectedModuleP
 }
 
 function run(command, args, binary = false) {
-  const result = spawnSync(command, args, { encoding: binary ? null : "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
+  const result = spawnSync(command, args, { encoding: binary ? null : "utf8", timeout: 120_000, maxBuffer: 128 * 1024 * 1024 });
   if (result.error) throw result.error;
   assert.equal(result.status, 0, command + " failed: " + String(result.stderr).trim());
   return result.stdout;
@@ -87,12 +125,35 @@ function main(argv = process.argv.slice(2)) {
   assert.equal(process.env.GOTOOLCHAIN, "local", "GOTOOLCHAIN=local is required to forbid automatic toolchain selection");
   assert.equal(run("go", ["env", "GOVERSION"]).trim(), "go" + options["go-version"], "Inspector is not the pinned Go toolchain");
   const archive = path.resolve(options.archive);
+  const runtimeMatch = /-windows-(amd64|arm64)\.tgz$/.exec(archive);
+  const runtimeArch = runtimeMatch?.[1] || null;
   const entries = run("tar", ["-tzf", archive]).trim().split(/\r?\n/);
-  const binaries = assertBinaryEntries(entries);
+  const sourcePackage = JSON.parse(run("git", ["show", "HEAD:packages/agent/package.json"]));
+  const binaries = assertBinaryEntries(entries, runtimeArch, expectsRevocationHelpers(sourcePackage));
+  assertPackageFlavor(JSON.parse(run("tar", ["-xOzf", archive, "package/package.json"])), runtimeArch);
+  const installer = run("tar", ["-xOzf", archive, "package/scripts/install-agent.ps1"]);
+  // The retained 0.20.0 producer predates the marker. Only an exact match to
+  // the producer's Git blob may take the legacy path.
+  const sourceInstaller = !runtimeArch && installerMarkers(installer).length === 0
+    ? run("git", ["show", "HEAD:packages/agent/scripts/install-agent.ps1"])
+    : undefined;
+  assertInstallerFlavor(installer, runtimeArch, sourceInstaller);
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "tt-agent-native-verify-"));
   try {
     const receipt = { schemaVersion: 1, status: "passed", archive: path.basename(archive), archiveSha256: sha256(fs.readFileSync(archive)), sourceSha: options["source-sha"], goVersion: "go" + options["go-version"], goToolchain: "local", builtAtRun: process.env.GITHUB_RUN_ID || null, verifiedAt: new Date().toISOString(), binaries: [] };
     for (const entry of binaries) {
+      if (entry.startsWith("package/runtime/")) {
+        const bytes = run("tar", ["-xOzf", archive, entry], true);
+        assertPeArchitecture(bytes, runtimeArch);
+        assert.equal(sha256(bytes), RUNTIMES[runtimeArch].sha256, "Packaged Node digest does not match pinned release");
+        const manifest = JSON.parse(run("tar", ["-xOzf", archive, "package/runtime/manifest.json"]));
+        assert.deepEqual(manifest, { version: NODE_VERSION, architecture: runtimeArch, path: `runtime/${runtimeArch}/node.exe`, sha256: RUNTIMES[runtimeArch].sha256 });
+        const license = run("tar", ["-xOzf", archive, "package/runtime/LICENSE"], true);
+        assert.ok(license.length, "Packaged Node license missing");
+        const pin = RUNTIMES[runtimeArch];
+        receipt.binaries.push({ path: entry, sha256: sha256(bytes), bytes: bytes.length, nodeVersion: NODE_VERSION, architecture: runtimeArch, upstreamArchive: `node-v${NODE_VERSION}-win-${pin.upstream}.zip`, upstreamArchiveSha256: pin.zipSha256, licenseSha256: sha256(license) });
+        continue;
+      }
       const architecture = /-(amd64|arm64)\.exe$/.exec(entry)[1];
       const family = path.basename(entry).replace(/-(amd64|arm64)\.exe$/, "");
       const bytes = run("tar", ["-xOzf", archive, entry], true);
@@ -104,7 +165,7 @@ function main(argv = process.argv.slice(2)) {
     }
     fs.mkdirSync(path.dirname(path.resolve(options.out)), { recursive: true });
     fs.writeFileSync(options.out, JSON.stringify(receipt, null, 2) + "\n");
-    process.stdout.write("Verified six packaged Windows binaries: " + receipt.goVersion + ", archive sha256:" + receipt.archiveSha256 + "\n");
+    process.stdout.write("Verified " + binaries.length + " packaged Windows binaries: " + receipt.goVersion + ", archive sha256:" + receipt.archiveSha256 + "\n");
     return receipt;
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
@@ -114,4 +175,4 @@ function main(argv = process.argv.slice(2)) {
 if (require.main === module) {
   try { main(); } catch (error) { process.stderr.write(error.message + "\n"); process.exitCode = 1; }
 }
-module.exports = { parseArgs, assertBinaryEntries, assertPeArchitecture, parseBuildInfo, EXPECTED_BINARIES, MODULE_PATHS };
+module.exports = { parseArgs, assertBinaryEntries, assertPackageFlavor, assertInstallerFlavor, assertPeArchitecture, parseBuildInfo, expectsRevocationHelpers, EXPECTED_BINARIES, REVOCATION_BINARIES, MODULE_PATHS };

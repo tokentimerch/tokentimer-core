@@ -3,6 +3,8 @@
 const { describe, it, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const { bindAuthenticatedAgent } = require("../../apps/api/services/certops/agentCredentialFence");
+const FIXTURE_CREDENTIAL_HASH = "a".repeat(64);
 
 const {
   CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
@@ -78,6 +80,8 @@ function createMockPool(handler) {
     transaction: [],
     audits: [],
     jobLogs: [],
+    credentialHash: FIXTURE_CREDENTIAL_HASH,
+    lockOrder: [],
   };
   const client = {
     query: async (text, params) => {
@@ -89,6 +93,12 @@ function createMockPool(handler) {
           (sql.includes("FROM certops_agents a") && sql.includes("latest.presence_state IS DISTINCT FROM 'confirmed_absent'"))) {
         return { rows: [] };
       }
+      if (sql.includes("to_regclass('certops_agent_credential_rotations')")) return { rows: [{ rotation_table: null }] };
+      if (sql.includes("SELECT credential_hash, status FROM certops_agents")) {
+        state.lockOrder.push("agent-lock");
+        return { rows: [{ credential_hash: state.credentialHash, status: state.agentStatus || "active" }] };
+      }
+      if (sql.includes("FROM certificate_jobs") && sql.includes("FOR UPDATE")) state.lockOrder.push("job-lock");
       state.queries.push({ text: sql, params });
       const trimmed = sql.trim().toUpperCase();
       if (
@@ -148,7 +158,9 @@ function createMockPool(handler) {
         return { rows: [{ iis_reassociation_requires_absence: state.iisGuardByCertificate?.[params[1]] ?? (state.iisReassociationRequiresAbsence === true), fingerprint_sha256:"a".repeat(64),
           source_ref:state.iisSourceRef || "agent-01/host/iis_binding/Default Web Site:443@192.0.2.10", key_mode:"os-store-managed", key_reference:"winstore://LocalMachine/My/"+"b".repeat(40) }] };
       }
-      return handler(sql, params, state);
+      const response = await handler(sql, params, state);
+      if (sql.includes("WHERE credential_prefix = $1") && response.rows[0]) state.credentialHash = response.rows[0].credential_hash;
+      return response;
     },
     release: () => {
       state.released = true;
@@ -163,7 +175,7 @@ function createMockPool(handler) {
 }
 
 function agentFixture(overrides = {}) {
-  return {
+  return bindAuthenticatedAgent({
     id: "agent-row-1",
     workspaceId: WORKSPACE_A,
     agentId: "agent-01",
@@ -175,7 +187,7 @@ function agentFixture(overrides = {}) {
     lastSeenAt: null,
     retiredAt: null,
     ...overrides,
-  };
+  }, FIXTURE_CREDENTIAL_HASH);
 }
 
 function registerEnvelope() {
@@ -206,6 +218,8 @@ function registrationQueryHandler({
   tokenStatus = "active",
   insertAgent = true,
   replayRow = null,
+  replayStatus = "active",
+  replayHash = require("node:crypto").createHash("sha256").update(`ttagent_0123456789abcdef_${"c".repeat(64)}`).digest("hex"),
   agentRow = {
     id: "agent-row-1",
     agent_id: "agent-01",
@@ -232,6 +246,9 @@ function registrationQueryHandler({
           row.registration_id === params[1],
       );
       return { rows: match ? [match] : [] };
+    }
+    if (sql.includes("SELECT credential_hash, status") && sql.includes("workspace_id = $1")) {
+      return { rows: [{ credential_hash: replayHash, status: replayStatus }] };
     }
     if (sql.includes("INSERT INTO certops_agents")) {
       if (!insertAgent) return { rows: [] };
@@ -513,6 +530,22 @@ describe("agentDispatch.registerAgent", () => {
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
+  for (const [name, replayStatus, replayHash] of [
+    ["retired", "retired", require("node:crypto").createHash("sha256").update(`ttagent_0123456789abcdef_${"c".repeat(64)}`).digest("hex")],
+    ["replaced credential", "active", "f".repeat(64)],
+  ]) {
+    it(`rejects registration replay after ${name}`, async () => {
+      const credential = `ttagent_0123456789abcdef_${"c".repeat(64)}`;
+      const dbPool = createMockPool(registrationQueryHandler({ tokenStatus: "used", replayStatus, replayHash,
+        replayRow: { bootstrap_token_id: "boot-1", registration_id: "550e8400-e29b-41d4-a716-446655440000",
+          agent_id: "agent-01", credential_ciphertext: encryptRegistrationCredential(credential),
+          encryption_version: ENCRYPTION_VERSION, protocol_version: "1.0.0" } }));
+      await assert.rejects(registerAgent({ dbPool, bootstrapToken: { id: "boot-1" },
+        envelope: registerEnvelope(), body: registerBody() }), { code: CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED });
+      assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+    });
+  }
+
   it("hard-rejects a different registrationId against an already-spent token", async () => {
     const dbPool = createMockPool(
       registrationQueryHandler({ tokenStatus: "used" }),
@@ -715,6 +748,9 @@ describe("agentDispatch.registerAgent", () => {
             row.registration_id === params[1],
         );
         return { rows: match ? [match] : [] };
+      }
+      if (sql.includes("SELECT credential_hash, status") && sql.includes("workspace_id = $1")) {
+        return { rows: [{ credential_hash: require("node:crypto").createHash("sha256").update(credential).digest("hex"), status: "active" }] };
       }
       if (sql.includes("INSERT INTO certops_agents")) {
         if (agentInserted) return { rows: [] };
@@ -1214,6 +1250,11 @@ describe("agentDispatch.recordHeartbeat", () => {
 });
 
 describe("agentDispatch.claimJobs", () => {
+  it("fails closed when rotation is enabled but its schema is absent", async () => {
+    const dbPool = createMockPool(() => { throw new Error("claim must not proceed"); });
+    await assert.rejects(claimJobs({ dbPool, agent: agentFixture(), env: { CERTOPS_AGENT_ROTATION_ALL_API_FENCED: "true" },
+      deps: { enforceAgentSequence: async () => {} } }), { code: "CERTOPS_AGENT_ROTATION_SCHEMA_UNAVAILABLE" });
+  });
   for (const platform of ["win32", "linux"]) {
     for (const missing of [null, "windows-material-iis-v1", "windows-cert-store-v1", "iis-binding-v1"]) {
       it(`authenticated ${platform} claim enforces persisted Windows capabilities: ${missing || "qualified"}`, async () => {
@@ -3420,7 +3461,7 @@ describe("agentDispatch.ingestResult", () => {
       throw new Error(`unexpected query: ${sql}`);
     });
 
-    const result = await ingestResult({
+    const result = await ingestResultImpl({
       dbPool,
       agent: agentFixture(),
       body: resultBody({ status: "succeeded", errorMessage: undefined }),
@@ -3431,7 +3472,7 @@ describe("agentDispatch.ingestResult", () => {
     });
 
     assert.equal(result.status, "succeeded");
-    assert.deepEqual(queryOrder, ["agent-lock", "job-lock"]);
+    assert.deepEqual(dbPool.state.lockOrder.slice(0, 2), ["agent-lock", "job-lock"]);
   });
 
   describe("result_metadata / certificate_job_log population (Bug 2: every real agent result used to leave both at their insert-time defaults)", () => {
