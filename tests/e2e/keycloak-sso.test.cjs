@@ -542,35 +542,24 @@ test(
           "WHERE u.email = '" + type + "@example.test'",
       );
       assert.equal(membership, "viewer:sso:" + type);
-      const { url } = await (
-        await context.request.get(api + "/api/sso/logout-url")
-      ).json();
-      await write(context.request, api, app, "POST", "/api/logout", {}, 200);
+      const logout = () => page.getByRole("menuitem", { name: "Sign Out", exact: true }).click();
+      await page.locator('button[data-tour="user-menu"]').click();
       if (type === "oidc") {
-        assert.equal(
-          new URL(url).pathname,
-          "/realms/tt-test/protocol/openid-connect/logout",
-        );
-        const readiness = [];
-        page.on("response", response => {
-          const responseUrl = new URL(response.url());
-          if (responseUrl.origin === api && responseUrl.pathname === "/api/auth/features") {
-            readiness.push(response.status());
-          }
-        });
-        await page.goto(url);
+        await Promise.all([
+          page.waitForRequest(request => {
+            const url = new URL(request.url());
+            return url.origin === new URL(issuer).origin &&
+              url.pathname === "/realms/tt-test/protocol/openid-connect/logout";
+          }),
+          logout(),
+        ]);
         await page.waitForURL(app + "/login");
-        try {
-          await page.getByText("Sign in with " + displayName, { exact: true })
-            .click({ timeout: 15000 });
-        } catch (error) {
-          t.diagnostic("OIDC logout return readiness statuses: " + readiness.join(", "));
-          t.diagnostic("OIDC logout return headings: " + (await page.locator("h1,h2").allTextContents()).join(", "));
-          throw error;
-        }
+        await page.getByText("Sign in with " + displayName, { exact: true }).click();
         await page.locator("#username").waitFor();
       } else {
-        assert.equal(url, null);
+        await logout();
+        await page.waitForURL(app + "/login");
+        await page.getByText("Sign in with " + displayName, { exact: true }).waitFor();
       }
       assert.equal(
         (await (await context.request.get(api + "/api/session")).json())
