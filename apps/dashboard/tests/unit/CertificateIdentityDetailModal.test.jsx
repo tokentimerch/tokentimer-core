@@ -535,7 +535,7 @@ it('shows registration details and flags an existing dependent IIS profile', asy
     </ChakraProvider>
   );
   expect(
-    await screen.findByText(/Existing IIS renewal profile/)
+    await screen.findByText(/Detach the IIS renewal profile or stop managing/)
   ).toBeInTheDocument();
   expect(
     screen.getByRole('checkbox', { name: /Automatically update Site:443/ })
