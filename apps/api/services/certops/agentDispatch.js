@@ -86,6 +86,7 @@ const {
   wireActionForOperation,
 } = require("./agentJobEligibility");
 const { isTrustAnchorOperation } = require("./jobs");
+const { IIS_STORE_OWNERSHIP_CHANGED } = require("./windowsRenewalOwnership");
 const {
   JOB_LOG_STREAM_CAPABILITY,
   MAX_BATCH_BYTES,
@@ -1260,6 +1261,7 @@ async function claimJobs({
           AND (
             (
               status = 'pending'
+              AND cj.error_code IS DISTINCT FROM '${IIS_STORE_OWNERSHIP_CHANGED}'
               AND (scheduled_for IS NULL OR scheduled_for <= NOW())
               AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
               -- Work an assistant connection asked for is not started once that
@@ -1500,6 +1502,20 @@ async function claimJobs({
           });
         } catch (error) {
           if (error.code !== "CERTOPS_WINDOWS_CONSENT_REFUSED") throw error;
+          // Hold new jobs intended for this agent. An unassigned job may
+          // still be legitimate on another host. Existing leases and retries
+          // retain their own reconciliation rules.
+          if (row.status === "pending" && row.attempt_count === 0 && row.assigned_agent_id === agent.id) {
+            const message = row.enrollment_id
+              ? "The Windows Store registration now owns this IIS binding. Cancel this queued enrollment under AD CS and configure IIS updates on the Store registration."
+              : "The Windows Store registration now owns this IIS binding. Configure IIS updates on the Store registration.";
+            await client.query(`UPDATE certificate_jobs SET error_code=$3,error_message=$4,
+                status=CASE WHEN enrollment_id IS NULL THEN 'rejected' ELSE status END,
+                completed_at=CASE WHEN enrollment_id IS NULL THEN clock_timestamp() ELSE completed_at END,
+                updated_at=clock_timestamp()
+              WHERE workspace_id=$1 AND id=$2 AND status='pending' AND attempt_count=0`,
+            [row.workspace_id, row.id, IIS_STORE_OWNERSHIP_CHANGED, message]);
+          }
           continue;
         }
       }

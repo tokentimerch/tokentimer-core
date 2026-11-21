@@ -11,6 +11,7 @@
  */
 
 const { getAgentsByIds } = require("./agentRegistry");
+const { IIS_STORE_OWNERSHIP_CHANGED } = require("./windowsRenewalOwnership");
 const {
   ADCS_ENROLL_CAPABILITY_REASON,
   explainAgentJobEligibility,
@@ -82,6 +83,10 @@ function isAgentOffline(agent) {
 
 function pendingReasonForJob(job, agent) {
   if (!job || !AWAITING_EXECUTION_STATUSES.has(job.status)) return null;
+
+  if (job.errorCode === IIS_STORE_OWNERSHIP_CHANGED) {
+    return { code: "iis_store_ownership_changed", message: job.errorMessage };
+  }
 
   if (job.status === "claimed") {
     return {

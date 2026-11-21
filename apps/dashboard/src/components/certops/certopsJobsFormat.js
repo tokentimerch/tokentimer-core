@@ -138,6 +138,7 @@ export function reconciliationAdvisoryText(reason) {
 }
 
 const PENDING_REASON_LABELS = {
+  iis_store_ownership_changed: 'Cancel queued IIS enrollment',
   operation_unsupported: 'Agent cannot run this job',
   agent_retired: 'Agent retired',
   compatibility_blocked: 'Agent incompatible',
