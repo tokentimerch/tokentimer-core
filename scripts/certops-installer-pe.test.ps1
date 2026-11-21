@@ -7,7 +7,7 @@ $installer=Join-Path $PSScriptRoot '..\packages\agent\scripts\install-agent.ps1'
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $installer).Path,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'Production installer parser errors'}
-foreach($name in @('Assert-WindowsPeImage','Assert-WindowsPackageHelpers','Get-PackageDirectoryIdentity','Remove-OwnedPackageStaging','Copy-PackageTree')){
+foreach($name in @('Assert-WindowsPeImage','Assert-WindowsPackageHelpers','Get-PackageDirectoryIdentity','Remove-OwnedPackageStaging','Test-PackageCopyExclusion','Copy-PackageTree')){
  $functions=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true))
  if($functions.Count -ne 1){throw 'Expected one production preactivation function'}
  Invoke-Expression $functions[0].Extent.Text
@@ -15,7 +15,7 @@ foreach($name in @('Assert-WindowsPeImage','Assert-WindowsPackageHelpers','Get-P
 $calls=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Assert-WindowsPackageHelpers'},$true))
 $activation=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Activate-StagedPackage'},$true))
 $copy=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Copy-PackageTree' -and $node.Extent.Text.Contains('$script:AppStaging')},$true))
-$rootCreation=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'New-Item' -and $node.Extent.Text.Contains('-Path $InstallRoot')},$true))
+$rootCreation=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Initialize-ProtectedPackageRoot' -and $node.Extent.Text.Contains('-Path $InstallRoot')},$true))
 if($calls.Count -ne 2 -or $copy.Count -ne 1 -or $activation.Count -ne 1 -or $rootCreation.Count -ne 1){throw 'Production preactivation hook cardinality mismatch'}
 if($calls[0].Extent.StartOffset -ge $rootCreation[0].Extent.StartOffset -or $calls[1].Extent.StartOffset -le $copy[0].Extent.StartOffset -or $calls[1].Extent.StartOffset -ge $activation[0].Extent.StartOffset){throw 'PE checks must precede source mutation and staged activation'}
 if(!$activation[0].Extent.Text.Contains('-ExpectedStagingIdentity $stagingIdentity')){throw 'Activation must bind the measured staging identity'}
@@ -101,7 +101,8 @@ try {
  while($stagingTry -and $stagingTry -isnot [Management.Automation.Language.TryStatementAst]){$stagingTry=$stagingTry.Parent}
  if(!$stagingTry){throw 'Production staging recovery boundary missing'}
  function Fail {param([string]$Message) throw $Message}
- $PackageDir=Join-Path $root 'bad-source';New-Item -ItemType Directory -Path $PackageDir|Out-Null
+ $PackageDir=Join-Path $root 'bad-source';New-Item -ItemType Directory -Path (Join-Path $PackageDir 'bin') -Force|Out-Null
+ [IO.File]::WriteAllBytes((Join-Path $PackageDir 'bin\tokentimer-agent-host-amd64.exe'),[byte[]](0,1))
  $AppDir=Join-Path $root 'untouched-app';New-Item -ItemType Directory -Path $AppDir|Out-Null
  $appMarker=Join-Path $AppDir 'operator-marker';[IO.File]::WriteAllText($appMarker,'preserve')
  $arch='AMD64'
@@ -109,7 +110,7 @@ try {
  $stagingIdentity=Get-PackageDirectoryIdentity -Directory $script:AppStaging
  $observedError=''
  try {Invoke-Expression $stagingTry.Extent.Text}catch{$observedError=$_.Exception.Message}
- if($observedError -notlike '*failed to stage the agent package*' -or $observedError -like '*cleanup refused*' -or (Test-Path -LiteralPath $script:AppStaging) -or [IO.File]::ReadAllText($appMarker) -ne 'preserve'){throw 'Actual staging catch did not clean owned stage and preserve original failure/app'}
+ if($observedError -notlike '*failed to stage the agent package*Native helper size is outside supported PE bounds*' -or $observedError -like '*cleanup refused*' -or (Test-Path -LiteralPath $script:AppStaging) -or [IO.File]::ReadAllText($appMarker) -ne 'preserve'){throw 'Actual staging catch did not clean owned stage and preserve original failure/app'}
  $originalStagingFailure=$observedError.Substring($observedError.IndexOf('('))
  # Re-run that same catch against a replacement stage: preserve it and retain the root error.
  New-Item -ItemType Directory -Path $script:AppStaging|Out-Null
