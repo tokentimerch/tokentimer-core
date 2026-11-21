@@ -6,9 +6,9 @@ agent or API token in metadata. These details are available in the Audit feed
 and CSV/JSON export. See [Audit event catalog](../audit-events.md) for other
 TokenTimer actions.
 
-- `CERTOPS_ISSUER_CREATED`: `{ issuerId, kind }` records issuer creation.
-- `CERTOPS_ISSUER_PREFLIGHT_DISPATCHED`: `{ issuerId, jobId, agentId }` records a CA preflight request.
-- `CERTOPS_ISSUER_KEY_CONFIRMED`: `{ issuerId, version, caKeySha256 }` records confirmation of a CA public-key pin.
+- `CERTOPS_ISSUER_CREATED`: `{ issuerId, issuerName, kind }` records issuer creation.
+- `CERTOPS_ISSUER_PREFLIGHT_DISPATCHED`: `{ issuerId, issuerName, caConfig, template, jobId, agentId }` records a CA preflight request. Older events may contain only IDs.
+- `CERTOPS_ISSUER_KEY_CONFIRMED`: `{ issuerId, issuerName, version, caKeySha256, caConfig, template }` records confirmation of a CA public-key pin.
 - `CERTOPS_ENROLLMENT_CREATED`: `{ enrollmentId, issuerId, jobId }` records a new enrollment request.
 - `CERTOPS_ENROLLMENT_RECONCILE_PROPOSED`: `{ enrollmentId, requestId }` records an operator-provided CA request ID for reconciliation.
 - `CERTOPS_ENROLLMENT_CANCELLED`: `{ enrollmentId }` records cancellation of an enrollment.
@@ -43,6 +43,7 @@ included in the audit metadata.
 - **CERTOPS_JOB_CREATED_MANUAL** metadata: `{ jobId, operation, subjectType, subjectId, source, via, targetType, windowsStore, windowsBindingSite, windowsBindingPort, windowsBindingSniHost }`.
 - **CERTOPS_JOB_CREATED_AUTOMATIC** metadata: `{ jobId, operation, mode, subjectType, subjectId, commonName, notAfter, profileId, enrollmentId, issuerId, source, trigger, targetType, windowsStore, windowsBindingSite, windowsBindingPort, windowsBindingSniHost }`.
 - **CERTOPS_JOB_FAILED** metadata: `{ jobId, operation, jobStatus, source, mode, agentId, claimId, errorCode, errorMessage, subjectType, subjectId, needsOperatorReconciliation, reconciliationReason, targetType, windowsStore, windowsBindingSite, windowsBindingPort, windowsBindingSniHost }`. Trust jobs can include `{ outcome, mutationPerformed, failureCategory, observedFingerprintBefore, observedFingerprintAfter, provenance }`.
+- **CERTOPS_ACME_STORE_RECOVERY_RECONCILED** records the enrollment, original job and resolving job when a continuation verifies installation. Historical failed jobs retain their outcomes and stop requiring reconciliation.
 - **CERTOPS_EXECUTOR_EVENT_ACCEPTED** records `{ apiTokenId, executorEventRecordId, executorEventId, eventType, jobId, logId, status, evidenceIds, certificateName, namespace, issuerRef, dnsNames }`. Certificate topology fields apply when the job targets a Kubernetes certificate.
 - **CERTOPS_EVIDENCE_ACCEPTED** metadata: same fields as `CERTOPS_EXECUTOR_EVENT_ACCEPTED`.
 - **CERTOPS_EVIDENCE_REJECTED** metadata: `{ workspaceId, jobId, eventId, eventType, evidenceIds, redactionApplied, redactionCount, rejectionCode, createdByApiTokenId, routeFamily }`.
@@ -59,7 +60,9 @@ included in the audit metadata.
 - **CERTOPS_TRUST_REFERENCE_RELEASED** metadata: `{ trustAnchorId, anchorName, fingerprintSha256, agentId, store, host, owner, transitionGeneration, otherLiveReferences, provenance }`.
 - **CERTOPS_RENEWAL_PROFILE_DERIVED** metadata: `{ profileId, profileName, created, managedCertificateId, renewBeforeDays, acmeKind, commandRef, caEndpoint, certPath, targetType, windowsStore, windowsBindingSite, windowsBindingPort, windowsBindingSniHost, dnsProvider, dnsZone, keyAlgorithm, keySize }`.
 - **CERTOPS_RENEWAL_PROFILE_DERIVATION_DECLINED** metadata: `{ managedCertificateId, commonName, jobId, operation, agentId, derivationReason, reconciliationReason, detail, targetType }`.
-- **CERTOPS_RENEWAL_PROFILE_UPDATED** metadata: `{ profileId, profileName, changes }`.
+- **CERTOPS_RENEWAL_PROFILE_UPDATED** metadata: `{ profileId, profileName, issuerId, issuerName, previousIssuerName, changes }`.
+- **CERTOPS_MANAGEMENT_STARTED** / **CERTOPS_MANAGEMENT_STOPPED** identify the certificate and management period; new events also include the certificate name, fingerprint, renewal profile ID and automatic-renewal setting when available. Older events may contain only IDs.
+- **CERTOPS_WINDOWS_STORE_REASSOCIATED** identifies the previous and new registrations and periods, certificate name and fingerprint, agent, and renewal profile.
 - **CERTOPS_RENEWAL_PROFILE_DETACHED** metadata: `{ managedCertificateId, commonName, profileId, profileName, invalidatedIntents }`.
 - **CERTOPS_JOB_APPROVAL_GRANTED** metadata: `{ jobId, status, payloadHash, canonicalIntentHash, reason }` (`reason` present only when the approver supplied one).
 - **CERTOPS_JOB_APPROVAL_REJECTED** metadata: `{ jobId, status, reason }` (`reason` present only when the approver supplied one).

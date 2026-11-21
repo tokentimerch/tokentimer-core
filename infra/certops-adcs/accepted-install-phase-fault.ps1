@@ -5,6 +5,8 @@ checked after the complete owned process tree has drained. #>
 param([Parameter(Mandatory)][string]$OwnedDirectory,[Parameter(Mandatory)][string]$ConfigDirectory,[Parameter(Mandatory)][string]$RepositoryRoot,[Parameter(Mandatory)][string]$NodeExecutable,[ValidateSet('accepted-before-bind','bound-before-complete')][string]$Phase='accepted-before-bind')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+# Fail closed before observation, service manipulation, or native process interruption.
+throw 'Accepted-install experiment is disabled: active observation-loss interruption and atomic descendant containment are not qualified'
 if($env:CERTOPS_ADCS_DISPOSABLE_LAB -ne '1' -or (Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw 'Owned disposable forest required'}
 $owned=[IO.Path]::GetFullPath($OwnedDirectory).TrimEnd('\');$config=[IO.Path]::GetFullPath($ConfigDirectory);$repo=[IO.Path]::GetFullPath($RepositoryRoot)
 if(!$owned.StartsWith(([IO.Path]::GetFullPath($env:TEMP).TrimEnd('\')+'\'),[StringComparison]::OrdinalIgnoreCase) -or (Split-Path $owned -Leaf) -notmatch '^certops-domain-adcs-' -or $config -ine (Join-Path $owned 'agent')){throw 'Foreign owned directory'}

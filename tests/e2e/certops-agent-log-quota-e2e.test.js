@@ -40,7 +40,7 @@ test("production fleet-log quota concurrency and workspace isolation", { timeout
     const agent = await createRegisteredAgent(fixture, baseUrl, ["job-log-stream-v1"]);
     const claimed = await agent.claimNoop();
     const id = (await fixture.pool.query("SELECT id FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2", [fixture.workspaceId, agent.agentId])).rows[0].id;
-    return { fixture, agent: { id, workspaceId: fixture.workspaceId }, ...claimed };
+    return { fixture, agent: agent.bindForService(id), ...claimed };
   }
   function batch(item, lines, final = false) { return { jobId: item.jobId, claimId: item.claimId, final, ...(lines.length ? { firstSeq: lines[0].seq } : {}), lines }; }
   const line = { seq: 1, ts: new Date().toISOString(), level: "info", step: "verify", message: "Public quota diagnostic " + "x".repeat(700), fields: null };

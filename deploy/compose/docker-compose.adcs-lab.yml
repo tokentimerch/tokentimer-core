@@ -1,0 +1,33 @@
+# Explicitly simulated, disposable developer lab. No native CA or Windows host.
+services:
+  postgres:
+    image: postgres:17-alpine
+    labels:
+      tokentimer.lab: adcs-simulated
+      tokentimer.lab.owner: ${ADCS_LAB_OWNER:?Use the lab CLI}
+    environment:
+      POSTGRES_DB: tt_adcs_simulated
+      POSTGRES_USER: tt_adcs_simulated
+      POSTGRES_PASSWORD: ${ADCS_LAB_DB_PASSWORD:?Use the lab CLI}
+    ports:
+      - "127.0.0.1:55479:5432"
+    volumes:
+      - data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U tt_adcs_simulated -d tt_adcs_simulated"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    labels:
+      tokentimer.lab: adcs-simulated
+      tokentimer.lab.owner: ${ADCS_LAB_OWNER:?Use the lab CLI}
+    ports:
+      - "127.0.0.1:11025:1025"
+      - "127.0.0.1:18025:8025"
+volumes:
+  data:
+    labels:
+      tokentimer.lab: adcs-simulated
+      tokentimer.lab.owner: ${ADCS_LAB_OWNER:?Use the lab CLI}

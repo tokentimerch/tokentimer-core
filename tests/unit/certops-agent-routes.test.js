@@ -767,6 +767,14 @@ describe("Register handler", () => {
 });
 
 describe("handleAgentRouteError", () => {
+  it("returns a conflict for a revoked certificate or ineligible material version", () => {
+    for (const code of ["CERTOPS_AGENT_CERTIFICATE_REVOKED", "CERTOPS_ROLLOUT_VERSION_INVALID"]) {
+      const res = createResponse();
+      _test.handleAgentRouteError(res, Object.assign(new Error("not eligible"), { code }));
+      assert.equal(res.statusCode, 409);
+      assert.equal(res.body.code, code);
+    }
+  });
   for (const [code, status] of [
     ["CERTOPS_MATERIAL_CONTRACT_INVALID", 422],
     ["CERTOPS_MATERIAL_RECEIPT_REQUIRED", 422],

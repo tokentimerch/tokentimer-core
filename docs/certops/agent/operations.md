@@ -40,6 +40,13 @@ Common terminal states and what to look for:
   general dashboard action to clear this flag. Preserve the job evidence and
   obtain support for the affected recovery path rather than editing database
   flags or deleting local journals. This is not a policy rejection.
+
+  For Windows ACME store jobs, open the job details and choose **Recover on
+  original agent** after entering a reason and acknowledging uncertainty.
+  Keep that agent and its protected state in place. If the continuation verifies
+  the installation, the historical job details identify the resolving job.
+  If the outcome stays uncertain, preserve the journal and inspect the original
+  order with the CA before requesting replacement work.
 - **`dry_run_complete`**: expected terminal for `mode:"dry_run"` jobs. If a
   real job somehow reports it, the control plane rejects the result
   (`CERTOPS_AGENT_RESULT_STATUS_INVALID`).

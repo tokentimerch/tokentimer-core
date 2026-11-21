@@ -14,9 +14,10 @@ Use the short fingerprint to tell same-name certificates apart. The inventory
 lists confirmed Windows certificate-store or IIS use when the location is
 visible to your role. In Asset Inventory, expiry and a linked certificate's
 retirement are shown separately.
-The default **All (except retired)** view excludes revoked and decommissioned certificates. Select
-**Revoked** or **Decommissioned** to view them; fresh presence evidence adds
-**Still observed** to their lifecycle label. They never count as active.
+The default **All (except retired)** view excludes certificates manually retired
+as revoked or decommissioned. An observed revocation remains visible there and
+also appears under **Revoked**; select **Decommissioned** for that retirement
+state. Fresh presence evidence on a retired certificate adds **Still observed**.
 **Show unmanaged** includes identities without an open management period and
 remains available while its count loads or cannot be retrieved.
 Key references and deployment paths are searchable only for roles allowed to
@@ -40,11 +41,11 @@ separate service bindings remain distinct. Unknown visibility at a genuinely
 unmonitored location is still shown and still matters for decommissioning.
 Seeing a certificate does not by itself configure automatic renewal.
 
-Open **Observation history** under **Observed locations**. If there are several
-registrations, select the one to inspect. Filter by verdict, location or date.
-History covers the selected registration and its current fingerprint. An empty
-result does not establish certificate removal or a successful check. Viewer API
-responses omit host and location details.
+Open **Observation history** under **Observed locations** and select a
+registration. Filter by verdict or date in local time. Managers can also search
+locations. History covers the current fingerprint across its management periods.
+Viewer API responses omit host and location details. Discovery gaps may leave
+the history empty, so use current evidence to verify removal or check results.
 
 ## Certificate management
 
@@ -88,14 +89,24 @@ periods, deleted registrations, and previous certificate associations. Their
 history is preserved even when hidden. A registration that has rotated to a
 different fingerprint cannot restart the old certificate from this view.
 
+For confirmed Windows dependencies, Store renewal can update explicitly authorized
+IIS bindings; discovery alone grants no update permission. The certificate details
+page no longer provides a control for Store-to-IIS authorization. Use **Start
+managing again** below for eligible stopped registrations. Existing IIS profiles
+require explicit consolidation, and replacing Store management requires IIS
+updates to be authorized again.
+
 ## Lifecycle is separate
 
-Marking revoked or decommissioned applies to the certificate fingerprint and
-does not close management periods or release their quota. Recording revocation
-in CertOps does not contact the CA. Fresh evidence of TLS or bound service use
-blocks decommissioning. Stored copies and uncertain visibility require a
-reason and acknowledgment. Rediscovery preserves lifecycle and can display
-**Revoked · Still observed** or **Decommissioned · Still observed**.
+An agent can report a certificate or its issuing CA as revoked. That security
+observation does not retire the certificate from management; replace it and
+investigate affected locations. A stale or unavailable check can show the last
+verified revocation. An updated agent identifies a revoked intermediate by its
+certificate fingerprint, so the CA and affected certificates show distinct
+statuses. Root trust anchors are not revocation-checked. Separately,
+**Mark revoked** or **Decommission** retires the selected fingerprint in
+TokenTimer, closes its current management periods and can cancel queued jobs;
+it does not contact the CA. Rediscovery preserves the recorded retirement.
 
 ## Renewal identities and the linked token
 

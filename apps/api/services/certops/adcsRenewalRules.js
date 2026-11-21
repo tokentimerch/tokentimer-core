@@ -24,6 +24,17 @@ function profileError(message, code = CERTOPS_PROFILE_INVALID, details = null) {
 const CERTOPS_PROFILE_ISSUER_INCOMPATIBLE = "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE";
 
 function adcsTargetComplete(target) {
+  if (target?.type === "windows-cert-store") {
+    return target.store === "My" &&
+      typeof target.reference === "string" &&
+      target.reference.length <= 253 &&
+      /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/.test(target.reference) &&
+      Object.keys(target).every(key => ["type", "reference", "store"].includes(key));
+  }
+  const address = target?.binding?.address;
+  if (address != null && (typeof address !== "string" ||
+      (address !== "*" && (address.includes("%") || require("node:net").isIP(address) === 0)) ||
+      (target?.binding?.sniHost && address !== "*" && address !== "0.0.0.0"))) return false;
   return Boolean(
     target &&
       target.type === "windows-iis" &&
@@ -43,7 +54,7 @@ function adcsTargetComplete(target) {
 function validateAdcsRenewalProfile(profile) {
   if (!adcsTargetComplete(profile?.target)) {
     throw profileError(
-      "This profile has no complete Windows/IIS deployment target, so AD CS cannot renew it.",
+      "This profile has no complete Windows certificate destination, so AD CS cannot renew it.",
       CERTOPS_PROFILE_ISSUER_INCOMPATIBLE,
     );
   }

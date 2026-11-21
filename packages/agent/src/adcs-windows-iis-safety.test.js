@@ -34,6 +34,37 @@ function jobFor(enrollmentId) {
     target: { type: "windows-iis", reference: "app.example.com", store: "My", binding: { site: "Unit Site", port: 443 } },
     enrollment: { enrollmentId, attempt: 1, snapshotB64: bytes.toString("base64"), snapshotSha256: crypto.createHash("sha256").update(bytes).digest("hex") } };
 }
+function unitCsr() {
+  const {privateKey,publicKey}=crypto.generateKeyPairSync("rsa",{modulusLength:2048});
+  const length=n=>n<128?Buffer.from([n]):n<256?Buffer.from([0x81,n]):Buffer.from([0x82,n>>8,n&255]);
+  const tlv=(tag,...parts)=>{const body=Buffer.concat(parts);return Buffer.concat([Buffer.from([tag]),length(body.length),body]);};
+  const spki=publicKey.export({type:"spki",format:"der"});
+  const subject=tlv(0x30,tlv(0x31,tlv(0x30,Buffer.from("0603550403","hex"),tlv(0x0c,Buffer.from("app.example.com")))));
+  const info=tlv(0x30,Buffer.from("020100","hex"),subject,spki,Buffer.from("a000","hex"));
+  const signature=crypto.sign("sha256",info,privateKey);
+  const csr=tlv(0x30,info,Buffer.from("300d06092a864886f70d01010b0500","hex"),tlv(0x03,Buffer.from([0]),signature));
+  return `-----BEGIN CERTIFICATE REQUEST-----\n${csr.toString("base64")}\n-----END CERTIFICATE REQUEST-----\n`;
+}
+test("a second safety refusal after keygen and failed cleanup never attests no key", async () => {
+  const stateDir=await fsp.mkdtemp(path.join(os.tmpdir(),"adcs-second-safety-unit-"));
+  try {
+    const helper=path.join(stateDir,"helper.exe");fs.writeFileSync(helper,"fixture");
+    const job=jobFor(crypto.randomUUID()), csr=unitCsr();let generated=false, cleanupAttempted=false, submitted=false;
+    const context={execution:{keysDir:path.join(stateDir,"keys")},adcsHelperPath:helper,adcsCaCertPath:caPath,windowsKeySurvivorHelperPath:helper,
+      adcsEnrollmentRules:[{caConfig:snapshot.caConfig,template:snapshot.template,dnsScopes:["example.com"],keyAlgorithms:["rsa"]}],
+      adcsPreflightImpl:()=>({preflightResult:facts()}),
+      windowsExecFileImpl(_file,args,_opts,callback){
+        if(args.includes("-key"))callback(null,"","");
+        else if(args.includes("-new")){generated=true;fs.writeFileSync(args.at(-1),csr);context.adcsEnrollmentRules=[];callback(null,"","");}
+        else {if(args.includes("-submit"))submitted=true;cleanupAttempted=true;callback(new Error("fixture cleanup failed"),"","");}
+        return {kill(){},once(){},pid:1};
+      }};
+    const result=await factory(stateDir).executeWindowsIisAdcsRenewJob({job,jobId:"second-safety",client:{},log:{},executionContext:context});
+    assert.equal(generated,true,JSON.stringify(result));assert.equal(cleanupAttempted,true,JSON.stringify(result));assert.equal(submitted,false);
+    assert.equal(result.status,"rejected");assert.equal(result.enrollmentResult.errorCode,"ADCS_CA_CONFIG_UNSAFE");
+    assert.doesNotMatch(result.errorMessage,/tt-adcs-no-key-no-submit-v1/);
+  } finally {await fsp.rm(stateDir,{recursive:true,force:true});}
+});
 for (const unsafe of ["template", "ca"]) test(`new enrollment refuses unsafe ${unsafe} before keygen intent, CNG or CA submit`, async () => {
   const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "adcs-native-safety-unit-"));
   try {
@@ -46,9 +77,20 @@ for (const unsafe of ["template", "ca"]) test(`new enrollment refuses unsafe ${u
         windowsExecFileImpl() { nativeCalls += 1; throw new Error("no private effect or submit permitted"); } } });
     assert.equal(result.status, "rejected"); assert.equal(result.enrollmentResult.state, "refused");
     assert.equal(result.enrollmentResult.errorCode, unsafe === "template" ? "ADCS_TEMPLATE_UNSAFE" : "ADCS_CA_CONFIG_UNSAFE");
+    assert.doesNotMatch(result.errorMessage, /tt-adcs-no-key-no-submit-v1/);
     assert.equal(nativeCalls, 0); assert.equal(fs.existsSync(keygenIntentPath(stateDir, enrollmentId)), false);
     assert.equal(readEnrollmentJournal(stateDir, enrollmentId).kind, "not_found");
   } finally { await fsp.rm(stateDir, { recursive: true, force: true }); }
+});
+test("replayed renew after keygen intent does not attest a local rule refusal", async () => {
+  const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "adcs-replay-keygen-unit-"));
+  try {
+    const enrollmentId=crypto.randomUUID(), job=jobFor(enrollmentId);
+    await writeKeygenIntent({stateDir,enrollmentId,containerName:buildEnrollmentContainerName(enrollmentId),attempt:1,snapshotSha256:job.enrollment.snapshotSha256,jobId:"prior-job"});
+    const result=await factory(stateDir).executeWindowsIisAdcsRenewJob({job,jobId:"replayed-job",client:{},log:{},executionContext:{execution:{keysDir:path.join(stateDir,"keys")},adcsEnrollmentRules:[],windowsExecFileImpl(){assert.fail("no native call allowed");}}});
+    assert.equal(result.status,"blocked");
+    assert.doesNotMatch(result.errorMessage,/tt-adcs-no-key-no-submit-v1/);
+  } finally { await fsp.rm(stateDir,{recursive:true,force:true}); }
 });
 for (const phase of ["prepared", "keygen_intent", "keygen_intent-operator", "prepared-accepted", "renew-prepared", "renew-foreign-job"]) test(`${phase} retry refuses newly unsafe facts without deleting protected keys`, async () => {
   const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "adcs-prepared-safety-unit-"));
@@ -101,6 +143,7 @@ for (const phase of ["prepared", "keygen_intent", "keygen_intent-operator", "pre
       assert.equal(calls.length,0); return;
     }
     assert.equal(result.enrollmentResult.state, "refused"); assert.equal(result.enrollmentResult.errorCode, "ADCS_TEMPLATE_UNSAFE");
+    assert.doesNotMatch(result.errorMessage, /tt-adcs-no-key-no-submit-v1/);
     const refused = readEnrollmentJournal(stateDir, enrollmentId);
     assert.equal(refused.kind, "valid"); assert.equal(refused.journal.state, "refused");
     if (phase === "keygen_intent") {
@@ -127,7 +170,7 @@ for(const boundary of ["missing-constraints","dns-scope","key-algorithm","extra-
     if(boundary==="cross-product")rules=[{...allowed,dnsScopes:["other.test"]},{...allowed,keyAlgorithms:["ecdsa"]}];
     if(boundary==="extra-san"){const bytes=Buffer.from(JSON.stringify({...snapshot,authorizedDnsNames:["app.example.com","outside.test"]}));job.enrollment.snapshotB64=bytes.toString("base64");job.enrollment.snapshotSha256=crypto.createHash("sha256").update(bytes).digest("hex");}
     const result=await factory(stateDir).executeWindowsIisAdcsRenewJob({job,jobId:"whole-rule-unit",client:{},log:{},executionContext:{execution:{keysDir:path.join(stateDir,"keys")},adcsEnrollmentRules:rules,adcsPreflightImpl(){nativeCalls++;throw new Error("No CA contact permitted");},windowsExecFileImpl(){nativeCalls++;throw new Error("No native key mutation permitted");}}});
-    assert.equal(result.status,"rejected");assert.equal(result.rejectionReason,"issuer_not_allowlisted");assert.equal(result.enrollmentResult.state,"refused");assert.equal(nativeCalls,0);assert.equal(fs.existsSync(keygenIntentPath(stateDir,enrollmentId)),false);
+    assert.equal(result.status,"rejected");assert.equal(result.rejectionReason,"issuer_not_allowlisted");assert.equal(result.enrollmentResult.state,"refused");assert.match(result.errorMessage,/\[tt-adcs-no-key-no-submit-v1\]$/);assert.equal(nativeCalls,0);assert.equal(fs.existsSync(keygenIntentPath(stateDir,enrollmentId)),false);
   }finally{await fsp.rm(stateDir,{recursive:true,force:true});}
 });
 

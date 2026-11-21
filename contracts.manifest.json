@@ -71,14 +71,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "53c42e40956b2e9c276ed3cf4397a662b75c055278772eb9fbf0b521a79d0ddd"
+          "sha256": "aad24bd726db471f70638bee00e5ff9a3f99e126390d15fc823ecf0b5e972f97"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "53c42e40956b2e9c276ed3cf4397a662b75c055278772eb9fbf0b521a79d0ddd"
+          "sha256": "aad24bd726db471f70638bee00e5ff9a3f99e126390d15fc823ecf0b5e972f97"
         },
         {
           "id": "auth-route-compat-contract",
@@ -184,14 +184,14 @@
           "kind": "schema",
           "path": "packages/contracts/certops/job-payload.schema.json",
           "status": "existing",
-          "sha256": "f24d29b5cb445257c5b2789e6043c850603563b6b80fd34bc9b867ede3337101"
+          "sha256": "307efcd3df18b8bbcbee76a4532f4e84db81fe4e33f2bbce14d32e5ab4f247bb"
         },
         {
           "id": "certops-renewal-profile-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/renewal-profile.schema.json",
           "status": "existing",
-          "sha256": "1d0637acb48144c45bc003ea0f47e52debda2bf37979d14acad472355cebe937"
+          "sha256": "a5a97d972d43b25a3f73722815abdaec7561422cff99faf3efaed9ebfdb5708b"
         },
         {
           "id": "certops-signed-dispatch-payload-schema",
@@ -222,7 +222,7 @@
           "kind": "module",
           "path": "packages/contracts/certops/validate-signed-job.cjs",
           "status": "existing",
-          "sha256": "f3f5e8fb373d26df3e52a6be81a7a88d2318b9e80b1d18d28f1b3352f2977935"
+          "sha256": "386489ed4a0441f66d992e534da0ae5c909213445ab088d1c5b9fab2d1d61666"
         },
         {
           "id": "certops-evidence-schema",
@@ -253,7 +253,7 @@
           "kind": "schema",
           "path": "packages/contracts/certops/agent-protocol.schema.json",
           "status": "existing",
-          "sha256": "659031808a8349497266474cdb540b30eed132ae054f3f786fc07aa8a56ee312"
+          "sha256": "d5f5ba1c912753c667180c246b44893ab080c8976119388270aee0655ec9ad5d"
         },
         {
           "id": "certops-trust-job-payload-schema",

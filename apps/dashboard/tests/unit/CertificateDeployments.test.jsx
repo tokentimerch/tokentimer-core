@@ -88,6 +88,36 @@ beforeEach(() => {
   mockData();
 });
 
+it.each([
+  [
+    'material_windows_wildcard_conflict',
+    /A specific HTTP\.sys binding serves a different certificate/,
+  ],
+  [
+    'material_windows_binding_inventory_unavailable',
+    /Windows could not read all HTTP\.sys bindings/,
+  ],
+])(
+  'explains IIS deployment failure %s without exposing a binding address',
+  async (code, message) => {
+    mockData([
+      row({
+        converged: false,
+        latest_deployment: { stage: 'failed', failureCode: code },
+      }),
+    ]);
+    render(view());
+    const table = await screen.findByRole('table', {
+      name: 'Certificate deployment consumers',
+    });
+    fireEvent.click(
+      within(table).getByRole('button', { name: 'Details', exact: true })
+    );
+    expect(screen.getByText(message)).toBeInTheDocument();
+    expect(screen.queryByText(/192\.0\.2\./)).not.toBeInTheDocument();
+  }
+);
+
 it('identifies Azure secret versions and Windows IIS consumers', async () => {
   const id = 'a'.repeat(32);
   mockData(

@@ -253,6 +253,39 @@ describe("Windows renewal topology", () => {
       null,
     );
   });
+
+  it("does not derive wildcard renewal for an observation-only IIS target", async () => {
+    const db = recordingClient(() => ({ rows: [{ target_id: "target-1", target_reference: "iis/prod",
+      windows_store: "My", windows_site: "Default Web Site", windows_port: 443,
+      windows_sni_host: null, agent_row_id: "agent-1", declared_target_selectors: ["iis/prod"],
+      target_metadata: { observationOnly: true, boundAddress: "192.0.2.10" } }] }));
+    assert.equal(await loadWindowsRenewalTopology({ db, workspaceId: WORKSPACE,
+      certificateId: CERT_ID, deployedAgentId: "agent-1" }), null);
+  });
+
+  it("adopts a freshly qualified explicit-IP target only with observed key proof", async () => {
+    const row = { target_id: "target-1", target_reference: "iis/prod", windows_store: "My",
+      windows_site: "Default Web Site", windows_port: 443, windows_sni_host: null,
+      agent_row_id: "agent-1", agent_public_id: "public-agent-1", agent_platform: "win32", declared_target_selectors: ["iis/prod"],
+      presence_state: "confirmed_present", captured_at: new Date().toISOString(),
+      declared_capabilities: ["iis-explicit-ip-v1"], capabilities_updated_at: new Date().toISOString(),
+      target_metadata: { observationOnly: true, keyPresent: true, boundAddress: "192.0.2.10", agentId: "public-agent-1" } };
+    const load = value => loadWindowsRenewalTopology({ db: recordingClient(() => ({ rows: [value] })),
+      workspaceId: WORKSPACE, certificateId: CERT_ID, deployedAgentId: "agent-1" });
+    assert.equal((await load(row)).target.binding.address, "192.0.2.10");
+    const observed = { ...row, target_reference: "iis://Default Web Site:443",
+      declared_target_selectors: ["app.example.com"], subject_alt_names: ["app.example.com"] };
+    assert.equal((await load(observed)).target.reference, "app.example.com");
+    assert.equal(await load({ ...observed, declared_target_selectors: ["app.example.com", "other.example.com"],
+      subject_alt_names: ["app.example.com", "other.example.com"] }), null);
+    assert.equal(await load({ ...row, target_metadata: { ...row.target_metadata, keyPresent: false } }), null);
+    assert.equal(await load({ ...row, declared_capabilities: [] }), null);
+    assert.equal(await load({ ...row, agent_platform: "linux" }), null);
+    assert.equal(await load({ ...row, capabilities_updated_at: "2000-01-01T00:00:00.000Z" }), null);
+    assert.equal(await load({ ...row, captured_at: "2000-01-01T00:00:00.000Z" }), null);
+    assert.equal(await load({ ...row, presence_state: "confirmed_absent" }), null);
+    assert.equal(await load({ ...row, agent_public_id: "other-agent" }), null);
+  });
 });
 
 describe("CertOps adoption route refusals", () => {

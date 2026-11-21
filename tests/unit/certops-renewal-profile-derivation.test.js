@@ -16,6 +16,69 @@ const WORKSPACE = "11111111-1111-4111-8111-111111111111";
 const CERT_ID = "22222222-2222-4222-8222-222222222222";
 const PROFILE_ID = "33333333-3333-4333-8333-333333333333";
 
+it("derives a store renewal profile only from the bound first-issuance snapshot", async () => {
+  const crypto = require("node:crypto");
+  const { freezeSnapshot } = require("../../apps/api/services/certops/enrollmentLifecycle");
+  const issuerId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const target = { type: "windows-cert-store", reference: "web.example.com", store: "My" };
+  const frozen = freezeSnapshot({ issuerId, issuerVersion: 1, caConfig: "ca\\CA", caKeySha256: "ab".repeat(32),
+    template: "WebServer", authorizedDnsNames: [target.reference], keyAlgorithm: "rsa", keySize: 2048,
+    destinationType: target.type, destinationSha256: crypto.createHash("sha256").update(JSON.stringify(target)).digest("hex"), predecessorFingerprintSha256: null });
+  let profile;
+  const client = { async query(sql, params) {
+    if (sql.includes("SELECT profile_id")) return { rows: [{ profile_id: null }] };
+    if (sql.includes("FROM certificate_enrollments")) {
+      assert.equal(params[3], "44444444-4444-4444-8444-444444444444");
+      return { rows: [{ issuer_id: issuerId, snapshot_bytes: frozen.bytes, snapshot_sha256: frozen.sha256, deploy_target: target }] };
+    }
+    if (sql.includes("INSERT INTO certificate_profiles")) { profile = JSON.parse(params[7]).renewalProfile; return { rows: [{ id: PROFILE_ID }] }; }
+    if (sql.includes("UPDATE managed_certificates")) return { rows: [], rowCount: 1 };
+    throw new Error(sql);
+  } };
+  const result = await ensureDerivedRenewalProfile({ client, workspaceId: WORKSPACE, certificateId: CERT_ID,
+    payload: { target }, enrollmentId: "44444444-4444-4444-8444-444444444444", certificate: {}, operation: "issue", auditWriter: async () => {} });
+  assert.equal(result.profileId, PROFILE_ID);
+  assert.deepEqual(profile.target, target);
+  assert.deepEqual(profile.sanPolicy.sans, [target.reference]);
+});
+
+it("derives an ACME store profile from the verified frozen enrollment, without a service target", async () => {
+  const { freezeAcmeStoreRequest } = require("../../apps/api/services/certops/acmeStoreContract");
+  const jobId = "44444444-4444-4444-8444-444444444444";
+  const agentId = "55555555-5555-4555-8555-555555555555";
+  const target = { type: "windows-cert-store", reference: "web.example.com", store: "My" };
+  const frozen = freezeAcmeStoreRequest({ workspaceId: WORKSPACE, certificateId: CERT_ID, jobId, agentId,
+    agentPublicId: "agent-one", target, dnsNames: [target.reference], caEndpoint: "https://acme.example.com/directory",
+    commandRef: "acme-dns", dnsProvider: "example-dns", dnsZone: "example.com", keyAlgorithm: "rsa-2048",
+    acmeKind: "certbot", eabAccountRef: "account-one", issuanceMode: "issue", predecessorFingerprintSha256: null });
+  let stored;
+  let storedHash = frozen.requestSha256;
+  const client = { async query(sql, params) {
+    if (sql.includes("SELECT profile_id")) return { rows: [{ profile_id: null }] };
+    if (sql.includes("FROM certops_acme_store_enrollments")) return { rows: [{ agent_id: agentId, original_job_id: jobId,
+      current_job_id: jobId, request_bytes: frozen.requestBytes, request_sha256: storedHash }] };
+    if (sql.includes("INSERT INTO certificate_profiles")) { stored = { profile: JSON.parse(params[6]).renewalProfile, keyMode: params[8] }; return { rows: [{ id: PROFILE_ID }] }; }
+    if (sql.includes("UPDATE managed_certificates")) return { rows: [], rowCount: 1 };
+    throw new Error(sql);
+  } };
+  const result = await ensureDerivedRenewalProfile({ client, workspaceId: WORKSPACE, certificateId: CERT_ID, jobId,
+    payload: { target, caEndpoint: "https://tampered.example/directory" },
+    certificate: { commonName: target.reference, subjectAltNames: [target.reference] }, operation: "issue", auditWriter: async () => {} });
+  assert.equal(result.profileId, PROFILE_ID);
+  assert.equal(stored.keyMode, "os-store-managed");
+  assert.equal(stored.profile.ca.endpoint, "https://acme.example.com/directory");
+  assert.equal(stored.profile.ca.accountRef, "account-one");
+  assert.deepEqual(stored.profile.target, target);
+  assert.deepEqual(stored.profile.deploymentTargets, []);
+  assert.equal(stored.profile.verification.requireMatch, false);
+  stored = null;
+  storedHash = "a".repeat(64);
+  const refused = await ensureDerivedRenewalProfile({ client, workspaceId: WORKSPACE, certificateId: CERT_ID, jobId,
+    payload: { target }, certificate: { commonName: target.reference }, operation: "issue", auditWriter: async () => {} });
+  assert.equal(refused.reason, "derivation_failed");
+  assert.equal(stored, null);
+});
+
 /**
  * A realistic issue-job payload, i.e. what the scheduler would have to be able
  * to reconstruct in order to renew the certificate the same way it was issued.

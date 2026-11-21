@@ -105,6 +105,46 @@ function certificateRow() {
 }
 
 describe("shared agent-job eligibility", () => {
+  it("does not route an explicit-IP IIS job to an unqualified or stale agent", () => {
+    const candidate = agent({ platform: "win32" });
+    const job = { operation: "renew", payload: { target: { type: "windows-iis",
+      reference: "host/web", binding: { site: "site", port: 443, address: "192.0.2.10" } } } };
+    const eligibility = value => evaluateAgentJobEligibility({ agent: value, job,
+      compatibility: computeAgentCompatibility(value, {}), now: NOW });
+    assert.equal(eligibility(candidate).reason, "iis_explicit_ip_capability_unavailable");
+    assert.equal(eligibility({ ...candidate, declaredCapabilities: ["iis-explicit-ip-v1"],
+      capabilitiesUpdatedAt: new Date(NOW - 30 * 86400000).toISOString() }).reason, "iis_explicit_ip_capability_unavailable");
+    assert.equal(eligibility({ ...candidate, platform: "linux", declaredCapabilities: ["iis-explicit-ip-v1"] }).reason, "iis_explicit_ip_capability_unavailable");
+    assert.equal(eligibility({ ...candidate, declaredCapabilities: ["iis-explicit-ip-v1"] }).eligible, true);
+  });
+  it("requires the fresh dedicated store-only capability", () => {
+    const candidate = agent({
+      platform: "win32",
+      declaredCapabilities: ["adcs-enroll-v1", "windows-cert-store-v1", "evidence-claim-binding-v1"],
+    });
+    const result = evaluateAgentJobEligibility({
+      agent: candidate,
+      job: {
+        operation: "renew",
+        assignedAgentId: candidate.id,
+        issuerKind: "adcs",
+        payload: { target: { type: "windows-cert-store", reference: "app.example.com", store: "My" } },
+      },
+      compatibility: computeAgentCompatibility(candidate, {}),
+      now: NOW,
+    });
+    assert.equal(result.eligible, false);
+    assert.equal(result.reason, "windows_store_only_unavailable");
+    const qualified = { ...candidate, declaredCapabilities: [...candidate.declaredCapabilities, "windows-store-only-adcs-v1"], targetSelectors: ["app.example.com"] };
+    const job = { operation: "renew", issuerKind: "adcs", assignedAgentId: candidate.id, payload: { target: { type: "windows-cert-store", reference: "app.example.com", store: "My" } } };
+    assert.equal(evaluateAgentJobEligibility({ agent: qualified, job, compatibility: computeAgentCompatibility(qualified, {}), now: NOW }).eligible, true);
+    assert.equal(evaluateAgentJobEligibility({ agent: { ...qualified, capabilitiesUpdatedAt: new Date(NOW - 90 * 86400000).toISOString() }, job, compatibility: computeAgentCompatibility(qualified, {}), now: NOW }).eligible, false);
+    const acme = { ...job, issuerKind: "acme" };
+    assert.equal(evaluateAgentJobEligibility({ agent: qualified, job: acme, compatibility: computeAgentCompatibility(qualified, {}), now: NOW }).eligible, false);
+    const acmeQualified = { ...qualified, declaredCapabilities: [...qualified.declaredCapabilities, "windows-store-only-acme-v1"] };
+    assert.equal(evaluateAgentJobEligibility({ agent: acmeQualified, job: acme, compatibility: computeAgentCompatibility(acmeQualified, {}), now: NOW }).eligible, true);
+    assert.equal(evaluateAgentJobEligibility({ agent: acmeQualified, job: { ...acme, assignedAgentId: "other-agent" }, compatibility: computeAgentCompatibility(acmeQualified, {}), now: NOW }).eligible, false);
+  });
   it("is the exact predicate exported by the real dispatch implementation", () => {
     assert.strictEqual(
       dispatch._test.evaluateAgentJobEligibility,

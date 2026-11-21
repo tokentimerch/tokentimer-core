@@ -47,6 +47,7 @@ const reservations = Object.freeze({
   122: "certops_observed_revocation",
   123: "agent_credential_rotations",
   124: "agent_credential_rotation_ack",
+  125: "certops_adcs_preflight_lookup_index",
   126: "certops_adcs_receipt_deadline",
   127: "auto_sync_creation_expiration",
 });

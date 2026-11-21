@@ -159,6 +159,7 @@ test("authority lost during fact gathering or deletion cannot write a ledger out
       withRowLock(_initial, work) { return work({ assertHeld() { if (lost) throw loss; } }); },
       gatherContext() { if (phase === "gather") lost = true; return eligibleFacts(); },
       performCleanup() { cleanupCalls += 1; lost = true; throw loss; },
+      afterRemoved() { assert.fail("lost authority must preserve the ownership record"); },
     }), error => error === loss);
     assert.equal(cleanupCalls, phase === "cleanup" ? 1 : 0);
     assert.deepEqual(fs.readFileSync(path.join(directory, A + ".json")), before);
@@ -169,6 +170,7 @@ test("the final removed ledger row is persisted before the lock scope returns", 
   const directory = fixture();
   persist(directory, row());
   let locked = false;
+  let afterRemoved = false;
   const summary = await sweepLedger({
     ledgerDir: directory, retentionHours: 24, now: () => new Date(nowMs),
     async withRowLock(_initial, work) {
@@ -180,7 +182,14 @@ test("the final removed ledger row is persisted before the lock scope returns", 
     },
     gatherContext() { assert.equal(locked, true); return eligibleFacts(); },
     performCleanup() { assert.equal(locked, true); },
+    afterRemoved(committed) {
+      assert.equal(locked, true);
+      assert.equal(committed.lifecycleState, "removed");
+      assert.deepEqual(readLedgerRow(directory, A), committed);
+      afterRemoved = true;
+    },
   });
   assert.deepEqual(summary.removed, [A]);
+  assert.equal(afterRemoved, true);
   assert.equal(locked, false);
 });

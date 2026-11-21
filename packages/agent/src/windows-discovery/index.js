@@ -755,6 +755,30 @@ async function listHttpSysBindings({
  * @param {string} stdout
  * @returns {{ name: string, id: string, state: string, bindings: { protocol: string, address: string, port: string, hostHeader: string }[] }[]}
  */
+function canonicalIisAddress(value) {
+  if (typeof value !== "string" || value.includes("%")) return null;
+  if (value === "*") return value;
+  const bracketed = /^\[([^\]]+)\]$/.exec(value);
+  if ((value.includes("[") || value.includes("]")) && !bracketed) return null;
+  const address = bracketed ? bracketed[1] : value;
+  const family = require("node:net").isIP(address);
+  if (bracketed && family !== 6) return null;
+  if (family === 4) return address;
+  if (family !== 6) return null;
+  try { return new URL(`http://[${address}]/`).hostname.slice(1,-1); } catch { return null; }
+}
+
+function parseIisBindingInformation(value) {
+  const match = /^(\[[^\]]+\]|[^:]*):(\d+):(.*)$/.exec(value);
+  if (!match || Number(match[2]) < 1 || Number(match[2]) > 65535 || canonicalIisAddress(match[1]) === null) return null;
+  return { address: match[1], port: match[2], hostHeader: match[3] };
+}
+
+function iisMetadataKey(site, binding) {
+  const address = canonicalIisAddress(binding.address);
+  return address === null ? null : JSON.stringify([site.toLowerCase(), address, Number(binding.port), binding.hostHeader.toLowerCase()]);
+}
+
 function parseAppcmdSiteListOutput(stdout) {
   const sitePattern = /^SITE\s+"([^"]+)"\s+\(id:(\d+),bindings:(.*?),state:([^)]*)\)\s*$/gim;
   const sites = [];
@@ -766,10 +790,10 @@ function parseAppcmdSiteListOutput(stdout) {
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0)
       .map((entry) => {
-        const bindingMatch = /^([A-Za-z]+)\/([^:]*):(\d+):(.*)$/.exec(entry);
+        const bindingMatch = /^([A-Za-z]+)\/(.*)$/.exec(entry);
         if (!bindingMatch) return null;
-        const [, protocol, address, port, hostHeader] = bindingMatch;
-        return { protocol, address, port, hostHeader };
+        const binding = parseIisBindingInformation(bindingMatch[2]);
+        return binding ? { protocol: bindingMatch[1], ...binding } : null;
       })
       .filter((binding) => binding !== null);
     sites.push({ name, id, state: state.trim(), bindings });
@@ -785,10 +809,6 @@ function parseAppcmdSiteListOutput(stdout) {
  * supplementary evidence layered on top of the real http.sys binding facts,
  * and a host running plain http.sys without the IIS management console
  * feature installed is a normal configuration, not an error condition.
- *
- * Not yet real-host verified: unit-tested against a hand-authored fixture
- * modeled on the documented `appcmd list site` line format, not a captured
- * transcript from a real IIS host.
  *
  * @param {object} input
  * @param {Function} [input.execFileImpl]
@@ -818,8 +838,8 @@ async function listIisSites({
 
   // Appcmd's site summary omits sslFlags. Resolve them separately so a
   // hostname-bearing non-SNI site is not confused with an SNI binding.
-  // If IIS metadata cannot be read, leave flags unknown and preserve the
-  // conservative existing behavior for host-header/IP associations.
+  // If IIS metadata cannot be read, leave flags unknown: HTTP.sys is still
+  // observed, but it cannot safely be attributed to an IIS site.
   const script = [
     "$ErrorActionPreference = 'Stop'",
     "Import-Module WebAdministration -ErrorAction Stop",
@@ -846,7 +866,9 @@ async function listIisSites({
   const flags = new Map();
   for (const item of items) {
     if (typeof item?.site !== "string" || typeof item.bindingInformation !== "string" || !Number.isSafeInteger(item.sslFlags) || item.sslFlags < 0 || item.sslFlags > 0xffffffff) continue;
-    const key = `${item.site}\0${item.bindingInformation}`.toLowerCase();
+    const parsed = parseIisBindingInformation(item.bindingInformation);
+    const key = parsed && iisMetadataKey(item.site, parsed);
+    if (!key) continue;
     // Conflicting metadata is ambiguous and cannot establish a non-SNI match.
     if (flags.has(key) && flags.get(key) !== item.sslFlags) flags.set(key, null);
     else if (!flags.has(key)) flags.set(key, item.sslFlags);
@@ -854,7 +876,7 @@ async function listIisSites({
   for (const site of sites) {
     for (const binding of site.bindings) {
       if (binding.protocol.toLowerCase() !== "https") continue;
-      const key = `${site.name}\0${binding.address}:${binding.port}:${binding.hostHeader}`.toLowerCase();
+      const key = iisMetadataKey(site.name, binding);
       if (Number.isSafeInteger(flags.get(key))) binding.sslFlags = flags.get(key);
     }
   }
@@ -885,19 +907,21 @@ function findSitesForBinding(sites, binding) {
     const matched = site.bindings.some((siteBinding) => {
       if (siteBinding.protocol.toLowerCase() !== "https") return false;
       if (siteBinding.port !== port) return false;
+      if (!Number.isSafeInteger(siteBinding.sslFlags)) return false;
       // Centralized certificate store bindings select a certificate outside
       // this HTTP.sys IP/hostname binding and cannot be attributed to it.
       if (Number.isSafeInteger(siteBinding.sslFlags) && (siteBinding.sslFlags & 2) !== 0) return false;
       if (binding.keyedBy === "hostnameport") {
-        if (Number.isSafeInteger(siteBinding.sslFlags) && (siteBinding.sslFlags & 1) === 0) return false;
+        if (!Number.isSafeInteger(siteBinding.sslFlags) || (siteBinding.sslFlags & 1) === 0) return false;
         return siteBinding.hostHeader.toLowerCase() === addressOrHost.toLowerCase();
       }
+      if (Number.isSafeInteger(siteBinding.sslFlags) && (siteBinding.sslFlags & 1) !== 0) return false;
       if (siteBinding.hostHeader && (!Number.isSafeInteger(siteBinding.sslFlags) || (siteBinding.sslFlags & 1) !== 0)) return false;
-      return (
-        siteBinding.address === "*" ||
-        siteBinding.address === addressOrHost ||
-        addressOrHost === "0.0.0.0"
-      );
+      const siteAddress = canonicalIisAddress(siteBinding.address);
+      const httpAddress = canonicalIisAddress(addressOrHost);
+      if (!siteAddress || !httpAddress) return false;
+      return siteAddress === "*" || siteAddress === httpAddress ||
+        (httpAddress === "0.0.0.0" && require("node:net").isIP(siteAddress) === 4);
     });
     if (matched) matches.push(site.name);
   }
@@ -1007,6 +1031,7 @@ module.exports = {
   parseCertutilKeyInfo,
   buildHttpSysBindingQueryScript,
   parseHttpSysBindingQueryOutput,
+  canonicalIisAddress,
   parseAppcmdSiteListOutput,
   findSitesForBinding,
   listMachineStoreCertificates,
