@@ -14,10 +14,10 @@ A retired identity cannot register again with a new bootstrap token: the control
 
 Check the agent log, protected journal, CA order and live endpoint. Record the original job ID and any certificate fingerprint.
 
-- **Result awaiting delivery:** restore connectivity or restart the same enrolled agent. Let its outbox deliver the original result while the control plane can still accept it.
-- **Failure before any effect:** fix the cause, confirm the original attempt is terminal and no issuance or deployment occurred, then submit new work.
-- **Certificate issued:** deploy the existing certificate when its key is usable. If it is already installed, finish the missing reload and verify the live endpoint. If the endpoint already serves it, re-scan and record the result.
-- **Effects uncertain:** hold new work for the affected certificate until you can reconcile the evidence.
+- **The result is awaiting delivery.** Restore connectivity or restart the same enrolled agent. Let its outbox deliver the original result while the control plane can still accept it.
+- **The job failed before making changes.** Fix the cause, confirm the original attempt is terminal and no issuance or deployment occurred, then submit new work.
+- **The certificate was issued.** Deploy the existing certificate when its key is usable. If it is already installed, finish the missing reload and verify the live endpoint. If the endpoint already serves it, re-scan and record the result.
+- **The effects are uncertain.** Hold new work for the affected certificate until you can reconcile the evidence.
 
 ### Replace a lost host
 
