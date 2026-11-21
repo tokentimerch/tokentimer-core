@@ -1041,18 +1041,28 @@ function validateAdcsObject(value) {
 
 function loadAgentConfig({ configDir } = {}) {
   const resolvedDir = resolveConfigDir(configDir);
-  if (process.platform === "win32" && fs.existsSync(resolvedDir)) {
-    ensureConfigDir(resolvedDir);
+  let fileConfig;
+  if (process.platform === "win32") {
     const configPath = path.join(resolvedDir, CONFIG_FILE_NAME);
-    if (fs.existsSync(configPath)) {
-      const stats = fs.lstatSync(configPath);
+    const stats = fs.lstatSync(configPath, { throwIfNoEntry: false });
+    if (stats) {
       if (!stats.isFile() || stats.isSymbolicLink()) {
         throw new Error(`tokentimer-agent: ${configPath} must be a regular non-symlink file`);
       }
+      // Refuse inaccessible state before either ACL can repair its access.
+      // Read the authoritative contents only after enforcing permissions.
+      fs.closeSync(fs.openSync(configPath, "r"));
+    }
+    if (stats || fs.existsSync(resolvedDir)) {
+      ensureConfigDir(resolvedDir);
+    }
+    if (stats) {
       applyRestrictivePermissions(configPath, { kind: "file", includeAdministrators: true });
     }
+    fileConfig = stats ? readConfigFile(resolvedDir) : {};
+  } else {
+    fileConfig = readConfigFile(resolvedDir);
   }
-  const fileConfig = readConfigFile(resolvedDir);
 
   const serverUrl = process.env.TOKENTIMER_AGENT_SERVER_URL || fileConfig.serverUrl;
   if (typeof serverUrl !== "string" || serverUrl.length === 0) {
