@@ -13,7 +13,7 @@ const { runMigrations } = requireMigrateModule();
 const { pool } = require("../../apps/api/db/database");
 const {
   claimJobs,
-} = require("../../apps/api/services/certops/agentDispatch");
+} = require("./helpers/authenticated-agent-dispatch");
 const {
   AGENT_KIND_DIAGNOSTIC,
   AGENT_KIND_NORMAL,

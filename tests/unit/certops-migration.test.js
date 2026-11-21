@@ -9,6 +9,36 @@ const { migrations, validateMigrationHistory } = require(
   path.resolve(__dirname, "../../apps/api/migrations/migrate.js"),
 );
 
+describe("Store and observed revocation preview upgrades", () => {
+  const { composeMigrations } = require("../../apps/api/migrations/compose-migrations");
+  const namesByVersion = new Map(migrations.map(({ version, name }) => [version, name]));
+  const prefix = migrations.filter(({ version }) => version < 78).map(({ version, name }) => ({ version, name }));
+  const at = (start, canonicalVersions) => canonicalVersions.map((canonical, index) => ({
+    version: start + index, name: namesByVersion.get(canonical),
+  }));
+
+  for (const [history, recordedTail, missing] of [
+    ["provider preview that already applied Store", at(78, [
+      78, 79, 80, 83, 81, 82, 84, 85, 92, 93, 99, 100, 101, 86, 87, 88, 89, 90, 91,
+      94, 95, 96, 97, 98, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 126,
+    ]), at(119, [122, 127])],
+    ["MCP preview that already applied observed revocation", [
+      ...at(78, [78, 79, 80, 81, 82, 83, 84, 85]),
+      ...at(92, [92, 93, 99, 100, 101, 94, 95, 98, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 122,
+        86, 87, 88, 89, 90, 91, 96, 97]),
+    ], at(122, [115, 116, 117, 126, 127])],
+  ]) {
+    it(`preserves the ${history} and replays its extension`, () => {
+      const applied = [...prefix, ...recordedTail];
+      const composed = [...applied, ...missing];
+      validateMigrationHistory(applied);
+      assert.deepEqual(composeMigrations(migrations, applied).map(({ version, name }) => ({ version, name })), composed);
+      validateMigrationHistory(composed);
+      assert.deepEqual(composeMigrations(migrations, composed).map(({ version, name }) => ({ version, name })), composed);
+    });
+  }
+});
+
 describe("operational notifications migration", () => {
   it("appends v56 after the unchanged historical v1-v55 migrations", () => {
     const notificationMigration = migrations.find(
@@ -56,6 +86,7 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 111).name, "auto_sync_owner_username");
     assert.equal(migrations.find(entry => entry.version === 113).name, "certops_material_reconciliation");
     assert.equal(migrations.find(entry => entry.version === 114).name, "distribution_pagerduty_recovery");
+    assert.equal(migrations.find((entry) => entry.version === 126).name, "certops_adcs_receipt_deadline");
     assert.equal(migrations.find(entry => entry.version === 122).name, "certops_observed_revocation");
     assert.equal(migrations.at(-1).name, "auto_sync_creation_expiration");
     assert.equal(migrations.find(entry => entry.version === 95).name, "remove_pagerduty_rest_lookup");
@@ -67,7 +98,7 @@ describe("operational notifications migration", () => {
     assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      [...Array.from({ length: 114 }, (_, index) => index + 1), 122, 127],
+      [...Array.from({ length: 114 }, (_, index) => index + 1), 115, 116, 117, 122, 126, 127],
     );
     assert.equal(migrations.find(entry => entry.version === 73).name, "certops_job_alert_context");
     assert.match(migrations.find(entry => entry.version === 72).sql, /ON DELETE SET NULL \(issuer_id\)/);
@@ -161,9 +192,34 @@ describe("operational notifications migration", () => {
     assert.doesNotThrow(() => validateMigrationHistory(migrations.map(({version,name}) => ({version,name}))));
   });
 });
-const { JOB_OPERATIONS, SUBJECT_TYPES } = require(
+const { JOB_OPERATIONS: CURRENT_JOB_OPERATIONS, SUBJECT_TYPES } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
 );
+// Earlier migrations predate the separately gated installation-proof operation.
+const JOB_OPERATIONS = CURRENT_JOB_OPERATIONS.filter(operation => operation !== "adcs-installation-proof");
+
+describe("AD CS installation proof migration", () => {
+  it("preserves every current job operation when adding installation proof", () => {
+    const migration = migrations.find(entry => entry.name === "certops_adcs_expected_identity_receipts");
+    const declared = migration.sql.match(/operation IN\s*\(([^)]+)\)/);
+    assert.deepEqual(
+      declared[1].split(",").map(value => value.trim().replace(/^'|'$/g, "")).sort(),
+      [...CURRENT_JOB_OPERATIONS].sort(),
+    );
+  });
+
+  it("rejects the colliding store preview history without relabeling applied migrations", () => {
+    const originalPrefix = migrations.filter(entry => entry.version <= 108)
+      .map(({ version, name }) => ({ version, name }));
+    assert.throws(() => validateMigrationHistory([
+      ...originalPrefix,
+      { version: 109, name: "store_issuance_explicit_renewal_consent" },
+      { version: 110, name: "certops_acme_store_enrollment_identity" },
+      { version: 111, name: "certops_adcs_expected_identity_receipts" },
+    ]), /unexpected name|Unsupported Core migration history/);
+  });
+});
+
 const baselineMinimumSchema = JSON.parse(
   fs.readFileSync(
     path.resolve(
@@ -441,14 +497,16 @@ describe("CertOps inventory migration", () => {
     const notificationCount = notificationVersions.filter((version) => tailVersions.includes(version)).length;
     assert.ok(notificationCount === 0 || notificationCount === 4,
       "PR #140 migration versions 56-59 must arrive together");
+    const independentReservations = [118, 119, 120, 121, 123, 124, 125];
     const expectedTailVersions = Array.from(
       { length: Math.max(...tailVersions) - 10 },
       (_, index) => 11 + index,
-    ).filter((version) => (notificationCount === 4 || !notificationVersions.includes(version)) && !(version >= 115 && version <= 121) && !(version >= 123 && version <= 126));
+    ).filter((version) => !independentReservations.includes(version) &&
+      (notificationCount === 4 || !notificationVersions.includes(version)));
     assert.deepEqual(
       tailVersions,
       expectedTailVersions,
-      "migration versions from 11 onward may omit only explicit reserved slots",
+      "migration versions from 11 onward retain the released prefix and omit only independent reservations",
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -1911,8 +1969,8 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const notificationVersions = [56, 57, 58, 59];
     const notificationCount = notificationVersions.filter((version) => sorted.includes(version)).length;
     assert.ok(notificationCount === 0 || notificationCount === 4);
-    const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
-      .filter((version) => (notificationCount === 4 || !notificationVersions.includes(version)) && !(version >= 115 && version <= 121) && !(version >= 123 && version <= 126));
+    const expected = [...Array.from({ length: 114 }, (_, index) => index + 1), 115, 116, 117, 122, 126, 127]
+      .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
     assert.equal(sorted[sorted.length - 1], 127);
   });

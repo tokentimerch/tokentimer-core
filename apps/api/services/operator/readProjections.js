@@ -304,6 +304,8 @@ const PENDING_WORDING = Object.freeze({
   compatibility_blocked: "The assigned agent's version is outside what this control plane accepts, so it cannot claim any job until it is upgraded.",
   operation_unsupported: "The assigned agent does not support this kind of job, or has not been set up to run it.",
   adcs_enroll_capability_unavailable: "The assigned agent has not recently declared support for AD CS enrollment.",
+  adcs_proof_capability_unavailable: "The assigned agent cannot provide the AD CS recovery proof this job needs.",
+  windows_store_only_unavailable: "The assigned agent cannot currently install certificates directly into the Windows store.",
   trust_anchor_deploy_capability_unavailable: "The assigned agent has not recently declared support for trust-anchor distribution.",
   agent_kind_mismatch: "The assigned agent is not of the kind this job needs.",
   assigned_agent_mismatch: "This job is assigned to a different agent.",

@@ -101,6 +101,7 @@ $script:WritePathsFile = ""
 $script:AllowInsecureLocalHttp = $false
 $script:TrustStore = $false
 $script:NoTrustStore = $false
+$script:NodeExe = 'node'
 
 function Write-Log {
     param([string]$Message)
@@ -111,6 +112,226 @@ function Fail {
     param([string]$Message)
     [Console]::Error.WriteLine("install-agent: ERROR: $Message")
     exit 1
+}
+
+# Only CA choices enter the service command; arbitrary Node options stay blocked.
+function Invoke-InstallerNode {
+    param([Parameter(Mandatory)][string[]]$NodeArguments)
+    $previousOptions = [Environment]::GetEnvironmentVariable('NODE_OPTIONS', 'Process')
+    $previousPath = [Environment]::GetEnvironmentVariable('NODE_PATH', 'Process')
+    try {
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS', $null, 'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH', $null, 'Process')
+        & $script:NodeExe @NodeArguments
+        $global:LASTEXITCODE = $LASTEXITCODE
+    } finally {
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS', $previousOptions, 'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH', $previousPath, 'Process')
+    }
+}
+
+function Get-WindowsServiceCaOptions {
+    param([string[]]$Existing, [version]$NodeVersion)
+    $options = @($Existing | Where-Object { $_ -match '^(?i:NODE_OPTIONS)=' })
+    $systemCa = @($Existing | Where-Object { $_ -match '^(?i:NODE_USE_SYSTEM_CA)=' })
+    if ($options.Count -gt 1 -or $systemCa.Count -gt 1) { throw 'duplicate service CA settings require operator reconciliation' }
+    $caOptions = @()
+    if ($options.Count -eq 1) {
+        $value = $options[0].Substring($options[0].IndexOf('=') + 1)
+        if ($value -match '(?i)--(?:no[-_])?use[-_](?:system|bundled|openssl)[-_]ca') {
+            foreach ($option in @($value -split '\s+' | Where-Object { $_ -ne '' })) {
+                if ($option -ceq '--trace-warnings') { continue }
+                if ($option -cnotin @('--use-system-ca','--no-use-system-ca','--use-bundled-ca','--use-openssl-ca')) {
+                    throw 'explicit service CA options must be separate supported switches; remove other NODE_OPTIONS settings before reinstalling'
+                }
+                $caOptions += $option
+            }
+        }
+    }
+    if ($caOptions -ccontains '--use-bundled-ca' -and $caOptions -ccontains '--use-openssl-ca') {
+        throw '--use-bundled-ca and --use-openssl-ca cannot be combined'
+    }
+    $supportsFlag = ($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.15.0') -or
+        ($NodeVersion.Major -eq 23 -and $NodeVersion -ge [version]'23.8.0') -or $NodeVersion.Major -ge 24
+    $supportsEnvironment = ($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.19.0') -or $NodeVersion -ge [version]'24.6.0'
+    $hasSystemFlag = @($caOptions | Where-Object { $_ -match '^--(?:no-)?use-system-ca$' }).Count -gt 0
+    if ($hasSystemFlag -and -not $supportsFlag) { throw 'the selected Node runtime does not support the existing service system CA option' }
+    if ($systemCa.Count -eq 1 -and $systemCa[0].Substring($systemCa[0].IndexOf('=') + 1) -ceq '1' -and -not $supportsEnvironment -and -not $hasSystemFlag) {
+        if (-not $supportsFlag) { throw 'the selected Node runtime cannot preserve NODE_USE_SYSTEM_CA=1; upgrade Node or configure an explicit CA bundle' }
+        $caOptions += '--use-system-ca'
+    }
+    return $caOptions
+}
+
+function Get-WindowsServiceCaEnvironment {
+    param([string[]]$ServiceValues, [scriptblock]$GetMachineValue = { param($Name) [Environment]::GetEnvironmentVariable($Name, 'Machine') })
+    $values = New-Object System.Collections.Generic.List[string]
+    foreach ($name in @('NODE_OPTIONS','NODE_USE_SYSTEM_CA')) {
+        $overrides = @($ServiceValues | Where-Object { $_ -match ('^(?i:' + $name + ')=') })
+        if ($overrides.Count) { foreach ($entry in $overrides) { $values.Add($entry) } }
+        else {
+            $value = & $GetMachineValue $name
+            if ($null -ne $value) { $values.Add("$name=$value") }
+        }
+    }
+    return $values.ToArray()
+}
+
+function Get-WindowsServiceCaCommand {
+    param([Parameter(Mandatory)][string]$ServiceCommand)
+    if ($ServiceCommand -match '[\x00-\x08\x0a-\x1f\x7f]' -or $ServiceCommand.Contains('\"')) { throw 'service command has unsupported escaping or control characters' }
+    $parts = [regex]::Matches($ServiceCommand, '"([^"]+)"|([^ \t"]+)')
+    $rest = [regex]::Replace($ServiceCommand, '"([^"]+)"|([^ \t"]+)', '')
+    if ($rest -notmatch '^[ \t]*$') { throw 'service command has unsupported quoting' }
+    for ($i = 1; $i -lt $parts.Count; $i++) {
+        $gapStart = $parts[$i-1].Index + $parts[$i-1].Length
+        if ($ServiceCommand.Substring($gapStart, $parts[$i].Index-$gapStart) -notmatch '^[ \t]+$') { throw 'service command has unsupported token boundaries' }
+    }
+    $tokens = @($parts | ForEach-Object { if ($_.Groups[1].Success) { $_.Groups[1].Value } else { $_.Groups[2].Value } })
+    if ($tokens.Count -lt 3) { throw 'service command must name its host, Node runtime and script' }
+    foreach ($value in @($tokens[0],$tokens[1],$tokens[$tokens.Count-1])) {
+        if ($value -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+\\)' -or $value -match '[\x00-\x1f]') { throw 'service command paths must be absolute' }
+    }
+    if ([IO.Path]::GetExtension($tokens[0]) -ine '.exe' -or [IO.Path]::GetFileName($tokens[1]) -ine 'node.exe' -or [IO.Path]::GetExtension($tokens[$tokens.Count-1]) -ine '.js') { throw 'unsupported service host, runtime or script command' }
+    $options = @()
+    for ($i = 2; $i -lt $tokens.Count-1; $i++) {
+        if ($tokens[$i] -cnotin @('--use-system-ca','--no-use-system-ca','--use-bundled-ca','--use-openssl-ca')) { throw 'service command contains a non-CA Node argument' }
+        $options += $tokens[$i]
+    }
+    return $options
+}
+
+function Get-WindowsServiceCaIntent {
+    param([string[]]$CaOptions,[string[]]$Environment = @())
+    $baseTrust = $null; $systemTrust = $null
+    foreach ($option in $CaOptions) {
+        switch -CaseSensitive ($option) {
+            '--use-openssl-ca' { $baseTrust='openssl' }
+            '--use-bundled-ca' { $baseTrust='bundled' }
+            '--use-system-ca' { $systemTrust=$true }
+            '--no-use-system-ca' { $systemTrust=$false }
+        }
+    }
+    if ($null -eq $systemTrust) {
+        $setting = @($Environment | Where-Object { $_ -match '^(?i:NODE_USE_SYSTEM_CA)=' })
+        if ($setting.Count) {
+            $value = $setting[0].Substring($setting[0].IndexOf('=')+1)
+            if ($value -ceq '1') { $systemTrust=$true }
+            elseif ($value -ceq '0' -or $value -ceq '') { $systemTrust=$false }
+            else { throw 'service system CA environment setting must be 0 or 1' }
+        }
+    }
+    return [pscustomobject]@{ Base=$baseTrust; System=$systemTrust }
+}
+
+function Resolve-WindowsServiceCaOptions {
+    param([Parameter(Mandatory)]$Snapshot,[version]$NodeVersion)
+    $machineSnapshot = @($Snapshot.MachineCaEnvironment)
+    $machineReader = { param($Name)
+        $entry = @($machineSnapshot | Where-Object { $_ -match ('^(?i:' + $Name + ')=') })
+        if ($entry.Count) { return $entry[0].Substring($entry[0].IndexOf('=')+1) }
+        return $null
+    }.GetNewClosure()
+    $effective = @(Get-WindowsServiceCaEnvironment -ServiceValues $Snapshot.Environment.Values -GetMachineValue $machineReader)
+    $environmentOptions = @(Get-WindowsServiceCaOptions -Existing $effective -NodeVersion $NodeVersion)
+    $serviceHasOptions = @($Snapshot.Environment.Values | Where-Object { $_ -match '^(?i:NODE_OPTIONS)=' }).Count -gt 0
+    $machineOptions = @($machineSnapshot | Where-Object { $_ -match '^(?i:NODE_OPTIONS)=' })
+    if (-not $serviceHasOptions -and $machineOptions.Count -and @(Get-WindowsServiceCaOptions -Existing $machineOptions -NodeVersion $NodeVersion).Count) {
+        throw 'machine NODE_OPTIONS contains CA settings; configure explicit per-service trust before reinstalling'
+    }
+    $environmentIntent = Get-WindowsServiceCaIntent -CaOptions $environmentOptions -Environment $effective
+    $serviceOptions = @()
+    if ($Snapshot.Exists) {
+        $serviceOptions = @(Get-WindowsServiceCaCommand -ServiceCommand $Snapshot.BinaryPath)
+        if ($serviceOptions.Count) { $null = Get-WindowsServiceCaOptions -Existing @('NODE_OPTIONS=' + ($serviceOptions -join ' ')) -NodeVersion $NodeVersion }
+    }
+    $serviceIntent = Get-WindowsServiceCaIntent -CaOptions $serviceOptions
+    foreach ($dimension in @('Base','System')) {
+        if ($null -ne $serviceIntent.$dimension -and $null -ne $environmentIntent.$dimension -and $serviceIntent.$dimension -cne $environmentIntent.$dimension) {
+            throw 'service command and environment CA settings disagree; reconcile them before reinstalling'
+        }
+    }
+    if (-not $serviceOptions.Count) { return $environmentOptions }
+    $resolved = @($serviceOptions)
+    foreach ($option in $environmentOptions) {
+        if (($option -match '^--(?:no-)?use-system-ca$' -and $null -eq $serviceIntent.System) -or
+            ($option -in @('--use-openssl-ca','--use-bundled-ca') -and $null -eq $serviceIntent.Base)) { $resolved += $option }
+    }
+    return $resolved
+}
+
+function Assert-WindowsServiceCaSnapshot {
+    param([string]$Name,[Parameter(Mandatory)]$Expected)
+    $current = Get-WindowsServiceConfigurationSnapshot -Name $Name
+    if ($current.Exists -ne $Expected.Exists -or $current.BinaryPath -cne $Expected.BinaryPath -or $current.Environment.Present -ne $Expected.Environment.Present) { throw 'service trust settings changed since preflight; preserve staged files and reconcile before retrying' }
+    $pairs = @(
+        [pscustomobject]@{ Current = @($current.Environment.Values); Expected = @($Expected.Environment.Values) },
+        [pscustomobject]@{ Current = @($current.MachineCaEnvironment); Expected = @($Expected.MachineCaEnvironment) }
+    )
+    foreach ($pair in $pairs) {
+        if ($pair.Current.Count -ne $pair.Expected.Count) { throw 'service trust settings changed since preflight; preserve staged files and reconcile before retrying' }
+        for ($i=0; $i -lt $pair.Current.Count; $i++) {
+            if ($pair.Current[$i] -cne $pair.Expected[$i]) { throw 'service trust settings changed since preflight; preserve staged files and reconcile before retrying' }
+        }
+    }
+}
+
+function Get-WindowsServiceBinPath {
+    param([string]$AppDirectory, [string]$NodeExecutable, [string]$Architecture, [string[]]$CaOptions = @())
+    if (@($CaOptions | Where-Object { $_ -cnotin @('--use-system-ca','--no-use-system-ca','--use-bundled-ca','--use-openssl-ca') }).Count) {
+        throw 'unsupported service CA argument'
+    }
+    $nodeFlags = if ($CaOptions.Count) { ' ' + ($CaOptions -join ' ') } else { '' }
+    $hostExe = Join-Path $AppDirectory "bin\tokentimer-agent-host-$($Architecture.ToLowerInvariant()).exe"
+    $entry = Join-Path $AppDirectory 'bin\tokentimer-agent.js'
+    return '"{0}" "{1}"{2} "{3}"' -f $hostExe, $NodeExecutable, $nodeFlags, $entry
+}
+
+function Get-WindowsServiceEnvironmentValues {
+    param([string[]]$Existing, [string]$ConfigDir, [string]$Token)
+    $values = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in $Existing) {
+        if ($entry -and $entry -notmatch '^(?i:TOKENTIMER_AGENT_CONFIG_DIR|TOKENTIMER_AGENT_BOOTSTRAP_TOKEN)=') { $values.Add($entry) }
+    }
+    $values.Add("TOKENTIMER_AGENT_CONFIG_DIR=$ConfigDir")
+    if (-not [string]::IsNullOrEmpty($Token)) { $values.Add("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=$Token") }
+    return $values.ToArray()
+}
+
+function Get-WindowsServiceEnvironmentSnapshot {
+    param([string]$ServiceKey)
+    try { $item = Get-ItemProperty -Path $ServiceKey -ErrorAction Stop }
+    catch [System.Management.Automation.ItemNotFoundException] { return [pscustomobject]@{ Present = $false; Values = @() } }
+    $property = if ($null -ne $item) { $item.PSObject.Properties['Environment'] } else { $null }
+    if ($null -eq $property) { return [pscustomobject]@{ Present = $false; Values = @() } }
+    $values = @($property.Value | Where-Object { $null -ne $_ })
+    if (@($values | Where-Object { $_ -isnot [string] }).Count) { throw 'service environment is not a string list' }
+    return [pscustomobject]@{ Present = $true; Values = $values }
+}
+
+function Get-WindowsServiceConfigurationSnapshot {
+    param([string]$Name)
+    $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$Name'" -ErrorAction Stop
+    $environment = Get-WindowsServiceEnvironmentSnapshot -ServiceKey "HKLM:\SYSTEM\CurrentControlSet\Services\$Name"
+    $machine = @(Get-WindowsServiceCaEnvironment -ServiceValues @())
+    if (-not $service) { return [pscustomobject]@{ Exists = $false; BinaryPath = $null; DisplayName = $null; Environment = $environment; MachineCaEnvironment = $machine } }
+    if ([string]::IsNullOrWhiteSpace([string]$service.PathName)) { throw 'the previous service command is unavailable' }
+    return [pscustomobject]@{ Exists = $true; BinaryPath = [string]$service.PathName; DisplayName = [string]$service.DisplayName; Environment = $environment; MachineCaEnvironment = $machine }
+}
+
+function Restore-WindowsServiceConfiguration {
+    param([string]$Name, [Parameter(Mandatory)]$Snapshot)
+    if (-not $Snapshot.Exists -or [string]::IsNullOrWhiteSpace([string]$Snapshot.BinaryPath)) {
+        throw 'the previous service configuration is unavailable; preserve the application and reconcile the service manually'
+    }
+    Set-ServiceBinaryPath -ServiceName $Name -BinPath $Snapshot.BinaryPath -DisplayName $Snapshot.DisplayName
+    $key = "HKLM:\SYSTEM\CurrentControlSet\Services\$Name"
+    if ($Snapshot.Environment.Present) {
+        New-ItemProperty -Path $key -Name Environment -PropertyType MultiString -Value ([string[]]$Snapshot.Environment.Values) -Force -ErrorAction Stop | Out-Null
+    } else {
+        $current = Get-ItemProperty -Path $key -ErrorAction Stop
+        if ($null -ne $current.PSObject.Properties['Environment']) { Remove-ItemProperty -Path $key -Name Environment -ErrorAction Stop }
+    }
 }
 
 # Runs (or prints, under -DryRun) a non-secret action. Never pass the
@@ -381,7 +602,7 @@ if (($script:ApiUrl + $script:WorkspaceId) -match '[\x00-\x08\x0B\x0C\x0E-\x1F\x
 if (-not (Test-Path -LiteralPath $ValidateServerUrlJs)) { Fail "server URL validator not found: $ValidateServerUrlJs" }
 $validateArgs = @($script:ApiUrl)
 if ($script:AllowInsecureLocalHttp) { $validateArgs += "--allow-insecure-local-http" }
-$normalizedApiUrl = & node $ValidateServerUrlJs @validateArgs 2>$null
+$normalizedApiUrl = Invoke-InstallerNode -NodeArguments (@($ValidateServerUrlJs) + $validateArgs) 2>$null
 if ($LASTEXITCODE -ne 0) {
     Fail "--api-url was rejected by the same rule the agent runtime uses (https required; http only for loopback with --allow-insecure-local-http)"
 }
@@ -439,7 +660,7 @@ $script:WritePaths = $validatedWritePaths
 
 $validatedReloadServices = New-Object System.Collections.Generic.List[string]
 foreach ($reloadService in $script:ReloadServices) {
-    & node $HostSandboxJs map-reload-service $reloadService | Out-Null
+    Invoke-InstallerNode -NodeArguments @($HostSandboxJs, 'map-reload-service', $reloadService) | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "invalid --reload-service: $reloadService" }
     $validatedReloadServices.Add($reloadService)
 }
@@ -469,7 +690,7 @@ $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
 if (-not $nodeCommand) {
     Fail "node is not installed or not on PATH; the agent requires Node '$requiredRange'"
 }
-$nodeVersionRaw = (& node -v).Trim()
+$nodeVersionRaw = (Invoke-InstallerNode -NodeArguments @('-v')).Trim()
 $nodeMajorMatch = [regex]::Match($nodeVersionRaw, '^v([0-9]+)')
 if (-not $nodeMajorMatch.Success) {
     Fail "could not parse installed Node version from 'node -v' (got '$nodeVersionRaw')"
@@ -480,6 +701,13 @@ if ($nodeMajor -lt $requiredMajor) {
 }
 Write-Log "Node $nodeVersionRaw satisfies engines.node '$requiredRange'."
 $script:NodeExe = $nodeCommand.Source
+$caVersion = [regex]::Match($nodeVersionRaw, '^v([0-9]+)\.([0-9]+)\.([0-9]+)')
+if (-not $caVersion.Success) { Fail 'could not determine Node version for the service CA policy' }
+$script:NodeVersion = [version]("{0}.{1}.{2}" -f $caVersion.Groups[1].Value, $caVersion.Groups[2].Value, $caVersion.Groups[3].Value)
+try {
+    $script:PreviousServiceConfiguration = Get-WindowsServiceConfigurationSnapshot -Name $ServiceName
+    $script:NodeCaOptions = @(Resolve-WindowsServiceCaOptions -Snapshot $script:PreviousServiceConfiguration -NodeVersion $script:NodeVersion)
+} catch { Fail "service CA policy validation failed before installation changes ($($_.Exception.Message))" }
 
 # --------------------------------------------------- platform module helper
 # Reuses the package's own src/platform module (already ACL-tested; see
@@ -506,7 +734,7 @@ function Invoke-PlatformAcl {
     $scriptPath = Join-Path ([System.IO.Path]::GetTempPath()) "tokentimer-acl-$PID-$([guid]::NewGuid().ToString('N')).js"
     try {
         [System.IO.File]::WriteAllText($scriptPath, $jsSource, (New-Object System.Text.UTF8Encoding($false)))
-        & node $scriptPath
+        Invoke-InstallerNode -NodeArguments @($scriptPath)
         if ($LASTEXITCODE -ne 0) {
             Fail "failed to apply a restricted ACL to $TargetPath (kind=$Kind)"
         }
@@ -775,6 +1003,7 @@ if (-not $script:DryRun) {
     catch { Fail "native package preflight failed before installation changes ($($_.Exception.Message))" }
 }
 
+if (-not $script:DryRun) { Assert-WindowsServiceCaSnapshot -Name $ServiceName -Expected $script:PreviousServiceConfiguration }
 Write-Log "Installing agent package from $PackageDir to $AppDir"
 if (-not $script:DryRun) {
     New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
@@ -803,6 +1032,7 @@ if ($script:DryRun) {
         Fail "failed to stage the agent package; $AppDir was left untouched ($stagingError)"
     }
     try {
+        Assert-WindowsServiceCaSnapshot -Name $ServiceName -Expected $script:PreviousServiceConfiguration
         Activate-StagedPackage -AppDirectory $AppDir -StagingDirectory $script:AppStaging -PreviousDirectory $script:AppPrevious -ExpectedStagingIdentity $stagingIdentity
     } catch {
         Fail $_.Exception.Message
@@ -878,7 +1108,7 @@ if ((Test-Path -LiteralPath $configPath) -and -not $script:DryRun) {
     Invoke-PlatformAcl -TargetPath $configPath -Kind "file"
     # Sanity-parse the result with the node we already verified, so a bad
     # value can never install an unreadable config.
-    & node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" $configPath
+    Invoke-InstallerNode -NodeArguments @('-e', "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))", $configPath)
     if ($LASTEXITCODE -ne 0) {
         Fail "generated $configPath is not valid JSON (unexpected characters in --api-url/--workspace-id?)"
     }
@@ -911,13 +1141,12 @@ if ($script:DryRun) {
 # wrapper. LocalSystem per ADR-0012 decision 11.
 function Set-ServiceEnvironment {
     param([string]$ConfigDir, [string]$Token)
-    $values = New-Object System.Collections.Generic.List[string]
-    $values.Add("TOKENTIMER_AGENT_CONFIG_DIR=$ConfigDir")
-    if (-not [string]::IsNullOrEmpty($Token)) {
-        $values.Add("TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=$Token")
+    $existing = @($script:PreviousServiceConfiguration.Environment.Values)
+    if (-not @($existing | Where-Object { $_ -match '^(?i:NODE_USE_SYSTEM_CA)=' }).Count) {
+        $existing += @($script:PreviousServiceConfiguration.MachineCaEnvironment | Where-Object { $_ -match '^(?i:NODE_USE_SYSTEM_CA)=' })
     }
-    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" `
-        -Name "Environment" -PropertyType MultiString -Value $values.ToArray() -Force | Out-Null
+    $values = @(Get-WindowsServiceEnvironmentValues -Existing $existing -ConfigDir $ConfigDir -Token $Token)
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" -Name Environment -PropertyType MultiString -Value $values -Force | Out-Null
 }
 
 function Test-ServiceHealthy {
@@ -956,8 +1185,6 @@ function Set-ServiceBinaryPath {
     }
 }
 
-$quotedNode = '"' + $script:NodeExe + '"'
-$quotedEntry = '"' + (Join-Path $AppDir "bin\tokentimer-agent.js") + '"'
 
 # The service's binPath is the native host, not node.exe: node never calls
 # StartServiceCtrlDispatcher, so the SCM would otherwise fail the start
@@ -974,8 +1201,7 @@ if (-not $script:DryRun -and -not (Test-Path -LiteralPath $serviceHostExe)) {
         "or was not built with 'pnpm run build:windows-service-host' before packaging"
     )
 }
-$quotedServiceHost = '"' + $serviceHostExe + '"'
-$binPath = "$quotedServiceHost $quotedNode $quotedEntry"
+$binPath = Get-WindowsServiceBinPath -AppDirectory $AppDir -NodeExecutable $script:NodeExe -Architecture $arch -CaOptions $script:NodeCaOptions
 
 # sc.exe's binPath= value here is three separately-quoted path segments
 # (host exe, node.exe, entry script). An earlier fix wrapped the whole
@@ -1013,6 +1239,7 @@ if ($script:DryRun) {
 # rewrite the machine-wide node.exe policy or infer containment from a registry
 # value. Native crash containment remains a separate qualification requirement.
 
+Assert-WindowsServiceCaSnapshot -Name $ServiceName -Expected $script:PreviousServiceConfiguration
 $serviceExisted = [bool](Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)
 if (-not $serviceExisted) {
     New-Service -Name $ServiceName -BinaryPathName $binPath -DisplayName $ServiceDisplayName `
@@ -1061,9 +1288,8 @@ if (-not $healthy -and $script:IsUpgrade -and (Test-Path -LiteralPath $script:Ap
     Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $AppDir -Recurse -Force
     Rename-Item -LiteralPath $script:AppPrevious -NewName (Split-Path -Leaf $AppDir)
-    $rollbackBinPath = $binPath
-    Set-ServiceBinaryPath -ServiceName $ServiceName -BinPath $rollbackBinPath -DisplayName $ServiceDisplayName
-    Set-ServiceEnvironment -ConfigDir $StateDir -Token ""
+    try { Restore-WindowsServiceConfiguration -Name $ServiceName -Snapshot $script:PreviousServiceConfiguration }
+    catch { Fail "rollback requires service reconciliation; preserve the restored application and state ($($_.Exception.Message))" }
     Start-Service -Name $ServiceName -ErrorAction SilentlyContinue
     # The credential file's ACL must be re-asserted after rollback, not
     # inherited from whatever the failed install left behind.

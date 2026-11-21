@@ -159,7 +159,7 @@ foreach($command in $commands){
   }
 });
 
-function run(t, failure = "") {
+function run(t, failure = "", iisMode = "required") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-member-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const wrapper = path.join(dir, "probe.ps1");
@@ -198,13 +198,14 @@ function Set-DnsClientServerAddress {
   }
 }
 function Resolve-DnsName { param($Name,$Type,$ErrorAction) Fail-At 'dns-lookup'; if($Name -ne '_ldap._tcp.dc._msdcs.lab.certops.test' -or $Type -ne 'SRV'){throw 'Wrong discovery query'} }
-function Install-WindowsFeature { param($Name,[switch]$IncludeManagementTools) Fail-At 'iis-install'; [pscustomobject]@{Success=($env:CERTOPS_MEMBER_FAILURE -ne 'iis-unsuccessful')} }
+function Install-WindowsFeature { param($Name,[switch]$IncludeManagementTools) Fail-At 'iis-install'; Write-Output 'IIS_INSTALL_CALLED'; [pscustomobject]@{Success=($env:CERTOPS_MEMBER_FAILURE -ne 'iis-unsuccessful')} }
+function Get-WindowsFeature { param($Name,$ErrorAction) Fail-At 'iis-check'; if($Name -ne 'Web-Server'){throw 'Unexpected feature'}; [pscustomobject]@{Installed=($env:CERTOPS_MEMBER_FAILURE -eq 'iis-present')} }
 function Add-Computer { param($DomainName,$Credential,[switch]$Force) Fail-At 'domain-join'; if($DomainName -ne 'lab.certops.test' -or $Credential.UserName -ne 'TTQUAL\tt-lab-admin' -or $Credential.GetNetworkCredential().Password -ne 'fixture-private-password'){throw 'Wrong join credential'}; Write-Output 'JOIN_CALLED' }
-& $env:CERTOPS_MEMBER_SCRIPT -DomainPassword 'fixture-private-password'
+& $env:CERTOPS_MEMBER_SCRIPT -DomainPassword 'fixture-private-password' -IisMode $env:CERTOPS_MEMBER_IIS_MODE
 `);
   return spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", wrapper], {
     encoding: "utf8", windowsHide: true, timeout: 15000,
-    env: { ...process.env, CERTOPS_MEMBER_FAILURE: failure, CERTOPS_MEMBER_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/domain-member.ps1") },
+    env: { ...process.env, CERTOPS_MEMBER_FAILURE: failure, CERTOPS_MEMBER_IIS_MODE: iisMode, CERTOPS_MEMBER_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/domain-member.ps1") },
   });
 }
 
@@ -212,6 +213,17 @@ test("member bootstrap emits its join receipt only after Add-Computer succeeds",
   const result = run(t);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /DNS_CONFIGURED[\s\S]*JOIN_CALLED[\s\S]*CERTOPS_STAGE=member-joined-reboot-required/);
+});
+
+test("a no-IIS qualification member refuses an installed role without modifying it", t => {
+  const absent = run(t, "", "absent");
+  assert.equal(absent.status, 0, absent.stdout + absent.stderr);
+  assert.match(absent.stdout, /JOIN_CALLED[\s\S]*CERTOPS_STAGE=member-joined-reboot-required/);
+  assert.doesNotMatch(absent.stdout, /IIS_INSTALL_CALLED/);
+  const present = run(t, "iis-present", "absent");
+  assert.notEqual(present.status, 0);
+  assert.match(present.stdout, /CERTOPS_MEMBER_FAILURE=iis-check:/);
+  assert.doesNotMatch(present.stdout, /IIS_INSTALL_CALLED|JOIN_CALLED/);
 });
 
 test("member failures expose bounded phase diagnostics without exporting credentials", t => {

@@ -11,7 +11,7 @@ import {
   reportedCertificates,
   scopeAgents,
 } from './certopsMatrix.js';
-import { scopeAdcs } from './adcsModel.js';
+import { scopeAdcs, scopeStoreIssuance } from './adcsModel.js';
 import { scopeDistribution } from './distributionModel.js';
 
 export const CHECK_STATUS = { PASS: 'pass', FAIL: 'fail', WARN: 'warn' };
@@ -105,6 +105,7 @@ export function evaluateVerification({
   clusterId,
   agentId,
   issuerId,
+  storeIssueJobId,
   distributionId,
 }) {
   const checks = [];
@@ -289,23 +290,38 @@ export function evaluateVerification({
         const ready =
           (adcs?.issuers || []).some(i => i.confirmed && i.safe) &&
           (adcs?.profiles || 0) > 0;
-        // The installed-enrollment count is reported for the whole workspace.
-        const installed = (adcs?.installedEnrollments || 0) > 0;
+        // The IIS installation count represents the whole workspace.
+        const storeIssue = scopeStoreIssuance(adcs, {
+          storeIssueJobId,
+          chosenAgentId: agentId,
+          chosenIssuerId: issuerId,
+        });
+        const installed = storeIssueJobId
+          ? storeIssue?.installed === true
+          : (adcs?.installedIisEnrollments || 0) > 0;
         checks.push(
           installed
             ? check(
                 'adcs',
                 CHECK_STATUS.PASS,
-                'The workspace reports an installed AD CS certificate',
-                'Confirm the enrollment for your certificate in Certificate Management and check the HTTPS binding.'
+                storeIssueJobId
+                  ? 'A certificate from your CA is installed'
+                  : 'The workspace reports an installed AD CS certificate',
+                storeIssueJobId
+                  ? 'The certificate and key were verified in the Windows machine store. Service activation is separate.'
+                  : 'Confirm the enrollment for your certificate in Certificate Management and check the HTTPS binding.'
               )
             : check(
                 'adcs',
                 CHECK_STATUS.WARN,
-                ready
-                  ? 'Issuer and profile exist, enrollment is not verified'
-                  : 'The AD CS issuer or profile is missing',
-                'Attach the profile to a certificate and confirm the first enrollment in Certificate Management.'
+                storeIssueJobId
+                  ? 'Windows store installation is not verified yet'
+                  : ready
+                    ? 'Issuer and profile exist, enrollment is not verified'
+                    : 'The AD CS issuer or profile is missing',
+                storeIssueJobId
+                  ? 'Follow the issuance job until the agent verifies the certificate and key in the Windows store.'
+                  : 'Attach the profile to a certificate and confirm the first enrollment in Certificate Management.'
               )
         );
       }

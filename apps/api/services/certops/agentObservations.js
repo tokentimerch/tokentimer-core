@@ -1026,6 +1026,7 @@ async function persistAgentDiscoveryEvidenceBatch({
   const client = await dbPool.connect();
   try {
     await client.query("BEGIN");
+    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
     await enforceSequence({
       client,
       agentRowId: agent.id,
@@ -1087,6 +1088,7 @@ async function persistAgentJobEvidenceBatch({
   const client = await dbPool.connect();
   try {
     await client.query("BEGIN");
+    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
     await enforceSequence({
       client,
       agentRowId: agent.id,
@@ -1100,6 +1102,7 @@ async function persistAgentJobEvidenceBatch({
     });
 
     const created = [];
+    const expectedIdentityReceipts = [];
     for (const item of evidenceItems) {
       if (!item || typeof item !== "object" || Array.isArray(item)) {
         throw observationError("evidence item is invalid");
@@ -1114,6 +1117,27 @@ async function persistAgentJobEvidenceBatch({
       }
 
       const clientMeta = metadataMapFromItem(item);
+      if (clientMeta.step === "acme-store-receipt") {
+        if (item.eventType !== "validation.passed" || !binding?.claimId) {
+          throw observationError("ACME store receipt requires a verified claim");
+        }
+        // Reconstruct authenticated identity from the server context. The
+        // receipt and ordinary evidence commit together or neither does.
+        const receipt = {
+          agentId: String(agent.id), jobId, claimId: String(binding.claimId),
+          enrollmentId: clientMeta.enrollmentId, requestSha256: clientMeta.requestSha256,
+          containerName: clientMeta.containerName, state: clientMeta.state,
+        };
+        for (const field of ["csrSha256", "csrSpkiSha256", "leafSpkiSha256", "orderReferenceSha256", "store", "keyPossessionVerified", "machineKey", "nonExportable"]) {
+          if (clientMeta[field] !== undefined) receipt[field] = clientMeta[field];
+        }
+        if (item.fingerprintSha256 !== undefined && item.fingerprintSha256 !== null) receipt.fingerprintSha256 = item.fingerprintSha256;
+        await (deps.applyAcmeStoreReceiptTx || require("./acmeStorePersistence").applyAcmeStoreReceiptTx)({
+          client, workspaceId: agent.workspaceId, enrollmentId: clientMeta.enrollmentId,
+          authenticatedAgentRowId: String(agent.id), claimId: String(binding.claimId),
+          receiptId: clientMeta.receiptId, evidence: receipt,
+        });
+      }
       // Security-relevant invariant (B18): server-owned fields win.
       const metadata = {
         ...clientMeta,
@@ -1143,10 +1167,26 @@ async function persistAgentJobEvidenceBatch({
         claimId: binding?.claimId || null,
         attemptCount: binding?.attemptCount ?? null,
       });
+      if (clientMeta.step === "adcs.expected-identity") {
+        if (item.eventType !== "validation.passed" || !evidence?.id) throw observationError("AD CS expected identity requires persisted claim evidence");
+        const receipt = await (deps.recordAdcsExpectedIdentityTx || require("./adcsProofRecovery").recordAdcsExpectedIdentityTx)({
+          client, agent, jobId, evidenceId: String(evidence.id),
+        });
+        expectedIdentityReceipts.push(receipt.receiptId);
+      }
       if (evidence) created.push(evidence);
     }
 
     await client.query("COMMIT");
+    if (expectedIdentityReceipts.length) {
+      await client.query("BEGIN");
+      for (const receiptId of expectedIdentityReceipts) {
+        await (deps.witnessCommittedAdcsIdentityTx || require("./adcsProofRecovery").witnessCommittedAdcsIdentityTx)({
+          client, agent, jobId, receiptId,
+        });
+      }
+      await client.query("COMMIT");
+    }
     return { ok: true, evidenceCount: created.length, items: created };
   } catch (error) {
     try {

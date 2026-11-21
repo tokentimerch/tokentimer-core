@@ -8,17 +8,21 @@ const path = require("node:path");
 const {
   CERTOPS_APPROVAL_APPROVER_REQUIRED,
   CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
+  CERTOPS_APPROVAL_STORE_ENROLLMENT_UNAVAILABLE,
   CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
   approveJob,
   computeJobPayloadApprovalHash,
+  computeCanonicalIntentHash,
+  loadStoreApprovalBinding,
   rejectJob,
   requestApprovalState,
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/jobApprovals.js"),
 );
-const { claimJobs } = require(
+const { claimJobs: claimJobsImpl } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/agentDispatch.js"),
 );
+const claimJobs = options => claimJobsImpl({ ...options, deps: { assertCurrentAgentCredential: async () => {}, ...options.deps } });
 const {
   canonicalizeJobPayload,
 } = require(
@@ -90,6 +94,59 @@ describe("jobApprovals.computeJobPayloadApprovalHash", () => {
 });
 
 describe("jobApprovals.approveJob", () => {
+  it("binds AD CS approval to the persisted snapshot and assigned agent", async () => {
+    const { freezeSnapshot } = require("../../apps/api/services/certops/enrollmentLifecycle");
+    const target = { type: "windows-cert-store", reference: "web.example.com", store: "My" };
+    const issuerId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const agentId = "11111111-2222-4333-8444-555555555555";
+    const enrollmentId = "66666666-7777-4888-8999-aaaaaaaaaaaa";
+    const destinationSha256 = sha256Hex(JSON.stringify(target));
+    const frozen = freezeSnapshot({ issuerId, issuerVersion: 1, caConfig: "ca\\CA", caKeySha256: "ab".repeat(32), template: "WebServer",
+      authorizedDnsNames: [target.reference], keyAlgorithm: "rsa", keySize: 2048, destinationType: target.type, destinationSha256, predecessorFingerprintSha256: null });
+    const payload = { keyMode: "os-store-managed", target };
+    const db = createMockDb((sql, params) => {
+      if (sql.includes("FROM certificate_jobs")) return { rows: [jobRow({ operation: "issue", payload, subject_type: "managed_certificate", subject_id: JOB_ID, enrollment_id: enrollmentId, assigned_agent_id: agentId })] };
+      if (sql.includes("FROM certificate_enrollments")) return { rows: [{ id: enrollmentId, agent_id: agentId, issuer_id: issuerId, snapshot_bytes: frozen.bytes, snapshot_sha256: frozen.sha256, deploy_target: target, state: "requested" }] };
+      if (sql.includes("UPDATE certificate_jobs")) return { rows: [{ id: JOB_ID, status: "pending", approved_by_user_id: params[2], approved_payload_hash: params[3], approved_canonical_intent_hash: params[4] }] };
+      if (sql.includes("INSERT INTO certops_job_approvals")) return { rows: [{ id: "approval", workspace_id: WORKSPACE_A, job_id: JOB_ID, decision: "approved", payload_hash: params[4], canonical_intent_hash: params[5] }] };
+      if (sql.includes("INSERT INTO audit_events")) return { rows: [] };
+      throw new Error(sql);
+    });
+    const result = await approveJob({ client: db, workspaceId: WORKSPACE_A, jobId: JOB_ID, approverUserId: 9, logAppender: noopLogAppender() });
+    const binding = { enrollmentId, agentId, issuerId, snapshotSha256: frozen.sha256 };
+    assert.equal(result.canonicalIntentHash, computeCanonicalIntentHash({ operation: "issue", subjectType: "managed_certificate", subjectId: JOB_ID, payload, adcsApprovalBinding: binding }));
+    const record = db.state.queries.find(q => q.text.includes("FROM certificate_enrollments"));
+    assert.match(record.text, /FOR SHARE OF e/);
+    assert.deepEqual(record.params.slice(0, 4), [WORKSPACE_A, enrollmentId, agentId, JOB_ID]);
+    const continuationDb = createMockDb(() => ({ rows: [{ id: enrollmentId, agent_id: agentId, issuer_id: issuerId,
+      snapshot_bytes: frozen.bytes, snapshot_sha256: frozen.sha256, deploy_target: target, state: "installing" }] }));
+    assert.deepEqual(await loadStoreApprovalBinding(continuationDb, { workspaceId: WORKSPACE_A, operation: "continue-enrollment",
+      enrollmentId, assignedAgentId: agentId, subjectType: "managed_certificate", subjectId: JOB_ID, payload }), binding);
+    let queries = 0;
+    const busyDb = createMockDb(() => ({ rows: ++queries === 1 ? [] : [{ id: enrollmentId }] }));
+    assert.equal(await loadStoreApprovalBinding(busyDb, { workspaceId: WORKSPACE_A, operation: "issue", enrollmentId,
+      assignedAgentId: agentId, subjectType: "managed_certificate", subjectId: JOB_ID, payload }), undefined);
+  });
+  for (const operation of ["issue", "renew"]) {
+    it(`refuses ${operation} store approval until the enrollment snapshot is bound`, async () => {
+      const db = createMockDb((sql) => {
+        if (sql.includes("FROM certificate_jobs")) return { rows: [jobRow({ operation,
+          payload: { target: { type: "windows-cert-store", reference: "web.example.com", store: "My" } } })] };
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      await assert.rejects(approveJob({ client: db, workspaceId: WORKSPACE_A, jobId: JOB_ID, approverUserId: 9 }),
+        (error) => error.code === CERTOPS_APPROVAL_STORE_ENROLLMENT_UNAVAILABLE);
+      assert.equal(db.state.queries.some((q) => q.text.includes("UPDATE certificate_jobs")), false);
+    });
+  }
+  it("still refuses an ACME renewal lacking its approved profile", async () => {
+    const db = createMockDb((sql) => {
+      if (sql.includes("FROM certificate_jobs")) return { rows: [jobRow({ operation: "renew", payload: { target: { type: "domain", reference: "web.example.com" } } })] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await assert.rejects(approveJob({ client: db, workspaceId: WORKSPACE_A, jobId: JOB_ID, approverUserId: 9 }),
+      (error) => ["CERTOPS_RENEWAL_PROFILE_INCOMPLETE", "CERTOPS_RENEWAL_PROFILE_INVALID"].includes(error.code));
+  });
   it("rejects the requester approving their own job with the 403-shaped code", async () => {
     const db = createMockDb((sql) => {
       if (sql.includes("FROM certificate_jobs")) {
@@ -540,6 +597,52 @@ describe("agentDispatch.claimJobs approval-hash guard", () => {
       query: client.query,
     };
   }
+
+  it("invalidates a legacy approved store job even with a matching payload hash and qualified agent", async () => {
+    const payload = { target: { type: "windows-cert-store", reference: "web.example.com", store: "My" } };
+    const hash = sha256Hex(canonicalizeJobPayload(payload));
+    const invalidations = [];
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("declared_target_selectors")) return { rows: [{ platform: "win32", declared_capabilities: ["windows-store-only-adcs-v1", "adcs-enroll-v1", "evidence-claim-binding-v1"], capabilities_updated_at: new Date() }] };
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: [{ id: JOB_ID, workspace_id: WORKSPACE_A, operation: "renew", subject_type: null,
+        subject_id: null, payload, enrollment_id: "enrollment-1", assigned_agent_id: "agent-row-1", approved_payload_hash: hash }] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const result = await claimJobs({ dbPool, agent: agentFixture(), body: { maxJobs: 1, supportedActions: ["renew"] }, env: {},
+      deps: { ...CLAIM_DEPS_BASE, invalidateApprovalForClaim: async (options) => { invalidations.push(options); } } });
+    assert.deepEqual(result.jobs, []);
+    assert.equal(invalidations.length, 1);
+    assert.equal(invalidations[0].jobId, JOB_ID);
+  });
+
+  it("invalidates a store approval when the enrollment snapshot is substituted", async () => {
+    const { freezeSnapshot } = require("../../apps/api/services/certops/enrollmentLifecycle");
+    const target = { type: "windows-cert-store", reference: "web.example.com", store: "My" };
+    const issuerId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const enrollmentId = "66666666-7777-4888-8999-aaaaaaaaaaaa";
+    const payload = { keyMode: "os-store-managed", target };
+    const original = freezeSnapshot({ issuerId, issuerVersion: 1, caConfig: "ca\\CA", caKeySha256: "ab".repeat(32), template: "WebServer",
+      authorizedDnsNames: [target.reference], keyAlgorithm: "rsa", keySize: 2048, destinationType: target.type,
+      destinationSha256: sha256Hex(JSON.stringify(target)), predecessorFingerprintSha256: null });
+    const changed = freezeSnapshot({ ...original.snapshot, template: "OtherTemplate" });
+    const binding = { enrollmentId, agentId: "agent-row-1", issuerId, snapshotSha256: original.sha256 };
+    const originalIntent = computeCanonicalIntentHash({ operation: "renew", subjectType: "managed_certificate", subjectId: JOB_ID, payload, adcsApprovalBinding: binding });
+    const invalidations = [];
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("declared_target_selectors")) return { rows: [{ platform: "win32", declared_capabilities: ["windows-store-only-adcs-v1", "adcs-enroll-v1", "evidence-claim-binding-v1"], capabilities_updated_at: new Date() }] };
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: [{ id: JOB_ID, workspace_id: WORKSPACE_A, operation: "renew", subject_type: "managed_certificate",
+        subject_id: JOB_ID, payload, enrollment_id: enrollmentId, assigned_agent_id: "agent-row-1", approved_payload_hash: sha256Hex(canonicalizeJobPayload(payload)), approved_canonical_intent_hash: originalIntent }] };
+      if (sql.includes("SELECT state FROM certificate_enrollments")) return { rows: [{ state: "requested" }] };
+      if (sql.includes("SELECT e.id,e.agent_id")) return { rows: [{ id: enrollmentId, agent_id: "agent-row-1", issuer_id: issuerId, snapshot_bytes: changed.bytes, snapshot_sha256: changed.sha256, deploy_target: target, state: "requested" }] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const result = await claimJobs({ dbPool, agent: agentFixture(), body: { maxJobs: 1, supportedActions: ["renew"] }, env: {},
+      deps: { ...CLAIM_DEPS_BASE, invalidateApprovalForClaim: async (options) => { invalidations.push(options); } } });
+    assert.deepEqual(result.jobs, []);
+    assert.equal(invalidations.length, 1);
+  });
 
   it("skips a payload-edited approved job and flips it back to pending_approval", async () => {
     const editedPayload = { domain: "evil.example.com" };

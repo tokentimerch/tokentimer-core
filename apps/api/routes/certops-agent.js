@@ -350,6 +350,8 @@ function agentRateLimitIdentity(req, _res, next) {
 
 function handleAgentRouteError(res, error) {
   switch (error?.code) {
+    case "CERTOPS_AGENT_CREDENTIAL_INVALID":
+      return res.status(401).json({ error: "CertOps agent authentication required", code: "CERTOPS_AGENT_UNAUTHORIZED" });
     case CERTOPS_AGENT_MESSAGE_INVALID:
       return res.status(400).json({
         error: error.message,

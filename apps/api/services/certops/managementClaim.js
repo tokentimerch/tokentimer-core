@@ -7,7 +7,21 @@
 async function lockManagedJobForClaim({ client, job, workspaceId }) {
   if (job.subject_type !== "managed_certificate") return true;
 
-  if (job.enrollment_id || job.operation === "continue-enrollment") {
+  if (job.operation === "adcs-installation-proof") {
+    const binding = await require("./adcsProofRecovery").loadAdcsProofJobBindingTx({ client, workspaceId, jobId: job.id, agentId: job.assigned_agent_id });
+    return Boolean(binding);
+  }
+
+  if (job.operation === "continue-enrollment" && job.acme_store_bound === true) {
+    const enrollment = await client.query(
+      `SELECT id FROM certops_acme_store_enrollments
+        WHERE workspace_id = $1 AND certificate_id::text = lower($2)
+          AND agent_id = $3 AND current_job_id = $4
+        FOR SHARE SKIP LOCKED`,
+      [workspaceId, job.subject_id, job.assigned_agent_id, job.id],
+    );
+    if (!enrollment.rows[0]) return false;
+  } else if (job.enrollment_id || job.operation === "continue-enrollment") {
     const enrollment = await client.query(
       `SELECT state FROM certificate_enrollments
         WHERE workspace_id = $1 AND id = $2

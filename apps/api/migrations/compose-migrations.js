@@ -8,6 +8,13 @@ const ALERT = "certops_job_alert_context";
 const DISTRIBUTION = "certops_material_distribution";
 const REVIEW = "certops_distribution_review";
 const TRANSFER = "certops_distribution_transfer";
+const OBSERVED_REVOCATION = "certops_observed_revocation";
+const storeMigrationNames = [
+  "store_issuance_explicit_renewal_consent",
+  "certops_acme_store_enrollment_identity",
+  "certops_adcs_expected_identity_receipts",
+  "certops_adcs_receipt_deadline",
+];
 // These independent, unapplied schemas may arrive after an observation preview.
 const independentFeatureNames = new Set(Object.entries(require("./migration-reservations.cjs").reservations)
   .filter(([version]) => Number(version) >= 115 && Number(version) <= 126 && Number(version) !== 122)
@@ -41,6 +48,28 @@ const mcpAppendNames = [
   "certops_issuance_job_identity",
   "certops_issuance_identity_transfer",
 ];
+
+function ordersPreservingPriorFeatureTails(names, rows) {
+  const orders = [names];
+  if (!names.includes(OBSERVED_REVOCATION) || !names.some((name) => storeMigrationNames.includes(name))) return orders;
+
+  // A recognized preview could have added Store or observed revocation before
+  // the other definitions existed. Once committed, that exact prefix comes first.
+  const omittedOrders = [[OBSERVED_REVOCATION], storeMigrationNames];
+  if (rows.some((row) => row.name === "certops_adcs_receipt_deadline")) {
+    // Store with observed revocation may already have finished its receipt and metric tail.
+    omittedOrders.push([...independentFeatureNames].filter((name) => !storeMigrationNames.includes(name)));
+  }
+  for (const omitted of omittedOrders) {
+    const previous = names.filter((name) => !omitted.includes(name));
+    const mismatch = rows.findIndex((row, index) => row.name !== previous[index]);
+    const applied = previous.slice(0, mismatch === -1 ? rows.length : mismatch);
+    if (applied.includes(OBSERVED_REVOCATION) || applied.some((name) => storeMigrationNames.includes(name))) {
+      orders.push([...applied, ...names.filter((name) => !applied.includes(name))]);
+    }
+  }
+  return orders;
+}
 
 function composeMigrations(migrations, recorded = []) {
   for (const [offset, name] of canonical.entries()) {
@@ -112,11 +141,31 @@ function composeMigrations(migrations, recorded = []) {
     const oldRows = recorded.filter((row) => row.version <= 109);
     const oldComposed = composeMigrations(oldRegistry, oldRows);
     const oldIdentity = new Map(oldComposed.map((entry) => [entry.name, entry.version]));
-    const appended = reviewExtensions
+    const currentAppend = reviewExtensions
       .filter((entry) => entry.version >= 109 && entry.name !== "certops_retirement_dossiers")
       .map((entry) => entry.name);
+    const baseAppend = ["certops_period_creator_delete", "recipient_member_verification", "auto_sync_owner_username", "certops_material_reconciliation"];
+    const storeAppend = storeMigrationNames.filter((name) => byName.has(name));
+    const recoveryAppend = byName.has("distribution_pagerduty_recovery") ? ["distribution_pagerduty_recovery"] : [];
+    const revocationAppend = byName.has(OBSERVED_REVOCATION) ? [OBSERVED_REVOCATION] : [];
+    const previousOrders = [
+      [...baseAppend, ...recoveryAppend, ...revocationAppend],
+      ...(legacyExpiration ? [[...baseAppend, ...recoveryAppend, expiration.name, ...revocationAppend]] : []),
+      ...Array.from({ length: storeAppend.length + 1 }, (_, count) => [
+        ...baseAppend, ...storeAppend.slice(0, count), ...recoveryAppend, ...storeAppend.slice(count),
+      ]),
+    ];
+    // Preserve an applied prefix from either preview. Append only the
+    // remaining definitions in the current registry order.
+    const appendOrders = previousOrders.flatMap((order) =>
+      Array.from({ length: order.length + 1 }, (_, length) => {
+        const applied = order.slice(0, length);
+        return [...applied, ...currentAppend.filter((name) => !applied.includes(name))];
+      }),
+    );
     recognizedRetirementPreview = oldRows.every((row) => row.version < 70 || oldIdentity.get(row.name) === row.version) &&
-      rows.filter((row) => row.version > 109).every((row, index) => row.version === 110 + index && row.name === appended[index]);
+      appendOrders.some((appended) => rows.filter((row) => row.version > 109)
+        .every((row, index) => row.version === 110 + index && row.name === appended[index]));
     if (!recognizedRetirementPreview) throw new Error("Unsupported Core retirement preview migration history");
   }
   // This reviewed preview predates main's PagerDuty migrations at 94/95.
@@ -151,9 +200,10 @@ function composeMigrations(migrations, recorded = []) {
           [...independent.slice(0, cut), ...companions, ...independent.slice(cut)],
         );
         for (const tail of [[...independent, ...companions], remaining, ...historicalOrders]) {
-          const names = [...priorMcpNames, ...appliedAppend, ...tail];
-          const versions = [...priorMcpVersions, ...names.slice(priorMcpNames.length).map((_name, index) => 97 + index)];
-          if (rows.every((row, index) => row.name === names[index] && row.version === versions[index])) { priorOrder = names; break; }
+          const orders = ordersPreservingPriorFeatureTails([...priorMcpNames, ...appliedAppend, ...tail], rows);
+          priorOrder = orders.find((names) => rows.every((row, index) => row.name === names[index] &&
+            row.version === (index < priorMcpVersions.length ? priorMcpVersions[index] : 97 + index - priorMcpVersions.length))) || null;
+          if (priorOrder) break;
         }
         if (priorOrder) break;
       }
@@ -245,6 +295,8 @@ function composeMigrations(migrations, recorded = []) {
       // lifecycle is integrated. Its committed append order remains immutable.
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason"],
       [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup"],
+      [I, S, R, P, L, "auto_sync_system_metrics", C, D, PD, "pagerduty_resolution_reason", "pagerduty_operator_actions", "remove_pagerduty_rest_lookup",
+        "certops_manual_rollout_authority", "store_issuance_explicit_renewal_consent", "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts"],
     ];
     const laterCompanions = new Set([...lifecycle, Z, "certops_consumer_staging", "certops_review_authority_epochs"]);
     const integratedSeeds = seeds.flatMap((seed) =>
@@ -274,16 +326,18 @@ function composeMigrations(migrations, recorded = []) {
         ...names.filter((name) => !independentFeatureNames.has(name)),
         ...names.filter((name) => independentFeatureNames.has(name)),
       ]);
-      return [...reviewedOrders, ...independentAppends].some((names) => {
-        const applied = new Set(rows.map((row) => row.name));
-        const lastApplied = Math.max(-1, ...names.map((name, index) => applied.has(name) ? index : -1));
-        const skipped = names.slice(0, lastApplied + 1).filter((name) => !applied.has(name));
-        const orderedApplied = names.filter((name) => applied.has(name));
-        const matches = skipped.every((name) => independentFeatureNames.has(name) || name.startsWith("operator_") || ["certops_issuance_job_identity", "certops_issuance_identity_transfer"].includes(name)) &&
-          rows.every((row, index) => row.name === orderedApplied[index]);
-        if (matches) contiguousOrder = [...orderedApplied, ...names.filter((name) => !applied.has(name))];
-        return matches;
-      });
+      return [...reviewedOrders, ...independentAppends].some((order) =>
+        ordersPreservingPriorFeatureTails(order, rows).some((names) => {
+          const applied = new Set(rows.map((row) => row.name));
+          const lastApplied = Math.max(-1, ...names.map((name, index) => applied.has(name) ? index : -1));
+          const skipped = names.slice(0, lastApplied + 1).filter((name) => !applied.has(name));
+          const orderedApplied = names.filter((name) => applied.has(name));
+          const matches = skipped.every((name) => independentFeatureNames.has(name) || name.startsWith("operator_") || ["certops_issuance_job_identity", "certops_issuance_identity_transfer"].includes(name)) &&
+            rows.every((row, index) => row.name === orderedApplied[index]);
+          if (matches) contiguousOrder = [...orderedApplied, ...names.filter((name) => !applied.has(name))];
+          return matches;
+        }),
+      );
     });
     if (!recognized)
       throw new Error(
@@ -291,6 +345,7 @@ function composeMigrations(migrations, recorded = []) {
       );
   }
   const dependencies = {
+    certops_adcs_receipt_deadline: ["certops_adcs_expected_identity_receipts"],
     recipient_member_verification: ["recipient_channel_verification"],
     certops_issuance_identity_transfer: ["certops_issuance_job_identity"],
     certops_issuance_job_identity: ["operator_issuance"],

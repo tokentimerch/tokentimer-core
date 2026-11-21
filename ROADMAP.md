@@ -122,6 +122,8 @@ does not promise a version or add a v1.0.0 gate.
   ([#504](https://github.com/tokentimerch/tokentimer-core/issues/504)):
   service discovery, typed connectors, controlled activation and fleet
   operations build on shipped Windows/IIS and AD CS support.
+  Store-only issuance and renewal ([PR #613](https://github.com/tokentimerch/tokentimer-core/pull/613))
+  remain gated on native package qualification and do not activate a service.
   Distribution provides consumer discovery and lifecycle groundwork. Other
   service connectors and unsupported activation methods remain separate work.
 - **Workspace readiness and actionable recovery**

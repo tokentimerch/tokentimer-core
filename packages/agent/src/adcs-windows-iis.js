@@ -9,6 +9,7 @@
  */
 
 const path = require("node:path");
+const crypto = require("node:crypto");
 const fsp = require("node:fs/promises");
 
 const {
@@ -59,6 +60,7 @@ const {
 } = require("./windows-cert-store");
 const { queryCurrentBinding, resolveVerificationTarget } = require("./windows-iis");
 const { listMachineStoreCertificates } = require("./windows-discovery");
+const { observeStoreOnlyPredecessor } = require("./windows-cert-store/store-only");
 const {
   computeCertificateFingerprint,
   verifyDeployedCertificate,
@@ -74,6 +76,26 @@ function boundErrorMessage(message, max = 512) {
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.length > 0;
+}
+
+function storeSnapshotTargetError(snapshot, target) {
+  if (snapshot?.destinationType === "windows-cert-store" && target?.type !== "windows-cert-store") {
+    return "store-only enrollment cannot change destination";
+  }
+  if (target?.type !== "windows-cert-store") return null;
+  if (snapshot?.destinationType !== "windows-cert-store" ||
+      !Object.hasOwn(snapshot, "predecessorFingerprintSha256") ||
+      !(snapshot.predecessorFingerprintSha256 === null || /^[a-f0-9]{64}$/.test(snapshot.predecessorFingerprintSha256))) {
+    return "store-only enrollment snapshot lacks its frozen predecessor identity";
+  }
+  const bytes = JSON.stringify({ type: target.type, reference: target.reference, store: target.store });
+  if (snapshot.destinationSha256 !== crypto.createHash("sha256").update(bytes, "utf8").digest("hex")) {
+    return "store-only enrollment destination does not match its frozen snapshot";
+  }
+  if (typeof target.reference !== "string" || !Array.isArray(snapshot.authorizedDnsNames) || !snapshot.authorizedDnsNames.some(
+    (name) => typeof name === "string" && name.toLowerCase() === target.reference.toLowerCase(),
+  )) return "store-only target name is not authorized by its frozen snapshot";
+  return null;
 }
 
 function enrollmentResultFor(enrollmentId, attempt, state, extras = {}) {
@@ -116,6 +138,11 @@ function isRetryableInstallInterrupt(deployResult) {
   if (!deployResult || typeof deployResult !== "object") return false;
   if (deployResult.status === "blocked") return true;
   return deployResult.retryableInterrupt === true;
+}
+
+function uncertainStoreOutcome(detail) {
+  return { status: "orphaned_unknown_effect", keyRotated: null, retryableInterrupt: true,
+    errorMessage: `${detail} (needsOperatorReconciliation=true; reconciliationReason=store_installation_uncertain)` };
 }
 
 /**
@@ -422,6 +449,12 @@ async function inspectAdcsInstallProgress({
   queryCurrentBindingImpl = queryCurrentBinding,
   verifyDeployedCertificateImpl = verifyDeployedCertificate,
 }) {
+  // Store-only recovery re-inspects under the store lock in its install
+  // helper. It must not consult an IIS binding or repeat an uncertain accept.
+  if (windowsTarget?.type === "windows-cert-store") {
+    if (windowsTarget.store !== "My") return { status: "error", error: "unsupported machine store" };
+    return { status: "resume", startAtStep: "accept" };
+  }
   let expectedThumbprint;
   try {
     expectedThumbprint = computeSha1ThumbprintFromPem(certificatePem);
@@ -563,7 +596,7 @@ function resultForValidationOutcome(validation, { enrollmentId, attempt }, reque
 }
 
 async function resolveWindowsIisTarget(job) {
-  if (job?.keyMode !== "os-store-managed" || job?.target?.type !== "windows-iis") {
+  if (job?.keyMode !== "os-store-managed" || !["windows-iis", "windows-cert-store"].includes(job?.target?.type)) {
     return {
       error:
         "AD CS jobs require keyMode os-store-managed and a windows-iis target",
@@ -574,6 +607,12 @@ async function resolveWindowsIisTarget(job) {
     return { error: "renew job has no target.reference" };
   }
   const store = job.target.store;
+  if (job.target.type === "windows-cert-store") {
+    if (store !== "My" || Object.keys(job.target).some((key) => !["type", "store", "reference"].includes(key))) {
+      return { error: "windows-cert-store requires the My machine store and no service binding" };
+    }
+    return { windowsTarget: { type: "windows-cert-store", store, reference } };
+  }
   const binding = job.target.binding;
   if (
     !isNonEmptyString(store) ||
@@ -603,6 +642,7 @@ function createAdcsWindowsIisExecutors(deps) {
     renewJobLeaseOrAbort,
     reportIssuanceEvidence,
     reportStepEvidence,
+    reportAdcsExpectedIdentity,
     runWindowsIisDeployTail,
     finalizeWindowsIisDeployBookkeeping,
     emitInfo,
@@ -696,10 +736,11 @@ function createAdcsWindowsIisExecutors(deps) {
       });
     }
 
-    const observeImpl =
-      executionContext.adcsObserveInstalledIdentityImpl || observeInstalledCertificateIdentity;
+    const observeImpl = executionContext.adcsObserveInstalledIdentityImpl ||
+      (windowsTarget.type === "windows-cert-store" ? observeStoreOnlyPredecessor : observeInstalledCertificateIdentity);
     const observed = await observeImpl({
       windowsTarget,
+      fingerprintSha256: snapshot.predecessorFingerprintSha256,
       execFileImpl: executionContext.windowsExecFileImpl,
       queryCurrentBindingImpl: executionContext.adcsQueryCurrentBindingImpl,
       listMachineStoreCertificatesImpl: executionContext.adcsListMachineStoreCertificatesImpl,
@@ -778,6 +819,8 @@ function createAdcsWindowsIisExecutors(deps) {
   async function buildAdcsIssuerContext({ job, executionContext, stateDir, continuation = false }) {
     const decoded = decodeEnrollmentSnapshot(job);
     if (!decoded.ok) return { error: decoded.error };
+    const targetError = storeSnapshotTargetError(decoded.snapshot, job?.target);
+    if (targetError) return { error: targetError };
     // Cleanup must remain possible when the CA cache/helper is unavailable.
     if (decoded.terminalState) return { decoded, snapshot: decoded.snapshot };
 
@@ -886,6 +929,24 @@ function createAdcsWindowsIisExecutors(deps) {
     const { windowsTarget } = targetResolved;
 
     const stateDir = resolveAgentStateDir(executionContext) || path.dirname(execution.keysDir);
+    // A completed store installation needs only the frozen signed snapshot
+    // and native store proof. Do not require the CA/helper merely to replay
+    // the original job's already-installed result after an acknowledgement loss.
+    if (windowsTarget.type === "windows-cert-store") {
+      const replaySnapshot = decodeEnrollmentSnapshot(job);
+      if (!replaySnapshot.ok || storeSnapshotTargetError(replaySnapshot.snapshot, job.target)) {
+        return { status: "failed", keyRotated: null, errorMessage: "invalid store enrollment snapshot" };
+      }
+      const replay = readEnrollmentJournal(stateDir, replaySnapshot.enrollmentId);
+      if (!replaySnapshot.terminalState && replaySnapshot.reconcileRequestId === undefined && replay.kind === "valid" &&
+          replay.journal.state === "installed" && replay.journal.jobId === jobId &&
+          replay.journal.attempt === replaySnapshot.attempt && replay.journal.snapshotSha256 === replaySnapshot.snapshotSha256 &&
+          replay.journal.containerName === buildEnrollmentContainerName(replaySnapshot.enrollmentId)) {
+        return executeWindowsIisContinueEnrollmentJob({ job, jobId, client, executionContext, log,
+          leaseOpts, onBeforeMutation, renewRecoveryAuthorization: { jobId, attempt: replaySnapshot.attempt,
+            snapshotSha256: replaySnapshot.snapshotSha256 } });
+      }
+    }
     const ctx = await buildAdcsIssuerContext({ job, executionContext, stateDir });
     if (ctx.error) {
       const base = {
@@ -910,7 +971,7 @@ function createAdcsWindowsIisExecutors(deps) {
       return { status: "rejected", rejectionReason: "invalid_terminal_cleanup_operation",
         keyRotated: null, errorMessage: "Terminal cleanup requires continue-enrollment" };
     }
-    const commonName = windowsTarget.binding.sniHost || domains[0];
+    const commonName = windowsTarget.type === "windows-cert-store" ? windowsTarget.reference : windowsTarget.binding?.sniHost || domains[0];
     if (!ctx.localRuleRefused && !domains.includes(commonName)) {
       return {
         status: "failed",
@@ -928,7 +989,7 @@ function createAdcsWindowsIisExecutors(deps) {
       jobId,
       `AD CS renew enrollment ${decoded.enrollmentId} attempt ${decoded.attempt} CN ${commonName} ` +
         `template ${snapshot.template} CA ${snapshot.caConfig} key ${keyMapped.algorithm} ` +
-        `site ${windowsTarget.binding.site}:${windowsTarget.binding.port} store ${windowsTarget.store} ` +
+        `destination ${windowsTarget.type || "windows-iis"} store ${windowsTarget.store} ` +
         `names=${domains.length}`,
     );
     const cngWorkDir = path.join(stateDir, WINDOWS_CERT_STORE_WORK_DIR_NAME);
@@ -965,7 +1026,10 @@ function createAdcsWindowsIisExecutors(deps) {
     let submitStarted = false;
     let preparedJournalCommitted = false;
     try {
-      return await enrollmentLock.run(async (signal) => {
+      return await enrollmentLock.run(async (lockSignal) => {
+      const signal = executionContext.jobAbortSignal && lockSignal
+        ? AbortSignal.any([executionContext.jobAbortSignal, lockSignal])
+        : executionContext.jobAbortSignal || lockSignal;
       {
         const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
@@ -1354,6 +1418,9 @@ function createAdcsWindowsIisExecutors(deps) {
           await recordHighestRequestId(stateDir, snapshot.caConfig, issuance.requestId);
         }
       } catch (err) {
+        if (windowsTarget.type === "windows-cert-store") {
+          return uncertainStoreOutcome("Could not durably record the issued AD CS certificate");
+        }
         return {
           status: "failed",
           keyRotated: null,
@@ -1429,6 +1496,16 @@ function createAdcsWindowsIisExecutors(deps) {
       }
       await reportBestEffortRevocationEvidence(client, jobId, validation);
 
+      if (windowsTarget.type === "windows-cert-store") {
+        try {
+          if (typeof reportAdcsExpectedIdentity !== "function") throw new Error("identity transport unavailable");
+          await reportAdcsExpectedIdentity({ client: executionContext.adcsExpectedIdentityClient, jobId, claimId: leaseOpts?.claimId,
+            enrollmentId: decoded.enrollmentId, destinationSha256: snapshot.destinationSha256, csrSpkiSha256, certificatePem });
+        } catch {
+          return uncertainStoreOutcome("AD CS expected identity acknowledgement unavailable");
+        }
+      }
+
       await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
         state: "installing",
         attempt: decoded.attempt,
@@ -1454,9 +1531,13 @@ function createAdcsWindowsIisExecutors(deps) {
       logAdcs(
         jobId,
         `AD CS install starting for enrollment ${decoded.enrollmentId} store ${windowsTarget.store} ` +
-          `site ${windowsTarget.binding.site}:${windowsTarget.binding.port}`,
+          `destination ${windowsTarget.type || "windows-iis"}`,
       );
       const deployResult = await runWindowsIisDeployTail({
+        signal,
+        storeValidated: true,
+        storeEnrollmentId: decoded.enrollmentId,
+        storeDestinationSha256: snapshot.destinationSha256,
         jobId,
         client,
         certificatePem,
@@ -1589,6 +1670,7 @@ function createAdcsWindowsIisExecutors(deps) {
   }
 
   async function validateAndInstallFromLeaf({
+    signal,
     certificatePem,
     journal,
     decoded,
@@ -1718,9 +1800,13 @@ function createAdcsWindowsIisExecutors(deps) {
       logAdcs(
         jobId,
         `AD CS install resuming for enrollment ${decoded.enrollmentId} step ${currentInstallStep} ` +
-          `store ${windowsTarget.store} site ${windowsTarget.binding.site}:${windowsTarget.binding.port}`,
+          `store ${windowsTarget.store} destination ${windowsTarget.type || "windows-iis"}`,
       );
       const deployResult = await runWindowsIisDeployTail({
+        signal,
+        storeValidated: true,
+        storeEnrollmentId: decoded.enrollmentId,
+        storeDestinationSha256: snapshot.destinationSha256,
         jobId,
         client,
         certificatePem,
@@ -1732,6 +1818,7 @@ function createAdcsWindowsIisExecutors(deps) {
         leaseOpts,
         onBeforeMutation,
         startAtStep: progress.startAtStep,
+        storeRecovery: windowsTarget.type === "windows-cert-store",
         retainKeyOnAcceptFailure: true,
         journaledPredecessorThumbprint:
           typeof journal.predecessorThumbprint === "string" &&
@@ -1801,7 +1888,7 @@ function createAdcsWindowsIisExecutors(deps) {
       certificatePem,
       csrSpkiSha256: journal.csrSpkiSha256,
       snapshot,
-      requiredDnsName: windowsTarget.binding.sniHost || snapshot.authorizedDnsNames[0],
+      requiredDnsName: windowsTarget.type === "windows-cert-store" ? windowsTarget.reference : windowsTarget.binding?.sniHost || snapshot.authorizedDnsNames[0],
       stateDir,
       executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
       templateOid: journal.templateOid,
@@ -1842,6 +1929,16 @@ function createAdcsWindowsIisExecutors(deps) {
     }
     await reportBestEffortRevocationEvidence(client, jobId, validation);
     continueOutcomeRef.value = "issued";
+    if (windowsTarget.type === "windows-cert-store") {
+      try {
+        if (typeof reportAdcsExpectedIdentity !== "function") throw new Error("identity transport unavailable");
+        await reportAdcsExpectedIdentity({ client: executionContext.adcsExpectedIdentityClient, jobId, claimId: leaseOpts?.claimId,
+          enrollmentId: decoded.enrollmentId, destinationSha256: snapshot.destinationSha256,
+          csrSpkiSha256: journal.csrSpkiSha256, certificatePem });
+      } catch {
+        return uncertainStoreOutcome("AD CS expected identity acknowledgement unavailable");
+      }
+    }
 
     await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
       state: "installing",
@@ -1853,9 +1950,13 @@ function createAdcsWindowsIisExecutors(deps) {
     logAdcs(
       jobId,
       `AD CS install starting for enrollment ${decoded.enrollmentId} store ${windowsTarget.store} ` +
-        `site ${windowsTarget.binding.site}:${windowsTarget.binding.port}`,
+        `destination ${windowsTarget.type || "windows-iis"}`,
     );
     const deployResult = await runWindowsIisDeployTail({
+      signal,
+      storeValidated: true,
+      storeEnrollmentId: decoded.enrollmentId,
+      storeDestinationSha256: snapshot.destinationSha256,
       jobId,
       client,
       certificatePem,
@@ -1921,15 +2022,11 @@ function createAdcsWindowsIisExecutors(deps) {
     }
     const { windowsTarget } = targetResolved;
     const stateDir = resolveAgentStateDir(executionContext) || path.dirname(execution.keysDir);
-    const ctx = await buildAdcsIssuerContext({ job, executionContext, stateDir, continuation: true });
-    if (ctx.error) {
-      return {
-        status: "failed",
-        keyRotated: null,
-        errorMessage: boundErrorMessage(ctx.error),
-      };
-    }
-    const { decoded, helperPath, caCertPath, snapshot, domains, keyMapped } = ctx;
+    const decoded = decodeEnrollmentSnapshot(job);
+    if (!decoded.ok) return { status: "failed", keyRotated: null, errorMessage: boundErrorMessage(decoded.error) };
+    const targetError = storeSnapshotTargetError(decoded.snapshot, job?.target);
+    if (targetError) return { status: "failed", keyRotated: null, errorMessage: boundErrorMessage(targetError) };
+    const snapshot = decoded.snapshot;
 
 
     let enrollmentLock;
@@ -1986,6 +2083,18 @@ function createAdcsWindowsIisExecutors(deps) {
       };
     }
 
+    const installedStoreReplay = windowsTarget.type === "windows-cert-store" && journal.state === "installed" && !decoded.terminalState;
+    let helperPath, caCertPath, domains, keyMapped, ctx;
+    if (!installedStoreReplay) {
+      try { ctx = await buildAdcsIssuerContext({ job, executionContext, stateDir, continuation: true }); }
+      catch (error) { enrollmentLock.release(); throw error; }
+      if (ctx.error) {
+        enrollmentLock.release();
+        return { status: "failed", keyRotated: null, errorMessage: boundErrorMessage(ctx.error) };
+      }
+      ({ helperPath, caCertPath, domains, keyMapped } = ctx);
+    }
+
     const cngWorkDir = path.join(stateDir, WINDOWS_CERT_STORE_WORK_DIR_NAME);
     const windowsExecFileImpl = executionContext.windowsExecFileImpl;
     const windowsConnectImpl = executionContext.windowsConnectImpl;
@@ -1996,7 +2105,10 @@ function createAdcsWindowsIisExecutors(deps) {
     const continueOutcomeRef = { value: null };
 
     try {
-      return await enrollmentLock.run(async (signal) => {
+      return await enrollmentLock.run(async (lockSignal) => {
+      const signal = executionContext.jobAbortSignal && lockSignal
+        ? AbortSignal.any([executionContext.jobAbortSignal, lockSignal])
+        : executionContext.jobAbortSignal || lockSignal;
       // Re-prove the original-job binding under the authoritative lock. An
       // intervening continuation or manual failed-installation decision wins.
       if (renewRecoveryAuthorization &&
@@ -2083,6 +2195,36 @@ function createAdcsWindowsIisExecutors(deps) {
           errorMessage: "Proposed RequestId requires a current uncertain submission journal" };
       }
       if (journal.state === "installed") {
+        // Re-prove the installed store/key under the new claim when a prior
+        // result acknowledgement was lost. Never repeat acceptance.
+        if (windowsTarget.type === "windows-cert-store") {
+          if (typeof artifacts.leafPem !== "string" || !artifacts.leafPem) {
+            return { status: "failed", keyRotated: null, errorMessage: "installed store enrollment has no durable leaf" };
+          }
+          try {
+            const leaf = new crypto.X509Certificate(artifacts.leafPem);
+            const spki = crypto.createHash("sha256").update(leaf.publicKey.export({ type: "spki", format: "der" })).digest("hex");
+            if (containerName !== buildEnrollmentContainerName(decoded.enrollmentId) || spki !== journal.csrSpkiSha256) {
+              return { status: "failed", keyRotated: null, errorMessage: "installed store enrollment key identity does not match its durable journal" };
+            }
+          } catch {
+            return { status: "failed", keyRotated: null, errorMessage: "installed store enrollment leaf is invalid" };
+          }
+          const replay = await runWindowsIisDeployTail({
+            signal,
+            storeValidated: true, storeRecovery: true, storeEnrollmentId: decoded.enrollmentId,
+            storeDestinationSha256: snapshot.destinationSha256, jobId, client,
+            certificatePem: artifacts.leafPem, target: windowsTarget, stateDir, cngWorkDir,
+            log, containerName, leaseOpts, windowsExecFileImpl,
+            onBeforeMutation: (stage) => {
+              enrollmentLock.assertHeld();
+              if (typeof onBeforeMutation === "function") onBeforeMutation(stage);
+            },
+            onInstallStep: async () => { throw new Error("installed enrollment cannot repeat certificate acceptance"); },
+          });
+          enrollmentLock.assertHeld();
+          return withInstalledEnrollmentResult(replay, decoded, journal.requestId);
+        }
         return {
           status: "succeeded",
           keyRotated: null,
@@ -2182,7 +2324,7 @@ function createAdcsWindowsIisExecutors(deps) {
         }
         if (typeof onBeforeMutation === "function") onBeforeMutation("keygen");
         let csrResult = await generateCsrViaCng({
-          commonName: windowsTarget.binding.sniHost || domains[0],
+          commonName: windowsTarget.type === "windows-cert-store" ? windowsTarget.reference : windowsTarget.binding?.sniHost || domains[0],
           altNames: domains,
           jobId: job.certificateId,
           enrollmentId: decoded.enrollmentId,
@@ -2216,7 +2358,7 @@ function createAdcsWindowsIisExecutors(deps) {
           }
           removeIssuedContainerRecord({ stateDir, containerName });
           csrResult = await generateCsrViaCng({
-            commonName: windowsTarget.binding.sniHost || domains[0],
+            commonName: windowsTarget.type === "windows-cert-store" ? windowsTarget.reference : windowsTarget.binding?.sniHost || domains[0],
             altNames: domains,
             jobId: job.certificateId,
             enrollmentId: decoded.enrollmentId,
@@ -2517,6 +2659,7 @@ function createAdcsWindowsIisExecutors(deps) {
         };
         artifacts = { ...artifacts, leafPem: issuance.certificatePem };
         return validateAndInstallFromLeaf({
+          signal,
           certificatePem: issuance.certificatePem,
           journal,
           decoded,
@@ -2585,6 +2728,7 @@ function createAdcsWindowsIisExecutors(deps) {
             requestId,
           };
           return validateAndInstallFromLeaf({
+            signal,
             certificatePem,
             journal,
             decoded,
@@ -2654,7 +2798,7 @@ function createAdcsWindowsIisExecutors(deps) {
             certificatePem: artifacts.leafPem,
             csrSpkiSha256: journal.csrSpkiSha256,
             snapshot,
-            requiredDnsName: windowsTarget.binding.sniHost || snapshot.authorizedDnsNames[0],
+            requiredDnsName: windowsTarget.type === "windows-cert-store" ? windowsTarget.reference : windowsTarget.binding?.sniHost || snapshot.authorizedDnsNames[0],
             stateDir,
             executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
             templateOid: journal.templateOid,
@@ -2805,7 +2949,7 @@ function createAdcsWindowsIisExecutors(deps) {
           certificatePem: reconciled.certificatePem,
           csrSpkiSha256: journal.csrSpkiSha256,
           snapshot,
-          requiredDnsName: windowsTarget.binding.sniHost || snapshot.authorizedDnsNames[0],
+          requiredDnsName: windowsTarget.type === "windows-cert-store" ? windowsTarget.reference : windowsTarget.binding?.sniHost || snapshot.authorizedDnsNames[0],
           stateDir,
           executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
           templateOid: journal.templateOid,
@@ -2890,6 +3034,7 @@ function createAdcsWindowsIisExecutors(deps) {
           };
         }
         return validateAndInstallFromLeaf({
+          signal,
           certificatePem: artifacts.leafPem,
           journal,
           decoded,
@@ -3014,6 +3159,7 @@ function createAdcsWindowsIisExecutors(deps) {
       journal = { ...journal, state: "issued", leafSha256: written.leafSha256 };
 
       return validateAndInstallFromLeaf({
+        signal,
         certificatePem: issuance.certificatePem,
         journal,
         decoded,
@@ -3100,6 +3246,7 @@ function createAdcsWindowsIisExecutors(deps) {
 }
 
 module.exports = {
+  storeSnapshotTargetError,
   createAdcsWindowsIisExecutors,
   resultForAdcsOutcome,
   resultForValidationOutcome,

@@ -123,7 +123,7 @@ function pollFixture(f, dbPool = pool) {
   return claimJobs({ dbPool, agent: { id: f.agentId, agentId: f.agentId, workspaceId: f.workspaceId,
     status: "active", protocolVersion: "1.0.0", agentVersion: "0.18.1" },
   body: { maxJobs: 16, supportedActions: ["renew", "continue-enrollment"] },
-  env: { CERTOPS_ENABLED: "true" }, deps: { signJobForDispatch: async ({ job }) => job } });
+  env: { CERTOPS_ENABLED: "true" }, deps: { assertCurrentAgentCredential: async () => {}, signJobForDispatch: async ({ job }) => job } });
 }
 
 for (const status of ["revoked", "decommissioned"]) {

@@ -25,9 +25,11 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
-const dispatch = require(
+const rawDispatch = require(
   path.resolve(__dirname, "../../apps/api/services/certops/agentDispatch.js"),
 );
+const dispatch = { ...rawDispatch, ingestResult: options => rawDispatch.ingestResult({ ...options,
+  deps: { assertCurrentAgentCredential: async () => {}, ...options.deps } }) };
 const { ensureDerivedRenewalProfile } = require(
   path.resolve(
     __dirname,

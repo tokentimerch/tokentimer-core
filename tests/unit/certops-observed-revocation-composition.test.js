@@ -14,6 +14,6 @@ test("observed revocation appends after the unchanged main migrations", () => {
     assert.equal(plan.find((item) => item.name === "certops_observed_revocation").version, 122);
     assert.equal(plan.at(-1).name, "auto_sync_creation_expiration");
     assert.equal(plan.find((item) => item.version === 112).name, "certops_retirement_dossiers");
-    assert.equal(plan.filter((item) => item.name.startsWith("store_issuance")).length, 0);
+    assert.equal(plan.find((item) => item.name === "store_issuance_explicit_renewal_consent").version, 115);
   }
 });

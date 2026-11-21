@@ -50,6 +50,7 @@ function environmentFor(site) {
   if (site.file === "packages/agent/src/material-store/material-store.test.js" && site.name.startsWith("real ")) return "distribution-vault-adapter";
   if (site.file === windowsPathFile) return "windows-powershell-filesystem";
   if (site.file === windowsContainedFile) return "windows-native-process-containment";
+  if (site.file === "tests/e2e/helpers/certops-acme-ca-watch.test.js") return "windows-ca-process-watch";
   const text = `${site.file} ${site.name}`;
   if (site.file === "packages/agent/src/config/config.test.js" && /re-asserts 0700/.test(site.name)) return "linux-filesystem";
   if (site.file === "packages/agent/src/issuers/adcs-enrollment.test.js" && /pins a CA cert/.test(site.name)) return "openssl-fixtures";
@@ -67,6 +68,7 @@ function environmentFor(site) {
   return "prerequisite-review";
 }
 const environments = {
+  "windows-ca-process-watch": { capabilities: ["windows", "powershell", "cim", "owned-benign-process"], owner: "CA process watcher regression", workflow: ".github/workflows/ci.yml", status: "candidate-environment-not-qualified" },
   "core-material-reconciliation": { capabilities: ["linux", "postgres", "core-api", "agent"], owner: "Original deployment reconciliation", workflow: ".github/workflows/ci.yml", status: "candidate-environment-not-qualified" },
   "windows-material-iis": {capabilities:["windows-server","iis","machine-cng","disposable-store"],owner:"Native shared material qualification",workflow:".github/workflows/ci.yml",status:"candidate-environment-not-qualified"},
   "distribution-kv-live": {capabilities:["linux","disposable-vault-kv2","synthetic-credentials"],owner:"Live material provider compatibility",workflow:".github/workflows/ci.yml",status:"candidate-environment-not-qualified"},
@@ -91,6 +93,7 @@ for (const [name, file] of Object.values(dedicatedSuites)) {
 }
 function routeFor(site, environment) {
   const direct = (workflow, job, command = `node --test ${site.file}`) => ({workflow, job, command});
+  if (environment === "windows-ca-process-watch") return direct(".github/workflows/ci.yml", "windows_agent_quality");
   if (environment === "core-material-reconciliation") return direct(".github/workflows/ci.yml", "vault_cleanup_regression", "tests/postgres/material-reconciliation.test.js");
   if (environment === "windows-material-iis") return direct(".github/workflows/ci.yml", "windows_material_qualification", site.file);
   if (environment === "distribution-kv-live") return direct(".github/workflows/ci.yml", "material_store_compatibility");
