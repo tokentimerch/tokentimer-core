@@ -253,6 +253,12 @@ export default function AdcsStep({ ctx }) {
   const [choiceError, setChoiceError] = useState('');
   const state = adcsIssuerState(adcs);
   const [checking, setChecking] = useState(false);
+  // Expire readiness even when this guide stays open without a summary reload.
+  const [, setFreshnessTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setFreshnessTick(tick => tick + 1), 15000);
+    return () => clearInterval(timer);
+  }, []);
   const [issuerOpen, setIssuerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [storeIssueOpen, setStoreIssueOpen] = useState(false);

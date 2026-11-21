@@ -616,10 +616,12 @@ describe("opNotifications helpers (worker, ESM)", () => {
       const client = mockClient((sql, values) => {
         if (
           sql.includes(
-            "SELECT id, workspace_id, token_id, category, dedupe_key",
+            "SELECT id, workspace_id, token_id, category, type, dedupe_key",
           )
-        )
+        ) {
+          expect(sql).to.include("category <> 'certops' OR type = 'adcs_preflight_blocked'");
           return { rows };
+        }
         if (sql.includes("SELECT aq.status FROM alert_queue")) {
           expect(sql).to.include("LEFT JOIN certops_agents ca");
           expect(sql).to.include(

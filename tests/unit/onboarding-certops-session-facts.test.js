@@ -60,10 +60,21 @@ describe("loadAdcsReality session facts", () => {
     ]);
     assert.equal(issuers[0].profileCount, 2);
     assert.equal(issuers[0].attachedCertificates, 1);
-    assert.equal(issuers[0].checkedAfterPin, true);
+    assert.equal(issuers[0].checkedAfterPin, false);
     assert.equal(issuers[0].revalidationRequired, true);
     assert.equal(issuers[1].checkedAfterPin, false);
     assert.equal(issuers[2].checkedAfterPin, null);
+  });
+
+  it("requires fresh, safe, issuer-bound evidence for the selected agent", async () => {
+    const now=Date.now();
+    const ready={ confirmed_at:new Date(now-3600000),ca_config:"ca.example\\CA",template:"WebServer",
+      ca_key_sha256:"ab".repeat(32),preflight_status:"succeeded",preflight_created_at:new Date(now-60000),
+      preflight_metadata:{preflightVerdict:{caConfig:"ca.example\\CA",template:"WebServer",
+        caKeySha256s:["ab".repeat(32)],templateCheck:"safe",caCheck:"safe"}} };
+    const {issuers}=await load([row(ready),row({...ready,preflight_created_at:new Date(now-86400001)}),
+      row({...ready,revalidation_required:true}),row({...ready,preflight_status:"failed"})],{now});
+    assert.deepEqual(issuers.map(i=>i.checkedAfterPin),[true,false,false,false]);
   });
 });
 

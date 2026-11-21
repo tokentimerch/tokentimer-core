@@ -306,7 +306,10 @@ export function adcsIssuerState(adcs) {
 export function issuerNeedsRecheck(issuer) {
   return (
     Boolean(issuer?.confirmed) &&
-    (issuer.checkedAfterPin === false || issuer.revalidationRequired === true)
+    (issuer.checkedAfterPin === false ||
+      issuer.revalidationRequired === true ||
+      (issuer.preflightExpiresAt != null &&
+        !(new Date(issuer.preflightExpiresAt).getTime() >= Date.now())))
   );
 }
 

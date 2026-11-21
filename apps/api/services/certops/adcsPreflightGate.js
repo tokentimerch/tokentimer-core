@@ -19,7 +19,10 @@ const ADCS_PREFLIGHT_WAITING_REASON = "waiting_for_fresh_preflight";
 // adcs-preflight for this issuer. The verdict is checked in JS by
 // qualifiesAdcsPreflight so both callers run identical logic.
 const QUALIFYING_AGENTS_SQL = `
-  SELECT a.id, a.last_seen_at, latest.status, latest.result_metadata, latest.created_at
+  SELECT a.id, a.last_seen_at, a.status AS agent_status, a.platform, a.agent_version,
+         a.protocol_version,a.declared_capabilities,a.capabilities_updated_at,a.agent_kind,
+         a.supported_operations,a.declared_target_selectors,
+         latest.status, latest.result_metadata, latest.created_at
     FROM certops_agents a
     LEFT JOIN LATERAL (
       SELECT j.status, j.result_metadata, j.created_at
@@ -34,11 +37,79 @@ const QUALIFYING_AGENTS_SQL = `
    WHERE a.workspace_id = $1
      AND a.status = 'active'
      AND a.declared_target_selectors @> jsonb_build_array($2::text)
-   ORDER BY a.last_seen_at DESC NULLS LAST`;
+   ORDER BY a.last_seen_at DESC NULLS LAST, a.id`;
+
+// Bounded keyset pages preserve the authoritative JS eligibility predicate
+// without silently excluding valid declarations beyond the first page.
+async function findEligibleAdcsPreflightAgent({
+  db,
+  workspaceId,
+  reference,
+  target,
+  ownerId = null,
+  env = process.env,
+  now = Date.now(),
+}) {
+  // A heartbeat changes last_seen_at, the ordering key. Pool callers need a
+  // single read snapshot so an unseen row cannot move into an already read page.
+  // A supplied transaction client retains its caller-owned transaction.
+  if (typeof db.connect === "function" && typeof db.idleCount === "number") {
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const candidate = await findEligibleAdcsPreflightAgent({
+        db: client,
+        workspaceId,
+        reference,
+        target,
+        ownerId,
+        env,
+        now,
+      });
+      await client.query("COMMIT");
+      return candidate;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  let cursor = null;
+  for (;;) {
+    const result = await db.query(
+      `SELECT id,status,platform,agent_version,protocol_version,supported_operations,
+      declared_target_selectors,declared_capabilities,capabilities_updated_at,agent_kind,last_seen_at,
+      last_seen_at::text AS cursor_seen_at
+      FROM certops_agents WHERE workspace_id=$1 AND status='active' AND platform='win32'
+        AND declared_target_selectors @> jsonb_build_array($2::text)
+        AND supported_operations @> '["renew","adcs-preflight"]'::jsonb
+        AND ($3::uuid IS NULL OR id=$3::uuid)
+        AND ($6::boolean OR ($4::timestamptz IS NOT NULL AND
+          (last_seen_at<$4 OR last_seen_at IS NULL OR (last_seen_at=$4 AND id>$5::uuid)))
+          OR ($4::timestamptz IS NULL AND last_seen_at IS NULL AND id>$5::uuid))
+      ORDER BY last_seen_at DESC NULLS LAST,id LIMIT 100`,
+      [
+        workspaceId,
+        reference,
+        ownerId,
+        cursor?.cursor_seen_at || null,
+        cursor?.id || null,
+        !cursor,
+      ],
+    );
+    const candidate = result.rows.find((row) =>
+      eligibleRenewalAgent(row, { target, ownerId, env, now }),
+    );
+    if (candidate) return candidate;
+    if (result.rows.length < 100) return null;
+    cursor = result.rows[result.rows.length - 1];
+  }
+}
 
 async function loadCurrentAdcsIssuerVersion({ db, workspaceId, issuerId }) {
   const result = await db.query(
-    `SELECT v.ca_config, v.template, v.ca_key_sha256, v.confirmed_at
+    `SELECT v.version, v.ca_config, v.template, v.ca_key_sha256, v.confirmed_at, i.revalidation_required
        FROM certificate_issuers i
        JOIN certificate_issuer_versions v
          ON v.workspace_id = i.workspace_id
@@ -56,10 +127,35 @@ function timeMs(value) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+function renewalAgentEligibility(row, { target, ownerId = null, env = process.env, now = Date.now() }) {
+  const { evaluateAgentJobEligibility } = require("./agentJobEligibility");
+  const { computeAgentCompatibility } = require("./agentRegistry");
+  const agent = { ...row,status: row.agent_status || row.status,
+    agentVersion: row.agent_version,protocolVersion: row.protocol_version,
+    supportedOperations: row.supported_operations,targetSelectors: row.declared_target_selectors,
+    declaredCapabilities: row.declared_capabilities,capabilitiesUpdatedAt: row.capabilities_updated_at,
+    agentKind: row.agent_kind };
+  if (agent.status !== "active") return { eligible:false,reason:"agent_unavailable" };
+  if (agent.platform !== "win32") return { eligible:false,reason:"platform_unsupported" };
+  const compatibility = computeAgentCompatibility(agent,env);
+  const job = { operation: "renew",issuerKind: "adcs",assignedAgentId: ownerId,
+    payload: { target } };
+  const renewal = evaluateAgentJobEligibility({ agent,job,compatibility,env,now });
+  return renewal.eligible ? evaluateAgentJobEligibility({ agent,job: { operation: "adcs-preflight" },compatibility,env,now }) : renewal;
+}
+
+function eligibleRenewalAgent(row, context) {
+  return renewalAgentEligibility(row,context).eligible;
+}
+
 // A missing version or confirmation time fails closed, as it did in SQL.
 function qualifiesAdcsPreflight(evidence, version, nowMs) {
-  if (!evidence || evidence.status !== "succeeded" || !version) return false;
+  if (!evidence || evidence.status !== "succeeded" || !version || version.revalidation_required === true) return false;
   const verdict = evidence.result_metadata?.preflightVerdict;
+  const context = evidence.result_metadata?.preflightContext;
+  if (context && (Number(context.issuerVersion) !== Number(version.version) ||
+      context.caKeySha256 !== version.ca_key_sha256 ||
+      timeMs(context.confirmedAt) !== timeMs(version.confirmed_at))) return false;
   const createdMs = timeMs(evidence.created_at);
   const confirmedMs = timeMs(version.confirmed_at);
   if (createdMs == null || confirmedMs == null) return false;
@@ -74,6 +170,7 @@ function qualifiesAdcsPreflight(evidence, version, nowMs) {
     Array.isArray(verdict.caKeySha256s) &&
     verdict.caKeySha256s.includes(version.ca_key_sha256) &&
     createdMs >= confirmedMs &&
+    createdMs <= nowMs &&
     createdMs >= nowMs - ADCS_PREFLIGHT_MAX_AGE_MS
   );
 }
@@ -90,6 +187,9 @@ async function loadQualifyingAdcsAgents({
   reference,
   version,
   nowMs = Date.now(),
+  target = null,
+  ownerId = null,
+  env = process.env,
 }) {
   const result = await db.query(QUALIFYING_AGENTS_SQL, [
     workspaceId,
@@ -97,7 +197,8 @@ async function loadQualifyingAdcsAgents({
     String(issuerId),
   ]);
   return result.rows
-    .filter((row) => qualifiesAdcsPreflight(row, version, nowMs))
+    .filter((row) => qualifiesAdcsPreflight(row, version, nowMs) &&
+      (!target || eligibleRenewalAgent(row,{ target,ownerId,env,now: nowMs })))
     .map((row) => ({ id: row.id, last_seen_at: row.last_seen_at }));
 }
 
@@ -107,4 +208,7 @@ module.exports = {
   loadCurrentAdcsIssuerVersion,
   loadQualifyingAdcsAgents,
   qualifiesAdcsPreflight,
+  eligibleRenewalAgent,
+  renewalAgentEligibility,
+  findEligibleAdcsPreflightAgent,
 };

@@ -49,6 +49,7 @@ test("normal runner appends member verification to the released ledger and resta
     assert.equal(after.find(row => row.version === 113).name, "certops_material_reconciliation");
     assert.equal(after.find(row => row.version === 114).name, "distribution_pagerduty_recovery");
     assert.equal(after.find(row => row.version === 122).name, "certops_observed_revocation");
+    assert.equal(after.find(({ version }) => version === 125).name, "certops_adcs_preflight_lookup_index");
     assert.equal(after.find(({ version }) => version === 126).name, "certops_adcs_receipt_deadline");
     assert.equal(after.at(-1).version, 127);
     assert.equal(after.at(-1).name, "auto_sync_creation_expiration");
