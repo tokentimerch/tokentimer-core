@@ -123,6 +123,33 @@ describe("summarizeAgents", () => {
 });
 
 describe("loadAdcsReality", () => {
+  it("reports scoped store issuance separately from verified installation and service", async () => {
+    const jobId = "11111111-1111-4111-8111-111111111111";
+    const agentId = "22222222-2222-4222-8222-222222222222";
+    const issuerId = "33333333-3333-4333-8333-333333333333";
+    const since = "2026-11-01T00:00:00Z";
+    const base = { job_id: jobId, agent_id: agentId, issuer_id: issuerId, enrollment_id: "e", certificate_id: "c", job_status: "succeeded" };
+    for (const [state, status, fingerprint, installed] of [["requested", "provisioning", null, false], ["installed", "provisioning", "ab", false], ["installed", "active", "ab", true]]) {
+      const answers = [{ rows: [] }, { rows: [{ n: 0 }] }, { rows: [{ installed: 0 }] }, { rows: [] },
+        { rows: [{ ...base, enrollment_state: state, certificate_status: status, fingerprint_sha256: fingerprint }] }];
+      let query;
+      const pool = { query: async (sql, params) => { if (sql.includes("j.operation='issue'")) query = { sql, params }; return answers.shift(); } };
+      const result = await loadAdcsReality(pool, "workspace", { issueJobId: jobId, agentId, issuerId, since });
+      assert.equal(result.storeIssuance.requested, true);
+      assert.equal(result.storeIssuance.installed, installed);
+      assert.equal(result.storeIssuance.served, null);
+      assert.deepEqual(query.params, ["workspace", jobId, agentId, issuerId, since]);
+      assert.match(query.sql, /j\.assigned_agent_id=e\.agent_id/);
+    }
+  });
+
+  it("does not adopt a store issue outside the selected agent or issuer", async () => {
+    const answers = [{ rows: [] }, { rows: [{ n: 0 }] }, { rows: [{ installed: 0 }] }, { rows: [] }, { rows: [] }];
+    const id = "11111111-1111-4111-8111-111111111111";
+    const result = await loadAdcsReality({ query: async () => answers.shift() }, "workspace", { issueJobId: id, agentId: id, issuerId: id });
+    assert.equal(result.storeIssuance, null);
+  });
+
   it("counts only enrollments that reached the install step", async () => {
     const answers = [
       { rows: [] },
@@ -177,6 +204,7 @@ describe("loadAdcsReality issuer facts", () => {
       existedBeforeSession: false,
       profileCount: 0,
       attachedCertificates: 0,
+      installedIisEnrollments: 0,
       revalidationRequired: false,
       checkedAfterPin: null,
     });
@@ -402,8 +430,20 @@ describe("session certificates", () => {
     assert.deepEqual(out, [
       { certificateId: "c9", tokenId: 41, source: "enrollment" },
     ]);
-    assert.deepEqual(seen[0].params, ["w", since]);
+    assert.deepEqual(seen[0].params, ["w", since, null, null]);
     assert.match(seen[0].sql, /e\.workspace_id = \$1/);
+  });
+
+  it("scopes enrollment certificates to the selected issuer and agent", async () => {
+    const seen = [];
+    const pool = { query: async (sql, params) => { seen.push({ sql, params }); return { rows: [] }; } };
+    const issuer = "11111111-1111-4111-8111-111111111111";
+    const agent = "22222222-2222-4222-8222-222222222222";
+    const since = "2026-10-22T10:00:00.000Z";
+    await loadSessionCertificates(pool, "w", { since, adcsIssuerId: issuer, agentId: agent });
+    assert.deepEqual(seen[0].params, ["w", since, issuer, agent]);
+    assert.match(seen[0].sql, /e\.issuer_id = \$3::uuid/);
+    assert.match(seen[0].sql, /e\.agent_id = \$4::uuid/);
   });
 
   it("does not query enrollments without a session start", async () => {

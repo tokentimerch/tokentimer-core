@@ -101,6 +101,7 @@ function certOpsMachineWriteRouteFamily(requestPath, options = {}) {
       normalizedPath === `${prefix}/agent/jobs/claim` ||
       normalizedPath === `${prefix}/agent/jobs/claim/` ||
       new RegExp(`^${prefix}/agent/jobs/[^/]+/lease/?$`).test(normalizedPath) ||
+      new RegExp(`^${prefix}/agent/jobs/[^/]+/iis-consent/?$`).test(normalizedPath) ||
       new RegExp(`^${prefix}/agent/jobs/[^/]+/logs/?$`).test(normalizedPath) ||
       normalizedPath === `${prefix}/agent/jobs/results` ||
       normalizedPath === `${prefix}/agent/jobs/results/`

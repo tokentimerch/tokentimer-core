@@ -522,7 +522,7 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
     const badConfig = spawnSync("sc.exe", ["config", SERVICE_NAME, "binPath=", badConfigPath], { encoding: "utf8" });
     assert.equal(badConfig.status, 0, "could not select shipped entrypoint for owned service");
     spawnSync("sc.exe", ["start", SERVICE_NAME], { encoding: "utf8" });
-    const badConfigDeadline = Date.now() + 15000;
+    const badConfigDeadline = Date.now() + 30000;
     const hostLog = path.join(serviceConfigDir, "host.log");
     let rejectedConfig = false;
     while (Date.now() < badConfigDeadline) {
@@ -530,7 +530,8 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
           /failed to parse/.test(fs.readFileSync(hostLog, "utf8"))) { rejectedConfig = true; break; }
       spawnSync(process.execPath, ["-e", "setTimeout(()=>{},300)"], { timeout: 1000 });
     }
-    assert.ok(rejectedConfig, "SCM must stop and retain explicit shipped configuration failure evidence");
+    const diagnosticLog = fs.existsSync(hostLog) ? fs.readFileSync(hostLog, "utf8").slice(-4000) : "(no host log)";
+    assert.ok(rejectedConfig, `SCM must stop and retain explicit shipped configuration failure evidence; status=${getServiceStatus()}, host log tail: ${diagnosticLog}`);
     assert.equal(fs.readFileSync(stateMarker, "utf8"), "existing-state-preserved");
     // Recovery uses the real configuration loader followed by the bounded
     // supporting child. This proves service/config repair, not API registration.

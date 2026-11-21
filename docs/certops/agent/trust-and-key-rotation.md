@@ -83,6 +83,12 @@ is the platform's own trust store, resolved from `anchorType` and the
 detected OS family, never re-derived from the certificate's own
 basicConstraints/issuer at run time.
 
+Distribution is refused when the CA certificate or its issuing CA is known
+to be revoked; removing trust remains available. Updated agents must reach the
+control plane immediately before installing trust; upgrade existing agents to
+enforce this check. Root trust anchors are not
+revocation-checked, so an unknown status does not establish that a root is safe.
+
 Platform resolution is a hard gate before anything else runs: Windows targets
 `LocalMachine\Root` (root anchors) or `LocalMachine\CA` (intermediates) via
 `certutil`; Debian-family hosts write to

@@ -39,8 +39,13 @@
 const GATED_CAPABILITIES = Object.freeze([
   "windows-cert-store-v1",
   "iis-binding-v1",
+  "iis-explicit-ip-v1",
   "trust-anchor-deploy-v1",
   "adcs-enroll-v1",
+  "windows-store-only-adcs-v1",
+  "windows-store-only-acme-v1",
+  "windows-store-iis-consumers-v1",
+  "adcs-store-proof-only-v1",
   "material-store-vault-kv2-v1",
   "certificate-publication-v1",
   "deploy-from-store-v1",

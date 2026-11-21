@@ -9,6 +9,8 @@
       {
         "file": "certops-adcs-enrollments.test.js",
         "names": [
+          "retries only a proved local policy refusal, with cooldown, idempotency and IIS locking",
+          "replans a server-superseded enrollment only when it was never claimed",
           "survivor fixture uses the insert-trigger management period and creates eligible enrollment work",
           "WebHosting fixture opens exactly one trigger-created period and its real enrollment job is claimable",
           "claims the continuation of a first enrollment that has no certificate identity yet",
@@ -31,6 +33,7 @@
       {
         "file": "certops-adcs-readiness.test.js",
         "names": [
+          "queues only one preflight when a due renewal lacks fresh evidence",
           "qualifies an agent whose safe preflight matches the confirmed CA, template, and key",
           "does not qualify a preflight older than the 24-hour freshness bound",
           "qualifies a preflight 23 hours old, inside the freshness bound",
@@ -126,7 +129,8 @@
     "files": [
       "certops-inventory.test.js",
       "certops-inventory-import-helpers.test.js",
-      "certops-agent-unmanaged-observations.test.js"
+      "certops-agent-unmanaged-observations.test.js",
+      "certops-iis-topology-ingestion-projection.test.js"
     ],
     "requiredTestsByFile": [
       {
@@ -189,6 +193,7 @@
       {
         "file": "certops-agent-unmanaged-observations.test.js",
         "names": [
+          "retains a versioned topology attestation only on the current compatible IIS observation",
           "retains two locations and evidence without tokens or management, fences replays, and later enrolls the same identity",
           "retains unmanaged service bindings, blocks decommission, and preserves revoked lifecycle on rediscovery",
           "keeps existing-source rotation admissible while over quota",
@@ -203,6 +208,12 @@
           "does not hide an unchecked or revoked location behind a good location",
           "projects a revoked issuing CA by exact fingerprint and retains it after an unavailable check",
           "rolls back the sequence and retained observations on non-admission database failures"
+        ]
+      },
+      {
+        "file": "certops-iis-topology-ingestion-projection.test.js",
+        "names": [
+          "folds an old HTTP.sys location only while the newer IIS capture is attested"
         ]
       }
     ]
@@ -282,7 +293,8 @@
           "returns { items: [] } for an admin on an anchor with no installations",
           "returns 404 for an anchor id that does not exist in this workspace",
           "rejects a viewer and a workspace_manager with 403, and allows admin",
-          "omits requireWorkspaceCertOpsActive: a paused workspace can still be read"
+          "omits requireWorkspaceCertOpsActive: a paused workspace can still be read",
+          "prevents distributing an observed revoked CA at admission and dispatch"
         ]
       }
     ]
@@ -301,9 +313,9 @@
       {
         "file": "certops-identity-invariants.test.js",
         "names": [
+          "normalizes legacy audit reads without changing immutable metadata or timestamps",
           "preserves tracking mode when the outbox links an adopted renewal profile",
           "defers to a concurrent replace-management choice",
-          "normalizes legacy audit reads without changing immutable metadata or timestamps",
           "returns real AD CS metadata in every audit feed and JSON/CSV export",
           "upgrades representative pre-v62 history without guessing lifecycle or historical job identity",
           "v62 compatibility preserves erased-workspace audit metadata and rolls preparation back on failure",
@@ -380,6 +392,7 @@
           "preserves an existing reconciliation reason across revocation and completion",
           "does not flag dry-run or read-only work as a retirement mutation conflict",
           "records revocation without deadlocking a completion that already owns the token",
+          "shows the prior HTTP.sys classification under the newer IIS observation without erasing either",
           "groups recreated endpoint monitors before pagination without hiding genuine visibility gaps",
           "previous deleted monitors do not make a freshly observed endpoint uncertain",
           "visibility is known when all 21 locations are fresh in list and detail",
@@ -417,7 +430,8 @@
           "isolates transferred token and source data in original-workspace HTTP history",
           "returns global visibility and full counts with only 20 HTTP locations",
           "retains stopped identity details with workspace authorization and never hydrates a moved token",
-          "projects current renewal facts for a rotated identity without a token and clears them when management stops"
+          "projects current renewal facts for a rotated identity without a token and clears them when management stops",
+          "shows the observed machine to managers but not viewers"
         ]
       },
       {

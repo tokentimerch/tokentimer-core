@@ -44,6 +44,7 @@ import {
   NGINX_RELOAD_DROPIN,
   AGENT_KEYS_DIR,
   buildObserveConfig,
+  parseRevocationOrigins,
   buildPreseedSteps,
   buildLinuxCredentialPrep,
   dnsCredentialsExample,
@@ -77,6 +78,7 @@ const FIELD_NAMES = {
   caName: 'the CA name',
   template: 'the template',
   dnsScopes: 'the allowed DNS scopes',
+  revocationOrigins: 'the revocation responder origins',
 };
 
 const STAGING_WARNING =
@@ -317,14 +319,16 @@ export function ConfigStep({ ctx }) {
     reloadService: saved.reloadService || '',
     acmeClientPath: saved.acmeClientPath || '',
     acmeShellPath: saved.acmeShellPath ?? DEFAULT_WINDOWS_SHELL,
-    iisSite: saved.iisSite || 'Default Web Site',
-    iisPort: saved.iisPort || '443',
+    iisSite: saved.iisSite || (objective === 'adcs' ? '' : 'Default Web Site'),
+    iisPort: saved.iisPort || (objective === 'adcs' ? '' : '443'),
+    iisAddress: saved.iisAddress || '',
     sniHost: saved.sniHost || '',
     caHost: saved.caHost || '',
     caName: saved.caName || '',
     template: saved.template || 'WebServer',
     dnsScopes: saved.dnsScopes || '',
     directories: saved.directories || '/etc/ssl/certs',
+    revocationOrigins: saved.revocationOrigins || '',
   });
   const [error, setError] = useState('');
   // Errors appear only after the operator has typed in, or left, a field.
@@ -371,6 +375,24 @@ export function ConfigStep({ ctx }) {
       result.config.policy.allowedPaths = [AGENT_KEYS_DIR];
     }
   }
+  const revocation = parseRevocationOrigins(form.revocationOrigins);
+  if (!revocation.ok) {
+    result = {
+      ...result,
+      ok: false,
+      fieldErrors: {
+        ...(result.fieldErrors || {}),
+        revocationOrigins: [
+          'Enter HTTP or HTTPS origins without paths or credentials.',
+        ],
+      },
+    };
+  } else if (result.ok) {
+    result.config.observedRevocation = {
+      enabled: true,
+      allowedOrigins: revocation.origins,
+    };
+  }
   const fieldErrors = result.fieldErrors || {};
   const shown = key => (touched[key] ? fieldErrors[key] || [] : []);
   // Why the main button is off, said once and without red until the person
@@ -402,12 +424,14 @@ export function ConfigStep({ ctx }) {
         acmeShellPath: form.acmeShellPath,
         iisSite: form.iisSite,
         iisPort: form.iisPort,
+        iisAddress: form.iisAddress,
         sniHost: form.sniHost,
         caHost: form.caHost,
         caName: form.caName,
         template: form.template,
         dnsScopes: form.dnsScopes,
         directories: form.directories,
+        revocationOrigins: form.revocationOrigins,
         configReviewed: true,
       });
     } catch (e) {
@@ -430,7 +454,16 @@ export function ConfigStep({ ctx }) {
             ]),
       ]}
       actions={
-        <PrimaryButton onClick={confirm} isDisabled={!result.ok}>
+        <PrimaryButton
+          onClick={confirm}
+          isDisabled={
+            !result.ok ||
+            (os === 'windows' &&
+              form.iisAddress.trim() &&
+              !['*', '0.0.0.0'].includes(form.iisAddress.trim()) &&
+              form.sniHost.trim())
+          }
+        >
           I saved this file
         </PrimaryButton>
       }
@@ -554,8 +587,9 @@ export function ConfigStep({ ctx }) {
               stores CA credentials: the agent authenticates as the computer
               account.
             </Text>
-            <Text fontSize='xs'>
-              Choose the IIS binding when creating the renewal profile.
+            <Text fontSize='xs' data-testid='adcs-preparation-note'>
+              This prepares access to the CA. Choose the certificate destination
+              later when configuring issuance.
             </Text>
           </>
         ) : (
@@ -677,6 +711,18 @@ export function ConfigStep({ ctx }) {
                       value={form.iisPort}
                       onChange={set('iisPort')}
                     />
+                  </FormControl>
+                  <FormControl flex='1 1 200px'>
+                    <FormLabel fontSize='sm'>IP address (optional)</FormLabel>
+                    <Input
+                      size='sm'
+                      value={form.iisAddress}
+                      onChange={set('iisAddress')}
+                    />
+                    <Text fontSize='xs' mt={1}>
+                      Leave blank for all IPv4 addresses. A specific IP requires
+                      a qualified Windows agent and cannot be combined with SNI.
+                    </Text>
                   </FormControl>
                   <FormControl flex='1 1 200px'>
                     <FormLabel fontSize='sm'>SNI host (optional)</FormLabel>
@@ -831,6 +877,26 @@ export function ConfigStep({ ctx }) {
             ) : null}
           </>
         )}
+        <FormControl isInvalid={shown('revocationOrigins').length > 0}>
+          <FormLabel fontSize='sm'>
+            Permitted CRL/OCSP origins (optional)
+          </FormLabel>
+          <Textarea
+            size='sm'
+            rows={2}
+            value={form.revocationOrigins}
+            onChange={set('revocationOrigins')}
+            onBlur={blur('revocationOrigins')}
+            placeholder='http://pki.example.com'
+          />
+          <FormErrorMessage fontSize='xs'>
+            {errorLines(shown('revocationOrigins'))}
+          </FormErrorMessage>
+          <Text fontSize='xs' mt={1}>
+            Enter the HTTP or HTTPS origins your agent may contact, one per
+            line. Until you add them, revocation is not checked.
+          </Text>
+        </FormControl>
         {!result.ok ? (
           <Text fontSize='xs' color={muted} data-testid='config-missing'>
             The button below stays disabled until these are filled in correctly:{' '}

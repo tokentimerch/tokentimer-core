@@ -681,6 +681,20 @@ test("reportResult: forwards trustResult in the body when provided, omits it ent
   assert.equal("trustResult" in calls[1].parsedBody.body, false);
 });
 
+test("IIS proofs share the agent's serialized sequence and preserve an id across a failed send", async () => {
+  const calls = stubFetch([{ status:200, json:{} }, { status:503, json:{} }, { status:200, json:{} }]);
+  const client = createProtocolClient({ serverUrl:"https://example.test", agentId:"agent-1", protocolVersion:"1.0.0", getCredential:()=>CREDENTIAL });
+  const proof = { evidenceId:"proof-1", targetHost:"pilot.example.test", site:"Default Web Site", port:443, address:"192.0.2.10", fingerprintSha256:"a".repeat(64), thumbprint:"b".repeat(40), observedAt:new Date().toISOString() };
+  const first = client.heartbeat({ agentVersion:"1.0.0" });
+  const failed = client.reportIisAbsenceProof([proof]);
+  await first;
+  await assert.rejects(failed, AgentProtocolError);
+  await client.reportIisAbsenceProof([proof]);
+  assert.deepEqual(calls.map(call => call.parsedBody.sequence),[1,2,3]);
+  assert.equal(calls[1].parsedBody.messageType,"iis-absence-proof");
+  assert.equal(calls[1].parsedBody.body.proofs[0].evidenceId,calls[2].parsedBody.body.proofs[0].evidenceId);
+});
+
 test("reportEvidence: sends correct envelope shape (messageType + evidenceBody fields)", async () => {
   const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
 
@@ -1599,4 +1613,18 @@ test("heartbeat: command profile removal and replacement remain explicit", async
   assert.deepEqual(calls[2].parsedBody.body.declaredCommandProfileNames, []);
   await assert.rejects(client.heartbeat({ agentVersion: "0.1.0", declaredCommandProfileNames: ["unsafe command"] }));
   assert.equal(calls.length, 3);
+});
+
+test("IIS consumer authorization uses the credential and sequence and fails closed", async () => {
+  const calls = stubFetch([{ status: 200, json: { allowed: true } }, { status: 200, json: { allowed: false } }]);
+  const client = createProtocolClient({ serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0", getCredential: () => CREDENTIAL });
+  const args = { jobId: "job-1", claimId: "claim-1", consumerId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", authorizationRevision: 3 };
+  assert.equal(await client.authorizeIisConsumer(args), true);
+  assert.equal(await client.authorizeIisConsumer(args), false);
+  assert.equal(calls[0].url, `https://example.test${ROUTES.LEASE}/job-1/iis-consent`);
+  assert.equal(calls[0].init.headers.authorization, `Bearer ${CREDENTIAL}`);
+  assert.equal(calls[0].parsedBody.sequence, 1);
+  assert.equal(calls[1].parsedBody.sequence, 2);
+  assert.equal(calls[0].parsedBody.authorizationRevision, 3);
+  await assert.rejects(client.authorizeIisConsumer({ ...args, authorizationRevision: 0 }));
 });

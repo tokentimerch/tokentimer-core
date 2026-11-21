@@ -83,6 +83,25 @@ describe('Linux key location', () => {
     expect(job.payload.keyPath).toBe('/etc/ssl/tt/site.pem.key');
   });
 
+  it('preserves an IIS IP and rejects combining it with SNI', () => {
+    const input = {
+      os: 'windows',
+      names: ['a.example.com'],
+      zone: 'example.com',
+      dnsProvider: 'rfc2136',
+      iisSite: 'Site',
+      iisPort: 443,
+      iisAddress: '192.0.2.10',
+      idempotencyKey: 'k',
+    };
+    expect(buildIssueJob(input).payload.target.binding.address).toBe(
+      '192.0.2.10'
+    );
+    expect(() => buildIssueJob({ ...input, sniHost: 'a.example.com' })).toThrow(
+      /cannot be combined with SNI/
+    );
+  });
+
   it('prints nginx, Apache and HAProxy lines that name the key', () => {
     const certPath = '/etc/ssl/tt/site.pem';
     expect(buildServerSnippet({ reloadService: 'nginx', certPath })).toMatch(

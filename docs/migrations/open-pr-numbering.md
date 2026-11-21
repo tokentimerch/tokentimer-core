@@ -36,11 +36,22 @@ are reservations, not no-op migrations. They do not install another feature.
 | 104 | operator_inventory | MCP inventory metadata import (#406) |
 | 105 | operator_oauth_retention | MCP token retention (#406) |
 | 106 | operator_issuance | MCP certificate issuance (#406) |
+| 107 | certops_issuance_job_identity | Main; unchanged |
+| 108 | certops_issuance_identity_transfer | Main; unchanged |
 | 109 | certops_period_creator_delete | Main; unchanged |
 | 110 | recipient_member_verification | Reuse exact verified workspace-member email proof |
-| 114 | distribution_pagerduty_recovery | Main; unchanged |
-| 115–121 | Store issuance and IIS schemas | Reserved by independent open PRs; no SQL installed here |
+| 112 | certops_retirement_dossiers | Distribution lifecycle on main |
+| 113 | certops_material_reconciliation | Distribution lifecycle on main |
+| 114 | distribution_pagerduty_recovery | PagerDuty distribution recovery on main |
+| 115 | store_issuance_explicit_renewal_consent | Windows Store issuance consent |
+| 116 | certops_acme_store_enrollment_identity | Windows Store ACME enrollment identity |
+| 117 | certops_adcs_expected_identity_receipts | Windows Store AD CS identity receipts |
+| 118 | certops_windows_iis_consent | Windows IIS reassociation consent |
+| 119 | certops_material_adcs_operation_union | Preserve material and AD CS job operations |
+| 120 | certops_iis_absence_proofs | Reconcile proven IIS observations |
+| 121 | certops_enrollment_jobs_index | Index enrollment jobs |
 | 122 | certops_observed_revocation | Observed certificate revocation (#541) |
+| 126 | certops_adcs_receipt_deadline | Immutable AD CS receipt admission deadline |
 | 127 | auto_sync_creation_expiration | Auto-sync creation metric expiration (#780) |
 
 Use the normal runner with these canonical identities. Independent feature tails
@@ -53,6 +64,8 @@ qualify the corresponding runtime feature or production artifact.
 
 A recognized #780 preview keeps its previously applied expiration row, including
 version 115 on a standard preview database. New installs use version 127.
+
+The integrated Windows Store and IIS preview previously used 115 for observed revocation and 116–122 for Store and IIS. The runner preserves those recorded pairs and appends only missing definitions.
 
 ## Applied history and supported previews
 

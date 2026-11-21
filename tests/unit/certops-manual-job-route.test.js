@@ -162,6 +162,54 @@ async function invokeAfterEarlyGlobalGate(
 }
 
 describe("CertOps manual-job route preserves explicit execution mode", () => {
+  it("returns 400 for malformed AD CS store issuer and agent identifiers", async () => {
+    const pool = createTransactionalPool();
+    const handler = certOpsRouter._test.createManualCertificateJobHandler({
+      manualJobCreator: options => createManualCertificateJob({
+        ...options, dbPool: pool, certOpsEnabledResolver: async () => true,
+      }),
+    });
+    for (const badField of ["issuer", "agent"]) {
+      const req = { workspace: { id: "workspace-1" }, user: { id: 42 },
+        authz: { workspaceRole: "workspace_manager" },
+        body: { operation: "issue", idempotencyKey: `bad-${badField}`,
+          assignedAgentId: badField === "agent" ? "-".repeat(36) : "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          payload: { issuerId: badField === "issuer" ? "-".repeat(36) : "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+            target: { type: "windows-cert-store", reference: "host.example.com", store: "My" } } } };
+      const res = responseRecorder();
+      await handler(req, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.code, "CERTOPS_JOB_INVALID");
+      assert.equal(pool.jobs.length, 0);
+    }
+  });
+  it("uses only an internally attached issue creator for issue operations", async () => {
+    const internalCreator = async () => {};
+    const bodyCreator = async () => {};
+    const seen = [];
+    const handler = certOpsRouter._test.createManualCertificateJobHandler({
+      manualJobCreator: async options => {
+        seen.push(options);
+        return { job: { id: "job-1", operation: options.operation } };
+      },
+    });
+    const request = operation => ({
+      workspace: { id: "workspace-1" },
+      user: { id: 42 },
+      authz: { workspaceRole: "workspace_manager" },
+      certopsIssueJobCreator: internalCreator,
+      body: { operation, certopsIssueJobCreator: bodyCreator },
+    });
+    await handler(request("issue"), responseRecorder());
+    await handler(request("renew"), responseRecorder());
+    assert.equal(seen[0].jobCreator, internalCreator);
+    assert.notEqual(seen[0].jobCreator, bodyCreator);
+    assert.notEqual(seen[1].jobCreator, internalCreator);
+    const external = request("issue");
+    delete external.certopsIssueJobCreator;
+    await handler(external, responseRecorder());
+    assert.notEqual(seen[2].jobCreator, bodyCreator);
+  });
   for (const mode of ["dry_run", "real", undefined, "invalid-mode"]) {
     it(`persists or rejects the requested mode: ${mode}`, async () => {
       const pool = createTransactionalPool();

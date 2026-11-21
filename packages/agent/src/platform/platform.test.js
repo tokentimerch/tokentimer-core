@@ -200,11 +200,44 @@ describe("platform: permission application", () => {
     assert.ok(icacls.args.includes(`*${OWN_SID}:(OI)(CI)(F)`));
   });
 
+  it("lets administrators traverse state without inheritable or write rights", () => {
+    const spawn = fakeSpawn({
+      whoami: () => ({ stdout: `"nt authority\\system","${platform.SYSTEM_SID}"\r\n` }),
+      icacls: icaclsSaveHandler("D:PAI(A;OICI;FA;;;SY)(A;;0x1200a9;;;BA)"),
+      powershell: () => ({ stdout: `${platform.SYSTEM_SID}\r\n` }),
+    });
+    platform.applyRestrictivePermissions("C:\\state", {
+      kind: "directory", includeAdministrators: true, platform: "win32", spawn,
+      tmpDir: os.tmpdir(),
+    });
+    const grant = spawn.calls.find((call) => call.args.includes("/grant:r"));
+    assert.ok(grant.args.includes(`*${platform.ADMINISTRATORS_SID}:(RX)`));
+    assert.ok(grant.args.includes(`*${platform.SYSTEM_SID}:(OI)(CI)(F)`));
+  });
+
+  it("grants administrators access to config without changing secret-file defaults", () => {
+    const spawn = fakeSpawn({
+      whoami: whoamiHandler,
+      icacls: icaclsSaveHandler(`D:PAI(A;;FA;;;${OWN_SID})(A;;FA;;;SY)(A;;FA;;;BA)`),
+    });
+    platform.applyRestrictivePermissions("C:\\state\\config.json", {
+      includeAdministrators: true, platform: "win32", spawn, tmpDir: os.tmpdir(),
+    });
+    const grant = spawn.calls.find((call) => call.args.includes("/grant:r"));
+    assert.ok(grant.args.includes(`*${platform.ADMINISTRATORS_SID}:(F)`));
+  });
+
   it("resolves whoami through System32 so Git Bash cannot shadow it", () => {
     const spawn = fakeSpawn({ whoami: whoamiHandler });
     const sid = platform.currentUserSid({ spawn, useCache: false });
     assert.equal(sid, OWN_SID);
     assert.equal(spawn.calls[0].file, platform.windowsSystem32Tool("whoami"));
+  });
+
+  it("uses Windows PowerShell from System32 for owner checks, independent of PATH", () => {
+    const spawn = fakeSpawn({});
+    assert.equal(platform.readWindowsOwnerSid("C:\\state\\config.json", { spawn }), OWN_SID);
+    assert.equal(spawn.calls[0].file, path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
   });
 
   it("collapses the grant list when the agent already runs as SYSTEM", () => {
@@ -293,7 +326,7 @@ describe("platform: permission application", () => {
       icacls: icaclsSaveHandler(`D:PAI(A;;FA;;;${OWN_SID})(A;;FA;;;SY)`),
     });
     const bareSpawn = (file, args) => {
-      if (file === "powershell") return { error: Object.assign(new Error("nope"), { code: "ENOENT" }) };
+      if (path.parse(file).name.toLowerCase() === "powershell") return { error: Object.assign(new Error("nope"), { code: "ENOENT" }) };
       return spawn(file, args);
     };
     assert.throws(

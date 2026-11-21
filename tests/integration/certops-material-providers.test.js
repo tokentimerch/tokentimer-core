@@ -319,6 +319,20 @@ describe("CertOps material provider references on PostgreSQL", function () {
           },
           certificatePem: nextPem,
         });
+        const target = (await client.query(`INSERT INTO certificate_targets(workspace_id,name,target_type,source,hostname)
+          VALUES($1,'revocation test','host','integration','pilot.example.test') RETURNING id`, [workspaceId])).rows[0];
+        const status = { verdict: 'revoked', chainStatus: 'valid', checkedAt: new Date(Date.now()-60000).toISOString(), validUntil: new Date(Date.now()+3600000).toISOString() };
+        const observed = (await client.query(`INSERT INTO certificate_instances(workspace_id,target_id,source,source_ref,observed_fingerprint_sha256,
+          location_kind,presence_state,evidence_kind,captured_at,scan_interval_seconds,public_metadata)
+          VALUES($1,$2,'agent_filesystem','revoked-version',$3,'filesystem','confirmed_present','stored_copy',NOW(),3600,$4::jsonb) RETURNING id`,
+        [workspaceId,target.id,fingerprintSha256,JSON.stringify({ observedRevocation: status })])).rows[0];
+        await assert.rejects(material.assertDeployableVersion(client,workspaceId,group.id,materialVersionId), {code:'CERTOPS_ROLLOUT_VERSION_INVALID'});
+        await material.assertDeployableVersion(client,workspaceId,group.id,materialVersionId,{verificationOnly:true});
+        await material.assertDeployableVersion(client,workspaceId,group.id,nextId);
+        await client.query(`UPDATE certificate_instances SET observed_fingerprint_sha256=$2,public_metadata=$3::jsonb WHERE id=$1`,
+          [observed.id,crypto.createHash('sha256').update(nextCert.raw).digest('hex'),JSON.stringify({observedRevocation:{...status,verdict:'issuer_revoked',revokedIssuerFingerprintSha256:fingerprintSha256}})]);
+        await assert.rejects(material.assertDeployableVersion(client,workspaceId,group.id,materialVersionId), {code:'CERTOPS_ROLLOUT_VERSION_INVALID'});
+        await client.query('DELETE FROM certificate_instances WHERE id=$1',[observed.id]);
         const binding = (
           await client.query(
             `INSERT INTO certops_consumer_bindings(workspace_id,group_id,assigned_agent_id,deployment_profile_ref,profile_revision,verification_policy)
@@ -407,6 +421,12 @@ describe("CertOps material provider references on PostgreSQL", function () {
           jobId: child.id,
         };
         await resolveDistributionJobDefaults(resolution);
+        const observedAfterApproval = (await client.query(`INSERT INTO certificate_instances(workspace_id,target_id,source,source_ref,observed_fingerprint_sha256,
+          location_kind,presence_state,evidence_kind,captured_at,scan_interval_seconds,public_metadata)
+          VALUES($1,$2,'agent_filesystem','revoked-version-after-approval',$3,'filesystem','confirmed_present','stored_copy',NOW(),3600,$4::jsonb) RETURNING id`,
+        [workspaceId,target.id,fingerprintSha256,JSON.stringify({ observedRevocation: status })])).rows[0];
+        await assert.rejects(resolveDistributionJobDefaults({ ...resolution, forClaim:true }), {code:'CERTOPS_ROLLOUT_VERSION_INVALID'});
+        await client.query('DELETE FROM certificate_instances WHERE id=$1',[observedAfterApproval.id]);
         await assert.rejects(
           resolveDistributionJobDefaults({
             ...resolution,
