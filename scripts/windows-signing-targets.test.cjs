@@ -22,7 +22,10 @@ function fixture(t) {
 test("selects every first-party executable and leaves the Node runtime untouched", t => {
   const root = fixture(t);
   const list = collect(root, "amd64");
-  assert.equal(list.length, OWNED.length);
+  assert.equal(list.length, 14);
+  assert.ok(list.includes(path.join(root, "src/windows-cert-store/find-predecessor.ps1")));
+  assert.ok(list.includes(path.join(root, "src/windows-cert-store/inspect-pending-request.ps1")));
+  assert.ok(list.includes(path.join(root, "src/windows-cert-store/inspect-store.ps1")));
   assert.ok(list.every(name => !name.toLowerCase().endsWith("node.exe")));
 });
 
@@ -65,10 +68,12 @@ test("fails closed for unexpected, missing or linked executable material", async
     fs.writeFileSync(file, executable);
     assert.throws(() => collect(root, "amd64"), /Unsupported Windows native executable/);
   });
-  await t.test("missing script", t => {
-    const root = fixture(t);
-    fs.unlinkSync(path.join(root, "scripts", "install-agent.ps1"));
-    assert.throws(() => collect(root, "amd64"), /missing/);
+  await t.test("missing installer or Store script", t => {
+    for (const missing of ["scripts/install-agent.ps1", "src/windows-cert-store/inspect-store.ps1"]) {
+      const root = fixture(t);
+      fs.unlinkSync(path.join(root, missing));
+      assert.throws(() => collect(root, "amd64"), /missing/);
+    }
   });
   await t.test("wrong runtime architecture", t => {
     const root = fixture(t);

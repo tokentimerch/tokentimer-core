@@ -10,6 +10,9 @@ const OWNED = Object.freeze([
   "scripts/install-agent.ps1",
   "src/acme/windows-command.ps1",
   "src/windows-material/connector.ps1",
+  "src/windows-cert-store/find-predecessor.ps1",
+  "src/windows-cert-store/inspect-pending-request.ps1",
+  "src/windows-cert-store/inspect-store.ps1",
   ...["amd64", "arm64"].flatMap(arch => [
     `bin/tokentimer-adcs-chain-${arch}.exe`,
     `bin/tokentimer-adcs-cmc-${arch}.exe`,

@@ -176,8 +176,8 @@ switch ($Operation) {
         $publisherPins = @(foreach ($target in $targetList) {
             Get-CertificateSha (Get-TimestampedSigner (Join-Path $packageRoot $target))
         })
-        if ($publisherPins.Count -ne 11 -or @($publisherPins | Select-Object -Unique).Count -ne 1) {
-            throw 'The eleven Authenticode signatures must share one publisher leaf before CMS signing'
+        if ($publisherPins.Count -ne 14 -or @($publisherPins | Select-Object -Unique).Count -ne 1) {
+            throw 'The fourteen Authenticode signatures must share one publisher leaf before CMS signing'
         }
 
         $sdkZip = Join-Path $Stage 'dotnet-sdk-10.0.404-win-x64.zip'
@@ -279,7 +279,7 @@ switch ($Operation) {
         }
         $packageRoot = Join-Path $files 'package'
         $targetList = Read-SmallJson (Join-Path $Stage 'signing-targets.json')
-        if (@($targetList).Count -ne 11) { throw 'Expected the exact eleven first-party targets' }
+        if (@($targetList).Count -ne 14) { throw 'Expected the exact fourteen first-party targets' }
         $leaves = [ordered]@{}
         foreach ($target in $targetList) {
             $leaf = Get-TimestampedSigner (Join-Path $packageRoot $target)

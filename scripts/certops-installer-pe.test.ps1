@@ -100,6 +100,8 @@ try {
  $stagingTry=$copy[0].Parent
  while($stagingTry -and $stagingTry -isnot [Management.Automation.Language.TryStatementAst]){$stagingTry=$stagingTry.Parent}
  if(!$stagingTry){throw 'Production staging recovery boundary missing'}
+ # Match the standalone installer session without running installer top-level code.
+ $script:AuthorizedLauncherTransaction=$null
  function Fail {param([string]$Message) throw $Message}
  $PackageDir=Join-Path $root 'bad-source';New-Item -ItemType Directory -Path (Join-Path $PackageDir 'bin') -Force|Out-Null
  [IO.File]::WriteAllBytes((Join-Path $PackageDir 'bin\tokentimer-agent-host-amd64.exe'),[byte[]](0,1))
@@ -121,6 +123,21 @@ try {
  $observedError=''
  try {Invoke-Expression $stagingTry.Extent.Text}catch{$observedError=$_.Exception.Message}
  if($observedError -notlike '*staging cleanup refused*' -or !$observedError.EndsWith($originalStagingFailure) -or !(Test-Path -LiteralPath $foreignMarker)){throw 'Actual staging catch erased replacement or lost original failure'}
+ # An authorized launcher retains its exact stage and the original failure for recovery.
+ $script:AppStaging=Join-Path $root 'launcher-stage'
+ New-Item -ItemType Directory -Path $script:AppStaging|Out-Null
+ $stagingIdentity=Get-PackageDirectoryIdentity -Directory $script:AppStaging
+ $script:AuthorizedLauncherTransaction=[guid]::NewGuid().ToString('N')
+ $observedError=''
+ try {Invoke-Expression $stagingTry.Extent.Text}
+ catch {$observedError=$_.Exception.Message}
+ finally {$script:AuthorizedLauncherTransaction=$null}
+ if($observedError -notlike 'recovery_required: package staging failed; preserve *' -or
+    !$observedError.EndsWith($originalStagingFailure) -or
+    (Get-PackageDirectoryIdentity -Directory $script:AppStaging) -ne $stagingIdentity -or
+    [IO.File]::ReadAllText($appMarker) -ne 'preserve'){
+  throw 'Launcher-authorized staging failure did not retain the original stage and application'
+ }
  # A source success cannot replace validation of the bytes actually staged.
  $source=Join-Path $root 'valid-source';New-Item -ItemType Directory -Path (Join-Path $source 'bin') -Force|Out-Null
  foreach($name in @('tokentimer-agent-host-amd64.exe','tokentimer-adcs-chain-amd64.exe')){Copy-Item -LiteralPath (Join-Path $bin $name) -Destination (Join-Path $source "bin\$name")}

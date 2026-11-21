@@ -111,7 +111,11 @@ class CandidateBindingTests(unittest.TestCase):
         names = ["package/package.json", "package/LICENSE", "package/README.md",
                  "package/bin/tokentimer-agent.js", "package/src/index.js",
                  "package/scripts/install-agent.ps1", "package/src/acme/windows-command.ps1",
-                 "package/src/windows-material/connector.ps1", "package/runtime/LICENSE",
+                 "package/src/windows-material/connector.ps1",
+                 "package/src/windows-cert-store/find-predecessor.ps1",
+                 "package/src/windows-cert-store/inspect-pending-request.ps1",
+                 "package/src/windows-cert-store/inspect-store.ps1",
+                 "package/runtime/LICENSE",
                  "package/runtime/manifest.json", "package/runtime/amd64/node.exe"]
         names += [f"package/bin/{family}-{arch}.exe" for arch in ("amd64", "arm64")
                   for family in ("tokentimer-agent-host", "tokentimer-adcs-chain", "tokentimer-adcs-cmc",
