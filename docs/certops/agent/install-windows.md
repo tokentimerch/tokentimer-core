@@ -53,6 +53,15 @@ For an API-created no-op smoke test, list `GET /api/v1/workspaces/{workspaceId}/
 
 If registration or heartbeat fails, check `Get-Service TokenTimerAgent`, the Windows Application log, and the configured URL and workspace. For a private CA or an approved TLS-inspecting proxy, update `caBundlePath` in the existing configuration using [Windows maintenance](../windows-maintenance.md#edit-configuration-without-losing-identity). Restart and check the original fleet row for an enrolled agent. For a rejected or expired token on a new host, obtain a new one-use token. Redact bootstrap tokens, credentials and keys from support logs.
 
+## Worked rollout for 500 Windows agents
+
+This example uses the classic installer, an RMM job or computer-scoped GPO, and existing IIS HTTPS bindings. Start with 5 hosts, then 25, then batches of up to 50. Keep rollout batches within the workspace and issuer limits.
+
+1. Record the device ID, workspace and intended endpoint for each host. Before each wave, a workspace manager creates a short-lived, single-use bootstrap token for each new host in **Agent fleet** or via `POST /api/v1/workspaces/{workspaceId}/certops/agent-bootstrap-tokens` using an authorized user session. Keep the manager session at the rollout coordinator. Deliver only the host’s token through its protected secret channel.
+2. Run the [unattended installer](#unattended-classic-installation). Record the exit code, then match the local `agentId` to its fleet row. Require exit `0`, the intended version, compatibility and a fresh heartbeat. If enrollment consumed the token without a heartbeat, inspect the original protected state and fleet record before issuing another token.
+3. On the first pilot host, [verify signed dispatch](#verify), review local DNS and IIS policy, then enable real execution. Create a manual **Issue** job with a `windows-iis` target for that binding and the configured [DNS-01 provider](dns-and-acme.md). Obtain any required approval. From a separate client, [connect to that endpoint](../verify-live-service.md#windows-and-iis) and match the served serial or fingerprint to the issued certificate.
+4. Repeat the checks for each target and record its fleet row, job ID and verified fingerprint. Advance only after the wave passes. Pause on exceptions and [recover the original job](operations.md#recover-a-failed-job) before retrying.
+
 ## Continue
 
 [Windows runtime details](windows-runtime.md) · [Upgrades and retirement](operations.md) · [Agent overview](../agent.md)

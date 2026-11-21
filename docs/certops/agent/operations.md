@@ -10,6 +10,19 @@ Configuration changes do not require a replacement registration. After restart, 
 
 A retired identity cannot register again with a new bootstrap token: the control plane returns `CERTOPS_AGENT_REGISTRATION_CONFLICT` without consuming that token or overwriting working state. A replacement needs a new `agentId` and separate protected state. Coordinate any installed Windows service handoff and custody migration separately; registering an independent replacement process does not transfer the predecessor's jobs, journals, or keys.
 
+## Recover a failed job
+
+Check the agent log, protected journal, CA order and live endpoint. Record the original job ID and any certificate fingerprint.
+
+- **Result awaiting delivery:** restore connectivity or restart the same enrolled agent. Let its outbox deliver the original result while the control plane can still accept it.
+- **Failure before any effect:** fix the cause, confirm the original attempt is terminal and no issuance or deployment occurred, then submit new work.
+- **Certificate issued:** deploy the existing certificate when its key is usable. If it is already installed, finish the missing reload and verify the live endpoint. If the endpoint already serves it, re-scan and record the result.
+- **Effects uncertain:** hold new work for the affected certificate until you can reconcile the evidence.
+
+### Replace a lost host
+
+If the original host is recoverable with its protected state intact, repair that agent and reconcile its jobs. For a lost host, hold affected renewals and check surviving CA, inventory and endpoint evidence. Retire the old fleet row after its jobs finish. If the host is gone and a lease blocks retirement, [force-retire with a reason](#forced-agent-retirement-and-in-flight-work) and reconcile the orphaned jobs. Enroll the replacement with a new `agentId` and separate protected state, then retarget renewal and deployment. Recover keys through approved custody procedures. Reissue if the old key is unavailable, including a non-exportable key on the lost host. [Verify the live endpoint](../verify-live-service.md) before resuming renewals.
+
 <a id="9-troubleshooting"></a>
 
 ## Troubleshooting
