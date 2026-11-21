@@ -17,7 +17,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import Ajv from "ajv";
+import addFormats from "ajv-formats";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..");
@@ -313,6 +316,7 @@ describe("OpenAPI agent request bodies align with agent-protocol.schema.json", (
       "result",
       "evidence",
       "log",
+      "iis-absence-proof",
     ]);
     assert.ok(
       envelopeBlock.includes(`enum: [${schemaEnum.join(", ")}]`),
@@ -325,7 +329,7 @@ describe("OpenAPI agent request bodies align with agent-protocol.schema.json", (
       CertOpsAgentRegisterRequest: "enum: [register]",
       CertOpsAgentHeartbeatRequest: "enum: [heartbeat]",
       CertOpsAgentClaimRequest: "enum: [claim]",
-      CertOpsAgentResultRequest: "enum: [result, evidence]",
+      CertOpsAgentResultRequest: "enum: [result, evidence, iis-absence-proof]",
       CertOpsAgentLogRequest: "enum: [log]",
     };
     for (const [schemaName, pin] of Object.entries(pins)) {
@@ -341,8 +345,72 @@ describe("OpenAPI agent request bodies align with agent-protocol.schema.json", (
     }
   });
 
+  it("documents the authenticated IIS proof body and its runtime limits", () => {
+    const apiRequire = createRequire(path.join(repoRoot, "apps/api/package.json"));
+    const yaml = createRequire(apiRequire.resolve("swagger-jsdoc"))("yaml");
+    const spec = yaml.parse(openApiYaml);
+    const operation = spec.paths["/api/v1/certops/agent/jobs/results"].post;
+    assert.deepStrictEqual(operation.security, [{ agentCredentialAuth: [] }]);
+    const request = spec.components.schemas.CertOpsAgentResultRequest.allOf[1];
+    const proofBranch = request.oneOf.find(branch => branch.properties.messageType.enum.includes("iis-absence-proof"));
+    assert.deepStrictEqual(proofBranch.required, ["sequence"]);
+    assert.strictEqual(proofBranch.properties.body.$ref, "#/components/schemas/CertOpsAgentIisAbsenceProofBody");
+    const documented = spec.components.schemas.CertOpsAgentIisAbsenceProofBody;
+    const protocol = agentProtocol.definitions.iisAbsenceProofBody;
+    assert.strictEqual(documented.additionalProperties, false);
+    assert.deepStrictEqual(documented.required, protocol.required);
+    assert.strictEqual(documented.properties.proofs.minItems, protocol.properties.proofs.minItems);
+    assert.strictEqual(documented.properties.proofs.maxItems, protocol.properties.proofs.maxItems);
+    const docItem = documented.properties.proofs.items;
+    const protocolItem = protocol.properties.proofs.items;
+    assert.strictEqual(docItem.additionalProperties, false);
+    assert.deepStrictEqual(docItem.required, protocolItem.required);
+    assert.deepStrictEqual(Object.keys(docItem.properties).sort(), Object.keys(protocolItem.properties).sort());
+    for (const [name, property] of Object.entries(protocolItem.properties)) {
+      for (const key of ["type", "minLength", "maxLength", "minimum", "maximum", "pattern", "format"]) {
+        if (property[key] !== undefined) assert.deepStrictEqual(docItem.properties[name][key], property[key], `${name}.${key}`);
+      }
+    }
+    assert.strictEqual(docItem.properties.site.pattern, "^[A-Za-z0-9 _.:-]+$");
+    assert.strictEqual(spec.components.schemas.CertOpsAgentProtocolEnvelope.properties.sequence.minimum, 1);
+
+    const ajv = new Ajv({ strict: false });
+    addFormats(ajv);
+    const requestSchema = structuredClone(spec.components.schemas.CertOpsAgentResultRequest);
+    // The shared result body includes unrelated OpenAPI-only nullable fields;
+    // validate the proof branch and envelope independently of those fields.
+    delete requestSchema.allOf[1].properties.body;
+    const validate = ajv.compile({
+      ...requestSchema,
+      components: { schemas: {
+        CertOpsAgentProtocolEnvelope: spec.components.schemas.CertOpsAgentProtocolEnvelope,
+        CertOpsAgentIisAbsenceProofBody: documented,
+      } },
+    });
+    const proof = { evidenceId: "proof-1", targetHost: "host.example", site: "Default Web Site", port: 443,
+      address: "192.0.2.10", fingerprintSha256: "a".repeat(64), thumbprint: "b".repeat(40),
+      observedAt: "2026-11-15T12:00:00Z" };
+    const envelope = { schemaVersion: 1, protocolVersion: "1.0.0", messageType: "iis-absence-proof",
+      agentId: "agent-1", sentAt: "2026-11-15T12:00:00Z", sequence: 1, body: { proofs: [proof] } };
+    assert.strictEqual(validate(envelope), true, JSON.stringify(validate.errors));
+    const { sequence, ...missingSequence } = envelope;
+    assert.strictEqual(validate(missingSequence), false);
+    assert.strictEqual(validate({ ...envelope, body: { proofs: [{ ...proof, unexpected: true }] } }), false);
+    assert.strictEqual(validate({ ...envelope, body: { proofs: Array(17).fill(proof) } }), false);
+  });
+
   it("mirrors per-messageType required body fields", () => {
     const defs = agentProtocol.definitions;
+
+    const proofRequest = extractSchemaBlock(openApiYaml, "CertOpsAgentResultRequest");
+    assert.ok(proofRequest.includes("required: [sequence]"));
+    assert.ok(proofRequest.includes("#/components/schemas/CertOpsAgentIisAbsenceProofBody"));
+    const proofBlock = extractSchemaBlock(openApiYaml, "CertOpsAgentIisAbsenceProofBody");
+    const proof = defs.iisAbsenceProofBody.properties.proofs;
+    assert.ok(proofBlock.includes(`minItems: ${proof.minItems}`));
+    assert.ok(proofBlock.includes(`maxItems: ${proof.maxItems}`));
+    assert.ok(proofBlock.includes(`required: [${proof.items.required.join(", ")}]`));
+    assert.equal((proofBlock.match(/additionalProperties: false/g) || []).length, 2);
 
     const registerBlock = extractSchemaBlock(
       openApiYaml,

@@ -423,6 +423,19 @@ const TestUtils = {
     options = {},
   ) => {
     return new Promise((resolve, reject) => {
+      if (
+        options.timeoutMs !== undefined &&
+        (!Number.isInteger(options.timeoutMs) ||
+          options.timeoutMs <= 0 ||
+          options.timeoutMs > 2147483647)
+      ) {
+        reject(
+          new Error(
+            "runNode timeoutMs must be a positive integer within the timer range",
+          ),
+        );
+        return;
+      }
       const argsText = Array.isArray(args)
         ? args.join(" ")
         : String(args || "");
@@ -449,14 +462,67 @@ const TestUtils = {
         DB_NAME: process.env.DB_NAME || (env && env.DB_NAME) || "tokentimer",
       };
       const p = spawn(cmd, args, { stdio: "inherit", cwd, env: mergedEnv });
+      let timeoutTimer;
+      let killTimer;
+      let stopTimer;
+      let timedOut = false;
+      let stopError;
+      const clearTimers = () => {
+        clearTimeout(timeoutTimer);
+        clearTimeout(killTimer);
+        clearTimeout(stopTimer);
+      };
+      const timeoutError = (confirmed) =>
+        new Error(
+          `${cmd} (pid ${p.pid}) timed out after ${options.timeoutMs} ms; ` +
+            (confirmed
+              ? "child closed"
+              : "child closure not confirmed after SIGKILL") +
+            (stopError ? `; termination error: ${stopError.message}` : ""),
+        );
+      // Signal only the owned child, never an unrelated process group or tree.
+      const signalChild = (signal) => {
+        if (p.exitCode !== null || p.signalCode !== null) return;
+        try {
+          if (!p.kill(signal))
+            stopError = new Error(`${signal} could not be sent`);
+        } catch (error) {
+          stopError = error;
+        }
+      };
+      if (options.timeoutMs !== undefined) {
+        timeoutTimer = setTimeout(() => {
+          timedOut = true;
+          signalChild("SIGTERM");
+          killTimer = setTimeout(() => {
+            signalChild("SIGKILL");
+            stopTimer = setTimeout(() => {
+              p.unref();
+              reject(timeoutError(false));
+            }, 1000);
+          }, 500);
+        }, options.timeoutMs);
+      }
       p.on("close", (code) => {
+        clearTimers();
+        if (timedOut) {
+          reject(timeoutError(true));
+          return;
+        }
         if (allowExitCodes.includes(code)) {
           resolve({ code });
           return;
         }
         reject(new Error(`${cmd} ${args.join(" ")} exited ${code}`));
       });
-      p.on("error", reject);
+      p.on("error", (error) => {
+        if (timedOut) {
+          stopError = error;
+          return;
+        }
+        clearTimers();
+        reject(error);
+      });
     });
   },
 

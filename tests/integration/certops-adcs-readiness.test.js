@@ -77,8 +77,8 @@ describe("AD CS automatic renewal readiness (real database)", function () {
     const agent = await TestUtils.execQuery(
       `INSERT INTO certops_agents (
          workspace_id, agent_id, name, agent_version, protocol_version,
-         credential_prefix, credential_hash, status, declared_target_selectors
-       ) VALUES ($1, $2, 'adcs-agent', '0.1.0', '1.0.0', $3, $4, 'active', $5::jsonb)
+         credential_prefix, credential_hash, status, platform, declared_target_selectors, supported_operations
+       ) VALUES ($1, $2, 'adcs-agent', '0.1.0', '1.0.0', $3, $4, 'active', 'win32', $5::jsonb, '["adcs-preflight"]'::jsonb)
        RETURNING id`,
       [
         workspaceId,
@@ -133,7 +133,7 @@ describe("AD CS automatic renewal readiness (real database)", function () {
   }
 
   // Runs the real gate against the database and reports the scheduler outcome.
-  async function runGate(issuerId) {
+  async function runGate(issuerId, { automaticPreflight = false } = {}) {
     const certificate = {
       id: crypto.randomUUID(),
       workspace_id: workspaceId,
@@ -159,11 +159,27 @@ describe("AD CS automatic renewal readiness (real database)", function () {
       dbPool: pool,
       certificate,
       mode: "real",
-      env: {},
+      env: { CERTOPS_ENABLED: "true" },
       auditWriter: async () => {},
+      ...(automaticPreflight ? {} : { preflightDispatcher: async () => {} }),
     }).catch((caught) => caught);
     return { error };
   }
+
+  it("queues only one preflight when a due renewal lacks fresh evidence", async () => {
+    const { issuerId } = await scenario();
+    const first = await runGate(issuerId, { automaticPreflight: true });
+    expect(first.error?.code).to.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
+    const second = await runGate(issuerId, { automaticPreflight: true });
+    expect(second.error?.code).to.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
+    const jobs = await TestUtils.execQuery(
+      `SELECT operation, source, status FROM certificate_jobs
+        WHERE workspace_id = $1 AND subject_id = $2 AND operation = 'adcs-preflight'`,
+      [workspaceId, issuerId],
+    );
+    expect(jobs.rows).to.have.length(1);
+    expect(jobs.rows[0].source).to.equal("automation");
+  });
 
   it("qualifies an agent whose safe preflight matches the confirmed CA, template, and key", async () => {
     const { issuerId, agentId } = await scenario();

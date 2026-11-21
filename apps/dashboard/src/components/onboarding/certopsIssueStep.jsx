@@ -183,13 +183,14 @@ export default function IssueStep({ ctx }) {
           reloadService: windows ? '' : saved.reloadService || '',
           iisSite: saved.iisSite || 'Default Web Site',
           iisPort: saved.iisPort || 443,
+          iisAddress: saved.iisAddress || '',
           sniHost: saved.sniHost || '',
           assignedAgentId: agent.id,
           idempotencyKey: issueIdempotencyKey({
             names,
             zone: saved.zone,
             certPath: windows
-              ? `iis:${saved.iisSite || 'Default Web Site'}:${saved.iisPort || 443}`
+              ? `iis:${saved.iisSite || 'Default Web Site'}:${saved.iisPort || 443}${saved.iisAddress?.trim() && !['*', '0.0.0.0'].includes(saved.iisAddress.trim()) ? `@${saved.iisAddress.trim()}` : ''}`
               : saved.certPath,
             caEndpoint,
             reloadService: saved.reloadService || '',

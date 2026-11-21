@@ -160,6 +160,18 @@ describe("verifyJobSignature", () => {
     assert.ok(typeof result.detail === "string" && result.detail.length > 0);
   });
 
+  it("rejects removal or insertion of the signed IIS reassociation guard", () => {
+    const guarded=buildSignedJob({privateKeyPem:keys.privateKeyPem,signingKeyId:keys.signingKeyId,overrides:{iisReassociationGuard:{fingerprintSha256:"a".repeat(64),site:"Default Web Site",port:443,address:"192.0.2.10",store:"My"}}});
+    const changed=structuredClone(guarded);
+    changed.iisReassociationGuard.address="192.0.2.20";
+    assert.equal(verifyJobSignature({job:changed,publicKeyPem:keys.publicKeyPem,pinnedSigningKeyId:keys.signingKeyId}).allowed,false);
+    delete guarded.iisReassociationGuard;
+    assert.equal(verifyJobSignature({job:guarded,publicKeyPem:keys.publicKeyPem,pinnedSigningKeyId:keys.signingKeyId}).allowed,false);
+    const plain=buildSignedJob({privateKeyPem:keys.privateKeyPem,signingKeyId:keys.signingKeyId});
+    plain.iisReassociationGuard=true;
+    assert.equal(verifyJobSignature({job:plain,publicKeyPem:keys.publicKeyPem,pinnedSigningKeyId:keys.signingKeyId}).allowed,false);
+  });
+
   it("rejects a signingKeyId mismatch with a detail mentioning the key id mismatch", () => {
     const job = buildSignedJob({
       privateKeyPem: keys.privateKeyPem,

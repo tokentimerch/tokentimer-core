@@ -25,9 +25,11 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
-const dispatch = require(
+const rawDispatch = require(
   path.resolve(__dirname, "../../apps/api/services/certops/agentDispatch.js"),
 );
+const dispatch = { ...rawDispatch, ingestResult: options => rawDispatch.ingestResult({ ...options,
+  deps: { assertCurrentAgentCredential: async () => {}, ...options.deps } }) };
 const { ensureDerivedRenewalProfile } = require(
   path.resolve(
     __dirname,
@@ -281,6 +283,7 @@ function refreshClient({ metadata = VERIFY_METADATA, tokenId = 77 } = {}) {
         });
         return { rows: [] };
       }
+      if (sql.includes("SELECT source, source_ref FROM managed_certificates")) return { rows: [{ source: "agent_issuance", source_ref: "test" }] };
       if (sql.includes("FROM managed_certificates") && sql.includes("FOR UPDATE")) {
         return {
           rows: [
@@ -1151,6 +1154,8 @@ describe("management period audit", () => {
     const oldPeriodId = "44444444-4444-4444-8444-444444444444";
     const newPeriodId = "55555555-5555-4555-8555-555555555555";
     const identityId = "66666666-6666-4666-8666-666666666666";
+    const commonName = "reconciled.example.test";
+    const fingerprintSha256 = "a".repeat(64);
     const common = {
       managed_certificate_id: CERT_ID,
       current_identity_id: identityId,
@@ -1158,6 +1163,8 @@ describe("management period audit", () => {
     const original = {
       ...common,
       id: oldPeriodId,
+      audit_common_name: commonName,
+      audit_fingerprint_sha256: fingerprintSha256,
       renewal_profile_id: PROFILE_ID,
       automation_enabled: true,
     };
@@ -1180,7 +1187,7 @@ describe("management period audit", () => {
           return { rows: [{ ended_at: new Date() }] };
         if (sql.includes("COUNT(*)")) return { rows: [{ c: 2 }] };
         if (sql.includes("SELECT * FROM managed_certificates"))
-          return { rows: [{ id: CERT_ID, fingerprint_sha256: "a".repeat(64) }] };
+          return { rows: [{ id: CERT_ID, common_name: commonName, fingerprint_sha256: fingerprintSha256 }] };
         if (sql.includes("SELECT p.id")) return { rows: [] };
         if (sql.includes("SELECT id, lifecycle_status"))
           return { rows: [{ id: identityId }] };
@@ -1211,6 +1218,8 @@ describe("management period audit", () => {
           periodId: oldPeriodId,
           managedCertificateId: CERT_ID,
           identityId,
+          commonName,
+          fingerprintSha256,
           renewalProfileId: PROFILE_ID,
           automationEnabled: true,
           runningJobs: 2,
@@ -1222,6 +1231,8 @@ describe("management period audit", () => {
           periodId: newPeriodId,
           managedCertificateId: CERT_ID,
           identityId,
+          commonName,
+          fingerprintSha256,
           renewalProfileId: null,
           automationEnabled: false,
         },

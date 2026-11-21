@@ -84,7 +84,7 @@ function rawDataJson(thumbprint, derBase64) {
   return JSON.stringify({ items: [{ Thumbprint: thumbprint, RawData: Array.from(Buffer.from(derBase64, "base64")) }] });
 }
 
-function makeExecFileImplRouter({ storeJson, certutilStdout, bindingsJson, appcmdStdout, storeExitCode, bindingsExitCode }) {
+function makeExecFileImplRouter({ storeJson, certutilStdout, bindingsJson, appcmdStdout, storeExitCode, bindingsExitCode, flagsUnavailable }) {
   return function execFileImpl(file, args, options, callback) {
     process.nextTick(() => {
       if (isHttpSysQuery(args)) {
@@ -93,6 +93,12 @@ function makeExecFileImplRouter({ storeJson, certutilStdout, bindingsJson, appcm
           return;
         }
         callback(null, bindingsJson ?? JSON.stringify({ items: [] }), "");
+        return;
+      }
+      if (String(args.at(-1)).includes("Get-WebBinding")) {
+        if(flagsUnavailable){callback({code:1},"","IIS metadata unavailable");return;}
+        const sites=require("../windows-discovery").parseAppcmdSiteListOutput(appcmdStdout||"");
+        callback(null,JSON.stringify({items:sites.flatMap(site=>site.bindings.filter(b=>b.protocol.toLowerCase()==="https").map(b=>({site:site.name,bindingInformation:`${b.address}:${b.port}:${b.hostHeader}`,sslFlags:b.hostHeader?1:0})))}),"");
         return;
       }
       if (String(file).includes("powershell")) {
@@ -447,6 +453,7 @@ describe("collectWindowsDiscoveryObservations", () => {
       assert.ok(iisObservation, "expected an iis_binding observation");
       assert.equal(iisObservation.siteName, "Default Web Site");
       assert.equal(iisObservation.port, 443);
+      assert.equal(iisObservation.boundAddress, "10.0.0.5");
       assert.equal(iisObservation.fingerprintSha256, storeObservation.fingerprintSha256);
       // A binding never holds its own key handle -- it references the
       // store entry by thumbprint, cross-referenced from the same
@@ -492,6 +499,69 @@ describe("collectWindowsDiscoveryObservations", () => {
     assert.ok(observations.some(item=>item.locationKind==="iis_binding" && item.locationSlot==="Web:443@10.0.0.5"));
   });
 
+  it("reports the native bracketed IPv6 IIS binding without changing its native slot", async () => {
+    const certificate=new (require("node:crypto").X509Certificate)(fs.readFileSync(path.join(__dirname,"../verify/fixtures/leaf.crt.pem")));
+    const thumbprint="1122334455667788990011223344556677889900";
+    const execFileImpl=makeExecFileImplRouter({
+      ...storeFixtureFor(thumbprint,"ipv6.example.test",{hasPrivateKey:true}),
+      bindingsJson:httpSysJson([{ipPort:"[0:0:0:0:0:0:0:1]:18450",thumbprint,storeName:"My"}]),
+      appcmdStdout:'SITE "Default Web Site" (id:1,bindings:https/[::1]:18450:,state:Started)',
+    });
+    const observations=await collectWindowsDiscoveryObservations({execFileImpl,spawn:()=>fakeSpawnResult({stdout:rawDataJson(thumbprint,certificate.raw.toString("base64"))})});
+    const binding=observations.find(value=>value.locationKind==="iis_binding");
+    assert.ok(binding);assert.equal(binding.boundAddress,"0:0:0:0:0:0:0:1");assert.equal(binding.locationSlot,"Default Web Site:18450@0:0:0:0:0:0:0:1");
+    assert.equal(observations.filter(value=>value.locationKind==="http_sys").length,0);
+    const {parseIisSnapshot,provesWildcardAbsent}=require("./iis-absence-proof");
+    const iis=parseIisSnapshot(JSON.stringify({sites:["Default Web Site"],items:[{site:"Default Web Site",binding:"[::1]:18450:",flags:0}]}));
+    assert.equal(provesWildcardAbsent(binding,iis,[{keyedBy:"ipport",ipPort:"[0:0:0:0:0:0:0:1]:18450",thumbprint,storeName:"My"}],[{thumbprint,fingerprintSha256:binding.fingerprintSha256,hasPrivateKey:true}]),true);
+  });
+
+  it("retains HTTP.sys observation without IIS attribution when SSL flags cannot be read", async () => {
+    const certificate=new (require("node:crypto").X509Certificate)(fs.readFileSync(path.join(__dirname,"../verify/fixtures/leaf.crt.pem")));
+    const thumbprint="1122334455667788990011223344556677889900";
+    const execFileImpl=makeExecFileImplRouter({...storeFixtureFor(thumbprint,"ipv6.example.test",{hasPrivateKey:true}),
+      bindingsJson:httpSysJson([{ipPort:"[0:0:0:0:0:0:0:1]:18450",thumbprint,storeName:"My"}]),
+      appcmdStdout:'SITE "Default Web Site" (id:1,bindings:https/[::1]:18450:,state:Started)',flagsUnavailable:true});
+    const observations=await collectWindowsDiscoveryObservations({execFileImpl,spawn:()=>fakeSpawnResult({stdout:rawDataJson(thumbprint,certificate.raw.toString("base64"))})});
+    assert.equal(observations.filter(value=>value.locationKind==="iis_binding").length,0);
+    const http=observations.filter(value=>value.locationKind==="http_sys");
+    assert.equal(http.length,1);
+    assert.equal(http[0].locationSlot,"0:0:0:0:0:0:0:1:18450","preserve the pre-upgrade HTTP.sys identity");
+    assert.equal(http[0].boundAddress,"0:0:0:0:0:0:0:1");
+  });
+
+  it("keeps the legacy IIS identity for an IPv4 wildcard binding", async () => {
+    const certificate = new (require("node:crypto").X509Certificate)(fs.readFileSync(path.join(__dirname, "../verify/fixtures/leaf.crt.pem")));
+    const thumbprint = "1122334455667788990011223344556677889900";
+    const execFileImpl = makeExecFileImplRouter({
+      ...storeFixtureFor(thumbprint, "wildcard.example.test", { hasPrivateKey: true }),
+      bindingsJson: httpSysJson([{ ipPort: "0.0.0.0:443", thumbprint, storeName: "My" }]),
+      appcmdStdout: 'SITE "Default Web Site" (id:1,bindings:https/*:443:,state:Started)',
+    });
+    const observations = await collectWindowsDiscoveryObservations({ execFileImpl,
+      spawn: () => fakeSpawnResult({ stdout: rawDataJson(thumbprint, certificate.raw.toString("base64")) }) });
+    const binding = observations.find(value => value.locationKind === "iis_binding");
+    assert.ok(binding);
+    assert.equal(binding.locationSlot, "Default Web Site:443");
+  });
+
+  it("does not merge a wildcard binding with an IP-specific binding", async () => {
+    const certificate = new (require("node:crypto").X509Certificate)(fs.readFileSync(path.join(__dirname, "../verify/fixtures/leaf.crt.pem")));
+    const thumbprint = "1122334455667788990011223344556677889900";
+    const execFileImpl = makeExecFileImplRouter({
+      ...storeFixtureFor(thumbprint, "bindings.example.test", { hasPrivateKey: true }),
+      bindingsJson: httpSysJson([
+        { ipPort: "0.0.0.0:443", thumbprint, storeName: "My" },
+        { ipPort: "10.0.0.5:443", thumbprint, storeName: "My" },
+      ]),
+      appcmdStdout: 'SITE "Default Web Site" (id:1,bindings:https/*:443:,https/10.0.0.5:443:,state:Started)',
+    });
+    const observations = await collectWindowsDiscoveryObservations({ execFileImpl,
+      spawn: () => fakeSpawnResult({ stdout: rawDataJson(thumbprint, certificate.raw.toString("base64")) }) });
+    assert.deepEqual(observations.filter(value => value.locationKind === "iis_binding").map(value => value.locationSlot).sort(),
+      ["Default Web Site:443", "Default Web Site:443@10.0.0.5"]);
+  });
+
   it(
     "unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store",
     // skip-reason: prerequisite - needs a real openssl binary on PATH.
@@ -504,6 +574,7 @@ describe("collectWindowsDiscoveryObservations", () => {
       const execFileImpl = (file, args, options, callback) => {
         process.nextTick(() => {
           if (isHttpSysQuery(args)) return callback(null, bindingsJson, "");
+          if (String(args.at(-1)).includes("Get-WebBinding")) return callback(null,JSON.stringify({items:[{site:"Default Web Site",bindingInformation:"10.0.0.5:443:",sslFlags:0}]}),"");
           if (String(file).includes("appcmd")) {
             return callback(
               null,

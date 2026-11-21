@@ -135,6 +135,9 @@ const EXECUTABLE_TARBALL_ENTRIES = Object.freeze([
   "package/bin/tokentimer-observed-revocation-linux-arm64",
 ]);
 
+// Windows cannot represent Unix execute bits on source files. Normalize the
+// three known archive entries before computing the checksum so a release
+// packed on Windows remains runnable on Linux. Reject malformed/missing entries.
 function setArchiveExecutableEntries(tarballPath) {
   const tar = zlib.gunzipSync(fs.readFileSync(tarballPath));
   const remaining = new Set(EXECUTABLE_TARBALL_ENTRIES);

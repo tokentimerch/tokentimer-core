@@ -1200,7 +1200,7 @@ export default function CreateManualJobModal({
                   </FormHelperText>
                 ) : null}
               </FormControl>
-              {operation === 'noop' ? (
+              {!isControllerIssue && operation === 'noop' ? (
                 <FormControl>
                   <FormLabel fontSize='sm'>Execution mode</FormLabel>
                   <Select
@@ -1212,8 +1212,9 @@ export default function CreateManualJobModal({
                     <option value='dry_run'>Simulation (dry run)</option>
                   </Select>
                   <FormHelperText>
-                    Simulation checks signed job dispatch. Successful jobs
-                    report Dry-run complete.
+                    A simulation checks signed job dispatch without making
+                    changes on the agent. The expected result is Dry-run
+                    complete.
                   </FormHelperText>
                 </FormControl>
               ) : null}
