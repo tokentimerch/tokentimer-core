@@ -16,7 +16,7 @@ export const OBJECTIVES = {
   adcs: {
     label: 'Issue certificates from my Microsoft CA (AD CS)',
     description:
-      'A domain-joined Windows agent enrolls certificates for an HTTPS listener (IIS) from your private CA.',
+      'A domain-joined Windows agent enrolls certificates from your private CA for the machine store or an IIS listener.',
   },
   vault: {
     label: 'Share one certificate across servers',
@@ -52,7 +52,7 @@ export const INFRASTRUCTURES = {
         'Discover certificates in the machine certificate store and HTTPS bindings. No IIS needed.',
       automate:
         'Install the certificate in the machine store and bind it to an HTTPS listener, typically an IIS site.',
-      adcs: 'Use a domain-joined member server, not a domain controller. Install the certificate in the machine store and bind it to an HTTPS listener, typically an IIS site.',
+      adcs: 'Use a domain-joined member server, not a domain controller. Install in the machine store, or bind to an existing IIS listener.',
     },
     platform: 'win32',
     objectives: {

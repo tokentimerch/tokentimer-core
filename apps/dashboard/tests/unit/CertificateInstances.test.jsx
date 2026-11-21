@@ -67,6 +67,9 @@ describe('CertificateInstances', () => {
       observedRevocationDescriptor(good, Date.parse('2026-01-01T01:00:00Z'))
         .label
     ).toBe('Revocation check stale');
+    const previousRevocation = { ...good, lastVerified: { ...good, verdict: 'revoked' } };
+    expect(observedRevocationDescriptor(previousRevocation, Date.parse('2026-01-01T00:30:00Z')).label).toBe('Revocation checked');
+    expect(observedRevocationDescriptor(previousRevocation, Date.parse('2026-01-01T01:00:00Z')).label).toBe('Last known revoked');
     expect(
       observedRevocationDescriptor(
         {
@@ -84,6 +87,40 @@ describe('CertificateInstances', () => {
     expect(observedRevocationDescriptor(null).label).toBe(
       'Revocation not checked'
     );
+    expect(
+      observedRevocationDescriptor({ verdict: 'not_configured' }).label
+    ).toBe('Revocation not checked');
+    expect(observedRevocationDescriptor({ verdict: 'disabled' }).label).toBe(
+      'Revocation disabled'
+    );
+    expect(
+      observedRevocationDescriptor({
+        verdict: 'disabled',
+        lastVerified: { ...good, verdict: 'revoked' },
+      }).label
+    ).toBe('Last known revoked');
+  });
+  it('keeps revoked alerts red with future clock skew or malformed later evidence', () => {
+    const now = Date.parse('2026-01-01T00:00:00Z');
+    for (const verdict of ['revoked', 'issuer_revoked']) {
+      const future = observedRevocationDescriptor({ verdict, chainStatus: 'valid', checkedAt: '2026-01-01T00:01:00Z', validUntil: '2026-01-01T01:00:00Z' }, now);
+      expect(future.scheme).toBe('orange');
+      expect(future.help).toMatch(/clock/);
+      const lastVerified = { verdict, chainStatus: 'valid', checkedAt: '2025-12-31T23:00:00Z', validUntil: '2026-01-01T01:00:00Z' };
+      expect(observedRevocationDescriptor({ verdict: 'unknown', checkedAt: '2026-01-01T00:01:00Z', lastVerified }, now).scheme).toBe('red');
+      const invalid = observedRevocationDescriptor({ verdict: 'invalid_observation', lastVerified }, now);
+      expect(invalid.scheme).toBe('red');
+      expect(invalid.help).toMatch(/invalid/);
+    }
+    const invalid = observedRevocationDescriptor({ verdict: 'invalid_observation' }, now);
+    expect(invalid.scheme).toBe('orange');
+    expect(invalid.label).toBe('Revocation unknown');
+  });
+  it('identifies the exact revoked intermediate in the status detail', () => {
+    const now = Date.parse('2026-01-01T00:30:00Z');
+    const result = observedRevocationDescriptor({ verdict:'issuer_revoked', chainStatus:'valid', checkedAt:'2026-01-01T00:00:00Z', validUntil:'2026-01-01T01:00:00Z', revokedIssuerFingerprintSha256:'b'.repeat(64) }, now);
+    expect(result.label).toBe('CA revoked');
+    expect(result.help).toContain('b'.repeat(64));
   });
   it('shows the empty state when there are no instances', () => {
     renderInstances({ instances: [] });

@@ -1045,6 +1045,8 @@ router.get(
       }
       for (const row of opRows.rows) {
         const meta = row.metadata || {};
+        const isAdcsPreflight = row.category === "certops" && row.type === "adcs_preflight_blocked" &&
+          /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(String(meta.issuerId));
         const href =
           row.category === "auto_sync"
             ? autoSyncNotificationHref(
@@ -1052,7 +1054,9 @@ router.get(
                 meta.auto_sync_config_id,
                 req.workspace.id,
               )
-            : "/control-center";
+            : isAdcsPreflight
+              ? `/certops/renewals?${new URLSearchParams({workspace:req.workspace.id,action:"check-adcs-issuer",issuerId:meta.issuerId})}`
+              : "/control-center";
         items.push({
           id: row.id,
           kind:

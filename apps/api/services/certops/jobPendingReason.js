@@ -27,6 +27,9 @@ function declaredOperations(agent) {
 }
 
 function messageForEligibility({ job, agent, reason }) {
+  if (reason === "iis_explicit_ip_capability_unavailable") {
+    return "The assigned agent needs a qualified Windows build with a fresh declaration for explicit-IP IIS bindings.";
+  }
   if (reason === "agent_retired") {
     return "This agent has been retired and can no longer claim any job.";
   }

@@ -396,6 +396,31 @@ export function agentRestartCommandFor(os) {
  * Observe-only agent configuration: it registers and reports discovery, and
  * never claims jobs, because execution stays disabled.
  */
+export function parseRevocationOrigins(value = '') {
+  const origins = String(value)
+    .split(/[\s,]+/)
+    .filter(Boolean);
+  if (origins.length > 128) return { ok: false };
+  for (const origin of origins) {
+    if (origin.length > 2048) return { ok: false };
+    try {
+      const url = new URL(origin);
+      if (
+        !['http:', 'https:'].includes(url.protocol) ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash ||
+        url.pathname !== '/'
+      )
+        return { ok: false };
+    } catch {
+      return { ok: false };
+    }
+  }
+  return { ok: true, origins: [...new Set(origins)] };
+}
+
 export function buildObserveConfig({ os, directories = [] }) {
   const config = {
     execution: { enabled: false, dryRun: true },
@@ -632,6 +657,7 @@ function buildWindowsIssueJob({
   iisSite,
   iisPort,
   iisStore,
+  iisAddress,
   sniHost,
   acmeProfile,
   assignedAgentId,
@@ -639,6 +665,15 @@ function buildWindowsIssueJob({
 }) {
   const list = (names || []).map(n => String(n).trim()).filter(Boolean);
   const binding = { site: iisSite, port: Number(iisPort) };
+  const address = String(iisAddress || '').trim();
+  if (
+    address &&
+    !['*', '0.0.0.0'].includes(address) &&
+    String(sniHost || '').trim()
+  ) {
+    throw new Error('A specific IIS IP address cannot be combined with SNI.');
+  }
+  if (address) binding.address = address;
   if (String(sniHost || '').trim()) binding.sniHost = String(sniHost).trim();
   return {
     operation: 'issue',
@@ -675,6 +710,7 @@ export function buildIssueJob({
   iisSite = 'Default Web Site',
   iisPort = 443,
   iisStore = 'My',
+  iisAddress = '',
   sniHost = '',
   acmeProfile = WINDOWS_ACME_PROFILE,
   assignedAgentId,
@@ -689,6 +725,7 @@ export function buildIssueJob({
       iisSite,
       iisPort,
       iisStore,
+      iisAddress,
       sniHost,
       acmeProfile,
       assignedAgentId,

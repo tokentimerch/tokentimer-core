@@ -8,6 +8,7 @@
 const { listAgents } = require("../certops/agentRegistry");
 const { consumerMatrix } = require("../certops/materialDistribution");
 const { hasFreshCapability } = require("../certops/agentJobEligibility");
+const { qualifiesAdcsPreflight, ADCS_PREFLIGHT_MAX_AGE_MS } = require("../certops/adcsPreflightGate");
 const {
   CONTINUATION_STATES,
   DEFAULT_POLL_INTERVAL_SECONDS,
@@ -254,7 +255,7 @@ const MAX_SESSION_CERTIFICATES = 20;
 async function loadSessionCertificates(
   pool,
   workspaceId,
-  { jobs = [], since = null, adcsIssuerId = null } = {},
+  { jobs = [], since = null, adcsIssuerId = null, agentId = null } = {},
 ) {
   const found = new Map();
   const add = (certificateId, tokenId, source) => {
@@ -268,6 +269,8 @@ async function loadSessionCertificates(
   for (const { job, source } of jobs) {
     add(job?.certificateId, job?.tokenId, source);
   }
+  const issuerId = typeof adcsIssuerId === "string" && UUID_PATTERN.test(adcsIssuerId) ? adcsIssuerId : null;
+  const selectedAgent = typeof agentId === "string" && UUID_PATTERN.test(agentId) ? agentId : null;
   if (since) {
     const { rows } = await pool.query(
       `SELECT mc.id AS certificate_id, mc.token_id
@@ -275,17 +278,15 @@ async function loadSessionCertificates(
          JOIN managed_certificates mc
            ON mc.workspace_id = e.workspace_id AND mc.id = e.certificate_id
         WHERE e.workspace_id = $1 AND e.created_at >= $2
+          AND ($3::uuid IS NULL OR e.issuer_id = $3::uuid)
+          AND ($4::uuid IS NULL OR e.agent_id = $4::uuid)
           AND mc.status NOT IN ('decommissioned')
         ORDER BY e.created_at DESC
         LIMIT ${MAX_SESSION_CERTIFICATES}`,
-      [workspaceId, since],
+      [workspaceId, since, issuerId, selectedAgent],
     );
     for (const row of rows) add(row.certificate_id, row.token_id, "enrollment");
   }
-  const issuerId =
-    typeof adcsIssuerId === "string" && UUID_PATTERN.test(adcsIssuerId)
-      ? adcsIssuerId
-      : null;
   if (since || issuerId) {
     const { rows } = await pool.query(
       `SELECT mc.id AS certificate_id, mc.token_id
@@ -403,12 +404,13 @@ function preflightFacts(row) {
 async function loadAdcsReality(
   pool,
   workspaceId,
-  { now = Date.now(), since = null } = {},
+  { now = Date.now(), since = null, issueJobId = null, agentId = null, issuerId = null } = {},
 ) {
   const sinceMs = since ? new Date(since).getTime() : null;
   const issuers = await pool.query(
     `SELECT i.id, i.name, i.last_preflight, i.current_version, i.created_at,
-            i.revalidation_required,
+            i.revalidation_required, v.version, v.confirmed_at, v.ca_config, v.template, v.ca_key_sha256,
+            j.status AS preflight_status,j.result_metadata AS preflight_metadata,j.created_at AS preflight_created_at,
             (v.confirmed_at IS NOT NULL AND v.ca_key_sha256 IS NOT NULL) AS confirmed,
             (SELECT COUNT(*)::int FROM certificate_profiles p
               WHERE p.workspace_id = i.workspace_id AND p.issuer_id = i.id) AS profile_count,
@@ -417,17 +419,27 @@ async function loadAdcsReality(
                  ON p.workspace_id = mc.workspace_id AND p.id = mc.profile_id
               WHERE mc.workspace_id = i.workspace_id AND p.issuer_id = i.id
                 AND mc.status NOT IN ('decommissioned')) AS attached_certificates,
+            (SELECT COUNT(*)::int FROM certificate_enrollments e
+              WHERE e.workspace_id=i.workspace_id AND e.issuer_id=i.id AND e.state='installed'
+                AND e.deploy_target->>'type'='windows-iis'
+                AND ($2::uuid IS NULL OR e.agent_id=$2::uuid)) AS installed_iis_enrollments,
             (j.id IS NOT NULL AND v.confirmed_at IS NOT NULL
               AND COALESCE(j.completed_at, j.updated_at) >= v.confirmed_at) AS checked_after_pin
        FROM certificate_issuers i
        LEFT JOIN certificate_issuer_versions v
          ON v.issuer_id = i.id AND v.version = i.current_version
-       LEFT JOIN certificate_jobs j
-         ON j.workspace_id = i.workspace_id AND j.id = i.last_preflight_job_id
+       LEFT JOIN LATERAL (
+         SELECT candidate.status,candidate.result_metadata,candidate.created_at,candidate.id,candidate.completed_at,candidate.updated_at
+           FROM certificate_jobs candidate
+          WHERE candidate.workspace_id=i.workspace_id AND candidate.operation='adcs-preflight'
+            AND candidate.subject_id=i.id::text
+            AND ($2::uuid IS NULL OR candidate.assigned_agent_id=$2::uuid)
+          ORDER BY candidate.preflight_seq DESC NULLS LAST,candidate.created_at DESC,candidate.id DESC LIMIT 1
+       ) j ON TRUE
       WHERE i.workspace_id = $1 AND i.kind = 'adcs'
       ORDER BY i.created_at DESC
       LIMIT 20`,
-    [workspaceId],
+    [workspaceId, typeof agentId === "string" && UUID_PATTERN.test(agentId) ? agentId : null],
   );
   const profiles = await pool.query(
     `SELECT COUNT(*)::int AS n
@@ -443,6 +455,29 @@ async function loadAdcsReality(
     [workspaceId],
   );
   const overdue = await loadOverdueEnrollments(pool, workspaceId, { now });
+  let storeIssuance = null;
+  if ([issueJobId, agentId, issuerId].every((id) => typeof id === "string" && UUID_PATTERN.test(id))) {
+    const result = await pool.query(
+      `SELECT j.id AS job_id, j.status AS job_status, e.id AS enrollment_id, e.state AS enrollment_state,
+              e.certificate_id, e.agent_id, e.issuer_id, mc.status AS certificate_status, mc.fingerprint_sha256
+         FROM certificate_jobs j
+         JOIN certificate_enrollments e ON e.workspace_id=j.workspace_id AND e.id=j.enrollment_id
+         JOIN managed_certificates mc ON mc.workspace_id=e.workspace_id AND mc.id=e.certificate_id
+        WHERE j.workspace_id=$1 AND j.id=$2::uuid AND j.operation='issue'
+          AND e.agent_id=$3::uuid AND j.assigned_agent_id=e.agent_id
+          AND e.issuer_id=$4::uuid AND e.deploy_target->>'type'='windows-cert-store'
+          AND ($5::timestamptz IS NULL OR j.created_at >= $5::timestamptz)`,
+      [workspaceId, issueJobId, agentId, issuerId, since],
+    );
+    const row = result.rows[0];
+    if (row) storeIssuance = {
+      jobId: row.job_id, certificateId: row.certificate_id, enrollmentId: row.enrollment_id,
+      agentId: row.agent_id, issuerId: row.issuer_id, jobStatus: row.job_status,
+      enrollmentState: row.enrollment_state, requested: true,
+      installed: row.enrollment_state === "installed" && row.certificate_status === "active" && Boolean(row.fingerprint_sha256),
+      served: null,
+    };
+  }
   return {
     issuers: issuers.rows.map((row) => {
       const confirmed = row.confirmed === true;
@@ -466,14 +501,20 @@ async function loadAdcsReality(
           sinceMs !== null && createdMs !== null && createdMs < sinceMs,
         profileCount: Number(row.profile_count) || 0,
         attachedCertificates: Number(row.attached_certificates) || 0,
+        installedIisEnrollments: Number(row.installed_iis_enrollments) || 0,
         revalidationRequired: row.revalidation_required === true,
         // Renewal waits for a CA check taken after the CA certificate was
         // pinned. Null until a certificate is pinned.
-        checkedAfterPin: confirmed ? row.checked_after_pin === true : null,
+        checkedAfterPin: confirmed ? qualifiesAdcsPreflight({
+          status: row.preflight_status,result_metadata: row.preflight_metadata,created_at: row.preflight_created_at,
+        },row,now) : null,
+        preflightExpiresAt: row.preflight_created_at ? new Date(new Date(row.preflight_created_at).getTime() +
+          ADCS_PREFLIGHT_MAX_AGE_MS).toISOString() : null,
       };
     }),
     profiles: profiles.rows[0]?.n || 0,
     installedEnrollments: enrollments.rows[0]?.installed || 0,
+    storeIssuance,
     enrollments: { overdue },
   };
 }
@@ -575,6 +616,7 @@ async function loadCertopsReality(
     since,
     dryRunJobId,
     issueJobId,
+    storeIssueJobId,
     publishJobId,
     chosenAgentId,
     adcsIssuerId,
@@ -604,7 +646,7 @@ async function loadCertopsReality(
   const dryRun = await loadJobStatus(pool, workspaceId, dryRunJobId);
   const issueJob = await loadJobStatus(pool, workspaceId, issueJobId);
   const publishJob = await loadJobStatus(pool, workspaceId, publishJobId);
-  const adcs = await loadAdcsReality(pool, workspaceId, { since });
+  const adcs = await loadAdcsReality(pool, workspaceId, { since, issueJobId: storeIssueJobId, agentId: chosenAgentId, issuerId: adcsIssuerId });
   const sessionCertificates = await loadSessionCertificates(pool, workspaceId, {
     jobs: [
       { job: issueJob, source: "issue" },
@@ -612,6 +654,7 @@ async function loadCertopsReality(
     ],
     since,
     adcsIssuerId,
+    agentId: chosenAgentId,
   });
   const controllers = await loadControllerReality(pool, workspaceId);
   const observed = await loadObservedCertificates(pool, workspaceId, {

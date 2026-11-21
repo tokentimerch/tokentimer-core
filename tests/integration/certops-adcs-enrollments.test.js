@@ -137,7 +137,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
     const source=(await pool.query("SELECT key_reference,public_metadata FROM managed_certificates WHERE workspace_id=$1 AND id=$2",[workspaceId,certificateId])).rows[0];
     assert.equal(source.key_reference,`winstore://WebHosting/${site}:${port}`);assert.equal(source.public_metadata.issuance.target.store,"WebHosting");
     const enrollment=await createEnrollment(enrollmentInput({certificateId,authorizedDnsNames:[domain],target:{type:"windows-iis",reference:domain,store:"WebHosting",binding:{site,port,sniHost:domain}}}));
-    const {claimJobs,_test:dispatchCaps}=require("../../apps/api/services/certops/agentDispatch");
+    const {claimJobs,_test:dispatchCaps}=require("./helpers/authenticated-agent-dispatch");
     await pool.query("UPDATE certops_agents SET agent_version='0.18.0',declared_capabilities=$2::jsonb,capabilities_updated_at=NOW(),declared_target_selectors=$3::jsonb WHERE id=$1",[agentRowId,JSON.stringify(["adcs-enroll-v1",dispatchCaps.EVIDENCE_CLAIM_BINDING_CAPABILITY,dispatchCaps.SIGNED_PAYLOAD_B64_CAPABILITY]),JSON.stringify([domain])]);
     const agent=(await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1",[agentRowId])).rows[0];
     const claimed=await claimJobs({dbPool:pool,agent:{id:agentRowId,workspaceId,agentId:agent.agent_id,agentVersion:"0.18.0",protocolVersion:"1.0.0",status:"active"},envelope:{agentId:agent.agent_id,protocolVersion:"1.0.0"},body:{supportedActions:["renew"],maxJobs:16},deps:{enforceAgentSequence:async()=>({sequence:1}),signJobForDispatch:async({job,envelopeVersion})=>({...job,envelopeVersion})}});
@@ -149,7 +149,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
   it("claims the continuation of a first enrollment that has no certificate identity yet", async () => {
     const assert = require("node:assert/strict");
     const { provisionSurvivorSource } = require("../e2e/helpers/certops-adcs-local-rules");
-    const { claimJobs, _test: dispatchCaps } = require("../../apps/api/services/certops/agentDispatch");
+    const { claimJobs, _test: dispatchCaps } = require("./helpers/authenticated-agent-dispatch");
     const domain = "first-enrollment.example.test";
     const certificateId = await provisionSurvivorSource({
       fixture: { workspaceId, pool, request: async () => { throw new Error("Unexpected readd of an open source"); } },
@@ -199,6 +199,251 @@ describe("CertOps AD CS enrollments (real database)", function () {
     };
   }
 
+  let independentPort = 10000;
+  function independentTarget() {
+    const target = enrollmentInput().target;
+    return { ...target, binding: { ...target.binding, site: `Fixture ${crypto.randomUUID()}`, port: independentPort++ } };
+  }
+
+  it("retries only a proved local policy refusal, with cooldown, idempotency and IIS locking", async () => {
+    const assert = require("node:assert/strict");
+    assert.equal((await pool.query("SELECT 1 FROM pg_indexes WHERE schemaname=current_schema() AND indexname='idx_certificate_jobs_enrollment'")).rowCount,1);
+    const { retryableAdcsRenewalKey, renewalIdempotencyKey, createAutomaticAdcsRenewal } = require("../../apps/api/services/certops/renewalScheduler");
+    const { provisionSurvivorSource } = require("../e2e/helpers/certops-adcs-local-rules");
+    const certificateId = await provisionSurvivorSource({
+      fixture: { workspaceId, pool, request: async () => { throw new Error("unexpected request"); } },
+      agentRowId, domain: "retry.example.com", site: "Retry", port: 19443, ownedCertificateIds: [],
+    });
+    const fingerprint = crypto.randomBytes(32).toString("hex");
+    await pool.query("UPDATE managed_certificates SET fingerprint_sha256=$2 WHERE id=$1", [certificateId, fingerprint]);
+    const identity = (await pool.query("INSERT INTO certops_certificate_identities(workspace_id,fingerprint_sha256) VALUES($1,$2) ON CONFLICT(workspace_id,fingerprint_sha256) DO UPDATE SET updated_at=NOW() RETURNING id", [workspaceId,fingerprint])).rows[0].id;
+    let period = (await pool.query("SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",[workspaceId,certificateId])).rows[0].id;
+    await pool.query("INSERT INTO certops_management_associations(workspace_id,period_id,identity_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",[workspaceId,period,identity]);
+    const target = { type: "windows-iis", reference: "retry.example.com", store: "My", binding: { site: "Retry", port: 19443, sniHost: "retry.example.com" } };
+    const expiry = new Date("2031-01-01T00:00:00Z");
+    const key = renewalIdempotencyKey(certificateId, expiry);
+    assert.equal(key, renewalIdempotencyKey(certificateId, expiry.toISOString()));
+    const input = enrollmentInput({ certificateId, source: "automation", target, authorizedDnsNames: ["retry.example.com"], idempotencyKey: key, env: { CERTOPS_ENABLED: "true" } });
+    await require("./helpers/adcs-ready-agent.cjs").prepareAdcsAgent({db:pool,workspaceId,issuerId,agentId:agentRowId,reference:target.reference});
+    const first = await createEnrollment(input);
+    // A real bearer-authenticated HTTP result must survive ingestion/redaction
+    // as the exact attestation bound to the dispatched claim and nonce.
+    const credential = require("../../apps/api/services/certops/agentCredentials").generateAgentCredential();
+    const oldCredentials = (await pool.query("SELECT agent_id,credential_prefix,credential_hash FROM certops_agents WHERE id=$1",[agentRowId])).rows[0];
+    await pool.query("UPDATE certops_agents SET credential_prefix=$2,credential_hash=$3 WHERE id=$1",[agentRowId,credential.credentialPrefix,credential.credentialHash]);
+    const claimId=crypto.randomUUID(), nonce=crypto.randomUUID();
+    await pool.query("UPDATE certificate_jobs SET status='claimed',claimed_by_agent_id=$2,claim_id=$3,lease_expires_at=NOW()+INTERVAL '5 minutes' WHERE id=$1",[first.jobId,agentRowId,claimId]);
+    await pool.query("INSERT INTO certops_consumed_nonces(nonce,job_id,workspace_id,issued_to_agent_id,expires_at) VALUES($1,$2,$3,$4,NOW()+INTERVAL '5 minutes')",[nonce,first.jobId,workspaceId,agentRowId]);
+    const express=require("node:module").createRequire(require.resolve("../../apps/api/package.json"))("express");
+    const app=express(); app.use(express.json()); app.use(require("../../apps/api/routes/certops-agent"));
+    const marker="ADCS_CA_CONFIG_UNSAFE: Local enrollment rule refused before key generation and CA submission. [tt-adcs-no-key-no-submit-v1]";
+    const response=await require("supertest")(app).post("/api/v1/certops/agent/jobs/results").set("Authorization",`Bearer ${credential.plaintextCredential}`).send({schemaVersion:1,protocolVersion:"1.0.0",messageType:"result",agentId:oldCredentials.agent_id,workspaceId,sentAt:new Date().toISOString(),body:{jobId:first.jobId,attemptId:claimId,claimId,nonce,status:"rejected",rejectionReason:"issuer_not_allowlisted",errorMessage:marker,enrollmentResult:{enrollmentId:first.enrollmentId,attempt:1,state:"refused",errorCode:"ADCS_CA_CONFIG_UNSAFE"}}});
+    assert.equal(response.status,200,JSON.stringify(response.body));
+    assert.equal((await pool.query("SELECT error_message FROM certificate_jobs WHERE id=$1",[first.jobId])).rows[0].error_message,marker);
+    assert.ok(await require("../../apps/api/services/certops/certificateEnrollments").isSafeInitialLocalRefusal(pool,workspaceId,first.jobId));
+    await pool.query("UPDATE certificate_jobs SET updated_at=NOW()-INTERVAL '16 minutes' WHERE id=$1",[first.jobId]);
+    assert.match((await retryableAdcsRenewalKey(pool,workspaceId,key)).key, /:000000000101$/);
+    await pool.query("UPDATE certops_agents SET credential_prefix=$2,credential_hash=$3 WHERE id=$1",[agentRowId,oldCredentials.credential_prefix,oldCredentials.credential_hash]);
+    const markRefused = async (entry, age = "0 minutes") => {
+      await pool.query(`UPDATE certificate_enrollments SET state='refused',attempt=1,last_error_code='ADCS_CA_CONFIG_UNSAFE' WHERE id=$1`, [entry.enrollmentId]);
+      await pool.query(`UPDATE certificate_jobs SET status='rejected',error_code='issuer_not_allowlisted',error_message='ADCS_CA_CONFIG_UNSAFE: Local enrollment rule refused before key generation and CA submission. [tt-adcs-no-key-no-submit-v1]',result_metadata=$2::jsonb,updated_at=NOW()-$3::interval WHERE id=$1`, [entry.jobId, JSON.stringify({rejectionReason:"issuer_not_allowlisted",enrollmentResult:{state:"refused",errorCode:"ADCS_CA_CONFIG_UNSAFE"}}), age]);
+    };
+    await markRefused(first);
+    assert.equal((await retryableAdcsRenewalKey(pool,workspaceId,key)).existingId, first.jobId);
+    await markRefused(first, "16 minutes");
+    // Legacy results and second-check/failed-cleanup refusals do not carry the proof.
+    await pool.query("UPDATE certificate_jobs SET error_message='ADCS_CA_CONFIG_UNSAFE: unsafe CA' WHERE id=$1",[first.jobId]);
+    assert.equal((await retryableAdcsRenewalKey(pool,workspaceId,key)).existingId, first.jobId);
+    await assert.rejects(()=>createEnrollment({...input,idempotencyKey:`no-proof:${crypto.randomUUID()}`}));
+    await markRefused(first, "16 minutes");
+    await pool.query("UPDATE certificate_jobs SET needs_operator_reconciliation=TRUE WHERE id=$1",[first.jobId]);
+    assert.equal((await retryableAdcsRenewalKey(pool,workspaceId,key)).existingId, first.jobId);
+    await assert.rejects(()=>createEnrollment({...input,idempotencyKey:`reconciliation:${crypto.randomUUID()}`}));
+    await pool.query("UPDATE certificate_jobs SET needs_operator_reconciliation=FALSE WHERE id=$1",[first.jobId]);
+    await pool.query("UPDATE certificate_enrollments SET last_error_code=NULL WHERE id=$1",[first.enrollmentId]);
+    assert.equal((await retryableAdcsRenewalKey(pool,workspaceId,key)).existingId, first.jobId);
+    await assert.rejects(()=>createEnrollment({...input,idempotencyKey:`missing-proof:${crypto.randomUUID()}`}));
+    await markRefused(first, "16 minutes");
+    const retryKey = (await retryableAdcsRenewalKey(pool,workspaceId,key)).key;
+    assert.match(retryKey, /^certops-adcs-retry:[a-f0-9]{64}:000000000101$/);
+    const prefix = retryKey.slice(0, -12);
+    for (const collation of ['"C"', '"en-US-x-icu"']) {
+      const available = await pool.query("SELECT 1 FROM pg_collation WHERE collname=$1", [collation.slice(1,-1)]);
+      if (!available.rows.length) continue;
+      const ordered = await pool.query(`SELECT value FROM (VALUES ($1::text),($2::text),($3::text)) AS keys(value)
+        WHERE value COLLATE ${collation} >= $4 COLLATE ${collation} AND value COLLATE ${collation} <= $5 COLLATE ${collation}
+        ORDER BY value COLLATE ${collation} DESC`, [`${prefix}000000000001`,`${prefix}000000000020`,`${prefix}999999999999`,`${prefix}000000000000`,`${prefix}999999999999`]);
+      assert.deepEqual(ordered.rows.map(row=>row.value.slice(-12)),["999999999999","000000000020","000000000001"]);
+    }
+    const renewalProfile = {target,sanPolicy:{sans:["retry.example.com"]},keyAlgorithm:"rsa",keySize:2048};
+    const profileId = (await pool.query(`INSERT INTO certificate_profiles(workspace_id,name,status,source,source_ref,issuer_id,renew_before_days,key_mode,public_metadata,created_by)
+      VALUES($1,$2,'active','manual',$2,$3,30,'os-store-managed',$4::jsonb,$5) RETURNING id`,[workspaceId,`retry-${crypto.randomUUID()}`,issuerId,JSON.stringify({renewalProfile}),ownerId])).rows[0].id;
+    await pool.query("UPDATE managed_certificates SET profile_id=$2,not_after=$3,deployed_agent_id=$4 WHERE id=$1",[certificateId,profileId,expiry,agentRowId]);
+    const agentBefore = (await pool.query("SELECT platform,declared_target_selectors,supported_operations,declared_capabilities,capabilities_updated_at FROM certops_agents WHERE id=$1",[agentRowId])).rows[0];
+    await pool.query(`UPDATE certops_agents SET platform='win32',declared_target_selectors=$2::jsonb,supported_operations='["adcs-preflight","renew"]'::jsonb,
+      declared_capabilities='["iis-explicit-ip-v1","adcs-enroll-v1"]'::jsonb,capabilities_updated_at=NOW() WHERE id=$1`,[agentRowId,JSON.stringify(["retry.example.com"])]);
+    const preflightId = (await pool.query(`INSERT INTO certificate_jobs(workspace_id,operation,status,executor_kind,mode,subject_type,subject_id,payload,assigned_agent_id,result_metadata)
+      VALUES($1,'adcs-preflight','succeeded','agent','real','external',$2,'{}'::jsonb,$3,$4::jsonb) RETURNING id`,[workspaceId,issuerId,agentRowId,JSON.stringify({preflightVerdict:{templateCheck:"safe",caCheck:"safe",caConfig:CA,template:TEMPLATE,caKeySha256s:[KEY]}})])).rows[0].id;
+    const sourceRow=(await pool.query("SELECT source,source_ref,fingerprint_sha256 FROM managed_certificates WHERE id=$1",[certificateId])).rows[0];
+    const certificate = {id:certificateId,workspace_id:workspaceId,profile_id:profileId,profile_issuer_id:issuerId,common_name:"retry.example.com",not_after:expiry,profile_public_metadata:{renewalProfile},...sourceRow,management_period_id:period};
+    const run = () => createAutomaticAdcsRenewal({dbPool:pool,certificate,mode:"real",env:{CERTOPS_ENABLED:"true"},auditWriter:async()=>{}});
+    const version = (await pool.query("SELECT ca_config,template,ca_key_sha256,confirmed_at FROM certificate_issuer_versions WHERE issuer_id=$1",[issuerId])).rows[0];
+    const guardedInput = {...input,profileId,issuerId:undefined,idempotencyKey:retryKey,expectedAutomationRetry:{issuerId,previousJobId:first.jobId,notAfter:expiry,caConfig:version.ca_config,template:version.template,caKeySha256:version.ca_key_sha256,confirmedAt:version.confirmed_at,source:sourceRow.source,sourceRef:sourceRow.source_ref,fingerprint:sourceRow.fingerprint_sha256,periodId:period,requireOwner:false}};
+    for (const scenario of ["profile", "period", "owner", "fingerprint", "source"]) {
+      const blocker = await pool.connect();
+      try {
+        await blocker.query("BEGIN");
+        if (scenario === "profile") await blocker.query("UPDATE certificate_profiles SET status='disabled' WHERE id=$1",[profileId]);
+        else if (scenario === "period") await blocker.query("UPDATE certops_management_periods SET automation_enabled=FALSE WHERE id=$1",[period]);
+        else if (scenario === "owner") await blocker.query("UPDATE managed_certificates SET deployed_agent_id=NULL WHERE id=$1",[certificateId]);
+        else if (scenario === "fingerprint") await blocker.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp()+INTERVAL '1 minute' WHERE id=$1",[certificateId,crypto.randomBytes(32).toString("hex")]);
+        else await blocker.query("UPDATE managed_certificates SET source_ref=$2 WHERE id=$1",[certificateId,`changed-${crypto.randomUUID()}`]);
+        let completed;
+        const pending = createEnrollment({...guardedInput,expectedAutomationRetry:{...guardedInput.expectedAutomationRetry,requireOwner:scenario === "owner"}}).then(value=>(completed={value}),error=>(completed={error}));
+        let waiting = false;
+        for (let i=0;i<100&&!waiting;i++) {
+          const locks = await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND pid<>pg_backend_pid() LIMIT 1");
+          waiting = locks.rowCount > 0;
+          if (!waiting) await new Promise(resolve=>setTimeout(resolve,20));
+        }
+        assert.equal(waiting,true,`${scenario} retry should wait on the concurrent change: ${completed?.error?.code || completed?.error?.message || "not completed"}`);
+        await blocker.query("COMMIT");
+        const outcome=await pending;
+        assert.equal(outcome.error?.code,"CERTOPS_ENROLLMENT_REPLAY",`${scenario}: ${outcome.error?.message || JSON.stringify(outcome.value)} expected=${guardedInput.expectedAutomationRetry.fingerprint} current=${JSON.stringify((await pool.query("SELECT fingerprint_sha256,source_ref,deployed_agent_id FROM managed_certificates WHERE id=$1",[certificateId])).rows[0])}`);
+      } finally { await blocker.query("ROLLBACK").catch(()=>{}); blocker.release(); }
+      if (scenario === "profile") await pool.query("UPDATE certificate_profiles SET status='active' WHERE id=$1",[profileId]);
+      else if(scenario === "period") await pool.query("UPDATE certops_management_periods SET automation_enabled=TRUE WHERE id=$1",[period]);
+      else if(scenario === "owner") await pool.query("UPDATE managed_certificates SET deployed_agent_id=$2 WHERE id=$1",[certificateId,agentRowId]);
+      else if(scenario === "fingerprint") await pool.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp()+INTERVAL '2 minutes' WHERE id=$1",[certificateId,fingerprint]);
+      else await pool.query("UPDATE managed_certificates SET source_ref=$2 WHERE id=$1",[certificateId,sourceRow.source_ref]);
+    }
+    // The real replacement takes import -> period -> certificate locks. Make
+    // the retry wait at the import fence, then switch to tracking only.
+    const blocker = await pool.connect();
+    try {
+      await blocker.query("BEGIN");
+      await require("../../apps/api/services/certops/inventory").acquireManagedCertificateImportLock(blocker,workspaceId);
+      const pending = createEnrollment(guardedInput).then(value=>({value}),error=>({error}));
+      let waiting = false;
+      for (let i=0;i<100&&!waiting;i++) {
+        const locks=await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%pg_advisory_xact_lock%' LIMIT 1");
+        waiting=locks.rowCount>0;
+        if(!waiting) await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      assert.equal(waiting,true,"retry should wait for management replacement");
+      await require("../../apps/api/services/certops/certificateIdentity").replaceManagingSource({workspaceId,periodId:period,managedCertificateId:certificateId,renewalProfileId:null,automationEnabled:false,actorUserId:ownerId,client:blocker});
+      await blocker.query("COMMIT");
+      assert.equal((await pending).error?.code,"CERTOPS_ENROLLMENT_REPLAY");
+    } finally { await blocker.query("ROLLBACK").catch(()=>{}); blocker.release(); }
+    period=(await pool.query("SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",[workspaceId,certificateId])).rows[0].id;
+    await require("../../apps/api/services/certops/certificateIdentity").replaceManagingSource({workspaceId,periodId:period,managedCertificateId:certificateId,renewalProfileId:profileId,automationEnabled:true,actorUserId:ownerId,client:pool});
+    assert.equal((await run()).created,false,"a scan from the replaced period cannot create a retry");
+    certificate.management_period_id=(await pool.query("SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",[workspaceId,certificateId])).rows[0].id;
+    await pool.query("UPDATE managed_certificates SET status='expired' WHERE id=$1",[certificateId]);
+    target.binding.address="192.0.2.10";
+    delete target.binding.sniHost;
+    certificate.deployed_agent_id=agentRowId;
+    renewalProfile.sanPolicy.sans=["retry.example.com","retry.example.com"];
+    await pool.query("UPDATE certificate_profiles SET public_metadata=$2::jsonb WHERE id=$1",[profileId,JSON.stringify({renewalProfile})]);
+    const ownerBlocker=await pool.connect();
+    try {
+      await ownerBlocker.query("BEGIN");
+      await ownerBlocker.query("UPDATE managed_certificates SET deployed_agent_id=NULL WHERE id=$1",[certificateId]);
+      let completed;const pending=run().then(value=>(completed={value}),error=>(completed={error}));let waiting=false;
+      for(let i=0;i<100&&!waiting;i++){
+        waiting=(await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND pid<>pg_backend_pid() LIMIT 1")).rowCount>0;
+        if(!waiting)await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      assert.equal(waiting,true,`explicit-IP retry must wait for owner change: ${completed?.error?.message || JSON.stringify(completed?.value)}`);
+      await ownerBlocker.query("COMMIT");
+      assert.equal((await pending).value?.created,false,"the former owner must not receive a retry");
+    } finally {await ownerBlocker.query("ROLLBACK").catch(()=>{});ownerBlocker.release();}
+    await pool.query("UPDATE managed_certificates SET deployed_agent_id=$2 WHERE id=$1",[certificateId,agentRowId]);
+    const results = await Promise.all([run(),run()]);
+    await pool.query("DELETE FROM certificate_jobs WHERE id=$1",[preflightId]);
+    await pool.query("UPDATE certops_agents SET platform=$2,declared_target_selectors=$3::jsonb,supported_operations=$4::jsonb,declared_capabilities=$5::jsonb,capabilities_updated_at=$6 WHERE id=$1",[agentRowId,agentBefore.platform,JSON.stringify(agentBefore.declared_target_selectors),JSON.stringify(agentBefore.supported_operations),JSON.stringify(agentBefore.declared_capabilities),agentBefore.capabilities_updated_at]);
+    assert.equal(results.filter(result=>result.created).length,1);
+    const secondJobId = results.find(result=>result.created).job.id;
+    const second = {jobId:secondJobId,enrollmentId:(await pool.query("SELECT enrollment_id FROM certificate_jobs WHERE id=$1",[secondJobId])).rows[0].enrollment_id};
+    assert.equal((await retryableAdcsRenewalKey(pool,workspaceId,key)).existingId, second.jobId);
+    await markRefused(second, "16 minutes");
+    assert.equal((await retryableAdcsRenewalKey(pool,workspaceId,key)).existingId, second.jobId);
+    await markRefused(second, "31 minutes");
+    const thirdKey = (await retryableAdcsRenewalKey(pool,workspaceId,key)).key;
+    const third = await createEnrollment({...input,idempotencyKey:thirdKey});
+    await pool.query("UPDATE certificate_jobs SET idempotency_key=$2 WHERE id=$1", [third.jobId, `${prefix}80000000000x`]);
+    assert.equal((await retryableAdcsRenewalKey(pool,workspaceId,key)).existingId, third.jobId);
+    // Simulate many earlier refusals without creating an unbounded fixture.
+    await pool.query("UPDATE certificate_jobs SET idempotency_key=$2 WHERE id=$1", [third.jobId, thirdKey.replace(/\d{12}$/, "000000002002")]);
+    await markRefused(third, "59 minutes");
+    assert.equal((await retryableAdcsRenewalKey(pool,workspaceId,key)).existingId, third.jobId);
+    await markRefused(third, "61 minutes");
+    const lateKey = (await retryableAdcsRenewalKey(pool,workspaceId,key)).key;
+    assert.match(lateKey, /:000000002102$/);
+    const afterCorrection = await createEnrollment({...input,idempotencyKey:lateKey});
+    assert.ok(afterCorrection.jobId);
+    assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1",[afterCorrection.jobId])).rows[0].status,"pending");
+    await markRefused(afterCorrection, "61 minutes");
+    // An unknown or later effect must never be treated as a safe refusal.
+    await pool.query("UPDATE certificate_enrollments SET request_id=42 WHERE id=$1",[afterCorrection.enrollmentId]);
+    assert.equal((await retryableAdcsRenewalKey(pool,workspaceId,key)).existingId, afterCorrection.jobId);
+    await assert.rejects(()=>createEnrollment({...input,idempotencyKey:`other:${crypto.randomUUID()}`}));
+    await pool.query("UPDATE certificate_enrollments SET request_id=NULL,state='submission_uncertain' WHERE id=$1",[afterCorrection.enrollmentId]);
+    assert.equal((await retryableAdcsRenewalKey(pool,workspaceId,key)).existingId, afterCorrection.jobId);
+    await assert.rejects(()=>createEnrollment({...input,idempotencyKey:`uncertain:${crypto.randomUUID()}`}));
+  });
+
+  it("replans a server-superseded enrollment only when it was never claimed", async () => {
+    const assert=require("node:assert/strict");
+    const {retryableAdcsRenewalKey}=require("../../apps/api/services/certops/renewalScheduler");
+    const {provisionSurvivorSource}=require("../e2e/helpers/certops-adcs-local-rules");
+    const domain="superseded.example.com", target={type:"windows-iis",reference:domain,store:"My",binding:{site:"Superseded",port:19444,sniHost:domain}};
+    const certificateId=await provisionSurvivorSource({fixture:{workspaceId,pool,request:async()=>{throw new Error("unexpected request");}},agentRowId,domain,site:"Superseded",port:19444,ownedCertificateIds:[]});
+    const fingerprint=crypto.randomBytes(32).toString("hex");
+    await pool.query("UPDATE managed_certificates SET fingerprint_sha256=$2 WHERE id=$1",[certificateId,fingerprint]);
+    const identity=(await pool.query("INSERT INTO certops_certificate_identities(workspace_id,fingerprint_sha256) VALUES($1,$2) ON CONFLICT(workspace_id,fingerprint_sha256) DO UPDATE SET updated_at=NOW() RETURNING id",[workspaceId,fingerprint])).rows[0].id;
+    const period=(await pool.query("SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",[workspaceId,certificateId])).rows[0].id;
+    await pool.query("INSERT INTO certops_management_associations(workspace_id,period_id,identity_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",[workspaceId,period,identity]);
+    const key=`superseded-test:${crypto.randomUUID()}`;
+    const input=enrollmentInput({certificateId,source:"automation",target,authorizedDnsNames:[domain],idempotencyKey:key,env:{CERTOPS_ENABLED:"true"}});
+    await require("./helpers/adcs-ready-agent.cjs").prepareAdcsAgent({db:pool,workspaceId,issuerId,agentId:agentRowId,reference:target.reference});
+    const first=await createEnrollment(input);
+    await pool.query("UPDATE certificate_enrollments SET state='cancelled' WHERE id=$1",[first.enrollmentId]);
+    await pool.query("UPDATE certificate_jobs SET status='cancelled',error_code='CERTOPS_AUTOMATION_SUPERSEDED_BEFORE_CLAIM',completed_at=NOW() WHERE id=$1",[first.jobId]);
+    const safeKey=(await retryableAdcsRenewalKey(pool,workspaceId,key)).key;
+    assert.match(safeKey,/:000000000100$/,"server-proven supersession has no cooldown");
+    const reject=async label=>{
+      assert.equal((await retryableAdcsRenewalKey(pool,workspaceId,key)).existingId,first.jobId,label);
+      await assert.rejects(()=>createEnrollment({...input,idempotencyKey:`unsafe:${crypto.randomUUID()}`}));
+    };
+    for(const [column,value,label] of [["attempt_count",1,"previous attempt"],["claimed_by_agent_id",agentRowId,"claimed agent"],["claim_id",crypto.randomUUID(),"claim id"],["lease_expires_at",new Date(),"lease"],["needs_operator_reconciliation",true,"reconciliation"]]){
+      await pool.query(`UPDATE certificate_jobs SET ${column}=$2 WHERE id=$1`,[first.jobId,value]);
+      await reject(label);
+      await pool.query(`UPDATE certificate_jobs SET ${column}=${column==="attempt_count"?"0":column==="needs_operator_reconciliation"?"FALSE":"NULL"} WHERE id=$1`,[first.jobId]);
+    }
+    await pool.query("UPDATE certificate_enrollments SET request_id=42 WHERE id=$1",[first.enrollmentId]);await reject("CA request");
+    await pool.query("UPDATE certificate_enrollments SET request_id=NULL WHERE id=$1",[first.enrollmentId]);
+    await pool.query("UPDATE certificate_enrollments SET attempt=1 WHERE id=$1",[first.enrollmentId]);await reject("enrollment attempt");
+    await pool.query("UPDATE certificate_enrollments SET attempt=0,state='submission_uncertain' WHERE id=$1",[first.enrollmentId]);await reject("uncertain submission");
+    await pool.query("UPDATE certificate_enrollments SET state='cancelled' WHERE id=$1",[first.enrollmentId]);
+    const extra=(await pool.query("INSERT INTO certificate_jobs(workspace_id,operation,status,subject_type,subject_id,enrollment_id) VALUES($1,'renew','cancelled','managed_certificate',$2,$3) RETURNING id",[workspaceId,certificateId,first.enrollmentId])).rows[0].id;
+    await reject("second enrollment job");await pool.query("DELETE FROM certificate_jobs WHERE id=$1",[extra]);
+    const nonce=crypto.randomUUID();
+    await pool.query("INSERT INTO certops_consumed_nonces(nonce,job_id,workspace_id,issued_to_agent_id,expires_at) VALUES($1,$2,$3,$4,NOW()+INTERVAL '5 minutes')",[nonce,first.jobId,workspaceId,agentRowId]);
+    await reject("nonce");await pool.query("DELETE FROM certops_consumed_nonces WHERE nonce=$1",[nonce]);
+    await pool.query("UPDATE certificate_jobs SET error_code='OPERATOR_CANCELLED' WHERE id=$1",[first.jobId]);await reject("operator cancellation");
+    await pool.query("UPDATE certificate_jobs SET error_code='CERTOPS_AUTOMATION_SUPERSEDED_BEFORE_CLAIM' WHERE id=$1",[first.jobId]);
+    const results=await Promise.allSettled([createEnrollment({...input,idempotencyKey:safeKey}),createEnrollment({...input,idempotencyKey:safeKey})]);
+    assert.equal(results.filter(result=>result.status==="fulfilled").length,1);
+    assert.equal(results.filter(result=>result.status==="rejected").length,1);
+    const next=results.find(result=>result.status==="fulfilled").value;
+    await pool.query("UPDATE certificate_enrollments SET state='refused',attempt=1,last_error_code='ADCS_CA_CONFIG_UNSAFE' WHERE id=$1",[next.enrollmentId]);
+    await pool.query(`UPDATE certificate_jobs SET status='rejected',error_code='issuer_not_allowlisted',error_message='ADCS_CA_CONFIG_UNSAFE: Local enrollment rule refused before key generation and CA submission. [tt-adcs-no-key-no-submit-v1]',result_metadata=$2::jsonb,updated_at=NOW()-INTERVAL '14 minutes' WHERE id=$1`,[next.jobId,JSON.stringify({rejectionReason:"issuer_not_allowlisted",enrollmentResult:{state:"refused",errorCode:"ADCS_CA_CONFIG_UNSAFE"}})]);
+    assert.equal((await retryableAdcsRenewalKey(pool,workspaceId,key)).existingId,next.jobId);
+    await pool.query("UPDATE certificate_jobs SET updated_at=NOW()-INTERVAL '16 minutes' WHERE id=$1",[next.jobId]);
+    assert.match((await retryableAdcsRenewalKey(pool,workspaceId,key)).key,/:000000000201$/,"first agent refusal after supersession waits 15 minutes");
+  });
+
   async function assertNoForeignDueRows() {
     const foreign = await TestUtils.execQuery(
       `SELECT count(*)::int AS n
@@ -244,7 +489,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
         state,
         frozen.bytes,
         frozen.sha256,
-        JSON.stringify(enrollmentInput().target),
+        JSON.stringify(extra.target || enrollmentInput().target),
         extra.operatorRequestId || null,
         extra.nextPollAt || null,
       ],
@@ -306,6 +551,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
     try {
       await createEnrollment(enrollmentInput({
         certificateId,
+        target: independentTarget(),
         createJob: async () => {
           throw new Error("job insert failed");
         },
@@ -459,7 +705,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
 
     const certificateId = crypto.randomUUID();
     try {
-      await createEnrollment(enrollmentInput({ certificateId, keySize: 1024 }, 14432));
+      await createEnrollment(enrollmentInput({ certificateId, keySize: 1024, target: independentTarget() }));
       throw new Error("expected a malformed snapshot to be refused");
     } catch (error) {
       expect(error.code).to.equal("CERTOPS_SNAPSHOT_INVALID");
@@ -475,7 +721,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
       [issuerId],
     );
     try {
-      await createEnrollment(enrollmentInput({}, 14432));
+      await createEnrollment(enrollmentInput({ target: independentTarget() }));
       throw new Error("expected revalidation to block enrollment");
     } catch (error) {
       expect(error.code).to.equal("CERTOPS_ISSUER_REVALIDATION_REQUIRED");
@@ -488,7 +734,9 @@ describe("CertOps AD CS enrollments (real database)", function () {
   });
 
   it("keeps concurrent preflights inside the hourly limit and stores the agent result", async () => {
-    for (let i = 0; i < 19; i += 1) {
+    const recent=Number((await pool.query(`SELECT count(*)::int AS n FROM certificate_jobs
+      WHERE workspace_id=$1 AND operation='adcs-preflight' AND created_at>NOW()-INTERVAL '1 hour'`,[workspaceId])).rows[0].n);
+    for (let i = recent; i < 19; i += 1) {
       await TestUtils.execQuery(
         `INSERT INTO certificate_jobs
            (workspace_id, operation, status, executor_kind, mode, subject_type, subject_id, payload, requested_by_user_id)
@@ -896,21 +1144,22 @@ describe("CertOps AD CS enrollments (real database)", function () {
   });
 
   it("fences recovery and claims of every non-terminal continuation after retirement", async () => {
-    const { claimJobs, _test: dispatchCaps } = require("../../apps/api/services/certops/agentDispatch");
+    const { claimJobs, _test: dispatchCaps } = require("./helpers/authenticated-agent-dispatch");
     await assertNoForeignDueRows();
     await pool.query(
-      `UPDATE certops_agents SET agent_version='0.18.0', declared_capabilities=$2::jsonb,
+      `UPDATE certops_agents SET agent_version='0.18.0', platform='win32', declared_capabilities=$2::jsonb,
               capabilities_updated_at=NOW(), declared_target_selectors=$3::jsonb WHERE id=$1`,
       [agentRowId, JSON.stringify(["adcs-enroll-v1", dispatchCaps.EVIDENCE_CLAIM_BINDING_CAPABILITY,
-        dispatchCaps.SIGNED_PAYLOAD_B64_CAPABILITY]), JSON.stringify(["app.example.com", "iis-01/webhosting"])],
+        dispatchCaps.SIGNED_PAYLOAD_B64_CAPABILITY, "iis-explicit-ip-v1"]), JSON.stringify(["app.example.com", "iis-01/webhosting"])],
     );
     const agentId = (await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1", [agentRowId])).rows[0].agent_id;
+    const signedJobs=[];
     const claim = () => claimJobs({
       dbPool: pool,
       agent: { id: agentRowId, workspaceId, agentId, agentVersion: "0.18.0", protocolVersion: "1.0.0", status: "active" },
       envelope: { agentId, protocolVersion: "1.0.0" },
       body: { supportedActions: ["continue-enrollment"], maxJobs: 16 },
-      deps: { enforceAgentSequence: async () => ({ sequence: 1 }), signJobForDispatch: async ({ job, envelopeVersion }) => ({ ...job, envelopeVersion }) },
+      deps: { enforceAgentSequence: async () => ({ sequence: 1 }), signJobForDispatch: async ({ job, envelopeVersion }) => {signedJobs.push(job);return { ...job, envelopeVersion };} },
     }).then((result) => result.jobs.map((job) => String(job.id ?? job.jobId)));
     const retiredCertificate = async (name) => {
       const fingerprint = crypto.randomBytes(32).toString("hex");
@@ -926,23 +1175,30 @@ describe("CertOps AD CS enrollments (real database)", function () {
       )).rows[0].id;
       return { certificateId, identityId };
     };
-    const continuation = async (enrollmentId, certificateId) => {
+    const continuation = async (enrollmentId, certificateId, target = enrollmentInput().target) => {
       const job = await createCertificateJob({
         client: pool, workspaceId, operation: "continue-enrollment", allowEnrollmentContinuation: true,
         subjectType: "managed_certificate", subjectId: certificateId, assignedAgentId: agentRowId, enrollmentId,
-        payload: storedAdcsPayload({ certificateId, target: enrollmentInput().target }),
+        payload: storedAdcsPayload({ certificateId, target }),
       });
       await pool.query("UPDATE certificate_enrollments SET current_job_id=$3 WHERE workspace_id=$1 AND id=$2",
         [workspaceId, enrollmentId, job.id]);
       return job.id;
     };
 
-    // A cancelled enrollment keeps its key-cleanup job claimable, and proves the harness can claim.
-    const cleanupCert = await retiredCertificate("cleanup after retirement");
-    const cleanupEnrollment = await insertEnrollment("cancelled", { certificateId: cleanupCert.certificateId });
-    const cleanupJobId = await continuation(cleanupEnrollment, cleanupCert.certificateId);
-    await pool.query("UPDATE certops_certificate_identities SET lifecycle_status='revoked', retired_at=NOW() WHERE id=$1", [cleanupCert.identityId]);
-    expect(await claim()).to.include(cleanupJobId);
+    // A signed terminal directive only cleans the owned key. All three states
+    // remain claimable after reassociation and lifecycle retirement.
+    for (const state of ["cancelled","expired","abandoned"]) {
+      const cleanupCert = await retiredCertificate(`cleanup after ${state}`);
+      const cleanupEnrollment = await insertEnrollment(state, { certificateId: cleanupCert.certificateId });
+      const cleanupJobId = await continuation(cleanupEnrollment, cleanupCert.certificateId);
+      await pool.query("UPDATE managed_certificates SET iis_reassociation_requires_absence=TRUE WHERE id=$1",[cleanupCert.certificateId]);
+      await pool.query("UPDATE certops_certificate_identities SET lifecycle_status='revoked', retired_at=NOW() WHERE id=$1", [cleanupCert.identityId]);
+      expect(await claim()).to.include(cleanupJobId);
+      const signed=signedJobs.find(job=>String(job.jobId)===cleanupJobId);
+      expect(signed.enrollment.terminalState).to.equal(state);
+      expect(signed.iisReassociationGuard).to.equal(undefined);
+    }
 
     // First issuance has no identity yet, and a missing identity is not retirement.
     const firstCertificateId = (await pool.query(
@@ -995,6 +1251,64 @@ describe("CertOps AD CS enrollments (real database)", function () {
         expect(error.code).to.equal("55000");
       }
     }
+
+    // The locked registration defines the only binding a non-terminal AD CS
+    // continuation may use, even when another binding has the same certificate.
+    const exactTarget = { type:"windows-iis", reference:"iis-01/webhosting", store:"My",
+      binding:{site:"Shop",port:443,address:"192.0.2.10"} };
+    for (const address of ["192.0.2.10", "192.0.2.20"]) {
+      const cert = await retiredCertificate(`guarded continuation ${address}`);
+      await pool.query(`UPDATE managed_certificates SET iis_reassociation_requires_absence=TRUE,
+        source_ref=$2, key_reference=$3 WHERE id=$1`, [cert.certificateId,
+        `${cert.certificateId}/host/iis_binding/Shop:443@192.0.2.10`, "winstore://LocalMachine/My/"+"b".repeat(40)]);
+      const target = {...exactTarget,binding:{...exactTarget.binding,address}};
+      const enrollment = await insertEnrollment("issued", {certificateId:cert.certificateId,target});
+      const jobId = await continuation(enrollment,cert.certificateId,target);
+      const claimed = await claim();
+      if (address === "192.0.2.10") {
+        const row=(await pool.query("SELECT status,error_code,error_message FROM certificate_jobs WHERE id=$1",[jobId])).rows[0];
+        expect(claimed, JSON.stringify(row)).to.include(jobId);
+        expect(signedJobs.find(job=>String(job.jobId)===jobId).iisReassociationGuard).to.deep.include({
+          site:"Shop",port:443,address,store:"My"});
+      } else {
+        expect(claimed).to.not.include(jobId);
+        const rejected=(await pool.query("SELECT status,error_code FROM certificate_jobs WHERE id=$1",[jobId])).rows[0];
+        expect(rejected).to.deep.equal({status:"rejected",error_code:"CERTOPS_IIS_REASSOCIATION_UNSAFE"});
+      }
+    }
+
+    // A bound continuation targeting the former IIS binding of a moved
+    // registration must be individually rejected at actual agent claim.
+    const movedCert = await retiredCertificate("reassociated continuation");
+    const movedEnrollment = await insertEnrollment("issued", { certificateId:movedCert.certificateId });
+    let spoofError;
+    try {
+      await createCertificateJob({client:pool,workspaceId,operation:"continue-enrollment",allowEnrollmentContinuation:true,
+        subjectType:"managed_certificate",subjectId:movedCert.certificateId,assignedAgentId:agentRowId,enrollmentId:movedEnrollment,
+        payload:{...storedAdcsPayload({certificateId:movedCert.certificateId,target:enrollmentInput().target}),issuerKind:"adcs",enrollment:{terminalState:"cancelled"}}});
+    } catch(error) { spoofError=error; }
+    expect(spoofError?.code).to.equal("CERTOPS_JOB_EXECUTION_FIELD_INVALID");
+    const movedJobId = await continuation(movedEnrollment,movedCert.certificateId);
+    await pool.query("UPDATE managed_certificates SET iis_reassociation_requires_absence=TRUE WHERE id=$1",[movedCert.certificateId]);
+    expect(await claim()).to.not.include(movedJobId);
+    const guardedResult=(await pool.query('SELECT status,error_code,error_message FROM certificate_jobs WHERE id=$1',[movedJobId])).rows[0];
+    expect(guardedResult.status).to.equal('rejected');
+    expect(guardedResult.error_code).to.equal('CERTOPS_IIS_REASSOCIATION_UNSAFE');
+    expect(guardedResult.error_message).to.include('former IIS binding');
+    const endedCert = await retiredCertificate("ended reassociated continuation");
+    const endedEnrollment = await insertEnrollment("issued", { certificateId:endedCert.certificateId });
+    const endedJobId = await continuation(endedEnrollment,endedCert.certificateId);
+    await pool.query("UPDATE managed_certificates SET iis_reassociation_requires_absence=TRUE WHERE id=$1",[endedCert.certificateId]);
+    await pool.query("UPDATE certops_management_periods SET ended_at=NOW() WHERE managed_certificate_id=$1 AND ended_at IS NULL",[endedCert.certificateId]);
+    expect(await claim()).to.not.include(endedJobId);
+    expect((await pool.query('SELECT status FROM certificate_jobs WHERE id=$1',[endedJobId])).rows[0].status).to.equal('pending');
+    const uncertainCert=await retiredCertificate("uncertain IIS deployment");
+    const uncertainEnrollment=await insertEnrollment("installing",{certificateId:uncertainCert.certificateId,nextPollAt:new Date(Date.now()-1000)});
+    const uncertainJobId=await continuation(uncertainEnrollment,uncertainCert.certificateId);
+    await pool.query("UPDATE certificate_jobs SET status='orphaned_unknown_effect',needs_operator_reconciliation=TRUE WHERE id=$1",[uncertainJobId]);
+    const scheduled=await scheduleDueEnrollments({client:pool,now:new Date()});
+    expect(scheduled.some(item=>item.enrollmentId===uncertainEnrollment),'an uncertain IIS effect must not be retried automatically').to.equal(false);
+    expect((await pool.query('SELECT current_job_id FROM certificate_enrollments WHERE id=$1',[uncertainEnrollment])).rows[0].current_job_id).to.equal(uncertainJobId);
   });
 
   it("retirement covers running and queued install-capable work and spares key cleanup", async () => {

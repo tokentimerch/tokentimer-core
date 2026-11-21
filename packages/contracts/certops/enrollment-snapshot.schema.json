@@ -116,9 +116,50 @@
     "requireLaterNotAfter": {
       "type": "boolean",
       "description": "When true, an issued certificate whose notAfter is not later than the installed certificate's fails validation."
+    },
+    "destinationType": {
+      "type": "string",
+      "const": "windows-cert-store"
+    },
+    "destinationSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "predecessorFingerprintSha256": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Frozen managed predecessor fingerprint, or null for first issuance."
+    },
+    "iisConsumers": {
+      "type": "array", "maxItems": 32,
+      "description": "Server-authorized IIS consumers, frozen for this Store renewal and rechecked before mutation.",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["consumerId", "authorizationRevision", "binding"],
+        "properties": {
+          "consumerId": { "type": "string", "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$" },
+          "authorizationRevision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "binding": {
+            "type": "object", "additionalProperties": false,
+            "required": ["address", "store", "site", "port"],
+            "properties": {
+              "address": { "const": "*" }, "store": { "const": "My" },
+              "site": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 _.:-]+$" },
+              "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "sniHost": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[A-Za-z0-9.-]+$" }
+            }
+          }
+        }
+      }
     }
   },
   "allOf": [
+    {
+      "if": { "required": ["destinationType"] },
+      "then": { "required": ["predecessorFingerprintSha256", "destinationSha256"] },
+      "else": { "not": { "anyOf": [{ "required": ["predecessorFingerprintSha256"] }, { "required": ["destinationSha256"] }, { "required": ["iisConsumers"] }] } }
+    },
+    {
+      "if": { "required": ["iisConsumers"] },
+      "then": { "properties": { "predecessorFingerprintSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }, "required": ["predecessorFingerprintSha256"] }
+    },
     {
       "if": { "properties": { "keyAlgorithm": { "const": "rsa" } } },
       "then": { "properties": { "keySize": { "enum": [2048, 3072, 4096] } } }

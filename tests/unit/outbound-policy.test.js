@@ -309,7 +309,7 @@ test("an unapproved environment SMTP relay leaves an approved DB relay usable", 
     onBeforeAttempt: ({ attempt }) => attempts.push(attempt),
   });
   assert.deepEqual(result, { success: true });
-  assert.deepEqual(attempts, ["db-smtp"]);
+  assert.deepEqual(attempts, ["db-smtp", "db-smtp-send"]);
   assert.equal(messages, 1);
 });
 

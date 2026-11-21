@@ -96,6 +96,7 @@ describe("Delivery degraded threshold (real worker)", function () {
           ["src/delivery-worker.js"],
           "apps/worker",
           workerEnv,
+          { timeoutMs: 30000 },
         );
       const state = async () => {
         const queue = await client.query(

@@ -37,9 +37,9 @@ describe("Independent PR migration and preview compatibility",function(){
         })));
       }else execute(upgrade);
       const after=(await client.query("SELECT * FROM migrations ORDER BY version")).rows;
-      assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);
-      assert.equal(after.length, 116);
-      assert.equal(after.filter(row => row.name === "auto_sync_creation_expiration").length, 1);
+      assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);assert.equal(after.length,125);
+      for (const name of ["certops_observed_revocation", "store_issuance_explicit_renewal_consent", "certops_acme_store_enrollment_identity", "certops_adcs_expected_identity_receipts", "certops_windows_iis_consent", "certops_material_adcs_operation_union", "certops_iis_absence_proofs", "certops_enrollment_jobs_index", "distribution_pagerduty_recovery", "certops_adcs_preflight_lookup_index", "certops_adcs_receipt_deadline", "auto_sync_creation_expiration"])
+        assert.equal(after.filter(row=>row.name===name).length,1,`Migration ${name} is present once`);
       assert.equal((await client.query("SELECT expiration FROM auto_sync_creation_stats LIMIT 0")).rowCount, 0);
       assert.equal(after.filter(row=>row.name==="certops_retirement_dossiers").length,1);
       assert.equal(after.filter(row=>row.name==="certops_material_reconciliation").length,1);
