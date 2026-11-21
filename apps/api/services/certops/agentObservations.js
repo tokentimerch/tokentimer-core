@@ -701,20 +701,25 @@ async function findExistingEvidenceByClientId(client, observation) {
   return result.rows[0] || null;
 }
 
-async function findIssuedStoreCertificates(client, observation) {
+async function findIssuedStoreCertificates(client, observation, discoveredCertificateId) {
   // Older observations can omit location fields and receive inventory defaults.
   // Correlation requires the agent to report the actual Store and key presence.
   if (observation.locationKind !== "windows_store" || observation.keyPresent !== true ||
       observation.clientMetadata.storeLocation !== "LocalMachine" ||
       String(observation.clientMetadata.storeName || "").toLowerCase() !== "my") return [];
 
-  const { rows } = await client.query(`SELECT id FROM managed_certificates
-    WHERE workspace_id=$1 AND deployed_agent_id=$2 AND source='agent_issuance'
-      AND status='active' AND key_mode='os-store-managed'
-      AND certops_normalize_fingerprint(fingerprint_sha256)=$3
-      AND public_metadata#>>'{issuance,target,type}'='windows-cert-store'
-      AND public_metadata#>>'{issuance,target,store}'='My'
-    LIMIT 2`, [observation.workspaceId, observation.agentRowId, observation.fingerprintSha256]);
+  const { rows } = await client.query(`SELECT mc.id FROM managed_certificates mc
+    JOIN certops_management_periods p ON p.workspace_id=mc.workspace_id
+      AND p.managed_certificate_id=mc.id AND p.ended_at IS NULL
+    WHERE mc.workspace_id=$1 AND mc.deployed_agent_id=$2 AND mc.source='agent_issuance'
+      AND mc.status='active' AND mc.key_mode='os-store-managed'
+      AND certops_normalize_fingerprint(mc.fingerprint_sha256)=$3
+      AND mc.public_metadata#>>'{issuance,target,type}'='windows-cert-store'
+      AND mc.public_metadata#>>'{issuance,target,store}'='My'
+      AND NOT EXISTS (SELECT 1 FROM certops_management_periods existing
+        WHERE existing.workspace_id=$1 AND existing.managed_certificate_id=$4
+          AND existing.ended_at IS NULL)
+    LIMIT 2`, [observation.workspaceId, observation.agentRowId, observation.fingerprintSha256, discoveredCertificateId]);
   return rows;
 }
 
@@ -767,9 +772,9 @@ async function upsertInventoryForObservation(client, observation) {
       },
     );
   }
-  const [issuedCertificate, competingIssue] = existingManagedCertificate
-    ? []
-    : await findIssuedStoreCertificates(client, observation);
+  const [issuedCertificate, competingIssue] = await findIssuedStoreCertificates(
+    client, observation, existingManagedCertificate?.id ?? null,
+  );
   if (competingIssue) return retainUnmanagedObservation(client, observation);
 
   // A verified issue owns its registration. Discovery owns only the observed

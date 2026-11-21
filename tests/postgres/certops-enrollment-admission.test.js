@@ -625,14 +625,14 @@ test("first store issuance remains tracking-only on proof replay until explicit 
   const agent = bindAuthenticatedCredential({ id: f.agentId, agentId: publicAgentId, workspaceId: f.workspaceId }, discoveryCredential);
   const { persistAgentDiscoveryEvidenceBatch } = require("../../apps/api/services/certops/agentObservations");
   const thumbprint = "a".repeat(40);
-  const discover = async (sequence, storeName, keyPresent = true) => {
+  const discover = async (sequence, storeName, keyPresent = true, targetHost = "agent-host.example.test") => {
     const result = await persistAgentDiscoveryEvidenceBatch({ dbPool: pool, agent, envelope: { sequence }, evidenceItems: [{
       evidenceId: randomUUID(), eventType: "certificate.observed", observedAt: new Date().toISOString(),
       fingerprintSha256: issued.fingerprint_sha256,
       metadata: [
         { name: "locationKind", value: "windows_store" },
         { name: "locationSlot", value: `LocalMachine/${storeName}/${thumbprint}` },
-        { name: "targetHost", value: "agent-host.example.test" },
+        { name: "targetHost", value: targetHost },
         { name: "storeLocation", value: "LocalMachine" },
         { name: "storeName", value: storeName },
         { name: "thumbprint", value: thumbprint },
@@ -657,13 +657,45 @@ test("first store issuance remains tracking-only on proof replay until explicit 
   assert.deepEqual(observationEvidence.rows, Array(2).fill({ subject_id: certificateId, certificate_id: certificateId }));
   const otherStore = await discover(3, "WebHosting");
   assert.notEqual(otherStore.managedCertificateId, certificateId);
+  // Model a duplicate discovered by an older control plane before the
+  // issuance result was reconciled. Its period and evidence stay intact.
+  const legacy = (await pool.query(`INSERT INTO managed_certificates
+    (workspace_id,source,source_ref,fingerprint_sha256,name,status,deployed_agent_id,key_mode)
+    SELECT c.workspace_id,'agent_windows',target.source_ref,c.fingerprint_sha256,'Older Store observation',
+      'discovered',c.deployed_agent_id,'os-store-managed'
+    FROM managed_certificates c
+    JOIN certificate_instances ci ON ci.managed_certificate_id=c.id
+    JOIN certificate_targets target ON target.id=ci.target_id
+    WHERE c.id=$1 AND ci.id=$2 RETURNING id`, [certificateId, observed.certificateInstanceId])).rows[0];
+  assert.equal((await discover(4, "My")).managedCertificateId, legacy.id);
+  const { listWindowsRenewal } = require("../../apps/api/services/certops/windowsIisConsent");
+  const groups = () => listWindowsRenewal({ client: pool, workspaceId: f.workspaceId, identityId: period.current_identity_id });
+  const duplicateGroups = (await groups()).groups.filter(group => group.agentId === f.agentId);
+  assert.ok(duplicateGroups.every(group => group.ambiguous));
+  assert.deepEqual(
+    Object.fromEntries(duplicateGroups.map(group => [group.managedCertificateId, group.duplicateRole])),
+    { [certificateId]: "issued", [legacy.id]: "observed" },
+  );
+  const legacyPeriod = duplicateGroups.find(group => group.managedCertificateId === legacy.id).periodId;
+  const identity = require("../../apps/api/services/certops/certificateIdentity");
+  await assert.rejects(identity.replaceManagingSource({ client: pool, workspaceId: f.workspaceId,
+    periodId: legacyPeriod, managedCertificateId: legacy.id, renewalProfileId: period.renewal_profile_id,
+    automationEnabled: true, actorUserId: f.actor }), error => error.code === "CERTOPS_WINDOWS_CONSENT_REFUSED");
+  await identity.stopManagingSource({ client: pool, workspaceId: f.workspaceId, periodId: legacyPeriod, actorUserId: f.actor });
+  const reattached = await discover(5, "My");
+  assert.equal(reattached.managedCertificateId, certificateId);
+  assert.equal(reattached.certificateInstanceId, observed.certificateInstanceId);
+  assert.deepEqual((await groups()).groups.map(group => [group.managedCertificateId, group.ambiguous]), [[certificateId, false]]);
+  assert.equal((await pool.query("SELECT ended_reason FROM certops_management_periods WHERE id=$1", [legacyPeriod])).rows[0].ended_reason, "stopped_by_operator");
+  assert.equal(Number((await pool.query(`SELECT count(*) FROM certificate_evidence WHERE workspace_id=$1
+    AND evidence_type='certificate.observed' AND subject_id=$2`, [f.workspaceId, legacy.id])).rows[0].count), 1);
+
   const afterDiscovery = (await pool.query("SELECT * FROM managed_certificates WHERE id=$1", [certificateId])).rows[0];
   assert.deepEqual(afterDiscovery, issued, "discovery must preserve the verified issuance and its key reference");
   const sweep = () => scheduler.runRenewalSchedulerSweep({ dbPool: pool, env: { CERTOPS_ENABLED: "true" }, auditWriter: async () => {} });
   const automaticJobs = async () => Number((await pool.query("SELECT COUNT(*) FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2::text AND operation='renew' AND source='automation'", [f.workspaceId, certificateId])).rows[0].count);
   await sweep();
   assert.equal(await automaticJobs(), 0);
-  const identity = require("../../apps/api/services/certops/certificateIdentity");
   await identity.replaceManagingSource({ client: pool, workspaceId: f.workspaceId, periodId: period.id,
     managedCertificateId: certificateId, renewalProfileId: period.renewal_profile_id, automationEnabled: true, actorUserId: f.actor });
   period = (await pool.query("SELECT * FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL", [f.workspaceId, certificateId])).rows[0];
@@ -677,14 +709,14 @@ test("first store issuance remains tracking-only on proof replay until explicit 
       key_mode,key_reference,public_metadata,deployed_agent_id)
     SELECT workspace_id,status,source,$2,name,fingerprint_sha256,key_mode,key_reference,public_metadata,deployed_agent_id
     FROM managed_certificates WHERE id=$1`, [certificateId, randomUUID()]);
-  const ambiguous = await discover(4, "My");
+  const ambiguous = await discover(6, "My");
   assert.equal(ambiguous.unmanaged, true, "ambiguous issuance retains the observation without selecting an owner");
   assert.equal(ambiguous.managedCertificateId, null);
   const beforeNoKey = await pool.query("SELECT source FROM managed_certificates WHERE workspace_id=$1 AND fingerprint_sha256=$2 ORDER BY source",
     [f.workspaceId, issued.fingerprint_sha256]);
-  assert.deepEqual(beforeNoKey.rows.map(row => row.source), ["agent_issuance", "agent_issuance", "agent_windows"]);
+  assert.deepEqual(beforeNoKey.rows.map(row => row.source), ["agent_issuance", "agent_issuance", "agent_windows", "agent_windows"]);
 
-  const noKey = await discover(5, "My", false);
+  const noKey = await discover(7, "My", false, "no-key-slot.example.test");
   assert.notEqual(noKey.managedCertificateId, certificateId);
   assert.deepEqual((await pool.query(`SELECT mc.key_mode,p.renewal_profile_id,p.automation_enabled
     FROM managed_certificates mc JOIN certops_management_periods p ON p.managed_certificate_id=mc.id
@@ -1442,6 +1474,19 @@ test("management attachment refuses a second renewal owner before IIS consent ex
   });
   await pool.query("UPDATE certificate_instances SET presence_state='confirmed_present' WHERE target_id=$1", [listener.id]);
   assert.deepEqual((await claim()).jobs, []);
+  const jobDetails = () => require("../../apps/api/services/certops/jobs").getCertificateJobById({
+    client: pool, workspaceId: f.workspaceId, jobId: queued.jobId,
+  });
+  const held = await jobDetails();
+  assert.equal(held.status, "pending");
+  assert.equal(held.errorCode, "CERTOPS_IIS_STORE_OWNERSHIP_CHANGED");
+  assert.equal(held.pendingReason.code, "iis_store_ownership_changed");
+  assert.match(held.pendingReason.message, /Cancel this queued enrollment/);
   await pool.query("UPDATE certificate_instances SET presence_state='confirmed_absent' WHERE target_id=$1", [listener.id]);
-  assert.equal((await claim()).jobs[0]?.jobId, queued.jobId);
+  assert.deepEqual((await claim()).jobs, [], "an older IIS enrollment must remain held when the observed binding changes");
+  await enrollments.cancelEnrollment({ client: pool, workspaceId: f.workspaceId,
+    enrollmentId: queued.enrollmentId, actorUserId: f.actor, audit: async () => {} });
+  assert.equal((await jobDetails()).status, "cancelled");
+  const replacement = await manual(f, { certificateId: binding.id, target });
+  assert.equal((await claim()).jobs[0]?.jobId, replacement.jobId);
 });

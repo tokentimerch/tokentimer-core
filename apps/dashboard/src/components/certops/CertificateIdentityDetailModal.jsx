@@ -657,7 +657,12 @@ function IdentityDetailSession({
       );
     }
   }
-  const hasStoreAndIis = windowsGroups.some(group => group.bindings?.length);
+  const showAdvancedRegistrations = windowsGroups.some(
+    group => group.bindings?.length || group.ambiguous
+  );
+  const duplicateRoles = new Map(
+    windowsGroups.map(group => [group.periodId, group.duplicateRole])
+  );
   // When a current registration exists, show stopped registrations in history.
   // If all registrations are stopped, keep the restart action accessible.
   const latestSources = new Map();
@@ -1031,8 +1036,8 @@ function IdentityDetailSession({
               </AlertDescription>
             </Alert>
           ) : null}
-          <Box as={hasStoreAndIis ? 'details' : 'div'}>
-            {hasStoreAndIis ? (
+          <Box as={showAdvancedRegistrations ? 'details' : 'div'}>
+            {showAdvancedRegistrations ? (
               <Box
                 as='summary'
                 cursor='pointer'
@@ -1106,6 +1111,7 @@ function IdentityDetailSession({
                     {visibleSources.map(source => {
                       const current = activeSources.includes(source);
                       const canReadd = canRestart(source);
+                      const duplicateRole = duplicateRoles.get(source.periodId);
                       return (
                         <Tr
                           key={`${source.periodId || source.managedCertificateId}-${source.startedAt || 'replacement'}`}
@@ -1114,6 +1120,13 @@ function IdentityDetailSession({
                             <Text fontSize='sm' fontWeight='semibold'>
                               {registrationLabel(source, false)}
                             </Text>
+                            {duplicateRole ? (
+                              <Text fontSize='xs' color='orange.400'>
+                                {duplicateRole === 'issued'
+                                  ? 'Keep for renewal'
+                                  : 'Duplicate Store observation'}
+                              </Text>
+                            ) : null}
                             {source.sourceRef ? (
                               <Box
                                 as='details'
