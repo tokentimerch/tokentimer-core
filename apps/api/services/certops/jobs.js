@@ -2214,7 +2214,7 @@ async function createCertificateJob(options) {
   } = resolveExecutorKindAndRouting(options, source, payload, autoAssignedAgentId);
   if (["renew", "issue", "continue-enrollment"].includes(operation) && payload.target?.type === "windows-iis") {
     await require("./windowsIisConsent").assertIndependentIisTarget({ client:db,workspaceId,
-      agentId:assignedAgentId,target:payload.target });
+      agentId:assignedAgentId,target:payload.target,recovery:operation === "continue-enrollment" });
   }
   if (options.expectedRenewalRouting && (
     executorKind !== options.expectedRenewalRouting.executorKind ||
