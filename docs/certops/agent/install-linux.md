@@ -55,6 +55,8 @@ that the dashboard's Deploy-an-agent panel generates a command for. It:
   unit, so the atomically swapped app dir is what actually runs.
 
 `--dry-run` prints every action without touching the system.
+On a clean Linux checkout, maintainers can reproduce the CI install and uninstall previews with
+`node --test packages/agent/scripts/install-agent-sh.test.js` as an unprivileged user.
 
 Run the installer as `sudo bash ./scripts/install-agent.sh`. The `bash` form works whether or not the tarball kept the script's executable bit. The 0.17.3 and earlier release tarballs ship it without that bit, so `sudo ./scripts/install-agent.sh` fails with `Permission denied` there.
 
