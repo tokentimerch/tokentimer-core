@@ -76,10 +76,18 @@ export default function WindowsCertificateUsage({
               <Text fontSize='sm' color='dashboard.modal.muted'>
                 {group.host} › {group.store}
               </Text>
+              {group.duplicateRole ? (
+                <Text fontSize='xs' color='orange.400'>
+                  {group.duplicateRole === 'issued'
+                    ? 'Issued by TokenTimer · Keep for renewal'
+                    : 'Duplicate Windows Store observation'}
+                </Text>
+              ) : null}
             </Box>
             <Button
               size='xs'
               variant='outline'
+              isDisabled={group.ambiguous}
               onClick={() => {
                 onSelect?.(group.managedCertificateId);
                 setProfileId(group.profileId || '');
@@ -89,7 +97,7 @@ export default function WindowsCertificateUsage({
               Renewal settings
             </Button>
           </HStack>
-          {editing === group.periodId ? (
+          {editing === group.periodId && !group.ambiguous ? (
             <VStack align='stretch' spacing={2} mt={3}>
               <Select
                 size='sm'
@@ -142,7 +150,16 @@ export default function WindowsCertificateUsage({
           <Text fontSize='sm' mt={3}>
             Renewal:{' '}
             <Box as='span' fontWeight='semibold'>
-              {group.profileName || 'Not configured'}
+              {!group.profileId
+                ? 'Not configured'
+                : profiles.some(
+                      profile =>
+                        profile.id === group.profileId &&
+                        profile.renewalProfile?.target?.type ===
+                          'windows-cert-store'
+                    )
+                  ? group.profileName || 'Store profile assigned'
+                  : 'Verify existing profile'}
             </Box>
           </Text>
           <Box mt={4}>
@@ -194,7 +211,7 @@ export default function WindowsCertificateUsage({
                     mt={1}
                   >
                     {binding.deployment === 'conflict'
-                      ? 'Existing IIS renewal profile: stop that registration’s renewal before enabling Store updates.'
+                      ? 'Detach the IIS renewal profile or stop managing that IIS registration before enabling Store updates.'
                       : binding.relationship === 'absent'
                         ? 'Binding removed. It will not be recreated; Store renewal continues.'
                         : binding.relationship === 'changed'

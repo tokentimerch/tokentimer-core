@@ -3654,8 +3654,9 @@ async function runWindowsStoreConsumerTail({ snapshot, certificatePem, jobId, cl
       errorMessage: "Store installation is verified; this build is not qualified for dependent IIS updates." };
   }
   try {
+    // Authorization uses the live claim transport. Outcomes remain buffered as evidence.
     const result = await require("./windows-iis/store-consumer-tail").runStoreConsumerTail({
-      snapshot, certificatePem, jobId, claimId: leaseOpts?.claimId, client, signal,
+      snapshot, certificatePem, jobId, claimId: leaseOpts?.claimId, client: leaseOpts?.leaseClient, signal,
       acquireLock: () => acquireWindowsStoreLocksWithWait(stateDir, "My"),
       execFileImpl: windowsExecFileImpl, connectImpl: windowsConnectImpl,
       ensureLease: async () => {

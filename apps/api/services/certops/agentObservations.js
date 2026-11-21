@@ -701,6 +701,28 @@ async function findExistingEvidenceByClientId(client, observation) {
   return result.rows[0] || null;
 }
 
+async function findIssuedStoreCertificates(client, observation, discoveredCertificateId) {
+  // Older observations can omit location fields and receive inventory defaults.
+  // Correlation requires the agent to report the actual Store and key presence.
+  if (observation.locationKind !== "windows_store" || observation.keyPresent !== true ||
+      observation.clientMetadata.storeLocation !== "LocalMachine" ||
+      String(observation.clientMetadata.storeName || "").toLowerCase() !== "my") return [];
+
+  const { rows } = await client.query(`SELECT mc.id FROM managed_certificates mc
+    JOIN certops_management_periods p ON p.workspace_id=mc.workspace_id
+      AND p.managed_certificate_id=mc.id AND p.ended_at IS NULL
+    WHERE mc.workspace_id=$1 AND mc.deployed_agent_id=$2 AND mc.source='agent_issuance'
+      AND mc.status='active' AND mc.key_mode='os-store-managed'
+      AND certops_normalize_fingerprint(mc.fingerprint_sha256)=$3
+      AND mc.public_metadata#>>'{issuance,target,type}'='windows-cert-store'
+      AND mc.public_metadata#>>'{issuance,target,store}'='My'
+      AND NOT EXISTS (SELECT 1 FROM certops_management_periods existing
+        WHERE existing.workspace_id=$1 AND existing.managed_certificate_id=$4
+          AND existing.ended_at IS NULL)
+    LIMIT 2`, [observation.workspaceId, observation.agentRowId, observation.fingerprintSha256, discoveredCertificateId]);
+  return rows;
+}
+
 async function upsertInventoryForObservation(client, observation) {
   const certificate = certificateFor(observation);
   const certSourceRef = certSourceRefFor(observation);
@@ -750,73 +772,83 @@ async function upsertInventoryForObservation(client, observation) {
       },
     );
   }
-  const tokenId = await ensureManagedCertificateToken(
-    client,
-    certificate,
-    {
-      workspaceId: observation.workspaceId,
-      name: displayName,
-      tokenNotesSourceLabel: isFilesystem
-        ? "agent filesystem discovery"
-        : "agent Windows discovery",
-    },
-    existingManagedCertificate,
+  const [issuedCertificate, competingIssue] = await findIssuedStoreCertificates(
+    client, observation, existingManagedCertificate?.id ?? null,
   );
+  if (competingIssue) return retainUnmanagedObservation(client, observation);
 
-  const managedCertificate = await upsertManagedCertificateByMonitorSource(
-    client,
-    certificate,
-    {
-      workspaceId: observation.workspaceId,
-      status: "discovered",
-      source: observation.source,
-      sourceRef: certSourceRef,
-      reuseCertificateId: existingManagedCertificate?.id,
-      observedAt: observation.observedAt,
-      name: displayName,
-      // os-store-managed only when the agent actually
-      // observed a private key at this location (observation.keyPresent ===
-      // true, from the Windows store's own HasPrivateKey fact -- never
-      // assumed). TokenTimer's executor creates a certificate directly inside
-      // the CNG store, which always has a key by
-      // construction; this code instead observes certificates that already
-      // existed on the host, where that is not guaranteed (a public-only
-      // import, an intermediate cert, or a binding pointing at a store entry
-      // this agent cannot read the key state for). Claiming os-store-managed
-      // for a location with no confirmed key would misrepresent custody, so
-      // an unconfirmed/false observation leaves keyMode null rather than
-      // guessing. A confirmed key plus complete IIS topology is deployable by
-      // the Windows renew/rebind executor; public-only entries remain
-      // observation-only.
-      keyMode: isFilesystem
-        ? "agent-local"
-        : observation.keyPresent === true
-          ? "os-store-managed"
-          : null,
-      keyReference: isFilesystem
-        ? `file://${observation.filePath}`
-        : defaultKeyReference(observation.locationKind, {
-            windowsFields: observation.windowsFields,
-          }),
-      // Filesystem adoption uses this path directly. Windows adoption uses
-      // the store/site/binding descriptor instead, so its certificate path
-      // remains null and no file-based key custody is invented.
-      deployedCertPath: isFilesystem ? observation.filePath : null,
-      deployedAgentId: observation.agentRowId,
-      tokenId,
-      controllerObservationMetadata: {
-        agentId: observation.agentId,
-        filePath: observation.filePath,
-        locationKind: observation.locationKind,
-        locationSlot: observation.locationSlot,
-        targetHost: observation.targetHost,
-        observedAt: observation.observedAt,
-        observedAtServer: observation.observedAtServer,
-        source: observation.source,
+  // A verified issue owns its registration. Discovery owns only the observed
+  // target and instance and must not rewrite the issue's custody or identity.
+  let managedCertificate = issuedCertificate;
+  if (!managedCertificate) {
+    const tokenId = await ensureManagedCertificateToken(
+      client,
+      certificate,
+      {
+        workspaceId: observation.workspaceId,
+        name: displayName,
+        tokenNotesSourceLabel: isFilesystem
+          ? "agent filesystem discovery"
+          : "agent Windows discovery",
       },
-    },
-    0,
-  );
+      existingManagedCertificate,
+    );
+
+    managedCertificate = await upsertManagedCertificateByMonitorSource(
+      client,
+      certificate,
+      {
+        workspaceId: observation.workspaceId,
+        status: "discovered",
+        source: observation.source,
+        sourceRef: certSourceRef,
+        reuseCertificateId: existingManagedCertificate?.id,
+        observedAt: observation.observedAt,
+        name: displayName,
+        // os-store-managed only when the agent actually
+        // observed a private key at this location (observation.keyPresent ===
+        // true, from the Windows store's own HasPrivateKey fact -- never
+        // assumed). TokenTimer's executor creates a certificate directly inside
+        // the CNG store, which always has a key by
+        // construction; this code instead observes certificates that already
+        // existed on the host, where that is not guaranteed (a public-only
+        // import, an intermediate cert, or a binding pointing at a store entry
+        // this agent cannot read the key state for). Claiming os-store-managed
+        // for a location with no confirmed key would misrepresent custody, so
+        // an unconfirmed/false observation leaves keyMode null rather than
+        // guessing. A confirmed key plus complete IIS topology is deployable by
+        // the Windows renew/rebind executor; public-only entries remain
+        // observation-only.
+        keyMode: isFilesystem
+          ? "agent-local"
+          : observation.keyPresent === true
+            ? "os-store-managed"
+            : null,
+        keyReference: isFilesystem
+          ? `file://${observation.filePath}`
+          : defaultKeyReference(observation.locationKind, {
+              windowsFields: observation.windowsFields,
+            }),
+        // Filesystem adoption uses this path directly. Windows adoption uses
+        // the store/site/binding descriptor instead, so its certificate path
+        // remains null and no file-based key custody is invented.
+        deployedCertPath: isFilesystem ? observation.filePath : null,
+        deployedAgentId: observation.agentRowId,
+        tokenId,
+        controllerObservationMetadata: {
+          agentId: observation.agentId,
+          filePath: observation.filePath,
+          locationKind: observation.locationKind,
+          locationSlot: observation.locationSlot,
+          targetHost: observation.targetHost,
+          observedAt: observation.observedAt,
+          observedAtServer: observation.observedAtServer,
+          source: observation.source,
+        },
+      },
+      0,
+    );
+  }
 
   const target = await upsertTargetForObservation(client, observation);
 
