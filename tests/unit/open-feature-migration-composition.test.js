@@ -127,3 +127,19 @@ test("the two existing feature histories upgrade and replay without changing app
     assert.deepEqual(composeMigrations(migrations, plan), plan);
   }
 });
+
+test("the initial credential rotation preview survives each upgrade prefix", () => {
+  const versions = new Set([...Array.from({ length: 85 }, (_, i) => i + 1), 92, 93, 94, 95, 98]);
+  const history = migrations.filter(({ version }) => versions.has(version))
+    .map(({ version, name }) => ({ version, name }));
+  history.push({ version: 99, name: "agent_credential_rotations" });
+  const plan = composeMigrations(migrations, history);
+  const applied = plan.map(({ version, name }) => ({ version, name }));
+  assert.deepEqual(applied.slice(0, history.length), history);
+  for (let length = history.length; length <= applied.length; length++) {
+    assert.deepEqual(composeMigrations(migrations, applied.slice(0, length)), plan);
+  }
+  assert.throws(() => composeMigrations(migrations, history.filter(({ version }) => version !== 98)), /Unsupported/);
+  assert.throws(() => composeMigrations(migrations, history.map((row) => row.version === 99
+    ? { ...row, name: "unknown_rotation" } : row)), /Unsupported/);
+});

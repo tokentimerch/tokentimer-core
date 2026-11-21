@@ -6,13 +6,15 @@ The agent also needs Windows PowerShell 5.1 (`powershell.exe`, present by defaul
 
 For discovery of non-SNI IIS sites with host headers, install IIS Management Scripts and Tools (`Web-Scripting-Tools`). Without its `WebAdministration` module, the agent retains the HTTP.sys binding but cannot safely associate those sites with it.
 
+Bundled Node.js packages remain unavailable for deployment. They use the Windows Program Files folder for both the app and state under `TokenTimerAgent`, with a protected installation ACL. The installer accepts only fresh installations and refuses existing agent directories, state or services, upgrades and uninstall. Preserve retained files after failure and contact support. Windows Server 2019/2022/2025 amd64 acceptance and the publisher-signed install command remain pending. Rollback and ARM64 require separate qualification. Use the generic archive and protected system Node.js below.
+
 ## Prepare the control plane
 
 Enable CertOps and provision the signing and registration encryption keys. In the workspace's Agent fleet panel, create a single-use bootstrap token. A bootstrap token is shown once and expires 24 hours after creation by default (maximum 30 days); create a new one if it expires. Prepare [local policy](configuration.md) before enrolling the host for real work.
 
 ## Install
 
-Download the matching agent release and verify its checksum before running the installer. Recent Windows versions include `tar.exe`; check with `Get-Command tar.exe` and use another trusted extractor if it is missing. Extract the `.tgz` with `tar -xzf <archive>` into a new protected directory, such as one under Program Files. Set the owner of the extracted tree to the Administrators group and allow only Administrators and SYSTEM to modify it. Use the protected directory for installation and elevated dry runs. From that directory:
+Download the matching generic agent archive and verify its published checksum. Extract it into a new protected directory under Program Files. Set the owner to Administrators and allow only Administrators and SYSTEM to modify the tree. Use a machine-wide Node.js installation protected from unprivileged changes. Run installation and elevated dry runs from the protected extraction directory:
 
 ```powershell
 $workspaceId = Read-Host 'Workspace ID'
@@ -23,9 +25,7 @@ Get-Service TokenTimerAgent
 
 The installer prompts privately for the bootstrap token. The service runs as LocalSystem through the bundled native service host. The app lives at `C:\ProgramData\TokenTimerAgent\app`; configuration and custody state live at `C:\ProgramData\TokenTimerAgent\state`.
 
-For a private API CA, install its public chain in the Windows machine stores. The installer enables system CA trust for the service with Node 22.15–22.x, 23.8–23.x, or 24.x unless explicitly overridden. On Node 22.0–22.14 or 23.0–23.7, upgrade Node or use `--ca-bundle` for a new configuration. An existing `config.json` needs `caBundlePath` set explicitly; a reinstall does not add it. A configured bundle replaces the API's default CA trust. `--trust-store` does not configure API TLS trust. Restart the service after changing trust.
-
-Use a machine-wide Node.js installation on PATH in a protected directory such as `C:\Program Files\nodejs`. The installer rejects a Node path that uses a junction or allows unprivileged changes. If an older application has no verified installation record or uses an unsafe directory, the upgrade stops before changing the service or its state. Preserve the configuration, credentials, signing pins, custody keys and journals. Plan a controlled reinstall from a verified package in a clean protected directory and validate the preserved state before resuming jobs.
+For a private API CA, set `caBundlePath` in the agent configuration. `--ca-bundle` applies to a new configuration. The installer preserves explicit per-service CA flags as Node arguments and copies an explicit machine `NODE_USE_SYSTEM_CA` value when the service has no override. Configure per-service trust before retrying a conflicting policy. Upgrades require a verified existing application. Preserve credentials, keys and state if preflight refuses the installation.
 
 Write your policy first, then run the installer: it keeps an existing `config.json` and only creates one when absent. Command profile names and target selectors are read when the agent starts, so prepare them before the first registration. With a loopback `http` API address, pass `--allow-insecure-local-http` and also add `"allowInsecureLocalHttp": true` to a hand-written `config.json`. On an upgrade the installer still asks for a token; a registered agent keeps its credential and does not use it, so paste any value that starts with `ttboot_` or set `$env:TOKENTIMER_AGENT_BOOTSTRAP_TOKEN = 'ttboot_unused'`.
 
@@ -35,7 +35,11 @@ Windows state is protected with `icacls` ACLs. Local Administrators can access a
 
 For a protected config that even an elevated editor cannot change, follow [Windows configuration maintenance](../windows-maintenance.md). Never delete enrolled identity or keys to get past an access error.
 
-For a controlled reinstall of an enrolled agent, use `--prepare-only` from the verified package extracted into a protected directory. This mode requires a verified state restore, matching API URL and workspace, and an empty application and service slot. It preserves the restored state and leaves the new LocalSystem service disabled for inspection. The prepared service uses the verified API origin at startup. After an interruption, preserve the staged files and inspect the disabled registration before recovery. Enable the service only after verifying the installed candidate and its state.
+For a controlled reinstall of an enrolled agent, use `--prepare-only` from the verified generic archive extracted into a protected directory. This mode requires a verified state restore, matching API URL and workspace, and an empty application and service slot. It preserves the restored state and leaves the new LocalSystem service disabled for inspection. The prepared service uses the verified API origin at startup. After an interruption, preserve the staged files and inspect the disabled registration before recovery. Enable the service only after verifying the installed candidate and its state.
+
+If the verified installer reports `recovery_required` or retained staging, stop retries and contact support. Preserve the staging directories, their `.intent` records and `state\upgrade-recovery.json`: they are needed to assess the operation. A launcher-backed upgrade retains its backup and journal even after a successful health check; a failed check requires review rather than automatic rollback. Do not manually remove or move these files to resume installation. Process checks alone cannot establish that services or other persistent Windows components will not act later. An administrator can run the authenticated launcher with `--inspect-upgrade-recovery` to collect a read-only local report for support; the report does not authorize recovery. If a different account installed the agent and its access is still present, inspection may refuse; contact support.
+
+The authenticated launcher can inspect retained staging using `--inspect-quarantine`. Use `--inspect-scm-recovery` to show the service's current failure actions without exposing their command. Keep the staging directories, intent records and any upgrade recovery journal, and contact support before retrying. Releasing quarantine is currently unavailable: Windows may execute a previously queued service recovery command even after the service is disabled or its configuration changes, and an operator acknowledgement cannot establish that no action remains queued.
 
 ## Verify
 

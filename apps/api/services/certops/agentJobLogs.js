@@ -12,6 +12,7 @@
 const crypto = require("node:crypto");
 const client = require("prom-client");
 const { pool } = require("../../db/database");
+const { assertCurrentAgentCredential } = require("./agentCredentialFence");
 const { writeAudit } = require("../audit");
 const { logger } = require("../../utils/logger");
 const {
@@ -627,11 +628,10 @@ async function ingestAgentJobLogs({
       return { httpStatus: 409, body: { error: "Claim is not valid", code: CERTOPS_AGENT_LOG_CLAIM_INVALID } };
     }
     const result = await withTransaction(dbPool, async (client) => {
-      await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
+      await (deps.assertCurrentAgentCredential || assertCurrentAgentCredential)({ client, agent });
       return applyIngest(client, {
         workspaceId: agent.workspaceId,
         agentRowId: agent.id,
-        agentId: agent.agentId,
         jobId,
         body,
         env,
@@ -649,7 +649,7 @@ async function ingestAgentJobLogs({
   }
 }
 
-async function applyIngest(client, { workspaceId, agentRowId, agentId, jobId, body, env, reservedNames, quotaLimitBytes }) {
+async function applyIngest(client, { workspaceId, agentRowId, jobId, body, env, reservedNames, quotaLimitBytes }) {
   assertLockSequence(OPERATION_LOCKS.ingest);
   const jobState = await lockJobState(client, workspaceId, jobId);
   if (!jobState) {
@@ -844,7 +844,7 @@ async function applyIngest(client, { workspaceId, agentRowId, agentId, jobId, bo
         targetType: "certificate_job",
         targetId: null,
         workspaceId,
-        metadata: { agentId, jobId, claimId: body.claimId, code: CERTOPS_AGENT_LOG_PRIVATE_MATERIAL },
+        metadata: { jobId, claimId: body.claimId, code: CERTOPS_AGENT_LOG_PRIVATE_MATERIAL },
       });
     } catch (error) {
       logger.warn("agent log rejection audit failed", { code: error?.code || null });
