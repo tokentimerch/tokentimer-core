@@ -5,6 +5,11 @@ const { classifyAgentLiveness } = require("./agentLiveness");
 const { writeAudit } = require("../audit");
 const { pool } = require("../../db/database");
 
+const MAX_IIS_CONSUMERS = 32;
+const VERIFIED_ISSUED_STORE = `mc.source='agent_issuance' AND mc.status='active' AND mc.key_mode='os-store-managed'
+  AND mc.public_metadata#>>'{issuance,target,type}'='windows-cert-store'
+  AND mc.public_metadata#>>'{issuance,target,store}'='My'`;
+
 // The binding update trigger stamps the replaced certificate's absence with
 // the same capture time as the replacement. At that time the listener is
 // present. Keep a later absence authoritative.
@@ -14,9 +19,7 @@ const latestIisObservationOrder = alias => `${alias}.captured_at DESC NULLS LAST
 async function loadWindowsStoreRegistrations(client, workspaceId, identityId) {
   const result = await client.query(`SELECT DISTINCT p.id AS period_id,p.managed_certificate_id,p.renewal_profile_id,
       mc.fingerprint_sha256,mc.name,cp.name AS profile_name,cp.public_metadata AS profile_metadata,
-      CASE WHEN mc.source='agent_issuance' AND mc.status='active' AND mc.key_mode='os-store-managed'
-        AND mc.public_metadata#>>'{issuance,target,type}'='windows-cert-store'
-        AND mc.public_metadata#>>'{issuance,target,store}'='My' THEN 'issued'
+      CASE WHEN ${VERIFIED_ISSUED_STORE} THEN 'issued'
         WHEN mc.source='agent_windows' AND store.id IS NOT NULL THEN 'observed'
       END AS registration_kind,
       a.id AS agent_id,a.agent_id AS public_agent_id,a.name AS agent_name,a.status AS agent_status,
@@ -35,9 +38,7 @@ async function loadWindowsStoreRegistrations(client, workspaceId, identityId) {
       ((store.id IS NOT NULL AND a.agent_id=store.public_metadata->>'agentId') OR
        (store.id IS NULL AND a.id=mc.deployed_agent_id AND
         (cp.public_metadata#>>'{renewalProfile,target,type}'='windows-cert-store' OR
-         (mc.source='agent_issuance' AND mc.status='active' AND mc.key_mode='os-store-managed'
-          AND mc.public_metadata#>>'{issuance,target,type}'='windows-cert-store'
-          AND mc.public_metadata#>>'{issuance,target,store}'='My'))))
+         (${VERIFIED_ISSUED_STORE}))))
     WHERE p.workspace_id=$1 AND p.current_identity_id=$2 AND p.ended_at IS NULL`, [workspaceId,identityId]);
   return result.rows;
 }
@@ -73,6 +74,7 @@ async function listWindowsRenewal({ workspaceId, identityId, client = pool }) {
         AND ct.windows_store='My' AND ct.public_metadata->>'agentId'=$4
         AND (ci.observed_fingerprint_sha256=$5 OR c.id IS NOT NULL)
       ORDER BY ct.windows_site,ct.windows_port,ct.id`, [workspaceId,owner.agent_id,owner.period_id,owner.public_agent_id,owner.fingerprint_sha256]);
+    const enabledCount = rows.rows.filter(row => row.automatic_update === true).length;
     const bindings=rows.rows.map(row => {
       const captured=row.captured_at ? new Date(row.captured_at).getTime() : NaN;
       const state=classifyBinding({ owner:{ workspaceId,agentId:owner.agent_id,managementPeriodId:owner.period_id,
@@ -83,19 +85,32 @@ async function listWindowsRenewal({ workspaceId, identityId, client = pool }) {
         observationFresh:Number.isFinite(captured) && captured<=Date.now() && Date.now()-captured<=86400000 });
       return { targetId:row.id,managedCertificateId:row.managed_certificate_id,consumerId:row.consumer_id,
         site:row.windows_site,port:row.windows_port,sniHost:row.windows_sni_host,automaticUpdate:row.automatic_update === true,
-        ...state,lastResult:row.last_result,canEnable:!ambiguous && capable && storeProfile && row.public_metadata?.observationOnly !== true && state.deployment === "observed_only" };
+        ...state,lastResult:row.last_result,canEnable:!ambiguous && capable && storeProfile &&
+          enabledCount < MAX_IIS_CONSUMERS && row.public_metadata?.observationOnly !== true && state.deployment === "observed_only" };
     });
     groups.push({ periodId:owner.period_id,managedCertificateId:owner.managed_certificate_id,agentId:owner.agent_id,
       host:owner.hostname,store:"LocalMachine\\My",profileId:owner.renewal_profile_id,profileName:owner.profile_name,
-      bindings,ambiguous,ready:capable && storeProfile && !ambiguous,
+      bindings,ambiguous,ready:capable && storeProfile && !ambiguous && enabledCount <= MAX_IIS_CONSUMERS,
       ...(hasClearIssuedOwner ? { duplicateRole: owner.registration_kind } : {}),
       readinessReason:hasClearIssuedOwner
         ? "Keep the registration issued by TokenTimer. In Advanced registrations and history, check its duplicate for jobs or a renewal profile, then select Stop managing on the duplicate. Both records stay in history."
         : ambiguous ? "Review the overlapping Store registrations in Advanced registrations and history before configuring IIS updates."
         : !storeProfile ? "Configure renewal on this Windows Store certificate first." :
-        !capable ? "IIS automatic updates require a qualified agent build. These bindings are observation only." : null });
+        !capable ? "IIS automatic updates require a qualified agent build. These bindings are observation only." :
+        enabledCount > MAX_IIS_CONSUMERS ? `IIS automatic updates are paused. Disable updates until at most ${MAX_IIS_CONSUMERS} are enabled.` :
+        enabledCount === MAX_IIS_CONSUMERS ? "Disable an existing IIS update before enabling another." : null });
   }
-  return { groups };
+  // Retain issuance provenance for re-adding stopped registrations. An old
+  // identity that the registration has rotated away from cannot own it.
+  const issued = await client.query(`SELECT DISTINCT mc.id
+    FROM certops_management_periods p
+    JOIN managed_certificates mc ON mc.workspace_id=p.workspace_id AND mc.id=p.managed_certificate_id
+    JOIN certops_certificate_identities i ON i.workspace_id=p.workspace_id AND i.id=p.current_identity_id
+      AND i.fingerprint_sha256=certops_normalize_fingerprint(mc.fingerprint_sha256)
+    WHERE p.workspace_id=$1 AND p.current_identity_id=$2 AND i.lifecycle_status='active'
+      AND ${VERIFIED_ISSUED_STORE}
+    ORDER BY mc.id`, [workspaceId, identityId]);
+  return { groups, issuedStoreRegistrationIds: issued.rows.map(row => row.id) };
 }
 function ownerAgentLiveness(owner) { return { lastSeenAt:owner.last_seen_at,createdAt:owner.created_at }; }
 
@@ -185,6 +200,16 @@ async function enableWindowsIisConsumer({ client, workspaceId, periodId, targetI
     WHERE certops_windows_store_renewal_owners.agent_id=EXCLUDED.agent_id RETURNING id`,
   [workspaceId,owner.managed_certificate_id,periodId,owner.deployed_agent_id]);
   if (!ownerRow.rows[0]) throw refusal("The Store registration belongs to another agent.");
+  const ownerId = ownerRow.rows[0].id;
+  const enabled = await client.query(`SELECT id,target_id,selector_key,authorization_revision
+    FROM certops_windows_iis_renewal_consumers
+    WHERE workspace_id=$1 AND owner_id=$2 AND automatic_update=true AND removed_at IS NULL`,
+  [workspaceId, ownerId]);
+  const existing = enabled.rows.find(row => row.target_id === targetId && row.selector_key === selector);
+  if (existing) return { id: existing.id, authorizationRevision: Number(existing.authorization_revision) };
+  if (enabled.rows.length >= MAX_IIS_CONSUMERS) {
+    throw refusal(`A Store renewal supports at most ${MAX_IIS_CONSUMERS} IIS bindings. Disable an existing update before enabling another.`);
+  }
   const row = await client.query(`INSERT INTO certops_windows_iis_renewal_consumers
     (workspace_id,owner_id,agent_id,target_id,selector_key,automatic_update,authorized_by,authorized_at)
     VALUES($1,$2,$3,$4,$5,true,$6,clock_timestamp())
@@ -194,7 +219,7 @@ async function enableWindowsIisConsumer({ client, workspaceId, periodId, targetI
     WHERE certops_windows_iis_renewal_consumers.owner_id=EXCLUDED.owner_id
       AND certops_windows_iis_renewal_consumers.target_id=EXCLUDED.target_id
     RETURNING id,authorization_revision`,
-  [workspaceId,ownerRow.rows[0].id,owner.deployed_agent_id,targetId,selector,actorUserId]);
+  [workspaceId,ownerId,owner.deployed_agent_id,targetId,selector,actorUserId]);
   if (!row.rows[0]) throw refusal("This IIS selector is already managed by another Store registration.");
   await audit({ client, workspaceId, actorUserId, subjectUserId: null, action: "CERTOPS_WINDOWS_IIS_UPDATE_ENABLED",
     targetType: "certificate_target", targetId, metadata: { periodId, consumerId: row.rows[0].id } });
@@ -242,6 +267,9 @@ async function authorizeWindowsIisConsumer({ client, agent, jobId, claimId, cons
       AND j.management_period_id=p.id AND j.operation IN ('renew','continue-enrollment') AND j.status IN ('claimed','running')
       AND j.claimed_by_agent_id=$4 AND j.claim_id=$6 AND j.lease_expires_at > clock_timestamp()
       AND j.payload->'target'->>'type'='windows-cert-store'
+      AND NOT EXISTS (SELECT 1 FROM certops_windows_iis_renewal_consumers enabled
+        WHERE enabled.workspace_id=c.workspace_id AND enabled.owner_id=c.owner_id
+          AND enabled.automatic_update=true AND enabled.removed_at IS NULL OFFSET ${MAX_IIS_CONSUMERS})
       AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(convert_from(e.snapshot_bytes,'UTF8')::jsonb->'iisConsumers',
         convert_from(acme.request_bytes,'UTF8')::jsonb->'iisConsumers','[]'::jsonb)) item
         WHERE item->>'consumerId'=c.id::text AND item->>'authorizationRevision'=c.authorization_revision::text)
@@ -259,6 +287,7 @@ async function authorizeWindowsIisConsumer({ client, agent, jobId, claimId, cons
 // Resolve a server-owned immutable list before a Store renewal is signed.
 // Missing, stale or conflicting bindings never prevent Store renewal.
 async function snapshotWindowsIisConsumers({ client, workspaceId, certificateId, agentId }) {
+  await assertNoCompetingStoreRenewal({ client, workspaceId, certificateId, agentId });
   const result = await client.query(`SELECT c.id AS consumer_id,c.authorization_revision,c.selector_key,
       o.id AS owner_id,o.management_period_id,mc.fingerprint_sha256,mc.status AS certificate_status,
       a.status AS agent_status,a.last_seen_at,a.created_at,a.agent_id AS agent_public_id,
@@ -281,8 +310,10 @@ async function snapshotWindowsIisConsumers({ client, workspaceId, certificateId,
     WHERE c.workspace_id=$1 AND o.managed_certificate_id=$2 AND c.agent_id=$3
       AND c.automatic_update=true AND c.removed_at IS NULL AND ct.source='agent_windows'
       AND ct.location_kind='iis_binding' AND ct.target_type='windows-iis'
-    ORDER BY c.id LIMIT 33 FOR SHARE OF c`, [workspaceId,certificateId,agentId]);
-  if (result.rows.length > 32) throw refusal("A Store renewal supports at most 32 IIS bindings.");
+     ORDER BY c.id LIMIT ${MAX_IIS_CONSUMERS + 1} FOR SHARE OF c`, [workspaceId,certificateId,agentId]);
+  // Older versions accepted oversized sets. Keep renewing the Store while
+  // leaving all IIS updates untouched until the operator reduces the set.
+  if (result.rows.length > MAX_IIS_CONSUMERS) return [];
   const now=Date.now(), items=[];
   for (const row of result.rows) {
     if (row.public_metadata?.agentId !== row.agent_public_id || row.public_metadata?.observationOnly === true || !row.windows_site || row.certificate_status === "revoked" || row.certificate_status === "decommissioned") continue;
@@ -407,22 +438,40 @@ async function assertIndependentIisTarget({ client, workspaceId, agentId, target
   }
 }
 
+async function assertNoCompetingStoreRenewal({ client, workspaceId, certificateId, agentId }) {
+  const duplicate = await client.query(`SELECT 1
+    FROM managed_certificates predecessor
+    JOIN managed_certificates other ON other.workspace_id=predecessor.workspace_id
+      AND other.id<>predecessor.id AND other.deployed_agent_id=$3
+      AND certops_normalize_fingerprint(other.fingerprint_sha256)=certops_normalize_fingerprint(predecessor.fingerprint_sha256)
+    JOIN certops_management_periods p ON p.workspace_id=other.workspace_id
+      AND p.managed_certificate_id=other.id AND p.ended_at IS NULL AND p.automation_enabled=true
+    JOIN certificate_profiles cp ON cp.workspace_id=p.workspace_id AND cp.id=p.renewal_profile_id
+    WHERE predecessor.workspace_id=$1 AND predecessor.id=$2
+      AND other.status NOT IN ('revoked','decommissioned')
+      AND cp.public_metadata#>>'{renewalProfile,target,type}'='windows-cert-store'
+      AND cp.public_metadata#>>'{renewalProfile,target,store}'='My'
+    LIMIT 1`, [workspaceId, certificateId, agentId]);
+  if (duplicate.rows.length) {
+    throw refusal("Stop the competing Windows Store renewal for this certificate on the same agent.");
+  }
+}
+
 async function assertStoreRenewalAvailable({ client, workspaceId, certificate }) {
   if (!certificate.deployed_agent_id || !certificate.fingerprint_sha256) return;
   if (certificate.source === "agent_windows" && /\/windows_store(?:_v2)?\/LocalMachine\/My\//i.test(certificate.source_ref || "")) {
     const duplicate = await client.query(`SELECT 1 FROM managed_certificates mc
       JOIN certops_management_periods p ON p.workspace_id=mc.workspace_id
         AND p.managed_certificate_id=mc.id AND p.ended_at IS NULL
-      WHERE mc.workspace_id=$1 AND mc.deployed_agent_id=$2 AND mc.source='agent_issuance'
-        AND mc.status='active' AND mc.key_mode='os-store-managed'
+      WHERE mc.workspace_id=$1 AND mc.deployed_agent_id=$2
+        AND ${VERIFIED_ISSUED_STORE}
         AND certops_normalize_fingerprint(mc.fingerprint_sha256)=certops_normalize_fingerprint($3)
-        AND mc.public_metadata#>>'{issuance,target,type}'='windows-cert-store'
-        AND mc.public_metadata#>>'{issuance,target,store}'='My'
       LIMIT 1`, [workspaceId, certificate.deployed_agent_id, certificate.fingerprint_sha256]);
     if (duplicate.rows.length) {
       throw refusal("Use the Windows Store registration issued by TokenTimer. Stop managing the duplicate Store observation.");
     }
   }
+  await assertNoCompetingStoreRenewal({ client, workspaceId, certificateId: certificate.id, agentId: certificate.deployed_agent_id });
   const observed = await client.query(`SELECT ct.windows_port,ct.windows_sni_host,
     ct.public_metadata->>'boundAddress' AS bound_address,
     (SELECT cp.public_metadata#>'{renewalProfile,target}' FROM certops_management_periods p
@@ -451,4 +500,4 @@ async function assertStoreRenewalAvailable({ client, workspaceId, certificate })
   }
 }
 
-module.exports = { listWindowsRenewal, setWindowsIisConsumer, assertIndependentIisTarget, assertStoreRenewalAvailable, enableWindowsIisConsumer, disableWindowsIisConsumer, authorizeWindowsIisConsumer, snapshotWindowsIisConsumers, checkWindowsIisConsumerForAgent };
+module.exports = { listWindowsRenewal, setWindowsIisConsumer, assertIndependentIisTarget, assertStoreRenewalAvailable, assertNoCompetingStoreRenewal, enableWindowsIisConsumer, disableWindowsIisConsumer, authorizeWindowsIisConsumer, snapshotWindowsIisConsumers, checkWindowsIisConsumerForAgent };

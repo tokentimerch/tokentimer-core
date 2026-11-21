@@ -1518,8 +1518,12 @@ async function readdManagingSource({
           LEFT JOIN certificate_profiles cp ON cp.workspace_id=p.workspace_id AND cp.id=p.renewal_profile_id
           WHERE p.workspace_id=$1 AND p.managed_certificate_id=$2
           ORDER BY p.started_at DESC,p.id DESC LIMIT 1`, [workspaceId, managedCertificateId]);
-        if (previous.rows[0]?.target_type === "windows-cert-store" ||
-            (source.source === "agent_windows" && /\/windows_store_v2\/LocalMachine\/My\//i.test(source.source_ref || ""))) {
+        const issuance = source.public_metadata?.issuance?.target;
+        const issuedStore = source.source === "agent_issuance" &&
+          issuance?.type === "windows-cert-store" && issuance.store === "My";
+        const observedStore = source.source === "agent_windows" &&
+          /\/windows_store(?:_v2)?\/LocalMachine\/My\//i.test(source.source_ref || "");
+        if (previous.rows[0]?.target_type === "windows-cert-store" || issuedStore || observedStore) {
           fail("CERTOPS_WINDOWS_CONSENT_REFUSED", "Choose a Windows Store renewal profile for this registration. Configure IIS updates separately.");
         }
         await require("./windowsIisConsent").assertIndependentIisTarget({

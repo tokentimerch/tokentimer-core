@@ -99,6 +99,12 @@ function sourceIsThisCertificate(certificate, source) {
   return source.currentIdentityId === certificate.identityId;
 }
 
+function needsWindowsRenewalLookup(source) {
+  return (
+    source?.source === 'agent_windows' || source?.source === 'agent_issuance'
+  );
+}
+
 function wholeInRange(value, min, max) {
   if (!/^\d+$/.test(String(value || '').trim())) return false;
   const parsed = Number(value);
@@ -305,9 +311,7 @@ function ProfileWizard({ isOpen, onClose, workspaceId, issuers, onCreated }) {
         const windowsItems = (page.items || []).filter(
           item =>
             item.identityId &&
-            (item.sources || []).some(
-              source => source.source === 'agent_windows'
-            )
+            (item.sources || []).some(needsWindowsRenewalLookup)
         );
         const results = await Promise.allSettled(
           windowsItems.map(item =>
@@ -325,22 +329,25 @@ function ProfileWizard({ isOpen, onClose, workspaceId, issuers, onCreated }) {
           results.flatMap((result, index) =>
             result.status === 'rejected' || !Array.isArray(result.value?.groups)
               ? (windowsItems[index].sources || [])
-                  .filter(source => source.source === 'agent_windows')
+                  .filter(needsWindowsRenewalLookup)
                   .map(source => source.managedCertificateId)
               : []
           )
         );
         if (cancelled) return;
+        const storeIds = new Set(
+          matches.flatMap(({ groups, issuedStoreRegistrationIds }) => [
+            ...groups.map(group => group.managedCertificateId),
+            ...(Array.isArray(issuedStoreRegistrationIds)
+              ? issuedStoreRegistrationIds
+              : []),
+          ])
+        );
         if (destination === 'windows-cert-store') {
-          const ids = new Set(
-            matches.flatMap(item =>
-              (item.groups || []).map(group => group.managedCertificateId)
-            )
-          );
           next = next
             .filter(
               item =>
-                ids.has(item.managedCertificateId) ||
+                storeIds.has(item.managedCertificateId) ||
                 unknownIds.has(item.managedCertificateId)
             )
             .map(item =>
@@ -349,11 +356,6 @@ function ProfileWizard({ isOpen, onClose, workspaceId, issuers, onCreated }) {
                 : item
             );
         } else {
-          const storeIds = new Set(
-            matches.flatMap(item =>
-              item.groups.map(group => group.managedCertificateId)
-            )
-          );
           const dependentIds = new Set(
             matches.flatMap(item =>
               (item.groups || [])
@@ -888,7 +890,7 @@ function ProfileWizard({ isOpen, onClose, workspaceId, issuers, onCreated }) {
                       {blocked[0].storeRegistration ? (
                         'Choose a Windows Store renewal profile for this registration. Configure IIS updates separately.'
                       ) : blocked[0].ownershipUnknown ? (
-                        'IIS renewal ownership cannot be confirmed. Check the Windows renewal settings before attaching this profile.'
+                        'Windows renewal ownership cannot be confirmed. Check the Windows renewal settings before attaching this profile.'
                       ) : blocked[0].storeOwned ? (
                         'Renewal for this IIS binding is managed by its Windows Store registration. Configure IIS updates there.'
                       ) : (
