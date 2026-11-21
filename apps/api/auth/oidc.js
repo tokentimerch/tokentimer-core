@@ -704,7 +704,7 @@ function oidcRoutes(_passport, express) {
         subjectUserId: null,
         action: "LOGIN_FAILED",
         targetType: "auth",
-        targetId: providerSlug,
+        targetId: null,
         channel: "web",
         workspaceId: null,
         metadata: {
@@ -865,7 +865,7 @@ function oidcRoutes(_passport, express) {
             subjectUserId: user?.id || null,
             action: "LOGIN_FAILED",
             targetType: "auth",
-            targetId: providerSlug,
+            targetId: null,
             channel: "web",
             workspaceId: null,
             metadata: {

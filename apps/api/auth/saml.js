@@ -96,7 +96,7 @@ async function handleSamlProfile(req, profile, done) {
       subjectUserId: null,
       action: "LOGIN_FAILED",
       targetType: "auth",
-      targetId: providerSlug,
+      targetId: null,
       channel: "web",
       workspaceId: null,
       metadata: {
@@ -667,7 +667,7 @@ function samlRoutes(passport, express) {
             subjectUserId: null,
             action: "LOGIN_FAILED",
             targetType: "auth",
-            targetId: slug,
+            targetId: null,
             channel: "web",
             workspaceId: null,
             metadata: {
@@ -689,7 +689,7 @@ function samlRoutes(passport, express) {
               subjectUserId: user?.id || null,
               action: "LOGIN_FAILED",
               targetType: "auth",
-              targetId: slug,
+              targetId: null,
               channel: "web",
               workspaceId: null,
               metadata: {

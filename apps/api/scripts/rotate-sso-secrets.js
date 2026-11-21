@@ -52,7 +52,6 @@ async function rotateProviderSecrets(database, providerId, slug) {
         actorUserId: null,
         action: "SSO_PROVIDER_SECRET_REENCRYPTED",
         targetType: "sso_provider",
-        targetId: slug,
         metadata: {
           provider_slug: slug,
           secret_name: row.secret_name,

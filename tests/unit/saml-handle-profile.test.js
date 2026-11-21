@@ -35,6 +35,9 @@ function makeSamlLoginPool(seedUsers = []) {
     if (/^COMMIT$/i.test(flat)) return { rows: [], rowCount: 0 };
     if (/^ROLLBACK$/i.test(flat)) return { rows: [], rowCount: 0 };
 
+    if (/^SELECT 1 FROM sso_providers WHERE slug = \$1 AND enabled FOR SHARE/i.test(flat)) {
+      return { rows: [{ "?column?": 1 }] };
+    }
     if (/^SELECT type, config FROM sso_providers WHERE slug = \$1 AND enabled FOR SHARE/i.test(flat)) {
       return { rows: [{ type: "saml" }], rowCount: 1 };
     }
@@ -185,8 +188,8 @@ function setupSamlRuntime(pool, samlProvider, securityConfig = {}, provisioning 
   });
 }
 
-async function loginViaSamlProfile(samlProvider, profile) {
-  const req = { params: { provider: "azure-ad" }, session: {} };
+async function loginViaSamlProfile(samlProvider, profile, slug = "azure-ad") {
+  const req = { params: { provider: slug }, session: {} };
   return new Promise((resolve, reject) => {
     samlProvider.handleSamlProfile(req, profile, (err, user) => {
       if (err) reject(err);
@@ -198,6 +201,24 @@ async function loginViaSamlProfile(samlProvider, profile) {
 describe("handleSamlProfile displayName fallback", () => {
   afterEach(() => {
     clearModuleCache();
+  });
+
+  it("records failures for disabled numeric provider slugs in audit metadata", async () => {
+    const slug = "2147483648";
+    const events = [];
+    const samlProvider = require(samlPath);
+    await samlProvider.setupSamlStrategy({}, makeSamlLoginPool(), null, {
+      writeAudit: async (event) => events.push(event),
+      logger: { info() {}, warn() {}, error() {} },
+    });
+
+    await assert.rejects(loginViaSamlProfile(samlProvider, {}, slug), /provider_disabled/);
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].action, "LOGIN_FAILED");
+    assert.strictEqual(events[0].targetId, null);
+    assert.deepStrictEqual(events[0].metadata, {
+      method: "saml", provider_slug: slug, reason: "provider_disabled",
+    });
   });
 
   it("completes login when SAML sends email but no display name claim", async () => {

@@ -115,6 +115,9 @@ function makeMinimalPool() {
     if (/^SELECT pg_advisory_xact_lock/i.test(flat)) {
       return { rows: [], rowCount: 1 };
     }
+    if (/^SELECT 1 FROM sso_providers WHERE slug = \$1 AND enabled FOR SHARE/i.test(flat)) {
+      return { rows: [{ "?column?": 1 }] };
+    }
     if (/^SELECT type, config FROM sso_providers WHERE slug = \$1 AND enabled FOR SHARE/i.test(flat)) {
       return { rows: [{ type: "oidc", config: { issuer: "https://idp.test" } }], rowCount: 1 };
     }
@@ -361,14 +364,16 @@ describe("OIDC callback route", () => {
   });
 
   it("records only the callback pathname and failure reason for a missing transaction", async () => {
-    const path = `/auth/oidc/${PROVIDER_SLUG}/callback`;
+    const numericSlug = "2147483648";
+    const path = `/auth/oidc/${numericSlug}/callback`;
     const response = await fetch(`${baseUrl}${path}?state=test-state&code=test-code`, {
       redirect: "manual",
     });
     assert.equal(response.status, 302);
     const event = callbackAudit.find((item) => item.action === "LOGIN_FAILED");
+    assert.equal(event.targetId, null);
     assert.deepEqual(event.metadata, {
-      method: "oidc", provider_slug: PROVIDER_SLUG, protocol: "oidc",
+      method: "oidc", provider_slug: numericSlug, protocol: "oidc",
       reason: "state_mismatch", path,
     });
   });

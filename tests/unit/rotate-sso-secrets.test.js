@@ -38,8 +38,9 @@ describe("rotate-sso-secrets", () => {
     });
   });
 
-  it("re-encrypts secrets encrypted under a retired primary kid", async () => {
+  it("re-encrypts and audits secrets for a numeric provider slug", async () => {
     const providerId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const slug = "2147483648";
     const keyringConfig = JSON.parse(process.env.SSO_SECRETS_KEYRING);
     const oldRing = parseKeyringConfig({
       primary: "k0",
@@ -49,6 +50,7 @@ describe("rotate-sso-secrets", () => {
     const envelope = encryptSecret("rotate-me", aad, oldRing);
 
     let updatedEnvelope = null;
+    let audit;
     const pool = {
       connect: async () => ({
         query: async (sql, params) => {
@@ -65,6 +67,7 @@ describe("rotate-sso-secrets", () => {
             updatedEnvelope = JSON.parse(params[2]);
             return { rowCount: 1, rows: [] };
           }
+          if (s.includes("INSERT INTO audit_events")) audit = params;
           return { rows: [] };
         },
         release: () => {},
@@ -72,10 +75,15 @@ describe("rotate-sso-secrets", () => {
       query: async () => ({ rows: [] }),
     };
 
-    const rotated = await rotateProviderSecrets(pool, providerId, "azure-ad");
+    const rotated = await rotateProviderSecrets(pool, providerId, slug);
     assert.strictEqual(rotated, 1);
     assert.ok(updatedEnvelope);
     assert.strictEqual(updatedEnvelope.kid, "k1");
+    assert.strictEqual(audit[2], "SSO_PROVIDER_SECRET_REENCRYPTED");
+    assert.strictEqual(audit[4], null);
+    assert.deepStrictEqual(audit[6], {
+      provider_slug: slug, secret_name: "client_secret", from_kid: "k0", to_kid: "k1",
+    });
   });
 
   it("skips rows already encrypted with the current primary kid", async () => {
