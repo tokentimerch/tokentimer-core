@@ -209,6 +209,11 @@ async function applyResolution({
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const activeProvider = await client.query(
+      "SELECT 1 FROM sso_providers WHERE slug = $1 AND enabled FOR SHARE",
+      [slug],
+    );
+    if (!activeProvider.rows.length) throw new Error("SSO provider was disabled during sign-in");
 
     const adminSync = await syncSsoSystemAdminGrant(client, {
       userId,
@@ -269,6 +274,7 @@ async function applyResolution({
       }
     }
 
+    if (promotedSystemAdmin) await ensureSystemAdminWorkspaceAccess(client, userId);
     await client.query("COMMIT");
   } catch (err) {
     try {
@@ -279,18 +285,6 @@ async function applyResolution({
     throw err;
   } finally {
     client.release();
-  }
-
-  if (promotedSystemAdmin) {
-    try {
-      await ensureSystemAdminWorkspaceAccess(pool, userId);
-    } catch (err) {
-      logger?.warn?.("ensureSystemAdminWorkspaceAccess failed after SSO admin sync", {
-        error: err?.message,
-        userId,
-        provider_slug: slug,
-      });
-    }
   }
 
   if (typeof writeAudit === "function") {

@@ -1,3 +1,5 @@
+import { mcpAuthorizationReturnTo } from '../utils/mcpAuthorization.js';
+
 /**
  * Shared SSO dashboard helpers (ESM only).
  */
@@ -105,6 +107,8 @@ export const SSO_RELOAD_REASON_LABELS = {
   not_configured: 'Required fields missing',
   config_build_failed: 'Could not build strategy config',
   secret_keyring_missing: 'SSO secrets keyring is not configured',
+  provider_selection_required:
+    'Select one enabled provider for this protocol to restore sign-in',
   provider_disabled: 'Provider is disabled',
   discovery_required_or_manual_endpoints_missing:
     'Discovery failed; set endpoints manually',
@@ -131,8 +135,8 @@ export function parseAuthFeaturesProviders(data) {
   const saml = Array.isArray(providers.saml) ? providers.saml : [];
 
   return [
-    ...oidc.map(p => ({ ...p, type: p.type || 'oidc' })),
-    ...saml.map(p => ({ ...p, type: p.type || 'saml' })),
+    ...oidc.map(p => ({ ...p, type: p?.type || 'oidc' })),
+    ...saml.map(p => ({ ...p, type: p?.type || 'saml' })),
   ].filter(p => p && typeof p.slug === 'string' && p.slug.length > 0);
 }
 
@@ -151,4 +155,42 @@ export function buildSsoLoginUrl(provider, nextPath, apiBaseUrl) {
   }
   if (!nextPath) return base;
   return `${base}?next=${encodeURIComponent(nextPath)}`;
+}
+
+export function isSsoLoginError(code) {
+  return /^(oidc_|saml_|provider_disabled$|state_mismatch$)/.test(code || '');
+}
+
+export function loginNextPath(searchParams) {
+  const mcpReturn = mcpAuthorizationReturnTo(searchParams.get('returnTo'));
+  if (mcpReturn) return mcpReturn;
+
+  const next = searchParams.get('next');
+  if (
+    !next ||
+    next.length > 512 ||
+    !next.startsWith('/') ||
+    next.startsWith('//') ||
+    /^\/[a-z][a-z0-9+.-]*:/i.test(next)
+  )
+    return null;
+  if (
+    [...next].some(
+      character =>
+        character === '\\' ||
+        character.charCodeAt(0) < 32 ||
+        character.charCodeAt(0) === 127
+    )
+  )
+    return null;
+
+  const url = new URL(next, 'https://tokentimer.invalid');
+  if (
+    url.origin !== 'https://tokentimer.invalid' ||
+    url.pathname.startsWith('//') ||
+    url.pathname === '/mcp/authorize'
+  )
+    return null;
+  // Keep the original leading slash even when URL normalization removes dot segments.
+  return next;
 }

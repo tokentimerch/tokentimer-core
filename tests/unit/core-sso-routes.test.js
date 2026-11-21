@@ -14,22 +14,30 @@ function appWithProviders(rows) {
   mountSsoRoutes(app, {
     express,
     passport,
-    pool: { query: async () => ({ rows }) },
+    pool: { query: async (_sql, [protocol]) => ({ rows: rows.filter((row) => row.type === protocol) }) },
   });
   return app;
 }
 
-describe("Core single-provider SSO routes", () => {
-  it("rejects both protocols when stored configuration is ambiguous", async () => {
+describe("Core per-protocol SSO routes", () => {
+  it("gates only the protocol with multiple enabled providers", async () => {
     const rows = [
       { slug: "first", type: "oidc", enabled: true },
+      { slug: "other", type: "oidc", enabled: true },
       { slug: "second", type: "saml", enabled: true },
     ];
     const app = appWithProviders(rows);
     await request(app).get("/auth/oidc/first").expect(404);
     await request(app).get("/auth/oidc/first/callback").expect(404);
-    await request(app).get("/auth/saml/second/metadata").expect(404);
-    await request(app).post("/auth/saml/second/callback").expect(404);
+    await request(app).get("/auth/oidc/other").expect(404);
+    await request(app).get("/auth/saml/second").expect(302);
+  });
+
+  it("dispatches one enabled provider of each protocol", async () => {
+    const app = appWithProviders([{ type: "oidc", slug: "openid" }, { type: "saml", slug: "assertion" }]);
+    await request(app).get("/auth/oidc/openid").expect(302);
+    await request(app).get("/auth/saml/assertion").expect(302);
+    await request(app).get("/auth/oidc/assertion").expect(404);
   });
 
   it("keeps encoded and slugless routes outside the authentication handlers", async () => {

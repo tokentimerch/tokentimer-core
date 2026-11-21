@@ -39,6 +39,7 @@ const {
 const {
   publicOidcLoginErrorCode,
   buildLoginFailureRedirect,
+  sanitizeNextPath,
 } = require("../sso/login-redirect.js");
 const { normalizeBaseUrl } = require("../sso/callback-urls.js");
 
@@ -62,16 +63,6 @@ const parseCsv = (raw) =>
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-
-const MAX_NEXT_LEN = 512;
-
-function sanitizeNextPath(raw) {
-  if (typeof raw !== "string" || raw.length === 0) return null;
-  if (raw.length > MAX_NEXT_LEN) return null;
-  if (!raw.startsWith("/") || raw.startsWith("//")) return null;
-  if (/^\/?[a-z][a-z0-9+.-]*:/i.test(raw)) return null;
-  return raw;
-}
 
 function resolveOpenIdClient(deps) {
   if (deps?.openIdClient) return deps.openIdClient;
@@ -447,7 +438,7 @@ async function setupOidcStrategy(_passport, pool, _unusedStrategyCtor, deps = {}
         type: "oidc",
         registered: false,
         signInReady: false,
-        reason: "provider_disabled",
+        reason: provider.disabledReason || "provider_disabled",
       });
       continue;
     }

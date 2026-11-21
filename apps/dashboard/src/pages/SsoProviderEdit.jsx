@@ -129,6 +129,17 @@ export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [impact, setImpact] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
+  const [identityPolicy, setIdentityPolicy] = useState('');
+  const [membershipPolicy, setMembershipPolicy] = useState('');
+  const dependencyCounts = impact?.dependency_counts;
+  const hasDependencies = Object.values(dependencyCounts || {}).some(
+    count => count > 0
+  );
+  const needsIdentityPolicy = dependencyCounts?.identities_count > 0;
+  const needsMembershipPolicy = dependencyCounts?.memberships_count > 0;
+  const needsLocalRecovery =
+    impact?.requires_local_admin && !impact?.has_usable_local_admin;
+  const isDeleting = pendingAction === 'delete';
   const { isOpen, onOpen, onClose } = useDisclosure();
   const modalProps = useDashboardModalProps();
 
@@ -221,7 +232,42 @@ export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
     }
     setPendingAction(null);
     setImpact(null);
+    setIdentityPolicy('');
+    setMembershipPolicy('');
     onClose();
+  }
+
+  async function confirmImpact() {
+    if (!isDeleting) {
+      closeImpactModal(false);
+      const saved = await save({ enabled: false });
+      if (!saved) setForm(f => ({ ...f, enabled: true }));
+      return;
+    }
+
+    try {
+      setSaving(true);
+      const options = hasDependencies
+        ? {
+            params: {
+              confirmRetirement: true,
+              ...(needsIdentityPolicy ? { identityPolicy } : {}),
+              ...(needsMembershipPolicy ? { membershipPolicy } : {}),
+            },
+          }
+        : undefined;
+      await apiClient.delete(`/api/admin/sso/providers/${slug}`, options);
+      navigate('/sso-providers');
+    } catch (e) {
+      const code = e?.response?.data?.code;
+      showWarning(
+        code === 'last_login_method'
+          ? 'Keep a working administrator sign-in method before deleting this provider.'
+          : e?.response?.data?.error || 'Delete failed'
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function previewImpact(change) {
@@ -789,37 +835,50 @@ export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
 
       <Modal
         isOpen={isOpen}
-        onClose={() => closeImpactModal(pendingAction === 'disable')}
+        onClose={() => closeImpactModal(!isDeleting)}
+        closeOnEsc={!saving}
+        closeOnOverlayClick={!saving}
       >
         <ModalOverlay {...modalProps.overlayProps} />
         <DashboardModalFrame type='danger'>
           <ModalHeader {...modalProps.headerProps}>
             <DashboardModalTitle>
-              {pendingAction === 'delete'
-                ? 'Delete SSO provider'
+              {isDeleting
+                ? hasDependencies
+                  ? 'Retire SSO provider'
+                  : 'Delete SSO provider'
                 : 'Disable SSO provider'}
             </DashboardModalTitle>
             <DashboardModalDescription>
               {provider.displayName}
             </DashboardModalDescription>
           </ModalHeader>
-          <ModalCloseButton {...modalProps.closeButtonProps} />
+          <ModalCloseButton
+            {...modalProps.closeButtonProps}
+            isDisabled={saving}
+          />
           <ModalBody fontSize='sm' {...modalProps.bodyProps}>
             {impact ? (
               <VStack align='stretch' spacing={3}>
-                {impact.is_last_login_method && (
+                {impact.is_last_login_method && !needsLocalRecovery && (
                   <StatusPanel status='error'>
-                    This is the only sign-in method left for administrators. Set
-                    a local admin password or enable another SSO provider before
-                    you remove this one.
+                    Keep a working administrator sign-in method before removing
+                    this provider. Confirm a local administrator can sign in
+                    with a password or verify another provider’s administrator
+                    access.
                   </StatusPanel>
                 )}
-                {pendingAction === 'delete' && !impact.is_last_login_method && (
+                {needsLocalRecovery && (
+                  <StatusPanel status='error'>
+                    Retiring a provider with dependencies requires a local
+                    administrator who can sign in with a password. Set up and
+                    verify that sign-in before continuing.
+                  </StatusPanel>
+                )}
+                {isDeleting && hasDependencies && (
                   <Text color={muted}>
-                    Disabling the provider first is not required. Confirming
-                    delete will remove the provider, unlink linked SSO
-                    identities, and convert SSO workspace memberships to manual
-                    access.
+                    Retiring this provider removes its group mappings and
+                    provider-managed administrator grants.
                   </Text>
                 )}
                 <VStack
@@ -835,13 +894,58 @@ export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
                     Linked identities: {impact.linked_identities_count}
                   </Text>
                   <Text>Users affected: {impact.affected_users}</Text>
-                  {impact.memberships_at_risk > 0 && (
-                    <Text>
-                      SSO workspace memberships to convert:{' '}
-                      {impact.memberships_at_risk}
-                    </Text>
+                  {isDeleting && dependencyCounts && (
+                    <>
+                      <Text>
+                        SSO workspace memberships:{' '}
+                        {dependencyCounts.memberships_count}
+                      </Text>
+                      <Text>
+                        Group mappings: {dependencyCounts.group_mappings_count}
+                      </Text>
+                      <Text>
+                        Provider-managed administrator grants:{' '}
+                        {dependencyCounts.admin_grants_count}
+                      </Text>
+                    </>
                   )}
                 </VStack>
+                {isDeleting && needsIdentityPolicy && (
+                  <FormControl isRequired>
+                    <FormLabel>Linked identity cleanup</FormLabel>
+                    <Select
+                      placeholder='Choose how to handle linked identities'
+                      value={identityPolicy}
+                      onChange={event => setIdentityPolicy(event.target.value)}
+                      isDisabled={saving}
+                    >
+                      <option value='archive'>Archive linked identities</option>
+                      <option value='drop'>
+                        Permanently delete linked identities
+                      </option>
+                    </Select>
+                  </FormControl>
+                )}
+                {isDeleting && needsMembershipPolicy && (
+                  <FormControl isRequired>
+                    <FormLabel>Workspace membership cleanup</FormLabel>
+                    <Select
+                      placeholder='Choose how to handle SSO access'
+                      value={membershipPolicy}
+                      onChange={event =>
+                        setMembershipPolicy(event.target.value)
+                      }
+                      isDisabled={saving}
+                    >
+                      <option value='convert-to-manual'>
+                        Keep access as manual memberships
+                      </option>
+                      <option value='delete'>
+                        Remove SSO workspace access
+                      </option>
+                    </Select>
+                  </FormControl>
+                )}
                 {impact.runtime_breakage_likely && (
                   <Box>
                     <StatusTag tone='orange'>Runtime breakage likely</StatusTag>
@@ -854,8 +958,9 @@ export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
           </ModalBody>
           <ModalFooter {...modalProps.footerProps}>
             <Button
-              onClick={() => closeImpactModal(pendingAction === 'disable')}
+              onClick={() => closeImpactModal(!isDeleting)}
               {...modalProps.outlineButtonProps}
+              isDisabled={saving}
             >
               Cancel
             </Button>
@@ -863,32 +968,21 @@ export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
               {...(pendingAction === 'delete'
                 ? modalProps.dangerButtonProps
                 : modalProps.primaryButtonProps)}
-              isDisabled={!!impact?.is_last_login_method}
-              onClick={async () => {
-                const action = pendingAction;
-                closeImpactModal(false);
-                if (action === 'delete') {
-                  try {
-                    await apiClient.delete(`/api/admin/sso/providers/${slug}`);
-                    navigate('/sso-providers');
-                  } catch (e) {
-                    const code = e?.response?.data?.code;
-                    const msg =
-                      code === 'last_login_method'
-                        ? 'Cannot delete the last administrator sign-in method. Set a local admin password or enable another SSO provider first.'
-                        : e?.response?.data?.error || 'Delete failed';
-                    showWarning(msg);
-                  }
-                } else if (action === 'disable') {
-                  const saved = await save({ enabled: false });
-                  if (!saved) {
-                    setForm(f => ({ ...f, enabled: true }));
-                  }
-                }
-              }}
+              isLoading={saving}
+              isDisabled={
+                !impact ||
+                impact.is_last_login_method ||
+                (isDeleting &&
+                  (needsLocalRecovery ||
+                    (needsIdentityPolicy && !identityPolicy) ||
+                    (needsMembershipPolicy && !membershipPolicy)))
+              }
+              onClick={confirmImpact}
             >
-              {pendingAction === 'delete'
-                ? 'Delete provider'
+              {isDeleting
+                ? hasDependencies
+                  ? 'Retire provider'
+                  : 'Delete provider'
                 : 'Disable provider'}
             </Button>
           </ModalFooter>

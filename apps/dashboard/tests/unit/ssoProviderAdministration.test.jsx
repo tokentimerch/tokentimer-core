@@ -6,11 +6,12 @@ import { MemoryRouter } from 'react-router';
 import { theme } from '../../src/styles/theme.js';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 import SsoProviderWizard from '../../src/pages/SsoProviderWizard.jsx';
+import SsoProviderEdit from '../../src/pages/SsoProviderEdit.jsx';
 import SsoProviders from '../../src/pages/SsoProviders.jsx';
 import { showWarning } from '../../src/utils/toast.js';
 
 const { api, navigate } = vi.hoisted(() => ({
-  api: { get: vi.fn(), post: vi.fn(), put: vi.fn() },
+  api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
   navigate: vi.fn(),
 }));
 
@@ -25,6 +26,7 @@ vi.mock('../../src/utils/toast.js', () => ({
 vi.mock('react-router', async importOriginal => ({
   ...(await importOriginal()),
   useNavigate: () => navigate,
+  useParams: () => ({ slug: 'office' }),
 }));
 vi.mock('../../src/components/SsoAdminPageShell.jsx', () => ({
   default: ({ title, actions, children }) => (
@@ -131,15 +133,16 @@ describe('Core provider administration', () => {
         )
       );
       expect(navigate).toHaveBeenCalledWith(
-        '/sso-providers',
-        expect.any(Object)
+        '/system-settings?section=sso-group-mappings&provider=office',
+        { replace: true }
       );
     }
   );
 
-  it('requires a named selection for previously enabled providers', async () => {
+  it('shows selection only for an enabled same-protocol conflict', async () => {
     const providers = [
       { slug: 'openid', displayName: 'OpenID', type: 'oidc', enabled: true },
+      { slug: 'backup', displayName: 'Backup', type: 'saml', enabled: true },
       {
         slug: 'assertion',
         displayName: 'Assertion',
@@ -159,12 +162,19 @@ describe('Core provider administration', () => {
       },
     });
     api.get.mockResolvedValueOnce({
-      data: { providers: [{ ...providers[0], enabled: false }, providers[1]] },
+      data: {
+        providers: [
+          providers[0],
+          { ...providers[1], enabled: false },
+          providers[2],
+        ],
+      },
     });
     mount(<SsoProviders session={{}} />);
     expect(
-      await screen.findByText(/Multiple providers were previously enabled/)
+      await screen.findByText(/Multiple SAML providers are enabled/)
     ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Select OpenID' })).toBeNull();
     click('Select Assertion');
     await waitFor(() =>
       expect(showWarning).toHaveBeenCalledWith(reloadWarning)
@@ -172,13 +182,70 @@ describe('Core provider administration', () => {
     await waitFor(() =>
       expect(api.put).toHaveBeenCalledExactlyOnceWith(
         '/api/admin/sso/providers/assertion',
-        { enabled: true }
+        { enabled: true, selectForProtocol: true }
       )
     );
     await waitFor(() =>
       expect(
-        screen.queryByText(/Multiple providers were previously enabled/)
+        screen.queryByText(/Multiple SAML providers are enabled/)
       ).toBeNull()
+    );
+  });
+
+  it('previews dependencies and requires explicit retirement choices', async () => {
+    api.get.mockResolvedValue({
+      data: {
+        slug: 'office',
+        type: 'oidc',
+        enabled: false,
+        displayName: 'Office',
+      },
+    });
+    api.post.mockResolvedValue({
+      data: {
+        linked_identities_count: 2,
+        affected_users: 2,
+        requires_local_admin: true,
+        has_usable_local_admin: true,
+        dependency_counts: {
+          identities_count: 2,
+          memberships_count: 3,
+          group_mappings_count: 1,
+          admin_grants_count: 1,
+        },
+      },
+    });
+    api.delete.mockResolvedValue({ data: { ok: true } });
+    mount(<SsoProviderEdit session={{}} />);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete provider' })
+    );
+
+    const retire = await screen.findByRole('button', {
+      name: 'Retire provider',
+    });
+    expect(screen.getByText('Group mappings: 1')).toBeInTheDocument();
+    expect(
+      screen.getByText('Provider-managed administrator grants: 1')
+    ).toBeInTheDocument();
+    expect(retire).toBeDisabled();
+    enter(/Linked identity cleanup/, 'archive');
+    expect(retire).toBeDisabled();
+    enter(/Workspace membership cleanup/, 'convert-to-manual');
+    expect(retire).toBeEnabled();
+    fireEvent.click(retire);
+
+    await waitFor(() =>
+      expect(api.delete).toHaveBeenCalledExactlyOnceWith(
+        '/api/admin/sso/providers/office',
+        {
+          params: {
+            confirmRetirement: true,
+            identityPolicy: 'archive',
+            membershipPolicy: 'convert-to-manual',
+          },
+        }
+      )
     );
   });
 });

@@ -5,7 +5,7 @@ Use the target release notes to choose a supported transition. Keep the API, das
 ## Before upgrading
 
 1. Record the running version, image tags or digests, and Compose files or Helm values.
-2. Back up the database **and matching secrets and configuration** using [Backup and restore](BACKUP_RESTORE.md). Preserve `SESSION_SECRET`, CertOps wrapping keys, and agent state; changing them is not an upgrade step.
+2. Back up the database **and matching secrets and configuration** using [Backup and restore](BACKUP_RESTORE.md). Preserve `SESSION_SECRET`, the SSO keyring, CertOps wrapping keys, and agent state where configured.
 3. Read migration and compatibility notes for the target release. For agents, follow [upgrade ordering](https://github.com/tokentimerch/tokentimer-core/blob/main/docs/certops/agent/operations.md).
 4. Plan downtime if the release requires it. Keep the recovery set available before starting.
 
@@ -44,6 +44,8 @@ Check the migration Job and all six worker CronJobs. New CronJob specifications 
 ## Verify the result
 
 Sign in, check the inventory and workspace recipients, run the SMTP test, and inspect discovery/delivery worker results. Follow [First asset and alert check](FIRST_ASSET.md) when verifying the full notification path. If you use CertOps, confirm agent compatibility and renewal state before scheduling real work.
+
+If you adopt a database with SSO, verify the local administrator and both active protocols. Resolve same-protocol conflicts in **SSO Providers** before directing users to the new installation. See [changing providers](AUTHENTICATION.md#single-sign-on).
 
 ## Recover a failed upgrade
 

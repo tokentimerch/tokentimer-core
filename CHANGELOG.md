@@ -11,7 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Single sign-on in Core.** Use the setup guide to connect one active OIDC or SAML provider and map identity provider groups to roles. Both protocols support Keycloak and include templates and configuration hints for other providers. Keep a local recovery administrator and back up the database and matching keyring before upgrading. [Authentication guide](docs/AUTHENTICATION.md#single-sign-on)
+- **Single sign-on in Core.** Connect one active OIDC and one active SAML provider concurrently, and map identity provider groups to roles. The setup guide uses the same provider wizard and settings. Keep a local recovery administrator and back up the database and matching keyring before upgrading. [Authentication guide](docs/AUTHENTICATION.md#single-sign-on)
 - **Observed certificate revocation.** Windows and Linux agents report leaf and issuing-CA revocation through OCSP and HTTP(S) CRLs, including delta CRLs. Unavailable checks retain the last verified finding. Managers can filter the observation history for a registration in certificate details. **Operator action:** allow the responder origins in `observedRevocation.allowedOrigins`; new installer configurations enable monitoring with an empty allowlist. LDAP-only CRLs remain unsupported. See [agent configuration](docs/certops/agent/configuration.md) and [GPO trust distribution](docs/certops/adcs-gpo-trust.md).
 - **Asset expiration in auto-sync metrics.** Detailed creation metrics can include verified expiry for new inventory. **Operator guidance:** allow and select `expiration` to include the date or time in creation alerts. See the [auto-sync metrics guide](docs/AUTO_SYNC.md#asset-expiration-labels).
 

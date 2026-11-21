@@ -20,6 +20,7 @@ const {
   listProviders,
   lockProviderChanges,
   enabledProviderRows,
+  conflictingProviderTypes,
 } = require("./provider-registry.js");
 const { bumpSsoConfigVersion } = require("./sso-config-version.js");
 
@@ -114,6 +115,7 @@ async function upsertManifestProvider(pool, entry, meta = {}, txOpts = {}) {
     type: entry.type,
     displayName: entry.displayName,
     enabled: entry.enabled === true,
+    selectForProtocol: txOpts.selectForProtocol === true,
     sortOrder: entry.sort_order ?? 100,
     config,
     claim_mapping: entry.claim_mapping || {},
@@ -146,7 +148,7 @@ async function upsertManifestProvider(pool, entry, meta = {}, txOpts = {}) {
 async function disableRemovedProviders(pool, manifestSlugs, meta = {}, txOpts = {}) {
   const all = await listProviders(txOpts.dbClient || pool);
   for (const p of all) {
-    if (manifestSlugs.has(p.slug)) continue;
+    if (manifestSlugs.has(p.slug) || txOpts.unresolvedTypes.has(p.type)) continue;
     const locks = p.locked_fields || [];
     if (!locks.length) continue;
     await updateProvider(
@@ -181,8 +183,8 @@ async function reconcileSsoProvidersFromEnv(pool, opts = {}) {
     throw new Error("The SSO bootstrap manifest requires a providers array.");
   }
   const { providers } = manifest;
-  if (providers.filter((provider) => provider.enabled === true).length > 1) {
-    const err = new Error("Name at most one provider with enabled: true in the bootstrap manifest.");
+  if (conflictingProviderTypes(providers.filter((provider) => provider.enabled === true)).size) {
+    const err = new Error("Name at most one enabled provider per protocol in the bootstrap manifest.");
     err.code = "active_provider_exists";
     throw err;
   }
@@ -211,17 +213,26 @@ async function reconcileSsoProvidersFromEnv(pool, opts = {}) {
     try {
       await lockProviderChanges(client);
       const enabledRows = await enabledProviderRows(client);
-      const selected = providers.find(entry => entry.enabled === true);
-      if (enabledRows.length > 1) {
-        if (!selected || !(await getProvider(client, selected.slug))) {
-          const err = new Error("Explicitly enable an existing provider in the bootstrap manifest.");
-          err.code = "provider_selection_required";
-          throw err;
+      const unresolvedTypes = conflictingProviderTypes(enabledRows);
+      const selected = new Set();
+      for (const entry of providers) {
+        if (!unresolvedTypes.has(entry.type) || entry.enabled !== true ||
+            !enabledRows.some((row) => row.slug === entry.slug && row.type === entry.type)) continue;
+        try {
+          await upsertManifestProvider(pool, entry, {}, { ...txOpts, selectForProtocol: true });
+          selected.add(entry.slug);
+          unresolvedTypes.delete(entry.type);
+        } catch (err) {
+          // The local-admin guard runs before writes. Other protocol bootstrapping can continue.
+          if (err.code !== "last_login_method") throw err;
+          logger.warn?.("SSO bootstrap needs a usable local administrator before selecting the provider", { type: entry.type });
         }
-        await upsertManifestProvider(pool, selected, {}, txOpts);
       }
-      await disableRemovedProviders(pool, manifestSlugs, {}, txOpts);
-      const ordered = providers.filter(entry => enabledRows.length <= 1 || entry !== selected).sort(
+      for (const type of unresolvedTypes) {
+        logger.warn?.("SSO bootstrap requires selection of an enabled provider for this protocol", { type });
+      }
+      await disableRemovedProviders(pool, manifestSlugs, {}, { ...txOpts, unresolvedTypes });
+      const ordered = providers.filter(entry => !selected.has(entry.slug) && !unresolvedTypes.has(entry.type)).sort(
         (a, b) => Number(a.enabled === true) - Number(b.enabled === true),
       );
       for (const entry of ordered) {

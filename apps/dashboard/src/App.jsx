@@ -93,7 +93,7 @@ import {
 import EndpointSslMonitorModal from './components/EndpointSslMonitorModal.jsx';
 import RetireCertificateModal from './components/certops/RetireCertificateModal.jsx';
 import RequireManagerRoute from './components/RequireManagerRoute.jsx';
-import { mcpAuthorizationReturnTo } from './utils/mcpAuthorization.js';
+import { isSsoLoginError, loginNextPath } from './lib/sso-ui-shared.js';
 import { useWorkspaceCertOps } from './components/certops/useCertOps.js';
 import { retireCertificateAndRefreshAssets } from './components/certops/certificateRetirement.js';
 import {
@@ -2506,13 +2506,20 @@ function App() {
                                     )}`}
                                     replace
                                   />
+                                ) : session.isAdmin === true &&
+                                  isSsoLoginError(
+                                    new URLSearchParams(
+                                      window.location.search
+                                    ).get('error')
+                                  ) ? (
+                                  <Login session={session} />
                                 ) : (
                                   <Navigate
                                     to={
-                                      mcpAuthorizationReturnTo(
+                                      loginNextPath(
                                         new URLSearchParams(
                                           window.location.search
-                                        ).get('returnTo')
+                                        )
                                       ) || '/dashboard'
                                     }
                                     replace

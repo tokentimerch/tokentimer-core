@@ -13,6 +13,20 @@
       "secrets": {
         "client_secret": "SSO_KEYCLOAK_OIDC_CLIENT_SECRET"
       }
+    },
+    {
+      "slug": "keycloak-saml",
+      "type": "saml",
+      "displayName": "Keycloak SAML",
+      "enabled": true,
+      "config": {
+        "issuer": "https://api.example.com/saml",
+        "entry_point": "https://idp.example.com/realms/internal/protocol/saml",
+        "validate_in_response_to": "always"
+      },
+      "secrets": {
+        "cert_env": "SSO_KEYCLOAK_SAML_CERT"
+      }
     }
   ]
 }

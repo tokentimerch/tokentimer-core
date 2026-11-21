@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router';
 import SEO from '../components/SEO.jsx';
 import { getLogoPath } from '../utils/logoUtils.js';
 import { logger } from '../utils/logger.js';
@@ -23,17 +23,68 @@ import apiClient, { authAPI, API_BASE_URL } from '../utils/apiClient';
 import WelcomeModal from '../components/WelcomeModal';
 import { trackEvent } from '../utils/analytics.js';
 import { dashboardHrefAfterLogin } from '../utils/lastWorkspacePreference.js';
-import { mcpAuthorizationReturnTo } from '../utils/mcpAuthorization.js';
 
 import {
   buildSsoLoginUrl,
+  isSsoLoginError,
+  loginNextPath,
   parseAuthFeaturesProviders,
 } from '../lib/sso-ui-shared.js';
 
-export default function Login() {
+const SSO_ERROR_ADMIN_HINTS = {
+  oidc_failed: 'OIDC callback or token validation failed.',
+  saml_failed: 'SAML assertion validation failed.',
+  provider_disabled: 'This provider was disabled during sign-in.',
+  oidc_not_ready: 'OIDC provider is not sign-in ready on this API pod.',
+  saml_not_ready: 'SAML provider is not sign-in ready on this API pod.',
+  state_mismatch:
+    'OIDC state mismatch. Session cookie was lost between sign-in start and callback (check API_URL, APP_URL, SESSION_COOKIE_DOMAIN, or sticky sessions).',
+  oidc_auto_link_disabled:
+    'A local-password account exists for this email. Enable allow auto-link under System Settings → SSO policy (or override on the provider), or use email login.',
+  oidc_email_not_verified:
+    'IdP did not assert email_verified=true; linking to an existing account was refused.',
+  oidc_missing_claims:
+    'IdP token did not include a usable email or subject. Check claim mapping and Keycloak mappers.',
+  oidc_account_mismatch:
+    'This email is linked to a different SSO subject. Ask an admin to fix external_identities.',
+  oidc_no_group_mapping:
+    'IdP groups for this login matched no mapping and strict membership sync is enabled. Ask an admin to add a group mapping or grant workspace access.',
+};
+
+const SSO_REASON_ADMIN_HINTS = {
+  callback_error:
+    'OIDC callback failed. Common causes: API cannot reach the IdP token endpoint (network, firewall, IPv6), wrong client secret, or redirect URI mismatch. Check LOGIN_FAILED audit metadata.error.',
+  state_mismatch: SSO_ERROR_ADMIN_HINTS.state_mismatch,
+  session_login_error: 'User was resolved but passport session login failed.',
+  issuer_mismatch: 'ID token issuer does not match configured issuer.',
+  pkce_verifier_missing:
+    'PKCE code_verifier missing from session (cookie lost or expired).',
+  userinfo_sub_mismatch: 'UserInfo sub does not match ID token sub.',
+  missing_email: 'IdP token did not include a usable email.',
+  oidc_no_user: 'Could not create or link a user from SSO claims.',
+  auto_link_disabled: SSO_ERROR_ADMIN_HINTS.oidc_auto_link_disabled,
+  cross_provider_auto_link_disabled:
+    'Email matches an SSO user linked to another provider. Enable allow auto-link under System Settings → SSO policy, or sign in with the original provider.',
+  no_group_mapping_matched: SSO_ERROR_ADMIN_HINTS.oidc_no_group_mapping,
+};
+
+export default function Login({ session }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const errorParam = searchParams.get('error');
+  const reason = searchParams.get('reason');
+  const nextPath = loginNextPath(searchParams);
+  const adminDetail =
+    session?.isAdmin === true && isSsoLoginError(errorParam)
+      ? (Object.hasOwn(SSO_REASON_ADMIN_HINTS, reason) &&
+          SSO_REASON_ADMIN_HINTS[reason]) ||
+        (Object.hasOwn(SSO_ERROR_ADMIN_HINTS, errorParam) &&
+          SSO_ERROR_ADMIN_HINTS[errorParam])
+      : null;
+  const [showErrorDetails, setShowErrorDetails] = useState(false);
   const [error, setError] = useState('');
-  const [signInProvider, setSignInProvider] = useState(null);
+  const [signInProviders, setSignInProviders] = useState([]);
   const formBackground = useColorModeValue(
     'rgba(255, 255, 255, 0.72)',
     'gray.800'
@@ -41,24 +92,56 @@ export default function Login() {
   const formBorder = useColorModeValue('gray.200', 'gray.600');
 
   useEffect(() => {
-    const controller = new AbortController();
-    fetch(`${API_BASE_URL}/api/auth/features`, {
-      credentials: 'include',
-      cache: 'no-store',
-      signal: controller.signal,
-    })
-      .then(response => (response.ok ? response.json() : null))
-      .then(data => {
-        if (!data || controller.signal.aborted) return;
-        setSignInProvider(
-          parseAuthFeaturesProviders(data).find(
-            provider => provider.signInReady === true
-          ) || null
-        );
-      })
-      .catch(() => {});
-    return () => controller.abort();
-  }, []);
+    let controller;
+    async function refreshProviders() {
+      controller?.abort();
+      const request = new AbortController();
+      controller = request;
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/features`, {
+          credentials: 'include',
+          cache: 'no-store',
+          signal: request.signal,
+        });
+        const data = response.ok ? await response.json() : null;
+        if (!request.signal.aborted) {
+          setSignInProviders(
+            parseAuthFeaturesProviders(data)
+              .filter(provider => provider.signInReady === true)
+              .sort(
+                (a, b) =>
+                  (a.sortOrder ?? a.sort_order ?? 100) -
+                    (b.sortOrder ?? b.sort_order ?? 100) ||
+                  (a.displayName || a.slug).localeCompare(
+                    b.displayName || b.slug
+                  )
+              )
+          );
+        }
+      } catch {
+        if (!request.signal.aborted) setSignInProviders([]);
+      }
+    }
+
+    function refreshOnVisibility() {
+      if (document.visibilityState === 'visible') refreshProviders();
+    }
+
+    refreshProviders();
+    const retrySoon = window.setTimeout(refreshProviders, 500);
+    const retryLater = window.setTimeout(refreshProviders, 1500);
+    window.addEventListener('focus', refreshProviders);
+    window.addEventListener('pageshow', refreshProviders);
+    document.addEventListener('visibilitychange', refreshOnVisibility);
+    return () => {
+      controller?.abort();
+      window.clearTimeout(retrySoon);
+      window.clearTimeout(retryLater);
+      window.removeEventListener('focus', refreshProviders);
+      window.removeEventListener('pageshow', refreshProviders);
+      document.removeEventListener('visibilitychange', refreshOnVisibility);
+    };
+  }, [location.key]);
   const [verificationMessage, setVerificationMessage] = useState('');
   const [verificationAlert, setVerificationAlert] = useState({
     show: false,
@@ -77,15 +160,15 @@ export default function Login() {
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   // Check for URL parameters for OAuth errors and verification messages
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
+    const urlParams = new URLSearchParams(location.search);
+    setError('');
+    setShowErrorDetails(false);
     const errorParam = urlParams.get('error');
     const verificationSent = urlParams.get('verification_sent');
     const verificationSuccess = urlParams.get('verification_success');
     const email = urlParams.get('email');
 
-    if (
-      /^(oidc_|saml_|provider_disabled$|state_mismatch$)/.test(errorParam || '')
-    ) {
+    if (isSsoLoginError(errorParam)) {
       setError(
         'Single sign-on failed. Try again or contact your administrator.'
       );
@@ -128,7 +211,7 @@ export default function Login() {
         setEmailForm(prev => ({ ...prev, email: decodeURIComponent(email) }));
       } catch (_) {}
     }
-  }, []);
+  }, [location.search]);
 
   const handleEmailLogin = async e => {
     e.preventDefault();
@@ -157,9 +240,7 @@ export default function Login() {
           trackEvent('login_success', { method: 'email', two_factor: false });
         } catch (_) {}
         window.location.href =
-          mcpAuthorizationReturnTo(
-            new URLSearchParams(window.location.search).get('returnTo')
-          ) ||
+          nextPath ||
           dashboardHrefAfterLogin({
             firstLogin:
               new URLSearchParams(window.location.search).get(
@@ -201,9 +282,7 @@ export default function Login() {
         trackEvent('login_success', { method: 'email', two_factor: true });
       } catch (_) {}
       window.location.href =
-        mcpAuthorizationReturnTo(
-          new URLSearchParams(window.location.search).get('returnTo')
-        ) ||
+        nextPath ||
         dashboardHrefAfterLogin({
           firstLogin:
             new URLSearchParams(window.location.search).get(
@@ -285,6 +364,31 @@ export default function Login() {
               ) : (
                 error
               )}
+              {adminDetail && (
+                <Box mt={2}>
+                  <Button
+                    size='xs'
+                    variant='link'
+                    aria-expanded={showErrorDetails}
+                    aria-controls='sso-sign-in-details'
+                    onClick={() => setShowErrorDetails(v => !v)}
+                  >
+                    Details
+                  </Button>
+                  {showErrorDetails && (
+                    <Text id='sso-sign-in-details' fontSize='xs' mt={1}>
+                      {adminDetail}{' '}
+                      <Link
+                        as={RouterLink}
+                        to='/system-settings'
+                        color='blue.300'
+                      >
+                        Open System Settings
+                      </Link>
+                    </Text>
+                  )}
+                </Box>
+              )}
             </AlertDescription>
           </Alert>
         )}
@@ -299,22 +403,17 @@ export default function Login() {
 
         {/* Login Options */}
         <VStack spacing={4}>
-          {signInProvider && (
+          {signInProviders.map(provider => (
             <Button
+              key={provider.slug}
               as='a'
-              href={buildSsoLoginUrl(
-                signInProvider,
-                mcpAuthorizationReturnTo(
-                  new URLSearchParams(window.location.search).get('returnTo')
-                ),
-                API_BASE_URL
-              )}
+              href={buildSsoLoginUrl(provider, nextPath, API_BASE_URL)}
               colorScheme='blue'
               w='full'
             >
-              Sign in with {signInProvider.displayName || signInProvider.slug}
+              Sign in with {provider.displayName || provider.slug}
             </Button>
-          )}
+          ))}
           {/* Email Login */}
           <Box
             w='full'

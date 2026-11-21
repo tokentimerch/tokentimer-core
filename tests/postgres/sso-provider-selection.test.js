@@ -7,7 +7,7 @@ const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { Pool } = require("pg");
-const { MIGRATION_V1_SQL } = require("../../apps/api/migrations/sso-schema.js");
+const { MIGRATION_V1_SQL, MIGRATION_V2_SQL } = require("../../apps/api/migrations/sso-schema.js");
 const registry = require("../../apps/api/sso/provider-registry.js");
 const { reconcileSsoProvidersFromEnv } = require("../../apps/api/sso/bootstrap-from-env.js");
 
@@ -29,7 +29,7 @@ before(async () => {
   await setup.query(`CREATE SCHEMA ${schema}`);
   schemaCreated = true;
   await pool.query(`
-    CREATE TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN, auth_method TEXT, password_hash TEXT, email_verified BOOLEAN);
+    CREATE TABLE users (id INTEGER PRIMARY KEY, is_admin BOOLEAN, auth_method TEXT, password_hash TEXT, email_verified BOOLEAN, email TEXT, display_name TEXT, updated_at TIMESTAMPTZ);
     CREATE TABLE workspaces (id UUID PRIMARY KEY, created_by INTEGER REFERENCES users);
     CREATE TABLE workspace_memberships (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id INTEGER REFERENCES users,
@@ -46,8 +46,10 @@ before(async () => {
     );
     CREATE TABLE system_settings (id INTEGER PRIMARY KEY, sso_config_version BIGINT, updated_at TIMESTAMPTZ, sso_global_settings JSONB DEFAULT '{}');
     INSERT INTO system_settings VALUES (1, 1, NOW());
-    INSERT INTO users VALUES (1, TRUE, 'local', '$2b$12$' || repeat('A', 53), TRUE);
+    INSERT INTO users (id, is_admin, auth_method, password_hash, email_verified, email, display_name)
+    VALUES (1, TRUE, 'local', '$2b$12$' || repeat('A', 53), TRUE, 'admin@example.test', 'Local Admin');
     ${MIGRATION_V1_SQL}
+    ${MIGRATION_V2_SQL}
   `);
 });
 
@@ -60,37 +62,53 @@ after(async () => {
   }
 });
 
-it("serializes concurrent OIDC and SAML activation through the registry", async () => {
+it("admits OIDC and SAML together and serializes activations within each protocol", async () => {
   await registry.createProvider(pool, { type: "oidc", slug: "openid", config: oidc });
+  await registry.createProvider(pool, { type: "oidc", slug: "openid-peer", config: oidc });
   await registry.createProvider(pool, { type: "saml", slug: "assertion", config: saml });
   assert.deepEqual(await registry.enabledProviderRows(pool), []);
   const results = await Promise.allSettled([
     registry.updateProvider(pool, "openid", { enabled: true }),
+    registry.updateProvider(pool, "openid-peer", { enabled: true }),
     registry.updateProvider(pool, "assertion", { enabled: true }),
   ]);
-  assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 2);
   assert.equal(results.find(result => result.status === "rejected").reason.code, "active_provider_exists");
-  assert.equal((await registry.enabledProviderRows(pool)).length, 1);
+  assert.deepEqual((await registry.enabledProviderRows(pool)).map(row => row.type).sort(), ["oidc", "saml"]);
 });
 
-it("requires named selection on adoption and preserves both configurations and identities", async () => {
+it("requires explicit selection and local recovery, retaining peer links and auditing the disable", async () => {
   await pool.query("UPDATE sso_providers SET enabled = TRUE");
   await pool.query(`
     INSERT INTO external_identities (user_id, provider_slug, protocol, subject_id)
-    VALUES (1, 'openid', 'oidc', 'previous-oidc'), (1, 'assertion', 'saml', 'previous-saml')
+    VALUES (1, 'openid', 'oidc', 'previous-oidc'), (1, 'openid-peer', 'oidc', 'peer'),
+           (1, 'assertion', 'saml', 'previous-saml')
   `);
   await assert.rejects(
-    registry.updateProvider(pool, "assertion", { enabled: false }),
+    registry.updateProvider(pool, "openid-peer", { enabled: false }),
     { code: "provider_selection_required" },
   );
-  await registry.updateProvider(pool, "assertion", { enabled: true });
-  assert.deepEqual(await registry.enabledProviderRows(pool), [{ slug: "assertion" }]);
-  assert.equal((await registry.listProviders(pool)).length, 2);
-  assert.equal((await pool.query("SELECT * FROM external_identities")).rowCount, 2);
+  await registry.updateProvider(pool, "openid", { enabled: true, displayName: "Renamed" });
+  assert.equal((await registry.enabledProviderRows(pool)).length, 3);
+  assert.equal((await registry.getProvider(pool, "openid")).runtime.lastReason, "provider_selection_required");
+  assert.notEqual((await registry.getProvider(pool, "assertion")).runtime.lastReason, "provider_selection_required");
+  await pool.query("UPDATE users SET email_verified = FALSE WHERE id = 1");
+  await assert.rejects(
+    registry.updateProvider(pool, "openid", { enabled: true, selectForProtocol: true }),
+    { code: "last_login_method" },
+  );
+  assert.equal((await registry.enabledProviderRows(pool)).length, 3);
+  await pool.query("UPDATE users SET email_verified = TRUE WHERE id = 1");
+  await registry.updateProvider(pool, "openid", { enabled: true, selectForProtocol: true }, { userId: 1 });
+  assert.deepEqual((await registry.enabledProviderRows(pool)).map(row => row.slug).sort(), ["assertion", "openid"]);
+  assert.equal((await registry.listProviders(pool)).length, 3);
+  assert.equal((await pool.query("SELECT * FROM external_identities")).rowCount, 3);
+  assert.equal((await pool.query(
+    "SELECT 1 FROM audit_events WHERE action = 'SSO_PROVIDER_DISABLED' AND metadata->>'slug' = 'openid-peer'",
+  )).rowCount, 1);
 });
 
-it("admits only one explicitly named bootstrap provider and shares the API transaction lock", async (t) => {
-  await registry.updateProvider(pool, "assertion", { enabled: false });
+it("allows one enabled provider per bootstrap protocol and shares the API transaction lock", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "sso-provider-test-"));
   const manifestPath = join(dir, "providers.json");
   const previous = process.env.SSO_PROVIDERS_BOOTSTRAP_FILE;
@@ -107,9 +125,13 @@ it("admits only one explicitly named bootstrap provider and shares the API trans
   await writeFile(manifestPath, JSON.stringify({ providers: entries }));
   await reconcileSsoProvidersFromEnv(pool, { logger: {} });
   assert.deepEqual(await registry.enabledProviderRows(pool), []);
-  await writeFile(manifestPath, JSON.stringify({ providers: entries.map(entry => ({ ...entry, enabled: true })) }));
+  const mixed = entries.map(entry => ({ ...entry, enabled: true }));
+  await writeFile(manifestPath, JSON.stringify({ providers: [...mixed, { ...mixed[0], slug: "openid-peer" }] }));
   await assert.rejects(reconcileSsoProvidersFromEnv(pool, { logger: {} }), { code: "active_provider_exists" });
-  await writeFile(manifestPath, JSON.stringify({ providers: [{ ...entries[0], enabled: true }] }));
+  await writeFile(manifestPath, JSON.stringify({ providers: mixed }));
+  await reconcileSsoProvidersFromEnv(pool, { logger: {} });
+  assert.equal((await registry.enabledProviderRows(pool)).length, 2);
+  await registry.updateProvider(pool, "assertion", { enabled: false });
   await registry.createProvider(pool, { type: "saml", slug: "api-saml", config: saml });
   const results = await Promise.allSettled([
     reconcileSsoProvidersFromEnv(pool, { logger: {} }),
@@ -117,9 +139,8 @@ it("admits only one explicitly named bootstrap provider and shares the API trans
   ]);
   assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
   assert.equal(results.find(result => result.status === "rejected").reason.code, "active_provider_exists");
-  assert.equal((await registry.enabledProviderRows(pool)).length, 1);
+  assert.equal((await registry.enabledProviderRows(pool)).length, 2);
 });
-
 
 it("keeps linked OIDC subjects bound to the original issuer", async () => {
   await assert.rejects(
@@ -298,6 +319,44 @@ it("rolls back provider, secrets, cache, config version and audit events togethe
   await rejectedAudit("SSO_PROVIDER_SECRET_CLEARED", () => api.put(path).send({ clearSecrets: ["client_secret"] }));
   await rejectedAudit("SSO_PROVIDER_DELETED", () => api.delete(path));
   await api.delete(path).expect(200);
+});
+
+it("previews and retires an in-use provider with explicit cleanup and an independent local admin", async (t) => {
+  const api = adminProviderRoutes(t);
+  const slug = "retire";
+  const path = providersPath + "/" + slug;
+  const workspace = randomUUID();
+  await registry.createProvider(pool, { type: "oidc", slug, config: oidc });
+  await pool.query("INSERT INTO workspaces VALUES ($1, 1)", [workspace]);
+  await pool.query(`
+    INSERT INTO users (id, is_admin, auth_method, password_hash, email_verified, email)
+    VALUES (4, TRUE, 'sso', '$2b$12$' || repeat('A', 53), TRUE, 'sso-admin@example.test')
+  `);
+  await pool.query("INSERT INTO sso_system_admin_grants (user_id, provider_slug) VALUES (4, $1)", [slug]);
+  await pool.query("INSERT INTO external_identities (user_id, provider_slug, protocol, subject_id) VALUES (4, $1, 'oidc', 'subject')", [slug]);
+  await pool.query(`
+    INSERT INTO workspace_memberships (user_id, workspace_id, role, source, source_provider_slug)
+    VALUES (4, $1, 'viewer', 'sso', $2)
+  `, [workspace, slug]);
+  const preview = await api.post(path + "/impact").send({ delete: true }).expect(200);
+  assert.deepEqual(preview.body.dependency_counts, {
+    identities_count: 1, memberships_count: 1, group_mappings_count: 0, admin_grants_count: 1,
+  });
+  assert.equal(preview.body.has_usable_local_admin, true);
+  await api.delete(path).expect(409);
+  await api.delete(path).query({ confirmRetirement: "true", membershipPolicy: "convert-to-manual" }).expect(409);
+  const confirm = { confirmRetirement: "true", membershipPolicy: "convert-to-manual", identityPolicy: "archive" };
+  await pool.query("UPDATE users SET email_verified = FALSE WHERE id = 1");
+  const blocked = await api.delete(path).query(confirm).expect(409);
+  assert.equal(blocked.body.code, "last_login_method");
+  assert.equal((await registry.countDependencies(pool, slug)).identities_count, 1);
+  await pool.query("UPDATE users SET email_verified = TRUE WHERE id = 1");
+  await api.delete(path).query(confirm).expect(200);
+  assert.equal(await registry.getProvider(pool, slug), null);
+  assert.equal((await pool.query("SELECT is_admin FROM users WHERE id = 4")).rows[0].is_admin, false);
+  assert.deepEqual((await pool.query("SELECT source, source_provider_slug FROM workspace_memberships WHERE user_id = 4")).rows,
+    [{ source: "manual", source_provider_slug: null }]);
+  assert.equal((await pool.query("SELECT 1 FROM sso_deleted_external_identities_archive WHERE provider_slug = $1 AND deleted_by = 1", [slug])).rowCount, 1);
 });
 
 it("returns the committed provider and bounded warnings when post-commit status is unavailable", async (t) => {

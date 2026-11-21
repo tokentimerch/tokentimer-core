@@ -107,7 +107,7 @@ async function requireSsoAdmin(req, res, next) {
 function mapRegistryError(err, res) {
   const code = err.code || "internal_error";
   if (code === "not_found") return res.status(404).json({ error: err.message, code });
-  if (code === "slug_immutable" || code === "type_immutable") {
+  if (["slug_immutable", "type_immutable", "invalid_retirement_policy"].includes(code)) {
     return res.status(400).json({ error: err.message, code });
   }
   if (code === "redundant_override" || code === "invalid_slug" || code === "invalid_type" || code === "invalid_config") {
@@ -209,7 +209,10 @@ router.put(
           dbClient: client, secretChanges,
         });
         const action = req.body.enabled === false ? "SSO_PROVIDER_DISABLED" : "SSO_PROVIDER_UPDATED";
-        await auditProvider(client, req.user.id, slug, action, { clearSecrets: secretChanges.cleared });
+        await auditProvider(client, req.user.id, slug, action, {
+          clearSecrets: secretChanges.cleared,
+          ...(req.body.selectForProtocol === true && { selected_for_protocol: updated.type }),
+        });
         await auditSecretChanges(client, req.user.id, slug, secretChanges);
         return updated;
       });
@@ -232,8 +235,16 @@ router.delete(
     const slug = req.params.slug;
     try {
       await withProviderTransaction(async (client) => {
-        const result = await deleteProvider(pool, slug, { dbClient: client });
-        await auditProvider(client, req.user.id, slug, "SSO_PROVIDER_DELETED", { dependency_counts: result.dependencies });
+        const { membershipPolicy, identityPolicy, confirmRetirement } = req.query;
+        const result = await deleteProvider(pool, slug, {
+          dbClient: client, userId: req.user.id, membershipPolicy, identityPolicy,
+          confirmRetirement: confirmRetirement === "true",
+        });
+        await auditProvider(client, req.user.id, slug, "SSO_PROVIDER_DELETED", {
+          dependency_counts: result.dependencies,
+          membershipPolicy: membershipPolicy ?? null,
+          identityPolicy: identityPolicy ?? null,
+        });
       });
       res.json(await providerChangeResponse(slug));
     } catch (err) {

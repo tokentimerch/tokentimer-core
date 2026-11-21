@@ -189,6 +189,7 @@ export default function SsoProviders({ session, onLogout, onAccountClick }) {
     try {
       const { data } = await apiClient.put(`/api/admin/sso/providers/${slug}`, {
         enabled: true,
+        selectForProtocol: true,
       });
       if (
         Array.isArray(data?.sso_reload_warnings) &&
@@ -226,6 +227,15 @@ export default function SsoProviders({ session, onLogout, onAccountClick }) {
     }
   }
 
+  const conflicts = ['oidc', 'saml']
+    .map(type => ({
+      type,
+      providers: providers.filter(
+        provider => provider.enabled && provider.type === type
+      ),
+    }))
+    .filter(conflict => conflict.providers.length > 1);
+
   const headerActions = (
     <HStack spacing={2} flexWrap='wrap'>
       <DashboardActionButton
@@ -249,35 +259,33 @@ export default function SsoProviders({ session, onLogout, onAccountClick }) {
     <SsoAdminPageShell
       seoTitle='SSO Providers'
       title='SSO Providers'
-      subtitle='Configure the OIDC or SAML provider used for sign-in. Only one provider can be active at a time.'
+      subtitle='Configure one active OIDC provider and one active SAML provider for sign-in.'
       variant='wide'
       actions={headerActions}
       session={session}
       onLogout={onLogout}
       onAccountClick={onAccountClick}
     >
-      {providers.filter(provider => provider.enabled).length > 1 && (
-        <StatusPanel status='warning'>
+      {conflicts.map(({ type, providers: choices }) => (
+        <StatusPanel key={type} status='warning'>
           <VStack align='start'>
             <Text>
-              Multiple providers were previously enabled. Select one for
-              sign-in.
+              Multiple {type.toUpperCase()} providers are enabled. Select one to
+              keep enabled for {type.toUpperCase()} sign-in.
             </Text>
-            {providers
-              .filter(provider => provider.enabled)
-              .map(provider => (
-                <DashboardActionButton
-                  key={provider.slug}
-                  isLoading={selectingSlug === provider.slug}
-                  isDisabled={!!selectingSlug}
-                  onClick={() => selectProvider(provider.slug)}
-                >
-                  Select {provider.displayName || provider.slug}
-                </DashboardActionButton>
-              ))}
+            {choices.map(provider => (
+              <DashboardActionButton
+                key={provider.slug}
+                isLoading={selectingSlug === provider.slug}
+                isDisabled={!!selectingSlug}
+                onClick={() => selectProvider(provider.slug)}
+              >
+                Select {provider.displayName || provider.slug}
+              </DashboardActionButton>
+            ))}
           </VStack>
         </StatusPanel>
-      )}
+      ))}
       {loading && providers.length === 0 ? (
         <DashboardPanel role='status' aria-busy='true'>
           <DashboardState type='loading' title='Loading providers...' />

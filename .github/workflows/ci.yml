@@ -967,6 +967,35 @@ jobs:
       - name: Validate production compose + images overlay
         run: DB_PASSWORD=ci-synthetic-only SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.images.yml config -q
 
+      - name: Validate SSO compose setup and bootstrap
+        env:
+          DB_PASSWORD: ci-synthetic-only
+          SESSION_SECRET: dummy
+        run: |
+          set -euo pipefail
+          scratch="$RUNNER_TEMP/tokentimer-sso-compose"
+          mkdir -p "$scratch/secrets"
+          cp deploy/compose/docker-compose{,.images,.sso}.yml "$scratch/"
+          cp deploy/compose/sso-providers.example.json "$scratch/sso-providers.json"
+          touch "$scratch/secrets/sso.env"
+          printf '%s\n' '{}' > "$scratch/secrets/sso-keyring.json"
+          cd "$scratch"
+          SSO_SECRETS_KEYRING=ci-inline docker compose -f docker-compose.yml config --format json > dashboard.json
+          SSO_SECRETS_KEYRING= docker compose -f docker-compose.yml -f docker-compose.images.yml -f docker-compose.sso.yml config --format json > bootstrap.json
+          node <<'NODE'
+          const assert = require("node:assert/strict");
+          const dashboard = require("./dashboard.json").services.api;
+          const bootstrap = require("./bootstrap.json").services.api;
+          assert.equal(dashboard.environment.SSO_SECRETS_KEYRING, "ci-inline");
+          assert.equal(bootstrap.environment.SSO_SECRETS_KEYRING, "");
+          for (const key of ["SSO_PROVIDERS_BOOTSTRAP_FILE", "SSO_SECRETS_KEYRING_FILE"]) {
+            assert.ok(bootstrap.volumes.some(volume =>
+              volume.target === bootstrap.environment[key] && volume.read_only === true));
+          }
+          const providers = require("./sso-providers.json").providers;
+          assert.deepEqual(providers.filter(provider => provider.enabled).map(provider => provider.type).sort(), ["oidc", "saml"]);
+          NODE
+
       - name: Validate dev compose
         run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.dev.yml config -q
 

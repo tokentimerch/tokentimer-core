@@ -220,7 +220,7 @@ export function useSsoGroupMappings() {
     if (!id) return;
     if (
       !window.confirm(
-        'Delete this mapping? Users matched only by this rule will lose the granted role on their next SSO login.'
+        'Delete this mapping? Existing access stays in place. If strict membership sync is enabled, unmatched SSO workspace access may be removed on the user’s next sign-in. Existing system administrator grants remain.'
       )
     ) {
       return;

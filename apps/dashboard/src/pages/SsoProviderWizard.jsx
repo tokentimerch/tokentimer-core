@@ -341,10 +341,10 @@ export default function SsoProviderWizard({
       if (embedded) {
         onEnabled?.(effectiveSlug);
       } else {
-        navigate('/sso-providers', {
-          replace: true,
-          state: { refreshProviders: true },
-        });
+        navigate(
+          `/system-settings?section=sso-group-mappings&provider=${encodeURIComponent(effectiveSlug)}`,
+          { replace: true }
+        );
       }
     } catch (e) {
       showWarning(e?.response?.data?.error || 'Enable failed');

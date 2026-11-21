@@ -2,6 +2,13 @@
 
 const { apiBase, normalizeBaseUrl } = require("./callback-urls.js");
 
+function sanitizeNextPath(raw) {
+  if (typeof raw !== "string" || raw.length > 512 || !raw.startsWith("/")) return null;
+  if (raw.startsWith("//") || /^\/[a-z][a-z0-9+.-]*:/i.test(raw)) return null;
+  if (raw.includes("\\") || [...raw].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) return null;
+  return raw;
+}
+
 /**
  * Absolute URL for browser navigation to an SSO route on the API host.
  */
@@ -57,6 +64,7 @@ function buildLoginFailureRedirect(appUrl, { error, provider, reason }) {
 
 module.exports = {
   absoluteAuthRouteUrl,
+  sanitizeNextPath,
   publicOidcLoginErrorCode,
   buildLoginFailureRedirect,
 };

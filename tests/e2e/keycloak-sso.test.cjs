@@ -45,7 +45,11 @@ function startTlsProxy(upstreamPort, observe) {
         res.writeHead(response.statusCode, response.headers);
         response.pipe(res);
       });
-      upstream.on("error", () => { res.writeHead(502); res.end(); });
+      upstream.on("error", () => {
+        if (res.headersSent) return res.destroy();
+        res.writeHead(502);
+        res.end();
+      });
       req.pipe(upstream);
     },
   });
@@ -126,7 +130,7 @@ function realm(api, app, oidcSecret, userPassword) {
         }],
       },
       {
-        clientId: "core-saml",
+        clientId: api + "/saml",
         protocol: "saml",
         enabled: true,
         redirectUris: [api + "/auth/saml/saml/callback"],
@@ -200,7 +204,7 @@ async function createMapping(page, provider) {
 }
 
 test(
-  "Core guides SSO setup, maps groups, and signs in and out with Keycloak OIDC and SAML",
+  "Core signs in and out with Keycloak OIDC and SAML while both providers are active",
   {
     skip: process.env.TT_KEYCLOAK_E2E !== "1",
     timeout: 300000,
@@ -410,50 +414,46 @@ test(
     await adminPage.getByText("SSO policy settings saved", { exact: true }).waitFor();
     const policy = await (await admin.request.get(api + "/api/admin/system-settings")).json();
     assert.equal(policy.sso.strict_membership_sync.value, true);
-    const keys = await (
-      await fetch(issuer + "/protocol/openid-connect/certs")
-    ).json();
-    const signer = keys.keys.find(
-      (k) => k.use === "sig" && k.alg === "RS256" && k.x5c?.length,
-    );
-    assert.ok(signer, "Keycloak realm signing certificate");
+    const waiting = await localContext();
+    const waitingPage = await waiting.newPage();
+    await waitingPage.goto(app + "/login");
+    await waitingPage.getByText("Sign in with Keycloak OIDC", { exact: true }).waitFor();
+    assert.equal(await waitingPage.getByText("Sign in with Keycloak SAML", { exact: true }).count(), 0);
+
+    await adminPage.goto(app + "/sso-providers/new");
+    await adminPage.getByRole("combobox", { name: "Protocol", exact: true }).selectOption("saml");
+    await next.click();
+    await adminPage.getByRole("combobox", { name: "Template", exact: true }).selectOption("keycloak");
+    await next.click();
+    await adminPage.getByLabel("Display name").fill("Keycloak SAML");
+    await adminPage.getByPlaceholder("entra-prod").fill("saml");
+    const descriptor = await fetch(issuer + "/protocol/saml/descriptor");
+    assert.equal(descriptor.status, 200);
+    await adminPage.getByLabel("Or paste metadata XML").fill(await descriptor.text());
+    await next.click();
+    await next.click();
+    await adminPage.getByRole("button", { name: "Save and run test" }).click();
+    await adminPage.getByRole("button", { name: "Enable provider", exact: true }).click();
+    await adminPage.waitForURL(url => url.pathname === "/system-settings" &&
+      url.searchParams.get("provider") === "saml");
+    await createMapping(adminPage, "saml");
+
+    const saml = await (await admin.request.get(api + adminPath + "/saml")).json();
+    assert.equal(saml.enabled, true);
+    const enabledProtocols = Object.entries((await (
+      await admin.request.get(api + "/api/auth/features")
+    ).json()).providers);
+    assert.deepEqual(enabledProtocols.map(([type, providers]) => [type, providers.length, providers[0]?.signInReady]),
+      [["oidc", 1, true], ["saml", 1, true]]);
+
+    await waitingPage.evaluate(() => window.dispatchEvent(new Event("pageshow")));
+    await waitingPage.getByText("Sign in with Keycloak SAML", { exact: true }).waitFor();
+    await waitingPage.getByText("Sign in with Keycloak OIDC", { exact: true }).waitFor();
+    await waiting.close();
+    t.diagnostic("Keycloak SAML was enabled from the standalone wizard and appeared beside OIDC on an existing login page");
+
     for (const type of ["oidc", "saml"]) {
       const displayName = "Keycloak " + type.toUpperCase();
-      const provider = { type, slug: type, displayName, enabled: true };
-      if (type === "oidc") {
-        provider.config = {
-          issuer,
-          client_id: "core-oidc",
-          scopes: "openid profile email",
-        };
-        provider.secrets = { client_secret: clientSecret };
-      } else {
-        await write(
-          admin.request,
-          api,
-          app,
-          "PUT",
-          adminPath + "/oidc",
-          { enabled: false },
-          200,
-        );
-        provider.config = {
-          issuer: "core-saml",
-          entry_point: issuer + "/protocol/saml",
-          cert:
-            "-----BEGIN CERTIFICATE-----\n" +
-            signer.x5c[0] +
-            "\n-----END CERTIFICATE-----",
-          name_id_format:
-            "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
-          validate_in_response_to: "always",
-        };
-      }
-      if (type === "saml") {
-        await write(admin.request, api, app, "POST", adminPath, provider, 201);
-        await openSystemSso();
-        await createMapping(adminPage, "saml");
-      }
       const context = await localContext();
       const page = await context.newPage();
       const navigations = [];
@@ -481,7 +481,9 @@ test(
         assert.equal(metadata.status(), 200);
         assert.match(await metadata.text(), /AssertionConsumerService/);
       }
-      await page.goto(app + "/login");
+      await page.goto(app + "/login?next=%2Fworkspaces");
+      await page.getByText("Sign in with Keycloak OIDC", { exact: true }).waitFor();
+      await page.getByText("Sign in with Keycloak SAML", { exact: true }).waitFor();
       await page
         .getByText("Sign in with " + displayName, { exact: true })
         .click();
@@ -513,7 +515,7 @@ test(
       }
       await page.locator("#password").fill(userPassword);
       await page.locator("#kc-login").click();
-      await page.waitForURL((url) => url.origin === app);
+      await page.waitForURL((url) => url.origin === app && url.pathname === "/workspaces");
       const session = await (
         await context.request.get(api + "/api/session")
       ).json();
@@ -527,7 +529,7 @@ test(
       if (type === "saml") {
         assert.deepEqual(samlPost, { site: "cross-site", hasBrowserCookie: true });
         t.diagnostic("Chromium sent the host-only Secure SameSite=None cookie on Keycloak's cross-site HTTPS POST");
-        await verifySamlRejections(samlResponse, provider.config, api + "/auth/saml/saml/callback");
+        await verifySamlRejections(samlResponse, saml.config, api + "/auth/saml/saml/callback");
         t.diagnostic("The signed SAML fixture was rejected for an untrusted signer, incorrect audience, expiry, and missing request context");
       }
       assert.equal(session.user.email, type + "@example.test");
@@ -549,11 +551,23 @@ test(
           new URL(url).pathname,
           "/realms/tt-test/protocol/openid-connect/logout",
         );
+        const readiness = [];
+        page.on("response", response => {
+          const responseUrl = new URL(response.url());
+          if (responseUrl.origin === api && responseUrl.pathname === "/api/auth/features") {
+            readiness.push(response.status());
+          }
+        });
         await page.goto(url);
         await page.waitForURL(app + "/login");
-        await page
-          .getByText("Sign in with " + displayName, { exact: true })
-          .click();
+        try {
+          await page.getByText("Sign in with " + displayName, { exact: true })
+            .click({ timeout: 15000 });
+        } catch (error) {
+          t.diagnostic("OIDC logout return readiness statuses: " + readiness.join(", "));
+          t.diagnostic("OIDC logout return headings: " + (await page.locator("h1,h2").allTextContents()).join(", "));
+          throw error;
+        }
         await page.locator("#username").waitFor();
       } else {
         assert.equal(url, null);
@@ -600,9 +614,10 @@ test(
       await recovery.request.get(api + "/api/auth/features")
     ).json();
     assert.deepEqual(features.providers.saml, []);
+    assert.deepEqual(features.providers.oidc.map(p => p.slug), ["oidc"]);
     await recovery.close();
     t.diagnostic(
-      "Local admin signed in and disabled the active provider with Keycloak offline",
+      "Local admin signed in with Keycloak offline and disabled SAML without disabling OIDC",
     );
   },
 );

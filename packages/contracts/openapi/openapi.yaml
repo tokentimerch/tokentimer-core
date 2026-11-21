@@ -4841,7 +4841,7 @@ paths:
       tags: [Auth]
       operationId: createSsoProvider
       summary: Create an OIDC or SAML provider
-      description: Self-hosted system administrator session required. Core allows one active provider. Check runtime readiness and warnings before directing users to a new provider.
+      description: Self-hosted system administrator session required. Core allows one active OIDC provider and one active SAML provider. Check runtime readiness and warnings before directing users to a new provider.
       parameters:
         - $ref: "#/components/parameters/CsrfTokenHeader"
       requestBody:
@@ -4895,7 +4895,7 @@ paths:
       tags: [Auth]
       operationId: updateSsoProvider
       summary: Update SSO provider settings
-      description: Self-hosted system administrator session required. The slug and protocol are immutable. Changing a linked OIDC issuer returns 409 with code issuer_has_linked_accounts. Omitted fields retain their values.
+      description: Self-hosted system administrator session required. The slug and protocol are immutable. Changing a linked OIDC issuer returns 409 with code issuer_has_linked_accounts. Omitted fields retain their values. When several enabled providers share a protocol, choose one using enabled and selectForProtocol. Resolving the conflict requires a usable local administrator account.
       parameters:
         - $ref: "#/components/parameters/CsrfTokenHeader"
       requestBody:
@@ -4927,9 +4927,21 @@ paths:
       tags: [Auth]
       operationId: deleteSsoProvider
       summary: Delete an SSO provider
-      description: Self-hosted system administrator session required.
+      description: Self-hosted system administrator session required. Preview dependency counts before retiring a used provider. A used provider also requires a usable local admin whose recovery access survives retirement.
       parameters:
         - $ref: "#/components/parameters/CsrfTokenHeader"
+        - name: confirmRetirement
+          in: query
+          description: Required when the provider has dependencies.
+          schema: { type: boolean }
+        - name: membershipPolicy
+          in: query
+          description: Required for provider-managed workspace memberships.
+          schema: { type: string, enum: [convert-to-manual, delete] }
+        - name: identityPolicy
+          in: query
+          description: Required for linked identities.
+          schema: { type: string, enum: [archive, drop] }
       responses:
         "200":
           description: Successful result
@@ -4943,6 +4955,8 @@ paths:
                   sso_reload_warnings:
                     type: array
                     items: { $ref: "#/components/schemas/SsoWarning" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -13524,6 +13538,9 @@ components:
               type: object
               writeOnly: true
               additionalProperties: { type: string }
+            selectForProtocol:
+              description: On update, set with enabled true to select this enabled provider and disable its same-protocol peers while preserving their records.
+              type: boolean
             clearSecrets:
               description: Names of stored secrets to remove on update.
               type: array
@@ -13698,6 +13715,16 @@ components:
         memberships_at_risk: { type: integer }
         admins_added: { type: integer }
         users_who_would_no_longer_match_admin_mapping: { type: integer }
+        requires_local_admin: { type: boolean }
+        has_usable_local_admin: { type: boolean }
+        dependency_counts:
+          type: object
+          required: [identities_count, memberships_count, group_mappings_count, admin_grants_count]
+          properties:
+            identities_count: { type: integer }
+            memberships_count: { type: integer }
+            group_mappings_count: { type: integer }
+            admin_grants_count: { type: integer }
     SsoOidcDiagnostic:
       type: object
       required: [fieldsConfigured, signInReady, registered]

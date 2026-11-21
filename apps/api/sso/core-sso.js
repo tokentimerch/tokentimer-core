@@ -30,16 +30,13 @@ const providerRoute = /^\/auth\/(oidc|saml)\/([a-z0-9][a-z0-9_-]{0,62})(?:\/(cal
 const startLimiter = createSsoRateLimitMiddleware({ phase: "start" });
 const callbackLimiter = createSsoRateLimitMiddleware({ phase: "callback" });
 
-function selectedProvider(providers) {
-  const enabled = providers.filter((provider) => provider.enabled === true);
-  return enabled.length === 1 ? enabled[0] : null;
-}
-
 async function loadProviders(db, options) {
-  const { listProviders } = require("./provider-registry.js");
+  const { conflictingProviderTypes, listProviders } = require("./provider-registry.js");
   const providers = await listProviders(db, options);
-  if (selectedProvider(providers)) return providers;
-  return providers.map((provider) => ({ ...provider, enabled: false }));
+  const conflicts = conflictingProviderTypes(providers);
+  return providers.map((provider) => provider.enabled && conflicts.has(provider.type)
+    ? { ...provider, enabled: false, disabledReason: "provider_selection_required" }
+    : provider);
 }
 
 function registerSsoSystemSettings() {
@@ -97,10 +94,10 @@ function mountSsoRoutes(app, { passport, express, pool }) {
       try {
         await reloadAllSsoStrategiesIfStale();
         const { rows } = await pool.query(
-          "SELECT slug, type, enabled FROM sso_providers WHERE enabled = TRUE LIMIT 2",
+          "SELECT slug FROM sso_providers WHERE enabled = TRUE AND type = $1 LIMIT 2",
+          [protocol],
         );
-        const active = selectedProvider(rows);
-        if (!active || active.type !== protocol || active.slug !== slug) return notFound(res);
+        if (rows.length !== 1 || rows[0].slug !== slug) return notFound(res);
         assertSsoConfigCurrentForProvider(slug);
         return next();
       } catch (err) {
@@ -114,14 +111,12 @@ function mountSsoRoutes(app, { passport, express, pool }) {
 }
 
 async function getSsoAuthFeatures(pool) {
-  const { listProviders } = require("./provider-registry.js");
   const [rows, haFlags] = await Promise.all([
-    listProviders(pool, { includeStatuses: false }),
+    loadProviders(pool, { includeStatuses: false }),
     getSsoSyncAggregateFlags(pool),
   ]);
-  const active = selectedProvider(rows);
   const providers = { oidc: [], saml: [] };
-  if (active) {
+  for (const active of rows.filter((row) => row.enabled)) {
     const runtime = getProviderRuntimeStatus(active.slug);
     providers[active.type].push({
       slug: active.slug,

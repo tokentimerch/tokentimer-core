@@ -504,6 +504,7 @@ describe("group-resolver", () => {
       query: async (sql) => {
         queries.push(sql);
         const trim = String(sql).trim().toUpperCase();
+        if (sql.includes("FROM sso_providers")) return { rows: [{}] };
         if (trim === "BEGIN") {
           inTx = true;
           return { rowCount: 0, rows: [] };
@@ -711,6 +712,7 @@ describe("group-resolver", () => {
         connect: async () => ({
           query: async (sql) => {
             const trim = String(sql).trim().toUpperCase();
+            if (sql.includes("FROM sso_providers")) return { rows: [{}] };
             if (trim === "BEGIN" || trim === "ROLLBACK") {
               return { rowCount: 0, rows: [] };
             }

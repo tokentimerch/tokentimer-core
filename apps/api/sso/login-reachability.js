@@ -15,6 +15,8 @@ const USABLE_LOCAL_ADMIN_SQL = `
     AND (auth_method <> 'local' OR email_verified = TRUE)
     AND password_hash <> $1
     AND password_hash ~ '^[$]2[aby][$][0-9]{2}[$][./A-Za-z0-9]{53}$'
+    AND lower(email) NOT LIKE '%@example.invalid'
+    AND display_name IS DISTINCT FROM 'Deleted Account'
   LIMIT 1`;
 
 const ENABLED_OTHER_PROVIDERS_SQL = `
@@ -22,14 +24,36 @@ const ENABLED_OTHER_PROVIDERS_SQL = `
   FROM sso_providers
   WHERE enabled = TRUE
     AND slug <> $1
+    AND NOT EXISTS (
+      SELECT 1 FROM sso_providers peer
+      WHERE peer.type = sso_providers.type AND peer.enabled AND peer.slug <> sso_providers.slug
+    )
+    AND EXISTS (
+      SELECT 1 FROM external_identities ei
+      JOIN users u ON u.id = ei.user_id
+      WHERE ei.provider_slug = sso_providers.slug AND u.is_admin
+        AND lower(u.email) NOT LIKE '%@example.invalid'
+        AND u.display_name IS DISTINCT FROM 'Deleted Account'
+    )
   ORDER BY sort_order, display_name`;
 
 /**
  * @param {import('pg').Pool} pool
  * @returns {Promise<boolean>}
  */
-async function hasUsableLocalAdmin(pool) {
-  const res = await pool.query(USABLE_LOCAL_ADMIN_SQL, [SSO_NO_PASSWORD]);
+async function hasUsableLocalAdmin(pool, { lock = false, retiringSlug } = {}) {
+  const params = [SSO_NO_PASSWORD];
+  let sql = USABLE_LOCAL_ADMIN_SQL;
+  if (retiringSlug) {
+    params.push(retiringSlug);
+    sql = sql.replace("  LIMIT 1", `    AND (
+      is_admin_manual
+      OR NOT EXISTS (SELECT 1 FROM sso_system_admin_grants g WHERE g.user_id = users.id AND g.provider_slug = $2)
+      OR EXISTS (SELECT 1 FROM sso_system_admin_grants g WHERE g.user_id = users.id AND g.provider_slug <> $2)
+    )
+  LIMIT 1`);
+  }
+  const res = await pool.query(sql + (lock ? " FOR SHARE" : ""), params);
   return res.rows.length > 0;
 }
 
@@ -63,9 +87,9 @@ async function getSignInReadyProviderSlugs(pool, excludingSlug, getRuntimeStatus
  *   wouldLockOut: boolean,
  * }>}
  */
-async function evaluateLoginReachability(pool, { changingSlug, getRuntimeStatus, localAuthEnabled = true }) {
+async function evaluateLoginReachability(pool, { changingSlug, getRuntimeStatus, localAuthEnabled = true, lockLocalAdmin = false }) {
   const usableLocalAdmin = localAuthEnabled
-    ? await hasUsableLocalAdmin(pool)
+    ? await hasUsableLocalAdmin(pool, { lock: lockLocalAdmin })
     : false;
   const otherSignInReadySlugs = await getSignInReadyProviderSlugs(
     pool,

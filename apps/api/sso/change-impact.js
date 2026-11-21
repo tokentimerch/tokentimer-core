@@ -2,11 +2,13 @@
 
 const {
   evaluateLoginReachability,
+  hasUsableLocalAdmin,
 } = require("./login-reachability.js");
 const {
   getProviderRuntimeStatus,
   deriveSignInReady,
 } = require("./sso-runtime-status.js");
+const { countDependencies } = require("./provider-registry.js");
 const { buildComputedUrls } = require("./sso-computed-urls.js");
 
 async function getProviderRowLocal(pool, slug) {
@@ -108,12 +110,12 @@ async function previewProviderChangeImpact(pool, slug, proposed, { localAuthEnab
   }
 
   if (proposed.delete === true) {
-    const m = await pool.query(
-      `SELECT COUNT(*)::int AS c FROM workspace_memberships
-        WHERE source = 'sso' AND source_provider_slug = $1`,
-      [slug],
-    );
-    impact.memberships_at_risk = m.rows[0]?.c || 0;
+    impact.dependency_counts = await countDependencies(pool, slug);
+    impact.memberships_at_risk = impact.dependency_counts.memberships_count;
+    impact.requires_local_admin = Object.values(impact.dependency_counts).some((count) => count > 0);
+    impact.has_usable_local_admin = localAuthEnabled && await hasUsableLocalAdmin(pool, { retiringSlug: slug });
+    impact.is_last_login_method = impact.requires_local_admin ? !impact.has_usable_local_admin : impact.is_last_login_method;
+    impact.signInReady_after = false;
   } else {
     const { resolveProviderSecurityConfig } = require("./sso-global-settings.js");
     const effectiveStrict = resolveProviderSecurityConfig({

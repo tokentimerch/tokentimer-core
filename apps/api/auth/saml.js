@@ -9,6 +9,8 @@
 
 "use strict";
 
+const { sanitizeNextPath } = require("../sso/login-redirect.js");
+
 const { randomBytes } = require("node:crypto");
 const { resolveSessionCookieOptions } = require("../session-cookie-options");
 const { isValidEmail } = require("../utils/emailAddress");
@@ -476,7 +478,7 @@ async function setupSamlStrategy(passport, pool, SamlStrategyModule, deps = {}) 
         type: "saml",
         registered: false,
         signInReady: false,
-        reason: "provider_disabled",
+        reason: provider.disabledReason || "provider_disabled",
       });
       continue;
     }
@@ -603,15 +605,6 @@ function samlRoutes(passport, express) {
         error: err?.message,
       });
     }
-  };
-
-  const MAX_NEXT_LEN = 512;
-  const sanitizeNextPath = (raw) => {
-    if (typeof raw !== "string" || raw.length === 0) return null;
-    if (raw.length > MAX_NEXT_LEN) return null;
-    if (!raw.startsWith("/") || raw.startsWith("//")) return null;
-    if (/^\/?[a-z][a-z0-9+.-]*:/i.test(raw)) return null;
-    return raw;
   };
 
   // The IdP POST can arrive without the ordinary SameSite=Lax session cookie.
@@ -789,13 +782,7 @@ const provider = {
   routes: samlRoutes,
   samlRoutes,
   getConfigRequirements,
-  _sanitizeNextPath: (raw) => {
-    if (typeof raw !== "string" || raw.length === 0) return null;
-    if (raw.length > 512) return null;
-    if (!raw.startsWith("/") || raw.startsWith("//")) return null;
-    if (/^\/?[a-z][a-z0-9+.-]*:/i.test(raw)) return null;
-    return raw;
-  },
+  _sanitizeNextPath: sanitizeNextPath,
   _resetSamlRuntimeForTests,
   _setSamlRuntimeForTests,
   handleSamlProfile,

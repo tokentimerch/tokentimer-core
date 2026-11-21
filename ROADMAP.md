@@ -1,13 +1,13 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-20 (Core 0.20.0, main 6ec5b110).
+Last reviewed: 2026-11-21 (Core 0.20.0).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
 without gating v1.0.0, and what v1.0.0 itself changes for compatibility. Public feature cards and voting
 live on the [public feature roadmap](https://tokentimer.featurebase.app/en/roadmap).
 Release history lives in [CHANGELOG.md](CHANGELOG.md). Owners, acceptance
-criteria, and evidence live in the linked GitHub issues. The unreleased Core SSO work covers one active OIDC or SAML provider, guided setup, and group-to-role mappings, with Keycloak as the reference integration. [SSO tracking issue](https://github.com/tokentimerch/tokentimer-core/issues/766)
+criteria, and evidence live in the linked GitHub issues. Core SSO covers one active provider per protocol (OIDC and SAML), guided setup, and group-to-role mappings, with Keycloak as the reference integration. [SSO tracking issue](https://github.com/tokentimerch/tokentimer-core/issues/766)
 
 **Before v1.0.0** is 0.x work asked by pilot operators; it is a prerequisite
 for calling v1.0.0 stable, not a substitute for the RBAC contract below.
