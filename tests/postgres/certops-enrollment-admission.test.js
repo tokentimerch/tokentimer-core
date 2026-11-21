@@ -613,6 +613,52 @@ test("first store issuance remains tracking-only on proof replay until explicit 
   let period = (await pool.query("SELECT * FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL", [f.workspaceId, certificateId])).rows[0];
   assert.ok(period.renewal_profile_id, "derived profile exists");
   assert.equal(period.automation_enabled, false);
+
+  const issued = (await pool.query("SELECT * FROM managed_certificates WHERE id=$1", [certificateId])).rows[0];
+  const discoveryCredential = randomUUID();
+  const { createHash } = require("node:crypto");
+  const { agent_id: publicAgentId } = (await pool.query(
+    "UPDATE certops_agents SET credential_hash=$2 WHERE id=$1 RETURNING agent_id",
+    [f.agentId, createHash("sha256").update(discoveryCredential).digest("hex")],
+  )).rows[0];
+  const { bindAuthenticatedCredential } = require("../../apps/api/services/certops/agentCredentialFence");
+  const agent = bindAuthenticatedCredential({ id: f.agentId, agentId: publicAgentId, workspaceId: f.workspaceId }, discoveryCredential);
+  const { persistAgentDiscoveryEvidenceBatch } = require("../../apps/api/services/certops/agentObservations");
+  const thumbprint = "a".repeat(40);
+  const discover = async (sequence, storeName, keyPresent = true) => {
+    const result = await persistAgentDiscoveryEvidenceBatch({ dbPool: pool, agent, envelope: { sequence }, evidenceItems: [{
+      evidenceId: randomUUID(), eventType: "certificate.observed", observedAt: new Date().toISOString(),
+      fingerprintSha256: issued.fingerprint_sha256,
+      metadata: [
+        { name: "locationKind", value: "windows_store" },
+        { name: "locationSlot", value: `LocalMachine/${storeName}/${thumbprint}` },
+        { name: "targetHost", value: "agent-host.example.test" },
+        { name: "storeLocation", value: "LocalMachine" },
+        { name: "storeName", value: storeName },
+        { name: "thumbprint", value: thumbprint },
+        { name: "keyPresent", value: keyPresent },
+        { name: "subject", value: "CN=app.example.com" },
+        { name: "validTo", value: issued.not_after.toISOString() },
+      ],
+    }] });
+    return result.items[0];
+  };
+  const observed = await discover(1, "My");
+  assert.equal(observed.managedCertificateId, certificateId, "Store discovery must link to the proven issuance");
+  const repeated = await discover(2, "My");
+  assert.equal(repeated.managedCertificateId, certificateId);
+  assert.equal(repeated.certificateInstanceId, observed.certificateInstanceId);
+  const matching = await pool.query(`SELECT mc.id,p.id AS period_id,p.renewal_profile_id,p.automation_enabled
+    FROM managed_certificates mc JOIN certops_management_periods p ON p.workspace_id=mc.workspace_id AND p.managed_certificate_id=mc.id
+    WHERE mc.workspace_id=$1 AND mc.fingerprint_sha256=$2 AND p.ended_at IS NULL`, [f.workspaceId, issued.fingerprint_sha256]);
+  assert.deepEqual(matching.rows, [{ id: certificateId, period_id: period.id, renewal_profile_id: period.renewal_profile_id, automation_enabled: false }]);
+  const observationEvidence = await pool.query(`SELECT subject_id,metadata->>'managedCertificateId' AS certificate_id
+    FROM certificate_evidence WHERE workspace_id=$1 AND evidence_type='certificate.observed'`, [f.workspaceId]);
+  assert.deepEqual(observationEvidence.rows, Array(2).fill({ subject_id: certificateId, certificate_id: certificateId }));
+  const otherStore = await discover(3, "WebHosting");
+  assert.notEqual(otherStore.managedCertificateId, certificateId);
+  const afterDiscovery = (await pool.query("SELECT * FROM managed_certificates WHERE id=$1", [certificateId])).rows[0];
+  assert.deepEqual(afterDiscovery, issued, "discovery must preserve the verified issuance and its key reference");
   const sweep = () => scheduler.runRenewalSchedulerSweep({ dbPool: pool, env: { CERTOPS_ENABLED: "true" }, auditWriter: async () => {} });
   const automaticJobs = async () => Number((await pool.query("SELECT COUNT(*) FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2::text AND operation='renew' AND source='automation'", [f.workspaceId, certificateId])).rows[0].count);
   await sweep();
@@ -626,6 +672,23 @@ test("first store issuance remains tracking-only on proof replay until explicit 
   assert.equal(await automaticJobs(), 1);
   await sweep();
   assert.equal(await automaticJobs(), 1);
+
+  await pool.query(`INSERT INTO managed_certificates (workspace_id,status,source,source_ref,name,fingerprint_sha256,
+      key_mode,key_reference,public_metadata,deployed_agent_id)
+    SELECT workspace_id,status,source,$2,name,fingerprint_sha256,key_mode,key_reference,public_metadata,deployed_agent_id
+    FROM managed_certificates WHERE id=$1`, [certificateId, randomUUID()]);
+  const ambiguous = await discover(4, "My");
+  assert.equal(ambiguous.unmanaged, true, "ambiguous issuance retains the observation without selecting an owner");
+  assert.equal(ambiguous.managedCertificateId, null);
+  const beforeNoKey = await pool.query("SELECT source FROM managed_certificates WHERE workspace_id=$1 AND fingerprint_sha256=$2 ORDER BY source",
+    [f.workspaceId, issued.fingerprint_sha256]);
+  assert.deepEqual(beforeNoKey.rows.map(row => row.source), ["agent_issuance", "agent_issuance", "agent_windows"]);
+
+  const noKey = await discover(5, "My", false);
+  assert.notEqual(noKey.managedCertificateId, certificateId);
+  assert.deepEqual((await pool.query(`SELECT mc.key_mode,p.renewal_profile_id,p.automation_enabled
+    FROM managed_certificates mc JOIN certops_management_periods p ON p.managed_certificate_id=mc.id
+    WHERE mc.id=$1`, [noKey.managedCertificateId])).rows, [{ key_mode: null, renewal_profile_id: null, automation_enabled: false }]);
 });
 
 test("orphaned first store issuance recovers only on its original agent", async () => {
