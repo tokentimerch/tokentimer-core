@@ -268,6 +268,61 @@ describe("store-only qualification boundary", () => {
       assert.match(result.errorMessage, /not qualified/);
     }
   });
+
+  it("authorizes a Store renewal's IIS consumer through the live claim client", async (t) => {
+    const capabilities = require("./capabilities");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tt-store-consent-"));
+    const manifestPath = path.join(directory, "qualified.cjs");
+    fs.writeFileSync(manifestPath, 'module.exports = { qualified: ["windows-store-iis-consumers-v1"] };');
+    capabilities._setManifestModulePathForTests(manifestPath);
+    t.after(() => {
+      capabilities._resetQualifiedCapabilitiesCacheForTests();
+      fs.unlinkSync(manifestPath);
+      fs.rmdirSync(directory);
+    });
+
+    const jobId = "a8b3d87b-b4f6-4aa2-b22e-c388ab00ccbc";
+    const claimId = "a42f2a64-78b8-4cf7-9e7c-f7a92a15b8ae";
+    const consumerId = "ad3a786b-5665-4f72-aa41-b5e7bc9a13fe";
+    const enrollmentId = "7aa5ff6e-9601-46da-92ba-5e809aecfe76";
+    const evidence = [];
+    const authorization = { jobId, claimId, consumerId, authorizationRevision: 1 };
+    const leaseClient = {
+      authorizeIisConsumer(request) {
+        assert.deepEqual(request, authorization);
+        return Promise.resolve(true);
+      },
+    };
+    const fingerprintSha256 = new crypto.X509Certificate(TEST_CERT_PEM)
+      .fingerprint256.replaceAll(":", "").toLowerCase();
+    t.mock.method(require("./windows-cert-store/store-only"), "installStoreOnlyCertificate",
+      () => Promise.resolve({ status: "succeeded", storeProof: { fingerprintSha256 } }));
+    t.mock.method(require("./windows-iis/store-consumer-tail"), "runStoreConsumerTail",
+      async ({ client, reportOutcome }) => {
+        assert.equal(await client.authorizeIisConsumer(authorization), true);
+        await reportOutcome({ id: consumerId, ok: true });
+        return { allAttempted: true, outcomes: [{ ok: true }] };
+      });
+
+    const result = await runWindowsIisDeployTail({
+      jobId,
+      client: {
+        reportEvidence(body) {
+          evidence.push(body);
+          return Promise.resolve();
+        },
+      },
+      certificatePem: TEST_CERT_PEM,
+      target: { type: "windows-cert-store", reference: "app.example.test", store: "My" },
+      leaseOpts: { leaseClient, jobId, claimId },
+      storeEnrollmentId: enrollmentId,
+      storeDestinationSha256: "ab".repeat(32),
+      storeConsumerSnapshot: { iisConsumers: [{ consumerId, authorizationRevision: 1 }] },
+    });
+    assert.deepEqual(result, { status: "succeeded", keyRotated: null });
+    assert.equal(evidence.length, 2);
+    assert.ok(evidence.every((body) => body.claimId === claimId));
+  });
 });
 
 describe("buildJobPolicyDescriptor", () => {
