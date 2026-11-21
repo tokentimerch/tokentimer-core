@@ -21,6 +21,8 @@ if ($protectedRenames.Count -ne 2) { throw 'Both package renames must be inside 
 $callers = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Activate-StagedPackage' }, $true))
 if ($callers.Count -ne 1) { throw 'Production installer must invoke the tested package activation function exactly once' }
 Invoke-Expression $functionAst.Extent.Text
+# Match the standalone installer session without running installer top-level code.
+$script:AuthorizedLauncherTransaction = $null
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;

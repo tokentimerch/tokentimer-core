@@ -60,6 +60,8 @@ foreach($name in @('Test-PackageCopyExclusion','Copy-PackageTree','Activate-Stag
  if($definition.Count -ne 1){throw 'Missing unique production activation function'}
  Invoke-Expression $definition[0].Extent.Text
 }
+# Match the standalone installer session without running installer top-level code.
+$script:AuthorizedLauncherTransaction = $null
 Add-Type @'
 using System;
 using System.Collections.Concurrent;
