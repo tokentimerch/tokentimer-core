@@ -339,6 +339,8 @@ describe("CertOps handleCertOpsError status mapping", () => {
   // client-input problem behind a server-error status.
   const cases = [
     ["CERTOPS_ENROLLMENT_OPEN", 409],
+    ["CERTOPS_ACME_STORE_INVALID", 400],
+    ["CERTOPS_ACME_STORE_ORDER_UNCERTAIN", 409],
     ["CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED", 409],
     ["CERTOPS_JOB_METADATA_INVALID", 400],
     ["CERTOPS_JOB_EXECUTION_FIELD_INVALID", 400],
