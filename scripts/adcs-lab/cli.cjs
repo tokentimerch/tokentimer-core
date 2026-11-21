@@ -311,7 +311,7 @@ async function main() {
       JSON.stringify(
         {
           email: state.email,
-          password: state.password,
+          stateFile,
           workspaceId: state.workspaceId,
         },
         null,

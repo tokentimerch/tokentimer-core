@@ -34,8 +34,9 @@ Node services run in hidden background processes; the same commands work on
 Windows and Linux. Linux CI installs Chromium system dependencies with
 `pnpm exec playwright install --with-deps chromium`.
 
-- Dashboard: **http://localhost:55174**. Sign in with the email/password returned
-  by `credentials`; select **SIMULATED AD CS — developer lab**.
+- Dashboard: **http://localhost:55174**. Run `credentials` for the email and
+  the private state-file path. Read the password from that file locally, then
+  sign in and select **SIMULATED AD CS — developer lab**.
 - API: **http://localhost:55471**.
 - SMTP mailbox: **http://localhost:18025**; SMTP submission is loopback port
   **11025**. All recipients use reserved `example.test` identities.
@@ -51,9 +52,8 @@ issuer. Click **Check again**, choose that scenario's simulated agent, then
 separate from readiness; only an explicit operator confirmation pins the key.
 
 Credentials live in `.tmp/adcs-local-lab/private-state.json` with restrictive
-creation permissions. Never commit/share that file, browser storage state or
-the credential command's output. No customer keys or protected lab credentials
-are read. Public CA facts and renewed certificate metadata are synthetic.
+creation permissions. Keep that file and browser storage state private.
+No customer keys or protected lab credentials are read. Public CA facts and renewed certificate metadata are synthetic.
 
 ## Controls
 
