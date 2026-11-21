@@ -146,7 +146,7 @@ $lock = $source.IndexOf('Enter-AgentInstallLock }')
 $recovery = $source.IndexOf('            Recover-InterruptedUpgrade')
 $stateGuard = $source.IndexOf("if (`$script:RequiresBundledRuntime) { Fail 'existing agent state appeared; preserve it for inspection' }")
 if ($gate -le $lock -or $stateGuard -le $gate -or $recovery -le $stateGuard) { throw 'fresh guard must precede state/recovery mutations under the install lock' }
-$genericRoot = 'New-Item -ItemType Directory -Force -Path $InstallRoot'
+$genericRoot = 'Initialize-ProtectedPackageRoot -Path $InstallRoot'
 if (-not $source.Contains($genericRoot) -or -not $source.Contains('-FreshOnly:$script:RequiresBundledRuntime')) { throw 'generic path or fresh-only activation flag missing' }
 $serviceBlock = [regex]::Match($source,'(?s)if \(\$script:RequiresBundledRuntime\) \{\s*# New-Service fails.*?\n\} else \{')
 if (-not $serviceBlock.Success -or $serviceBlock.Value.Contains('Set-ServiceBinaryPath')) { throw 'bundled installation must exclusively create the service' }
