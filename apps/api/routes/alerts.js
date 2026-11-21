@@ -1801,6 +1801,12 @@ router.post(
           code: "VALIDATION_ERROR",
         });
       }
+      if (process.env.NODE_ENV === "production" && target.protocol !== "https:") {
+        return res.status(400).json({
+          error: "In production, only HTTPS webhook URLs are allowed",
+          code: "WEBHOOK_INVALID_URL",
+        });
+      }
 
       const normalizeSeverity = (raw) => {
         const s = String(raw || "").toLowerCase();

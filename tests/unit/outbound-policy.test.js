@@ -142,6 +142,29 @@ test("API integration validation denies before resolution even when private addr
   assert.deepEqual(await checkIntegrationAddress(new URL("https://vault.corp.example"), { lookup }), { allowed: true });
 });
 
+test("the production webhook test rejects HTTP before sending", async (t) => {
+  const router = require("../../apps/api/routes/alerts");
+  const route = router.stack.find(({ route }) => route?.path === "/api/test-webhook").route;
+  const previous = process.env.NODE_ENV;
+  t.after(() => {
+    if (previous === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previous;
+  });
+  process.env.NODE_ENV = "production";
+
+  let status;
+  let result;
+  await route.stack.at(-1).handle({
+    user: { id: -789 },
+    body: { url: "http://webhook.example.invalid", kind: "generic" },
+  }, {
+    status(code) { status = code; return this; },
+    json(body) { result = body; },
+  });
+  assert.equal(status, 400);
+  assert.equal(result.code, "WEBHOOK_INVALID_URL");
+});
+
 test("webhook transport and Vault fetch share the policy before network I/O", async (t) => {
   setPolicy(t, { offline: "true", allowlist: "other.example" });
   process.env.WEBHOOK_ALLOW_PRIVATE_IPS = "true";

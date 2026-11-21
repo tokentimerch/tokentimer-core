@@ -151,6 +151,31 @@ describe("Endpoint check worker integration", function () {
 
       await runEndpointWorker(policy);
       expect((await readState()).check_claimed_until).to.deep.equal(blocked.check_claimed_until);
+      const updateInterval = (interval) =>
+        request(BASE)
+          .put(`/api/v1/workspaces/${workspaceId}/domains/${monitor.id}`)
+          .set("Cookie", session.cookie)
+          .send({ check_interval: interval })
+          .expect(200);
+
+      await updateInterval("daily");
+      expect((await readState()).check_claimed_until).to.deep.equal(blocked.check_claimed_until);
+
+      await updateInterval("1min");
+      const rescheduled = await readState();
+      expect(rescheduled.check_claimed_until).to.equal(null);
+      expect(rescheduled.last_health_check_at).to.deep.equal(monitor.last_health_check_at);
+
+      const { rows: [lease] } = await TestUtils.execQuery(
+        `UPDATE domain_monitors
+            SET check_claim_id = gen_random_uuid(), check_claimed_until = NOW() + INTERVAL '5 minutes'
+          WHERE id = $1 RETURNING check_claim_id, check_claimed_until`,
+        [monitor.id],
+      );
+      await updateInterval("5min");
+      const owned = await readState();
+      expect(owned.check_claim_id).to.equal(lease.check_claim_id);
+      expect(owned.check_claimed_until).to.deep.equal(lease.check_claimed_until);
     } finally {
       await TestUtils.execQuery("DELETE FROM domain_monitors WHERE id = $1", [monitor.id]);
     }

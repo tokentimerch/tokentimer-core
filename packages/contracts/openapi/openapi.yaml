@@ -4627,7 +4627,9 @@ paths:
       summary: Send test webhook
       operationId: sendTestWebhook
       description: >-
-        Sends a test webhook payload to validate destination settings. For
+        Sends a test webhook payload to validate destination settings.
+        Production requires HTTPS for both testing and delivery. An HTTP URL
+        is rejected with status 400 and code WEBHOOK_INVALID_URL. For
         non-generic kinds (slack, teams, discord, pagerduty) the destination
         host must match the built-in provider allowlist (Slack, Discord,
         Teams, PagerDuty, and Power Automate/Logic Apps hosts) or a host added

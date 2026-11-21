@@ -1999,6 +1999,12 @@ router.post(
            SET validated = $1, validated_at = $2, ssl_issuer = $3, ssl_subject = $4,
                ssl_valid_from = $5, ssl_valid_to = $6, ssl_serial = $7, ssl_fingerprint = $8,
                health_check_enabled = $9, check_interval = $10, alert_after_failures = $11,
+               check_claimed_until = CASE
+                 WHEN check_claim_id IS NULL AND
+                   ROW(health_check_enabled, check_interval) IS DISTINCT FROM ROW($9::boolean, $10::text)
+                   THEN NULL
+                 ELSE check_claimed_until
+               END,
                updated_at = NOW()
            WHERE id = $12
            RETURNING *`,
@@ -2189,6 +2195,13 @@ router.put(
         `UPDATE domain_monitors
          SET health_check_enabled = COALESCE($1, health_check_enabled),
              check_interval = COALESCE($2, check_interval),
+             check_claimed_until = CASE
+               WHEN check_claim_id IS NULL AND
+                 ROW(health_check_enabled, check_interval) IS DISTINCT FROM
+                   ROW(COALESCE($1, health_check_enabled), COALESCE($2, check_interval))
+                 THEN NULL
+               ELSE check_claimed_until
+             END,
              updated_at = NOW()
          WHERE id = $3 AND workspace_id = $4
          RETURNING *`,
