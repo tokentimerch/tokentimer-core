@@ -1318,12 +1318,29 @@ test("IIS consent requires a fresh matching Store agent and rejects existing ren
       windows_store,windows_site,windows_port,public_metadata)
     VALUES($1,'IIS','windows-iis','agent_windows',$2,'iis_binding','My','Default Web Site',443,$3::jsonb) RETURNING id`,
     [f.workspaceId,randomUUID(),JSON.stringify({ agentId: agent.agent_id })])).rows[0];
+  const sourceRef = randomUUID();
+  // A native rebind keeps the selector and replaces the fingerprint. The
+  // inventory trigger stamps absence on the old row at the same instant,
+  // and UUID order alone would choose the old row in this fixture.
+  const priorFingerprint = randomBytes(32).toString("hex");
+  await pool.query(`INSERT INTO certificate_instances(id,workspace_id,managed_certificate_id,target_id,status,source,source_ref,
+      location_kind,observed_fingerprint_sha256,observed_at)
+    VALUES('ffffffff-ffff-4fff-bfff-ffffffffffff',$1,$2,$3,'discovered','agent_windows',$4,'iis_binding',$5,NOW()-interval '1 minute')`,
+    [f.workspaceId,bindingCert.id,target.id,sourceRef,priorFingerprint]);
   await pool.query(`INSERT INTO certificate_instances(workspace_id,managed_certificate_id,target_id,status,source,source_ref,
       location_kind,observed_fingerprint_sha256,observed_at) VALUES($1,$2,$3,'discovered','agent_windows',$4,'iis_binding',$5,NOW())`,
-    [f.workspaceId,bindingCert.id,target.id,randomUUID(),f.certificate.fingerprint_sha256]);
+    [f.workspaceId,bindingCert.id,target.id,sourceRef,f.certificate.fingerprint_sha256]);
+  const capture = await pool.query(`SELECT presence_state,captured_at FROM certificate_instances
+    WHERE workspace_id=$1 AND target_id=$2 ORDER BY presence_state`, [f.workspaceId,target.id]);
+  assert.deepEqual(capture.rows.map(row => row.presence_state), ["confirmed_absent","confirmed_present"]);
+  assert.deepEqual(capture.rows[0].captured_at, capture.rows[1].captured_at);
+
   const client = await pool.connect();
-  const { enableWindowsIisConsumer } = require('../../apps/api/services/certops/windowsIisConsent');
+  const { assertIndependentIisTarget, enableWindowsIisConsumer } = require('../../apps/api/services/certops/windowsIisConsent');
   try {
+    await assert.rejects(assertIndependentIisTarget({ client, workspaceId: f.workspaceId, agentId: f.agentId,
+      target: { type: "windows-iis", store: "My", reference: profileTarget.reference, binding: { site: "Default Web Site", port: 443 } },
+    }), error => error.code === "CERTOPS_WINDOWS_CONSENT_REFUSED");
     await pool.query("UPDATE certificate_targets SET public_metadata=public_metadata || '{\"observationOnly\":true,\"boundAddress\":\"192.0.2.10\"}'::jsonb WHERE id=$1", [target.id]);
     await client.query('BEGIN');
     await assert.rejects(enableWindowsIisConsumer({ client, workspaceId: f.workspaceId, periodId: period.id,
@@ -1346,6 +1363,7 @@ test("IIS consent requires a fresh matching Store agent and rejects existing ren
     const listed=await require('../../apps/api/services/certops/windowsIisConsent').listWindowsRenewal({ client,workspaceId:f.workspaceId,identityId:identity });
     assert.equal(listed.groups.length,1);
     assert.equal(listed.groups[0].bindings[0].automaticUpdate,true);
+    assert.equal(listed.groups[0].bindings[0].relationship,"observed");
     const enrollment = await manual(f, { target: profileTarget });
     const claim = randomUUID();
     await pool.query(`UPDATE certificate_jobs SET status='running',claimed_by_agent_id=$2,claim_id=$3,
