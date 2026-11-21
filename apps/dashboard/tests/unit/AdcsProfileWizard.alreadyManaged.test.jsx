@@ -158,6 +158,7 @@ describe('AD CS wizard when the certificate is already managed', () => {
       groups: [
         {
           profileId: 'store-profile',
+          managedCertificateId: 'store',
           ready: true,
           ambiguous: false,
           bindings: [{ managedCertificateId: 'iis', relationship: 'observed' }],
@@ -170,6 +171,13 @@ describe('AD CS wizard when the certificate is already managed', () => {
           identityId: 'identity-1',
           commonName: 'app.example',
           sources: [
+            {
+              managedCertificateId: 'store',
+              source: 'agent_windows',
+              currentIdentityId: 'identity-1',
+              startedAt: '2026-09-01T00:00:00Z',
+              periodId: 'other-period',
+            },
             {
               managedCertificateId: 'iis',
               source: 'agent_windows',
@@ -205,7 +213,7 @@ describe('AD CS wizard when the certificate is already managed', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Review' }));
     fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
     expect(
-      await screen.findByText(/managed by its Windows Store registration/)
+      await screen.findByText(/Choose a Windows Store renewal profile/)
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Attach and enable automation' })

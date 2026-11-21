@@ -1342,6 +1342,10 @@ test("management attachment refuses a second renewal owner before IIS consent ex
 
   assert.equal(Number((await pool.query("SELECT count(*) FROM certops_windows_iis_renewal_consumers WHERE workspace_id=$1",
     [f.workspaceId])).rows[0].count), 0);
+  await assert.rejects(replace(f.certificate.id, iisProfile.id), refused);
+  const stillStore = await pool.query(`SELECT renewal_profile_id FROM certops_management_periods
+    WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL`, [f.workspaceId, f.certificate.id]);
+  assert.equal(stillStore.rows[0].renewal_profile_id, storeProfile.id);
   await assert.rejects(replace(binding.id, iisProfile.id), refused);
   const stillTracked = await pool.query(`SELECT renewal_profile_id FROM certops_management_periods
     WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL`, [f.workspaceId, binding.id]);

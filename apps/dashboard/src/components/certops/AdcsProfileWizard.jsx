@@ -349,6 +349,11 @@ function ProfileWizard({ isOpen, onClose, workspaceId, issuers, onCreated }) {
                 : item
             );
         } else {
+          const storeIds = new Set(
+            matches.flatMap(item =>
+              item.groups.map(group => group.managedCertificateId)
+            )
+          );
           const dependentIds = new Set(
             matches.flatMap(item =>
               (item.groups || [])
@@ -379,11 +384,13 @@ function ProfileWizard({ isOpen, onClose, workspaceId, issuers, onCreated }) {
             ),
           ]);
           next = next.map(target =>
-            dependentIds.has(target.managedCertificateId)
-              ? { ...target, canAttach: false, storeOwned: true }
-              : unresolvedIds.has(target.managedCertificateId)
-                ? { ...target, canAttach: false, ownershipUnknown: true }
-                : target
+            storeIds.has(target.managedCertificateId)
+              ? { ...target, canAttach: false, storeRegistration: true }
+              : dependentIds.has(target.managedCertificateId)
+                ? { ...target, canAttach: false, storeOwned: true }
+                : unresolvedIds.has(target.managedCertificateId)
+                  ? { ...target, canAttach: false, ownershipUnknown: true }
+                  : target
           );
         }
         setTargets(next);
@@ -532,7 +539,7 @@ function ProfileWizard({ isOpen, onClose, workspaceId, issuers, onCreated }) {
         <ModalHeader {...modal.headerProps}>
           <DashboardModalTitle>New AD CS renewal profile</DashboardModalTitle>
           <DashboardModalDescription>
-            Choose a confirmed issuer, describe the IIS binding, then attach the
+            Choose a confirmed issuer and renewal destination, then attach the
             profile to a certificate already in inventory.
           </DashboardModalDescription>
         </ModalHeader>
@@ -878,7 +885,9 @@ function ProfileWizard({ isOpen, onClose, workspaceId, issuers, onCreated }) {
                   <Alert status='warning' borderRadius='md'>
                     <AlertIcon />
                     <AlertDescription fontSize='sm'>
-                      {blocked[0].ownershipUnknown ? (
+                      {blocked[0].storeRegistration ? (
+                        'Choose a Windows Store renewal profile for this registration. Configure IIS updates separately.'
+                      ) : blocked[0].ownershipUnknown ? (
                         'IIS renewal ownership cannot be confirmed. Check the Windows renewal settings before attaching this profile.'
                       ) : blocked[0].storeOwned ? (
                         'Renewal for this IIS binding is managed by its Windows Store registration. Configure IIS updates there.'
