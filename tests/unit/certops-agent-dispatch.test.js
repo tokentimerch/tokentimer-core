@@ -81,8 +81,14 @@ function createMockPool(handler) {
   };
   const client = {
     query: async (text, params) => {
-      if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
+      if (sql.includes("certops_managed_cert_quota_")) {
+        return { rows: sql.includes("pg_try_advisory_xact_lock") ? [{ locked: true }] : [] };
+      }
+      if (sql.includes("FROM certops_windows_iis_renewal_consumers c") ||
+          (sql.includes("FROM certops_agents a") && sql.includes("latest.presence_state IS DISTINCT FROM 'confirmed_absent'"))) {
+        return { rows: [] };
+      }
       state.queries.push({ text: sql, params });
       const trimmed = sql.trim().toUpperCase();
       if (

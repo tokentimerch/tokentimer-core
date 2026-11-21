@@ -2,6 +2,8 @@
 
 const { WINDOWS_SNI_HOST_PATTERN } = require("./renewalProfile");
 
+const IIS_STORE_OWNERSHIP_CHANGED = "CERTOPS_IIS_STORE_OWNERSHIP_CHANGED";
+
 // A hostname SNI selector covers every listening IP, so its site name is not
 // part of the key. IP-keyed bindings include the actual listener address.
 function iisSelectorKey(binding) {
@@ -113,4 +115,4 @@ function planPendingCutovers({ owner, bindings, agentOnline, predecessorSha256, 
   });
 }
 
-module.exports = { classifyBinding, classifyPendingCutover, iisSelectorKey, planPendingCutovers };
+module.exports = { IIS_STORE_OWNERSHIP_CHANGED, classifyBinding, classifyPendingCutover, iisSelectorKey, planPendingCutovers };

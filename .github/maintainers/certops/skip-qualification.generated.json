@@ -701,7 +701,7 @@
     {
       "id": "b45f65881e8f3ba572b1",
       "file": "packages/agent/src/index.test.js",
-      "line": 4347,
+      "line": 4402,
       "name": "refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities",
       "kind": "it(..., { skip }) option-object",
       "reason": "platform",

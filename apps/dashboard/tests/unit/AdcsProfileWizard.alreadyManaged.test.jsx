@@ -46,7 +46,10 @@ const alreadyOpen = conflict({
   currentPeriod: { periodId: OPEN_PERIOD, managementMode: 'automatic' },
 });
 
-async function openAtAttachStep(sources, expectAttach = true) {
+async function openAtAttachStep(
+  sources,
+  { destination = 'windows-iis', blockedMessage } = {}
+) {
   listCertificates.mockResolvedValue({
     items: [
       {
@@ -71,16 +74,22 @@ async function openAtAttachStep(sources, expectAttach = true) {
   fireEvent.change(screen.getByLabelText('Certificate name'), {
     target: { value: 'app.example' },
   });
-  fireEvent.change(screen.getByLabelText('IIS site'), {
-    target: { value: 'Default Web Site' },
-  });
-  fireEvent.change(screen.getByLabelText('IIS port'), {
-    target: { value: '443' },
-  });
+  if (destination === 'windows-cert-store') {
+    fireEvent.change(screen.getByLabelText('Renewal destination'), {
+      target: { value: destination },
+    });
+  } else {
+    fireEvent.change(screen.getByLabelText('IIS site'), {
+      target: { value: 'Default Web Site' },
+    });
+    fireEvent.change(screen.getByLabelText('IIS port'), {
+      target: { value: '443' },
+    });
+  }
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
-  if (!expectAttach) {
-    await screen.findByText(/No certificate in inventory uses app.example/);
+  if (blockedMessage) {
+    await screen.findByText(blockedMessage);
     expect(
       screen.queryByRole('button', { name: 'Attach and enable automation' })
     ).not.toBeInTheDocument();
@@ -122,10 +131,185 @@ const staleInventory = [
   },
 ];
 
+const issuedRegistration = {
+  managedCertificateId: 'issued',
+  source: 'agent_issuance',
+  currentIdentityId: 'identity-1',
+  startedAt: '2026-09-01T00:00:00Z',
+  periodId: OPEN_PERIOD,
+};
+
+const stoppedIssuedRegistration = {
+  ...issuedRegistration,
+  periodEndedAt: '2026-09-02T00:00:00Z',
+  endedAt: '2026-09-02T00:00:00Z',
+};
+
 describe('AD CS wizard when the certificate is already managed', () => {
   beforeEach(() => {
     replaceCalls.length = 0;
     replaceResults = [];
+    getWindowsRenewal.mockReset().mockResolvedValue({ groups: [] });
+  });
+
+  it('offers an issued Store registration for Store renewal', async () => {
+    getWindowsRenewal.mockResolvedValue({
+      groups: [{ managedCertificateId: 'issued' }],
+    });
+    const attach = await openAtAttachStep([issuedRegistration], {
+      destination: 'windows-cert-store',
+    });
+    expect(attach).toBeInTheDocument();
+    expect(getWindowsRenewal).toHaveBeenCalledWith('ws-1', 'identity-1');
+  });
+
+  it('blocks independent IIS renewal on an issued Store registration', async () => {
+    getWindowsRenewal.mockResolvedValue({
+      groups: [{ managedCertificateId: 'issued' }],
+    });
+    await openAtAttachStep([issuedRegistration], {
+      blockedMessage: /Choose a Windows Store renewal profile/,
+    });
+  });
+
+  it('withholds attachment when Windows ownership for an issued registration cannot be loaded', async () => {
+    getWindowsRenewal.mockRejectedValue(new Error('ownership unavailable'));
+    await openAtAttachStep([issuedRegistration], {
+      blockedMessage: /Windows renewal ownership cannot be confirmed/,
+    });
+  });
+
+  it('re-adds a stopped Store-issued registration with a Store profile', async () => {
+    getWindowsRenewal.mockResolvedValue({
+      groups: [],
+      issuedStoreRegistrationIds: ['issued'],
+    });
+    replaceResults = [{ stopped: null, readded: {} }];
+    const attach = await openAtAttachStep([stoppedIssuedRegistration], {
+      destination: 'windows-cert-store',
+    });
+    fireEvent.click(attach);
+    await waitFor(() => expect(replaceCalls).toHaveLength(1));
+    expect(replaceCalls[0]).toEqual([
+      'ws-1',
+      'issued',
+      {
+        periodId: null,
+        renewalProfileId: 'profile-1',
+        automationEnabled: true,
+      },
+    ]);
+  });
+
+  it('blocks an independent IIS profile on a stopped Store-issued registration', async () => {
+    getWindowsRenewal.mockResolvedValue({
+      groups: [],
+      issuedStoreRegistrationIds: ['issued'],
+    });
+    await openAtAttachStep([stoppedIssuedRegistration], {
+      blockedMessage: /Choose a Windows Store renewal profile/,
+    });
+  });
+
+  it('keeps an issued registration eligible for IIS when it has no Store ownership', async () => {
+    getWindowsRenewal.mockResolvedValue({
+      groups: [],
+      issuedStoreRegistrationIds: [],
+    });
+    const attach = await openAtAttachStep([stoppedIssuedRegistration]);
+    expect(attach).toBeInTheDocument();
+    expect(getWindowsRenewal).toHaveBeenCalledWith('ws-1', 'identity-1');
+  });
+
+  it('does not call Windows ownership for an unrelated filesystem registration', async () => {
+    getWindowsRenewal.mockRejectedValue(new Error('older API'));
+    expect(await openAtAttachStep(staleInventory)).toBeInTheDocument();
+    expect(getWindowsRenewal).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unrelated filesystem registration usable when Windows ownership fails', async () => {
+    getWindowsRenewal.mockRejectedValue(new Error('older API'));
+    const attach = await openAtAttachStep([
+      ...staleInventory,
+      {
+        managedCertificateId: 'iis',
+        source: 'agent_windows',
+        currentIdentityId: 'identity-1',
+        startedAt: '2026-09-01',
+        periodId: OPEN_PERIOD,
+      },
+    ]);
+    expect(attach).toBeInTheDocument();
+    expect(
+      await screen.findByText(/ownership cannot be confirmed/)
+    ).toBeInTheDocument();
+  });
+
+  it('does not attach an IIS profile to a binding owned by a Store renewal', async () => {
+    getWindowsRenewal.mockResolvedValue({
+      groups: [
+        {
+          profileId: 'store-profile',
+          managedCertificateId: 'store',
+          ready: true,
+          ambiguous: false,
+          bindings: [{ managedCertificateId: 'iis', relationship: 'observed' }],
+        },
+      ],
+    });
+    listCertificates.mockResolvedValue({
+      items: [
+        {
+          identityId: 'identity-1',
+          commonName: 'app.example',
+          sources: [
+            {
+              managedCertificateId: 'store',
+              source: 'agent_windows',
+              currentIdentityId: 'identity-1',
+              startedAt: '2026-09-01T00:00:00Z',
+              periodId: 'other-period',
+            },
+            {
+              managedCertificateId: 'iis',
+              source: 'agent_windows',
+              currentIdentityId: 'identity-1',
+              startedAt: '2026-09-01T00:00:00Z',
+              periodId: OPEN_PERIOD,
+            },
+          ],
+        },
+      ],
+    });
+    render(
+      <ChakraProvider>
+        <WizardHost />
+      </ChakraProvider>
+    );
+    fireEvent.change(screen.getByLabelText('Profile name'), {
+      target: { value: 'IIS profile' },
+    });
+    fireEvent.change(screen.getByLabelText('AD CS issuer'), {
+      target: { value: 'issuer-1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.change(screen.getByLabelText('Certificate name'), {
+      target: { value: 'app.example' },
+    });
+    fireEvent.change(screen.getByLabelText('IIS site'), {
+      target: { value: 'Default Web Site' },
+    });
+    fireEvent.change(screen.getByLabelText('IIS port'), {
+      target: { value: '443' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
+    expect(
+      await screen.findByText(/Choose a Windows Store renewal profile/)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Attach and enable automation' })
+    ).not.toBeInTheDocument();
   });
 
   it('attaches an ended period returned by the grouped certificate API', async () => {
@@ -180,7 +364,7 @@ describe('AD CS wizard when the certificate is already managed', () => {
             ...fields,
           },
         ],
-        false
+        { blockedMessage: /No certificate in inventory uses app.example/ }
       );
       expect(replaceCalls).toHaveLength(0);
     }

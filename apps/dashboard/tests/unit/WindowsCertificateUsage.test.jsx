@@ -62,8 +62,38 @@ it('locks opt-in for a conflicting profile and never offers an independent renew
     ],
   });
   expect(screen.getByRole('checkbox')).toBeDisabled();
-  expect(screen.getByText(/Existing IIS renewal profile/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/Detach the IIS renewal profile/)
+  ).toBeInTheDocument();
   expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+});
+it('identifies the issued Store registration and locks renewal edits while a duplicate is managed', () => {
+  show({
+    groups: [
+      { ...group, duplicateRole: 'issued', ambiguous: true, bindings: [] },
+      {
+        ...group,
+        periodId: 'duplicate',
+        duplicateRole: 'observed',
+        ambiguous: true,
+        bindings: [],
+        readinessReason:
+          'Review the duplicate in Advanced registrations and history.',
+      },
+    ],
+  });
+  expect(screen.getByText(/Issued by TokenTimer/)).toBeInTheDocument();
+  expect(
+    screen.getByText('Duplicate Windows Store observation')
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/Advanced registrations and history/)
+  ).toBeInTheDocument();
+  for (const button of screen.getAllByRole('button', {
+    name: 'Renewal settings',
+  })) {
+    expect(button).toBeDisabled();
+  }
 });
 it('keeps separate Store owners per agent even for the same wildcard certificate', () => {
   show({

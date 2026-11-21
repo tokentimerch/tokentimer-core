@@ -42,6 +42,7 @@ export default function AdcsPreflightReadiness({ issuer }) {
     const timer = setInterval(() => setNow(Date.now()), 15000);
     return () => clearInterval(timer);
   }, []);
+  const hasProjection = Array.isArray(issuer.renewalReadiness?.checks);
   const checks = issuer.renewalReadiness?.checks?.length
     ? issuer.renewalReadiness.checks
     : issuer.preflightRefresh || [];
@@ -79,10 +80,15 @@ export default function AdcsPreflightReadiness({ issuer }) {
             {check.action ? ` ${check.action}` : ''}
           </Text>
         ))
-      ) : (
+      ) : hasProjection ? (
         <Text>
           Preflight required. A check is requested automatically when renewal is
           due.
+        </Text>
+      ) : (
+        <Text>
+          Renewal readiness is unavailable. Check the issuer and agent before
+          renewal.
         </Text>
       )}
     </VStack>
