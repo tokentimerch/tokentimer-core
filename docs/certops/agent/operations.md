@@ -10,6 +10,19 @@ Configuration changes do not require a replacement registration. After restart, 
 
 A retired identity cannot register again with a new bootstrap token: the control plane returns `CERTOPS_AGENT_REGISTRATION_CONFLICT` without consuming that token or overwriting working state. A replacement needs a new `agentId` and separate protected state. Coordinate any installed Windows service handoff and custody migration separately; registering an independent replacement process does not transfer the predecessor's jobs, journals, or keys.
 
+## Recover a failed job
+
+Check the agent log, protected journal, CA order and live endpoint. Record the original job ID and any certificate fingerprint.
+
+- **The result is awaiting delivery.** Restore connectivity or restart the same enrolled agent. Let its outbox deliver the original result while the control plane can still accept it.
+- **The job failed before making changes.** Fix the cause, confirm the original attempt is terminal and no issuance or deployment occurred, then submit new work.
+- **The certificate was issued.** Deploy the existing certificate when its key is usable. If it is already installed, finish the missing reload and verify the live endpoint. If the endpoint already serves it, re-scan and record the result.
+- **The effects are uncertain.** Hold new work for the affected certificate until you can reconcile the evidence.
+
+### Replace a lost host
+
+If the original host is recoverable with its protected state intact, repair that agent and reconcile its jobs. For a lost host, hold affected renewals and check surviving CA, inventory and endpoint evidence. Retire the old fleet row after its jobs finish. If the host is gone and a lease blocks retirement, [force-retire with a reason](#forced-agent-retirement-and-in-flight-work) and reconcile the orphaned jobs. Enroll the replacement with a new `agentId` and separate protected state, then retarget renewal and deployment. Recover keys through approved custody procedures. Reissue if the old key is unavailable, including a non-exportable key on the lost host. [Verify the live endpoint](../verify-live-service.md) before resuming renewals.
+
 <a id="9-troubleshooting"></a>
 
 ## Troubleshooting
@@ -251,6 +264,10 @@ CERTOPS_CAPABILITY_FRESHNESS_MS.
 Upgrade the control plane before agents. Download and verify the new package, then re-run the platform installer using the same settings. The installer still asks for a bootstrap token on an upgrade: a registered agent keeps its credential and does not use it, so paste any value that starts with `ttboot_` (or set `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_unused`). Preserve config, credentials, signing pins, keys, and journals. Confirm a fresh heartbeat and compatibility before dispatching real work.
 
 Retire the agent in the fleet panel after its jobs finish. `install-agent.sh --uninstall` or `install-agent.ps1 --uninstall` removes the service and app while preserving state. Review and back up custody and recovery state before any manual deletion.
+
+### Unattended Windows upgrades
+
+Stage the checksum-verified classic package separately. Run the installer elevated and noninteractively with the enrolled API URL and workspace ID. With the enrolled credential present, set `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_unused` for the installer process. Advance from a small batch after exit `0` and a fresh, compatible heartbeat from each original fleet row at the target version. After a nonzero exit or interruption, pause and record the service status and installed version. Preserve state and recovery directories, confirm which version is running, and [reconcile uncertain jobs](#9-troubleshooting) before retrying.
 
 ### Linux removal behavior
 
