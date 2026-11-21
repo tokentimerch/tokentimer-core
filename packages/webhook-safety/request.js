@@ -390,6 +390,7 @@ function sendPinnedRequest({
   url,
   port,
   pinned,
+  method,
   bodyBuffer,
   extraHeaders,
   timeoutMs,
@@ -434,12 +435,14 @@ function sendPinnedRequest({
         hostname: pinned.address,
         family: pinned.family,
         port,
-        method: "POST",
+        method,
         path: `${url.pathname || "/"}${url.search || ""}`,
         headers: {
           Host: buildHostHeader(url),
-          "Content-Type": "application/json",
-          "Content-Length": String(bodyBuffer.length),
+          ...(bodyBuffer && {
+            "Content-Type": "application/json",
+            "Content-Length": String(bodyBuffer.length),
+          }),
           ...extraHeaders,
         },
         timeout: timeoutMs,
@@ -648,14 +651,14 @@ async function sendWithAddressFallback(
   );
 }
 
-function createPostWebhook(policy) {
+function createPinnedRequest(policy, method = "POST") {
   const {
     isPrivateOrReservedIP,
     shouldEnforcePrivateIpCheck,
     canonicalizeHost,
   } = policy;
 
-  return async function postWebhook(rawUrl, options = {}) {
+  return async function request(rawUrl, options = {}) {
     let url;
     try {
       url = new URL(rawUrl);
@@ -674,7 +677,8 @@ function createPostWebhook(policy) {
     assertOutboundHost(host);
     const timeoutMs = Number(options.timeoutMs) || DEFAULT_TIMEOUT_MS;
     const enforce = shouldEnforcePrivateIpCheck();
-    const proxyMode = options.proxyMode || "always";
+    // Read-only issuer probes use a direct socket to the validated address.
+    const proxyMode = method === "GET" ? "never" : options.proxyMode || "always";
     const proxyUrl = resolveOutboundProxy(url, proxyMode);
     if (proxyUrl) assertOutboundHost(proxyUrl.hostname);
     const deadline = createDeadline(timeoutMs, options.signal);
@@ -731,7 +735,7 @@ function createPostWebhook(policy) {
         }
       }
 
-      const bodyBuffer = encodeBody(options.body);
+      const bodyBuffer = method === "GET" ? null : encodeBody(options.body);
       const extraCa = options.ca;
       const extraHeaders = options.headers || {};
       const candidates = orderPinnedAddresses(addresses);
@@ -753,6 +757,7 @@ function createPostWebhook(policy) {
               url,
               port,
               pinned,
+              method,
               bodyBuffer,
               extraHeaders,
               extraCa,
@@ -778,7 +783,8 @@ function createPostWebhook(policy) {
 
 module.exports = {
   WebhookRequestError,
-  createPostWebhook,
+  createPostWebhook: createPinnedRequest,
+  createPinnedRequest,
   resolveOutboundProxy,
   hostMatchesNoProxy,
   orderPinnedAddresses,
