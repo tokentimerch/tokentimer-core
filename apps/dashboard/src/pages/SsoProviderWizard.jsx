@@ -811,9 +811,9 @@ export default function SsoProviderWizard({
                       'The next step maps IdP groups to roles. New SSO users follow your installation’s workspace access settings until mappings apply.'
                     ) : (
                       <>
-                        Enabling sign-in returns you to the provider list. New
-                        SSO users join the shared Default workspace on first
-                        login.
+                        Enabling sign-in opens Group → Role mappings for this
+                        provider. Until you add mappings, new SSO users follow
+                        your installation’s workspace access settings.
                       </>
                     )}
                   </Callout>

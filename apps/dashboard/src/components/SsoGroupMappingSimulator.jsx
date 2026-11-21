@@ -55,7 +55,7 @@ export default function SsoGroupMappingSimulator({
     let parsed;
     try {
       parsed = JSON.parse(input);
-    } catch (e) {
+    } catch {
       setError('Invalid JSON');
       return;
     }
@@ -80,63 +80,9 @@ export default function SsoGroupMappingSimulator({
       );
       setResult(res.data || null);
     } catch (e) {
-      const local = await simulateLocally(providerSlug, groups);
-      if (local) {
-        setResult(local);
-        setError(
-          e?.response?.data?.error
-            ? `${e.response.data.error} (showing client-side preview from loaded mappings)`
-            : 'Simulation API unavailable; showing client-side preview from loaded mappings only.'
-        );
-      } else {
-        setError(e?.response?.data?.error || 'Simulation failed');
-      }
+      setError(e?.response?.data?.error || 'Simulation failed');
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function simulateLocally(slug, groups) {
-    try {
-      const res = await apiClient.get('/api/admin/sso/group-mappings');
-      const mappings = (res.data?.mappings || []).filter(
-        m => m.provider_slug === slug
-      );
-      const groupSet = new Set(
-        groups.map(g => String(g).trim().toLowerCase()).filter(Boolean)
-      );
-      const grants = [];
-      const matchedGroups = new Set();
-      let isAdmin = false;
-      for (const m of mappings) {
-        const group = String(m.idp_group).toLowerCase();
-        if (!groupSet.has(group)) continue;
-        matchedGroups.add(group);
-        if (m.role === 'admin') {
-          isAdmin = true;
-          grants.push({ role: 'admin', workspace: 'system-wide' });
-        } else {
-          grants.push({
-            role: m.role,
-            workspace: m.workspace_id ? m.workspace_id : 'all workspaces',
-          });
-        }
-      }
-      return {
-        provider_slug: slug,
-        matched_groups: groups.filter(g =>
-          matchedGroups.has(String(g).trim().toLowerCase())
-        ),
-        grants,
-        is_admin: isAdmin,
-        strict_sync_note:
-          'Strict sync revokes only workspace memberships with source=sso for this provider. SSO system-admin mappings are grant-only: they promote matching users but never auto-revoke system admin; demote from Workspaces.',
-        users_who_would_no_longer_match_admin_mapping: isAdmin
-          ? 0
-          : 'N/A (no admin mapping matched)',
-      };
-    } catch (_) {
-      return null;
     }
   }
 

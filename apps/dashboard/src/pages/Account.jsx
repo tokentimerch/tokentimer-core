@@ -492,6 +492,14 @@ function Account({
                 {loginMethodDisplay.label}
               </AccountDetailRow>
               <AccountDetailRow
+                label='Installation role'
+                muted={bodySecondary}
+                text={text}
+                showDivider
+              >
+                {session.isAdmin ? 'System administrator' : 'Standard user'}
+              </AccountDetailRow>
+              <AccountDetailRow
                 label='Account created'
                 muted={bodySecondary}
                 text={text}
