@@ -142,7 +142,16 @@ export default function WindowsCertificateUsage({
           <Text fontSize='sm' mt={3}>
             Renewal:{' '}
             <Box as='span' fontWeight='semibold'>
-              {group.profileName || 'Not configured'}
+              {!group.profileId
+                ? 'Not configured'
+                : profiles.some(
+                      profile =>
+                        profile.id === group.profileId &&
+                        profile.renewalProfile?.target?.type ===
+                          'windows-cert-store'
+                    )
+                  ? group.profileName || 'Store profile assigned'
+                  : 'Verify existing profile'}
             </Box>
           </Text>
           <Box mt={4}>

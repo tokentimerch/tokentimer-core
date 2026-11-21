@@ -10,6 +10,17 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe('AD CS approval and current readiness', () => {
+  it('does not promise automatic preflight when readiness was not projected', () => {
+    render(
+      <AdcsPreflightReadiness issuer={{ confirmedKeySha256: 'approved' }} />
+    );
+    expect(
+      screen.getByText(/Renewal readiness is unavailable/)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/requested automatically/)
+    ).not.toBeInTheDocument();
+  });
   it('distinguishes every refresh state', () => {
     for (const [state, label] of Object.entries({
       required: 'Preflight required',
