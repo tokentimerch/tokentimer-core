@@ -61,6 +61,14 @@ describe("API OpenAPI conformance contract", () => {
     );
   });
 
+  it("documents the nullable expiry of an onboarding AD CS issuer check", () => {
+    const yaml = fs.readFileSync(openApiPath, "utf8");
+    const start = yaml.indexOf("  /api/v1/workspaces/{id}/onboarding/{flow}/summary:");
+    const end = yaml.indexOf("  /api/v1/workspaces/{id}/onboarding/{flow}/reset:", start);
+    assert.ok(start >= 0 && end > start);
+    assert.match(yaml.slice(start, end), /preflightExpiresAt:\s+type: string\s+format: date-time\s+nullable: true/);
+  });
+
   it("defines required core and integration paths in static OpenAPI", () => {
     const yaml = fs.readFileSync(openApiPath, "utf8");
     const requiredPaths = [

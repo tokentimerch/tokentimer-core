@@ -5932,6 +5932,11 @@ paths:
                                             the CA certificate was pinned,
                                             which renewal needs. Null until a
                                             certificate is pinned.
+                                        preflightExpiresAt:
+                                          type: string
+                                          format: date-time
+                                          nullable: true
+                                          description: Expiry time of the most recent CA check, or null when no check is recorded.
                                       additionalProperties: true
                                   profiles:
                                     type: integer
