@@ -97,7 +97,7 @@ function routeFor(site, environment) {
   if (environment === "windows-material-iis") return direct(".github/workflows/ci.yml", "windows_material_qualification", site.file);
   if (environment === "distribution-kv-live") return direct(".github/workflows/ci.yml", "material_store_compatibility");
   if (environment === "distribution-azure-live") return direct(".github/workflows/certops-azure-keyvault-qualification.yml", "lab");
-  if (environment === "mcp-windows-filesystem") return direct(".github/workflows/ci.yml", "windows_agent_quality", "pnpm --filter @tokentimer/mcp test");
+  if (environment === "mcp-windows-filesystem") return direct(".github/workflows/ci.yml", "windows_agent_quality", "pnpm --filter @tokentimer/mcp test:windows");
   if (environment === "mcp-posix-filesystem") return direct(".github/workflows/ci.yml", "operator_interface", "pnpm --filter @tokentimer/mcp test");
   if (dedicatedSuites[site.file]) {
     const [, file, job] = dedicatedSuites[site.file];

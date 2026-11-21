@@ -281,6 +281,16 @@
       "workflowJob": "backend_quality"
     },
     {
+      "id": "2766ca6f6620ef329694",
+      "file": "packages/agent/scripts/install-agent-sh.test.js",
+      "line": 128,
+      "name": "install-agent.sh Linux systemd dry runs",
+      "kind": "describe(..., { skip }) option-object",
+      "reason": "platform",
+      "environment": "linux-filesystem",
+      "workflowJob": "backend_quality"
+    },
+    {
       "id": "43e7781299c383776931",
       "file": "packages/agent/scripts/installer-revocation-default.test.js",
       "line": 30,
