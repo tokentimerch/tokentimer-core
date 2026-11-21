@@ -146,6 +146,9 @@ test("internal ACME store first issue atomically binds owner, enrollment and rep
     operation: "renew", source: "api", mode: "real", requestedByUserId: user, transactionOwned: true, payload: {} };
   const runRenewal = async (changes = {}) => { const client = await pool.connect(); try { await client.query("BEGIN"); const result = await renew({ ...renewalOptions, ...changes, client }); await client.query("COMMIT"); return result; } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); } };
   await assert.rejects(runRenewal({ assignedAgentId: randomUUID() }), /owned by the selected agent/);
+  await assert.rejects(runRenewal({ idempotencyKey: undefined }), {
+    code: "CERTOPS_ACME_STORE_INVALID",
+  });
   const renewed = await runRenewal();
   assert.equal(renewed.created, true);
   const binding = (await pool.query("SELECT request_bytes FROM certops_acme_store_enrollments WHERE original_job_id=$1", [renewed.job.id])).rows[0];
@@ -153,7 +156,10 @@ test("internal ACME store first issue atomically binds owner, enrollment and rep
   assert.equal(JSON.parse(binding.request_bytes.toString("utf8")).eabAccountRef, "account-main");
   assert.equal((await runRenewal()).created, false);
   await pool.query("UPDATE certops_agents SET capabilities_updated_at=NOW()-interval '2 days' WHERE id=$1", [agentId]);
-  await assert.rejects(runRenewal({ idempotencyKey: randomUUID() }), /already open or uncertain/);
+  await assert.rejects(runRenewal({ idempotencyKey: randomUUID() }), {
+    code: "CERTOPS_ACME_STORE_ORDER_UNCERTAIN",
+    message: /already open or uncertain/,
+  });
 });
 
 
