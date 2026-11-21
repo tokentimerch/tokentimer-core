@@ -5,6 +5,12 @@ const { classifyAgentLiveness } = require("./agentLiveness");
 const { writeAudit } = require("../audit");
 const { pool } = require("../../db/database");
 
+// The binding update trigger stamps the replaced certificate's absence with
+// the same capture time as the replacement. At that time the listener is
+// present. Keep a later absence authoritative.
+const latestIisObservationOrder = alias => `${alias}.captured_at DESC NULLS LAST,
+  (${alias}.presence_state = 'confirmed_present') DESC NULLS LAST, ${alias}.id DESC`;
+
 async function loadWindowsStoreRegistrations(client, workspaceId, identityId) {
   const result = await client.query(`SELECT DISTINCT p.id AS period_id,p.managed_certificate_id,p.renewal_profile_id,
       mc.fingerprint_sha256,mc.name,cp.name AS profile_name,cp.public_metadata AS profile_metadata,
@@ -59,7 +65,7 @@ async function listWindowsRenewal({ workspaceId, identityId, client = pool }) {
           ORDER BY e.created_at DESC LIMIT 1) AS last_result
       FROM certificate_targets ct
       LEFT JOIN LATERAL(SELECT * FROM certificate_instances item WHERE item.workspace_id=ct.workspace_id
-        AND item.target_id=ct.id ORDER BY captured_at DESC NULLS LAST LIMIT 1) ci ON true
+        AND item.target_id=ct.id ORDER BY ${latestIisObservationOrder("item")} LIMIT 1) ci ON true
       LEFT JOIN certops_windows_store_renewal_owners o ON o.workspace_id=ct.workspace_id AND o.management_period_id=$3
       LEFT JOIN certops_windows_iis_renewal_consumers c ON c.workspace_id=ct.workspace_id AND c.owner_id=o.id
         AND c.target_id=ct.id AND c.removed_at IS NULL
@@ -140,7 +146,7 @@ async function enableWindowsIisConsumer({ client, workspaceId, periodId, targetI
           AND bp.ended_at IS NULL AND bp.renewal_profile_id IS NOT NULL) AS profile_conflict
     FROM certificate_targets ct JOIN certificate_instances ci ON ci.workspace_id=ct.workspace_id AND ci.target_id=ct.id
     WHERE ct.workspace_id=$1 AND ct.id=$2 AND ct.source='agent_windows' AND ct.location_kind='iis_binding'
-    ORDER BY ci.captured_at DESC NULLS LAST LIMIT 1 FOR UPDATE OF ct,ci`, [workspaceId, targetId]);
+    ORDER BY ${latestIisObservationOrder("ci")} LIMIT 1 FOR UPDATE OF ct,ci`, [workspaceId, targetId]);
   const target = targetResult.rows[0];
   if (!target || target.public_metadata?.agentId !== owner.agent_public_id || target.public_metadata?.observationOnly === true || !target.windows_site) {
     throw refusal("The IIS binding is not confirmed on the Store agent.");
@@ -271,7 +277,7 @@ async function snapshotWindowsIisConsumers({ client, workspaceId, certificateId,
     JOIN certops_agents a ON a.workspace_id=c.workspace_id AND a.id=c.agent_id
     JOIN certificate_targets ct ON ct.workspace_id=c.workspace_id AND ct.id=c.target_id
     LEFT JOIN LATERAL (SELECT * FROM certificate_instances item WHERE item.workspace_id=c.workspace_id
-      AND item.target_id=c.target_id ORDER BY item.captured_at DESC NULLS LAST LIMIT 1) ci ON true
+      AND item.target_id=c.target_id ORDER BY ${latestIisObservationOrder("item")} LIMIT 1) ci ON true
     WHERE c.workspace_id=$1 AND o.managed_certificate_id=$2 AND c.agent_id=$3
       AND c.automatic_update=true AND c.removed_at IS NULL AND ct.source='agent_windows'
       AND ct.location_kind='iis_binding' AND ct.target_type='windows-iis'
@@ -365,7 +371,7 @@ const IIS_OBSERVATIONS = `
     SELECT ci.managed_certificate_id,ci.observed_fingerprint_sha256,ci.presence_state
     FROM certificate_instances ci
     WHERE ci.workspace_id=ct.workspace_id AND ci.target_id=ct.id
-    ORDER BY ci.captured_at DESC NULLS LAST,ci.id DESC LIMIT 1
+    ORDER BY ${latestIisObservationOrder("ci")} LIMIT 1
   ) latest ON true
   WHERE a.workspace_id=$1 AND a.id=$2
     AND ct.source='agent_windows' AND ct.location_kind='iis_binding'
