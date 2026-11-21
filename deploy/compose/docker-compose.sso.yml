@@ -1,0 +1,11 @@
+# Optional file-based provider bootstrap. Keep sso.env with the deployment secrets.
+services:
+  api:
+    env_file:
+      - ./secrets/sso.env
+    environment:
+      SSO_PROVIDERS_BOOTSTRAP_FILE: /etc/tokentimer/sso-providers.json
+      SSO_SECRETS_KEYRING_FILE: /run/secrets/sso-keyring.json
+    volumes:
+      - ./sso-providers.json:/etc/tokentimer/sso-providers.json:ro
+      - ./secrets/sso-keyring.json:/run/secrets/sso-keyring.json:ro

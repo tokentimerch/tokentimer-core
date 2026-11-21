@@ -1502,7 +1502,7 @@ paths:
       tags: [Operator]
       summary: Preview a viewer invitation by email
       operationId: previewOperatorMemberInvite
-      description: Requires mcp:members:invite. The preview distinguishes immediate access for an existing user from an invitation for a new user.
+      description: Requires mcp:members:invite. The preview reports whether the account qualifies for immediate access or requires a pending email invitation. SSO recipients must prove the exact invited address to redeem a pending invitation.
       security:
         - operatorConnectionAuth: []
       requestBody:
@@ -2559,13 +2559,175 @@ paths:
                     additionalProperties: true
                   environment:
                     type: string
+  /auth/oidc/{provider}:
+    parameters:
+      - in: path
+        name: provider
+        required: true
+        schema: { type: string }
+        description: Slug of the active provider.
+    get:
+      tags: [Auth]
+      operationId: startOidcSignIn
+      summary: Start browser sign-in with an OIDC provider
+      security: []
+      responses:
+        "302":
+          description: Redirect the browser to the provider or the sign-in error page.
+          headers:
+            Location: { schema: { type: string } }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: SSO configuration is temporarily unavailable.
+  /auth/oidc/{provider}/callback:
+    parameters:
+      - in: path
+        name: provider
+        required: true
+        schema: { type: string }
+        description: Slug of the active provider.
+    get:
+      tags: [Auth]
+      operationId: finishOidcSignIn
+      summary: Complete the browser authorization response
+      security: []
+      parameters:
+        - { in: query, name: code, schema: { type: string }, description: Authorization code on success. }
+        - { in: query, name: state, schema: { type: string }, description: State from the authorization request. }
+        - { in: query, name: error, schema: { type: string }, description: Authorization error returned by the provider. }
+      responses:
+        "302":
+          description: Redirect to the application or its sign-in error page.
+          headers:
+            Location: { schema: { type: string } }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: SSO configuration is temporarily unavailable.
+  /auth/saml/{provider}:
+    parameters:
+      - in: path
+        name: provider
+        required: true
+        schema: { type: string }
+        description: Slug of the active provider.
+    get:
+      tags: [Auth]
+      operationId: startSamlSignIn
+      summary: Start browser sign-in with a SAML provider
+      security: []
+      responses:
+        "302":
+          description: Redirect the browser to the provider or the sign-in error page.
+          headers:
+            Location: { schema: { type: string } }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: SSO configuration is temporarily unavailable.
+  /auth/saml/{provider}/callback:
+    parameters:
+      - in: path
+        name: provider
+        required: true
+        schema: { type: string }
+        description: Slug of the active provider.
+    post:
+      tags: [Auth]
+      operationId: finishSamlSignIn
+      summary: Receive the SAML HTTP-POST response
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [SAMLResponse]
+              properties:
+                SAMLResponse: { type: string }
+                RelayState: { type: string }
+      responses:
+        "302":
+          description: Redirect to the application or its sign-in error page.
+          headers:
+            Location: { schema: { type: string } }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: SSO configuration is temporarily unavailable.
+  /auth/saml/{provider}/metadata:
+    parameters:
+      - in: path
+        name: provider
+        required: true
+        schema: { type: string }
+        description: Slug of the active provider.
+    get:
+      tags: [Auth]
+      operationId: getSamlServiceProviderMetadata
+      summary: Read service provider metadata for a SAML provider
+      security: []
+      responses:
+        "200":
+          description: SAML service provider metadata.
+          content:
+            application/xml:
+              schema: { type: string }
+        "501":
+          description: Metadata generation is unavailable.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: SSO configuration is temporarily unavailable.
+  /api/sso/logout-url:
+    get:
+      tags: [Auth]
+      operationId: getSsoLogoutUrl
+      summary: Get the identity provider logout URL for the current session
+      security: []
+      responses:
+        "200":
+          description: The OIDC logout URL, or null when provider logout is unavailable.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url]
+                properties:
+                  url: { type: string, nullable: true }
   /api/auth/features:
     get:
       tags: [Auth]
       summary: Auth feature availability flags
+      operationId: getAuthFeatures
+      security: []
       responses:
         "200":
-          description: Feature flags for auth providers
+          description: Available login methods and provider readiness on this API instance.
+          headers:
+            Cache-Control: { schema: { type: string, enum: [no-store] } }
           content:
             application/json:
               schema:
@@ -2575,6 +2737,16 @@ paths:
                   - oidc
                   - contactGroupPluralWrites
                 properties:
+                  providers:
+                    type: object
+                    required: [oidc, saml]
+                    properties:
+                      oidc: { type: array, items: { $ref: "#/components/schemas/SsoLoginProvider" } }
+                      saml: { type: array, items: { $ref: "#/components/schemas/SsoLoginProvider" } }
+                  sso:
+                    type: object
+                    properties:
+                      ssoConfigVersion: { type: object, nullable: true, additionalProperties: true }
                   saml:
                     type: boolean
                   oidc:
@@ -3140,7 +3312,7 @@ paths:
       tags: [Workspaces]
       summary: Add or invite workspace member
       operationId: addWorkspaceMember
-      description: Adds an existing user or creates/updates an invitation for the provided email.
+      description: Adds an eligible verified account or creates a pending invitation. An SSO account redeems the invitation on sign-in with proof of the exact invited address. Use the member ID endpoint to change an existing member’s role.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -3169,6 +3341,7 @@ paths:
                   user_id:
                     type: integer
                     nullable: true
+                    description: Null when a pending invitation was created or updated.
                   role:
                     type: string
         "400":
@@ -3176,7 +3349,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
-          description: Plan limit reached
+          description: Plan limit reached, membership changed, or an existing member must be updated by ID (MEMBER_ALREADY_EXISTS).
           content:
             application/json:
               schema:
@@ -3216,6 +3389,10 @@ paths:
                     type: integer
                   role:
                     type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     delete:
       tags: [Workspaces]
       summary: Remove workspace member
@@ -4523,6 +4700,403 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/sso/group-mappings:
+    get:
+      tags: [Auth]
+      operationId: listSsoGroupMappings
+      summary: List SSO group mappings
+      description: Self-hosted system administrator session required.
+      responses:
+        "200":
+          description: Mappings and available roles, workspaces, and providers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoGroupMappingList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded. }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      tags: [Auth]
+      operationId: createSsoGroupMapping
+      summary: Create an SSO group mapping
+      description: Self-hosted system administrator session required.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SsoGroupMappingWrite" }
+      responses:
+        "201":
+          description: Created mapping.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoGroupMapping" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { description: An equivalent mapping already exists. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded. }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/admin/sso/group-mappings/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Auth]
+      operationId: updateSsoGroupMapping
+      summary: Replace an SSO group mapping
+      description: Self-hosted system administrator session required.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SsoGroupMappingWrite" }
+      responses:
+        "200":
+          description: Updated mapping.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoGroupMapping" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: An equivalent mapping already exists. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded. }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      tags: [Auth]
+      operationId: deleteSsoGroupMapping
+      summary: Delete an SSO group mapping
+      description: Self-hosted system administrator session required.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      responses:
+        "200":
+          description: Deleted mapping.
+          content:
+            application/json:
+              schema: { type: object, required: [ok, removed], properties: { ok: { type: boolean }, removed: { $ref: "#/components/schemas/SsoGroupMapping" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded. }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/admin/sso/group-mappings/simulate:
+    post:
+      tags: [Auth]
+      operationId: simulateSsoGroupMappings
+      summary: Preview SSO group grants
+      description: Self-hosted system administrator session required.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SsoGroupMappingSimulationWrite" }
+      responses:
+        "200":
+          description: Grants resolved without modifying users or memberships.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoGroupMappingSimulation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded. }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/admin/sso/providers:
+    get:
+      tags: [Auth]
+      operationId: listSsoProviders
+      summary: List SSO providers
+      description: Self-hosted system administrator session required.
+      responses:
+        "200":
+          description: Successful result
+          content:
+            application/json:
+              schema: { type: object, required: [providers], properties: { providers: { type: array, items: { $ref: "#/components/schemas/SsoProvider" } } } }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Auth]
+      operationId: createSsoProvider
+      summary: Create an OIDC or SAML provider
+      description: Self-hosted system administrator session required. Core allows one active OIDC provider and one active SAML provider. Check runtime readiness and warnings before directing users to a new provider.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { allOf: [{ $ref: "#/components/schemas/SsoProviderWrite" }, { type: object, required: [slug, type, config] }] }
+      responses:
+        "201":
+          description: Saved provider with local runtime status and any warnings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoProvider" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The requested change conflicts with provider selection, field locks or login recovery.
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/sso/providers/{slug}:
+    parameters:
+      - $ref: "#/components/parameters/SsoProviderSlug"
+    get:
+      tags: [Auth]
+      operationId: getSsoProvider
+      summary: Get an SSO provider and its runtime status
+      description: Self-hosted system administrator session required.
+      responses:
+        "200":
+          description: Successful result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoProvider" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Auth]
+      operationId: updateSsoProvider
+      summary: Update SSO provider settings
+      description: Self-hosted system administrator session required. The slug and protocol are immutable. Changing a linked OIDC issuer returns 409 with code issuer_has_linked_accounts. Omitted fields retain their values. When several enabled providers share a protocol, choose one using enabled and selectForProtocol. Resolving the conflict requires a usable local administrator account.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SsoProviderWrite" }
+      responses:
+        "200":
+          description: Successful result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoProvider" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The requested change conflicts with provider selection, field locks or login recovery.
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Auth]
+      operationId: deleteSsoProvider
+      summary: Delete an SSO provider
+      description: Self-hosted system administrator session required. Preview dependency counts before retiring a used provider. A used provider also requires a usable local admin whose recovery access survives retirement.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+        - name: confirmRetirement
+          in: query
+          description: Required when the provider has dependencies.
+          schema: { type: boolean }
+        - name: membershipPolicy
+          in: query
+          description: Required for provider-managed workspace memberships.
+          schema: { type: string, enum: [convert-to-manual, delete] }
+        - name: identityPolicy
+          in: query
+          description: Required for linked identities.
+          schema: { type: string, enum: [archive, drop] }
+      responses:
+        "200":
+          description: Successful result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+                  sso_reload_warnings:
+                    type: array
+                    items: { $ref: "#/components/schemas/SsoWarning" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The requested change conflicts with provider selection, field locks or login recovery.
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/sso/providers/{slug}/test:
+    parameters:
+      - $ref: "#/components/parameters/SsoProviderSlug"
+    post:
+      tags: [Auth]
+      operationId: testSsoProvider
+      summary: Test the saved provider configuration
+      description: Self-hosted system administrator session required.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      responses:
+        "200":
+          description: Check results. Inspect ok to determine whether the provider passed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoProviderTest" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/sso/providers/{slug}/impact:
+    parameters:
+      - $ref: "#/components/parameters/SsoProviderSlug"
+    post:
+      tags: [Auth]
+      operationId: previewSsoProviderImpact
+      summary: Preview the effect of a proposed provider change
+      description: Self-hosted system administrator session required.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { allOf: [{ $ref: "#/components/schemas/SsoProviderSettings" }, { type: object, properties: { delete: { type: boolean }, clearSecrets: { type: array, items: { type: string } } } }] }
+      responses:
+        "200":
+          description: Successful result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoChangeImpact" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/sso/fetch-idp-metadata:
+    post:
+      tags: [Auth]
+      operationId: fetchSamlIdpMetadata
+      summary: Fetch SAML identity provider metadata
+      description: Self-hosted system administrator session required.
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [url], properties: { url: { type: string, format: uri } } }
+      responses:
+        "200":
+          description: Successful result
+          content:
+            application/json:
+              schema: { type: object, required: [xml], properties: { xml: { type: string } } }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          description: The identity provider metadata could not be fetched.
+  /api/admin/sso/diagnostic-bundle:
+    get:
+      tags: [Auth]
+      operationId: getSsoDiagnosticBundle
+      summary: Export redacted SSO diagnostics
+      description: Self-hosted system administrator session required.
+      responses:
+        "200":
+          description: Successful result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoDiagnosticBundle" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/sso/oidc/diagnostics:
+    get:
+      tags: [Auth]
+      operationId: getSsoOidcDiagnostics
+      summary: Read OIDC provider diagnostics
+      description: Self-hosted system administrator session required.
+      parameters:
+        - { in: query, name: slug, schema: { type: string }, description: Limit diagnostics to one provider. }
+      responses:
+        "200":
+          description: Successful result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SsoOidcDiagnostic" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          description: Rate limit exceeded.
         "500":
           $ref: "#/components/responses/InternalError"
   /api/admin/system-settings:
@@ -12604,6 +13178,11 @@ components:
       scheme: bearer
       description: Per-agent credential (bearer) issued at registration, used for agent heartbeat, job claim, and result/evidence calls. CSRF-exempt. Not valid for registration.
   parameters:
+    SsoProviderSlug:
+      name: slug
+      in: path
+      required: true
+      schema: { type: string }
     pagerDutyIncidentIdParam:
       in: path
       name: incidentId
@@ -12917,6 +13496,266 @@ components:
   schemas:
     MaterialDistribution_materialReconciliation: {"type":"object","additionalProperties":false,"required":["originalJobId","assignedAgentId","workspaceAuthorizationRevision","intent"],"properties":{"originalJobId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"assignedAgentId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"workspaceAuthorizationRevision":{"type":"string","pattern":"^[0-9]{1,20}$"},"intent":{"$ref":"#/components/schemas/MaterialDistribution_materialDeployment"}}}
     MaterialDistribution_reconciliationReceipt: {"type":"object","additionalProperties":false,"required":["schemaVersion","workspaceId","originalJobId","groupId","bindingId","materialVersionId","generation","fingerprintSha256","observedAt","proofKind"],"properties":{"schemaVersion":{"enum":[1]},"workspaceId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"originalJobId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"groupId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"bindingId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"materialVersionId":{"$ref":"#/components/schemas/MaterialDistribution_uuid"},"generation":{"$ref":"#/components/schemas/MaterialDistribution_generation"},"fingerprintSha256":{"$ref":"#/components/schemas/MaterialDistribution_fingerprint"},"observedAt":{"type":"string","format":"date-time","maxLength":40},"proofKind":{"enum":["staged","deployed"]}}}
+    SsoComputedUrls:
+      type: object
+      required: [callback_url, metadata_url]
+      properties:
+        callback_url: { type: string }
+        metadata_url: { type: string, nullable: true }
+    SsoLoginProvider:
+      type: object
+      required: [slug, type, displayName, signInReady, loginUrl]
+      properties:
+        slug: { type: string }
+        type: { type: string, enum: [oidc, saml] }
+        displayName: { type: string }
+        sortOrder: { type: integer }
+        signInReady: { type: boolean }
+        lastReason: { type: string, nullable: true }
+        computed: { $ref: "#/components/schemas/SsoComputedUrls" }
+        loginUrl: { type: string }
+    SsoProviderSettings:
+      type: object
+      properties:
+        displayName: { type: string }
+        enabled: { type: boolean }
+        sortOrder: { type: integer }
+        config:
+          type: object
+          description: OIDC requires issuer and client_id. SAML requires entry_point, issuer and cert.
+          additionalProperties: true
+        claim_mapping: { type: object, additionalProperties: true }
+        security: { type: object, additionalProperties: true }
+    SsoProviderWrite:
+      allOf:
+        - $ref: "#/components/schemas/SsoProviderSettings"
+        - type: object
+          properties:
+            slug: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,62}$" }
+            type: { type: string, enum: [oidc, saml] }
+            secrets:
+              description: Secret values to set. Provider reads return only the names of configured secrets.
+              type: object
+              writeOnly: true
+              additionalProperties: { type: string }
+            selectForProtocol:
+              description: On update, set with enabled true to select this enabled provider and disable its same-protocol peers while preserving their records.
+              type: boolean
+            clearSecrets:
+              description: Names of stored secrets to remove on update.
+              type: array
+              items: { type: string }
+    SsoGroupMappingRole:
+      type: string
+      enum: [admin, workspace_manager, viewer]
+    SsoGroupMappingWrite:
+      type: object
+      required: [provider_slug, idp_group, role]
+      properties:
+        provider_slug: { $ref: "#/components/schemas/SsoProviderSlug" }
+        idp_group:
+          type: string
+          minLength: 1
+          description: Identity provider group value. Matches case-insensitively.
+        role: { $ref: "#/components/schemas/SsoGroupMappingRole" }
+        workspace_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Omit or pass null for global scope. The admin role always has global scope.
+        priority: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+    SsoGroupMapping:
+      allOf:
+        - $ref: "#/components/schemas/SsoGroupMappingWrite"
+        - type: object
+          required: [id, workspace_id, priority, created_at, created_by, updated_at]
+          properties:
+            id: { type: string, format: uuid }
+            created_at: { type: string, format: date-time }
+            created_by: { type: string, format: email, nullable: true }
+            updated_at: { type: string, format: date-time, nullable: true }
+    SsoGroupMappingList:
+      type: object
+      required: [mappings, workspaces, roles, providers]
+      properties:
+        mappings:
+          type: array
+          items: { $ref: "#/components/schemas/SsoGroupMapping" }
+        workspaces:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+        roles:
+          type: array
+          items: { $ref: "#/components/schemas/SsoGroupMappingRole" }
+        providers:
+          type: array
+          items:
+            type: object
+            required: [slug, displayName, type]
+            properties:
+              slug: { $ref: "#/components/schemas/SsoProviderSlug" }
+              displayName: { type: string }
+              type: { type: string, enum: [oidc, saml] }
+    SsoGroupMappingSimulationWrite:
+      type: object
+      required: [provider_slug]
+      properties:
+        provider_slug: { $ref: "#/components/schemas/SsoProviderSlug" }
+        groups: { type: array, items: { type: string }, default: [] }
+        strict_sync_preview: { type: boolean, default: false }
+    SsoGroupMappingSimulation:
+      type: object
+      required: [provider_slug, matched_groups, matched_groups_count, is_admin, grants, workspace_grants, revoked_preview, strict_sync_note, roles]
+      properties:
+        provider_slug: { $ref: "#/components/schemas/SsoProviderSlug" }
+        matched_groups: { type: array, items: { type: string } }
+        matched_groups_count: { type: integer, minimum: 0 }
+        is_admin: { type: boolean }
+        grants:
+          type: array
+          items:
+            type: object
+            required: [role, workspace]
+            properties:
+              role: { $ref: "#/components/schemas/SsoGroupMappingRole" }
+              workspace: { type: string }
+              workspace_id: { type: string, format: uuid }
+        workspace_grants:
+          type: array
+          items:
+            type: object
+            required: [role, workspace_id]
+            properties:
+              role: { $ref: "#/components/schemas/SsoGroupMappingRole" }
+              workspace_id: { type: string, format: uuid }
+        revoked_preview:
+          type: array
+          description: Empty for group-only previews, which have no existing memberships to compare.
+          items:
+            type: object
+            properties:
+              workspace_id: { type: string, format: uuid }
+        strict_sync_note: { type: string }
+        users_who_would_no_longer_match_admin_mapping:
+          oneOf:
+            - { type: integer }
+            - { type: string }
+        roles:
+          type: array
+          items:
+            type: object
+            required: [label, role, workspace_id, workspace]
+            properties:
+              label: { type: string }
+              role: { $ref: "#/components/schemas/SsoGroupMappingRole" }
+              workspace_id: { type: string, format: uuid }
+              workspace: { type: string }
+
+    SsoProvider:
+      allOf:
+        - $ref: "#/components/schemas/SsoProviderSettings"
+        - type: object
+          required: [slug, type, displayName, enabled, config, secrets_set, locked_fields, computed, runtime]
+          properties:
+            slug: { type: string }
+            type: { type: string, enum: [oidc, saml] }
+            secrets_set: { type: array, items: { type: string } }
+            locked_fields: { type: array, items: { type: string } }
+            computed: { $ref: "#/components/schemas/SsoComputedUrls" }
+            runtime:
+              type: object
+              properties:
+                signInReady: { type: boolean }
+                lastReason: { type: string, nullable: true }
+                lastReloadAt: { type: string, format: date-time, nullable: true }
+                appliedConfigVersion: { type: integer, nullable: true }
+            warnings:
+              type: array
+              items: { $ref: "#/components/schemas/SsoWarning" }
+            sso_reload_warnings:
+              type: array
+              items: { $ref: "#/components/schemas/SsoWarning" }
+    SsoWarning:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        secrets: { type: array, items: { type: string } }
+    SsoProviderTest:
+      type: object
+      required: [ok, checks]
+      properties:
+        ok: { type: boolean }
+        reason: { type: string }
+        checks:
+          type: array
+          items:
+            type: object
+            required: [name, ok]
+            properties:
+              name: { type: string }
+              ok: { type: boolean }
+              detail: { type: string, nullable: true }
+    SsoChangeImpact:
+      type: object
+      required: [slug, affected_users, linked_identities_count, is_last_login_method, signInReady_after]
+      properties:
+        slug: { type: string }
+        affected_users: { type: integer }
+        linked_identities_count: { type: integer }
+        is_last_login_method: { type: boolean }
+        runtime_breakage_likely: { type: boolean }
+        signInReady_after: { type: boolean }
+        memberships_at_risk: { type: integer }
+        admins_added: { type: integer }
+        users_who_would_no_longer_match_admin_mapping: { type: integer }
+        requires_local_admin: { type: boolean }
+        has_usable_local_admin: { type: boolean }
+        dependency_counts:
+          type: object
+          required: [identities_count, memberships_count, group_mappings_count, admin_grants_count]
+          properties:
+            identities_count: { type: integer }
+            memberships_count: { type: integer }
+            group_mappings_count: { type: integer }
+            admin_grants_count: { type: integer }
+    SsoOidcDiagnostic:
+      type: object
+      required: [fieldsConfigured, signInReady, registered]
+      properties:
+        fieldsConfigured: { type: boolean }
+        signInReady: { type: boolean }
+        registered: { type: boolean }
+        slug: { type: string, nullable: true }
+        reason: { type: string }
+        providers:
+          description: Per-provider results when querying without a slug.
+          type: array
+          items: { type: object, additionalProperties: true }
+    SsoDiagnosticBundle:
+      type: object
+      required: [exported_at, tokentimer_version, providers, ssoConfigVersion, ha, redactions]
+      properties:
+        exported_at: { type: string, format: date-time }
+        tokentimer_version: { type: string }
+        providers:
+          type: array
+          items:
+            type: object
+            properties:
+              slug: { type: string }
+              signInReady: { type: boolean }
+              config_keys_present: { type: array, items: { type: string } }
+              secrets_set: { type: array, items: { type: string } }
+        ssoConfigVersion: { type: object, additionalProperties: true }
+        ha: { type: object, additionalProperties: true }
+        redactions: { type: string }
     OperatorTokenRecord:
       type: object
       additionalProperties: false
@@ -16790,6 +17629,14 @@ components:
       type: object
       required: [id, email]
       properties:
+        ssoProviderSlug:
+          type: string
+          nullable: true
+          description: Provider used to establish this session.
+        ssoProtocol:
+          type: string
+          nullable: true
+          enum: [oidc, saml, null]
         id:
           type: integer
         email:

@@ -2,6 +2,8 @@
 const assert=require("node:assert/strict"),crypto=require("node:crypto"),path=require("node:path");
 const {spawnSync,spawn}=require("node:child_process"),{Client}=require("pg");
 const histories=require("../helpers/distribution-migration-histories.cjs");
+const { migrations } = require("../../apps/api/migrations/migrate");
+const canonicalNames = migrations.map(({ name }) => name).sort();
 describe("Independent PR migration and preview compatibility",function(){
   this.timeout(120000);
   for(const [history,names] of Object.entries(histories))it(`upgrades ${history} without rewriting applied rows or replaying SQL`,async()=>{
@@ -38,8 +40,7 @@ describe("Independent PR migration and preview compatibility",function(){
       }else execute(upgrade);
       const after=(await client.query("SELECT * FROM migrations ORDER BY version")).rows;
       assert.deepEqual(after.filter(row=>preserved.some(original=>original.version===row.version)),preserved);
-      assert.equal(after.length, 116);
-      assert.equal(after.filter(row => row.name === "auto_sync_creation_expiration").length, 1);
+      assert.deepEqual(after.map(({ name }) => name).sort(), canonicalNames);
       assert.equal((await client.query("SELECT expiration FROM auto_sync_creation_stats LIMIT 0")).rowCount, 0);
       assert.equal(after.filter(row=>row.name==="certops_retirement_dossiers").length,1);
       assert.equal(after.filter(row=>row.name==="certops_material_reconciliation").length,1);

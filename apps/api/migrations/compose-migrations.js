@@ -8,6 +8,7 @@ const ALERT = "certops_job_alert_context";
 const DISTRIBUTION = "certops_material_distribution";
 const REVIEW = "certops_distribution_review";
 const TRANSFER = "certops_distribution_transfer";
+const SSO = "shared_sso_schema";
 // These independent, unapplied schemas may arrive after an observation preview.
 const independentFeatureNames = new Set(Object.entries(require("./migration-reservations.cjs").reservations)
   .filter(([version]) => Number(version) >= 115 && Number(version) <= 126 && Number(version) !== 122)
@@ -96,11 +97,50 @@ function composeMigrations(migrations, recorded = []) {
   const recordedExpiration = rows.find((row) => row.name === expiration?.name);
   const legacyExpiration = recordedExpiration && recordedExpiration.version !== expiration.version &&
     rows.every((row) => row.name !== "certops_observed_revocation" || row.version > recordedExpiration.version);
-  const reviewExtensions = legacyExpiration ? [
+  let reviewExtensions = legacyExpiration ? [
     ...extensions.filter((entry) => entry.version <= 114),
     expiration,
     ...extensions.filter((entry) => entry.version > 114 && entry !== expiration),
   ] : extensions;
+  const appliedSso = rows.find((row) => row.name === SSO);
+  const sso = byName.get(SSO);
+  const ssoBeforeExpiration = appliedSso && sso && expiration &&
+    (!recordedExpiration || appliedSso.version < recordedExpiration.version);
+  // The later SSO preview was built before expiration became main's 127.
+  // Its standard ledger has a gap between observed revocation and SSO.
+  const standardSsoPreview = ssoBeforeExpiration && sso.version === 128 &&
+    appliedSso.version === 127 &&
+    extensions.filter((entry) => entry.version <= 127 && entry !== expiration).every((entry) =>
+      independentFeatureNames.has(entry.name) || rows.some((row) => row.version === entry.version && row.name === entry.name)) &&
+    rows.every((row) => row.version === byName.get(row.name)?.version ||
+      row === appliedSso || (row === recordedExpiration && row.version === 128));
+  if (ssoBeforeExpiration && appliedSso.version !== sso.version) {
+    reviewExtensions = reviewExtensions.filter((entry) => entry !== expiration);
+    reviewExtensions.splice(reviewExtensions.indexOf(sso) + 1, 0, expiration);
+  }
+  // The public SSO preview used 115 before observed revocation or the
+  // independent Store/IIS migrations were available. Reconstruct its actual
+  // plan from the preceding history; a number or name alone is insufficient.
+  if (appliedSso && sso?.version > 115 && !rows.some((row) =>
+    row.version < appliedSso.version && byName.get(row.name)?.version > 114)) {
+    const previewRegistry = [
+      ...migrations.filter((entry) => entry.version <= 114),
+      { ...sso, version: 115 },
+    ];
+    const beforeSso = recorded.filter((row) => row.version < appliedSso.version);
+    const previewPlan = composeMigrations(previewRegistry, beforeSso);
+    const expected = previewPlan.filter((entry) => entry.version >= 70 && entry.version <= appliedSso.version);
+    const actual = tail.filter((row) => row.version <= appliedSso.version);
+    if (expected.length !== actual.length || !expected.every((entry, i) =>
+      entry.name === actual[i].name && entry.version === actual[i].version)) {
+      throw new Error("Unsupported Core SSO preview migration history");
+    }
+    reviewExtensions = [
+      ...extensions.filter((entry) => entry.version <= 114),
+      sso,
+      ...reviewExtensions.filter((entry) => entry.version > 114 && entry !== sso),
+    ];
+  }
   // Validate the already-applied preview with the previous registry before
   // appending main's newer migrations under unoccupied identities.
   const hasRetirementPreview = byName.get("certops_retirement_dossiers")?.version !== 109 &&
@@ -200,7 +240,7 @@ function composeMigrations(migrations, recorded = []) {
       !base.every((name, index) =>
         rows.some((row) => row.version === 78 + index && row.name === name),
       ) ||
-      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp && !recognizedRetirementPreview)
+      (rows.some((row) => row.version !== byName.get(row.name).version) && !recognizedPriorMcp && !recognizedRetirementPreview && !standardSsoPreview)
     )
       throw new Error("Unsupported Core migration history: noncanonical gap");
   }
@@ -317,6 +357,9 @@ function composeMigrations(migrations, recorded = []) {
     certops_consumer_staging: ["certops_distribution_lifecycle"],
     certops_review_authority_epochs: ["certops_distribution_lifecycle"],
   };
+  if (appliedSso && appliedSso.version === sso?.version && expiration &&
+      (!recordedExpiration || recordedExpiration.version >= appliedSso.version))
+    throw new Error("Unsupported Core migration history: missing expiration before canonical SSO");
   const seen = new Set();
   for (const row of rows) {
     if ((dependencies[row.name] || []).some((name) => !seen.has(name)))

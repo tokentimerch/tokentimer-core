@@ -12,11 +12,12 @@ const {
   hasAtLeastRole,
 } = require("../services/rbac");
 const { MEMBER_LIMITS } = require("../services/planLimits");
+const { canAddExistingUserByEmail } = require("../services/operator/memberInvitePolicy");
 const {
   sendEmail,
   generateEmailTemplate,
 } = require("../services/emailService");
-const { sanitizeForLogging } = require("../utils/sanitize");
+const { escapeHtml, sanitizeForLogging } = require("../utils/sanitize");
 const {
   workspacesCreatedTotal,
   inviteSentTotal,
@@ -576,7 +577,7 @@ router.post(
       memberClient = await pool.connect();
       await memberClient.query("BEGIN");
       memberTransaction = true;
-      const lockedUsers = await memberClient.query("SELECT id FROM users WHERE id IN ($1,$2) OR LOWER(email)=$3 ORDER BY id FOR KEY SHARE", [ws.created_by, userId, normalizedEmail]);
+      const lockedUsers = await memberClient.query("SELECT id FROM users WHERE id IN ($1,$2) OR LOWER(email)=$3 ORDER BY id FOR SHARE", [ws.created_by, userId, normalizedEmail]);
       const lockedWorkspace = await memberClient.query("SELECT created_by,plan FROM workspaces WHERE id=$1 FOR SHARE", [ws.id]);
       if (!lockedWorkspace.rows[0] || String(lockedWorkspace.rows[0].created_by) !== String(ws.created_by)) {
         return res.status(409).json({ error: "Workspace ownership changed", code: "WORKSPACE_CHANGED" });
@@ -661,21 +662,34 @@ router.post(
         logger.debug("Non-critical operation failed", { error: _err.message });
       }
       const userRes = await memberClient.query(
-        "SELECT id, display_name FROM users WHERE email = $1",
+        "SELECT id, display_name, auth_method, email_verified FROM users WHERE email = $1",
         [normalizedEmail],
       );
+      const existingUser = userRes.rows[0];
+      if (existingUser && !lockedUsers.rows.some((row) => String(row.id) === String(existingUser.id))) {
+        return res.status(409).json({ error: "User changed; retry the invitation", code: "MEMBER_CHANGED" });
+      }
+      // Owners retain implicit admin access even without a membership row.
+      if (existingUser && String(existingUser.id) === String(ws.created_by)) {
+        return res.status(403).json({ error: "Workspace admin role cannot be changed here", code: "FORBIDDEN" });
+      }
+      const directAccess = canAddExistingUserByEmail(existingUser, normalizedEmail);
+      if (existingUser && !directAccess) {
+        const membership = await memberClient.query(
+          "SELECT 1 FROM workspace_memberships WHERE user_id = $1 AND workspace_id = $2",
+          [existingUser.id, ws.id],
+        );
+        if (membership.rowCount > 0) {
+          return res.status(409).json({
+            error: "This account is already a workspace member. Update its role using the member ID.",
+            code: "MEMBER_ALREADY_EXISTS",
+          });
+        }
+      }
       let targetUserId = null;
       let inviteToken = null;
-      if (userRes.rowCount > 0) {
-        // Existing user: create membership directly
-        targetUserId = userRes.rows[0].id;
-        if (!lockedUsers.rows.some((row) => String(row.id) === String(targetUserId))) {
-          return res.status(409).json({ error: "User changed; retry the invitation", code: "MEMBER_CHANGED" });
-        }
-        // Owners retain implicit admin access even without a membership row.
-        if (String(targetUserId) === String(ws.created_by)) {
-          return res.status(403).json({ error: "Workspace admin role cannot be changed here", code: "FORBIDDEN" });
-        }
+      if (directAccess) {
+        targetUserId = existingUser.id;
         const membership = await memberClient.query(
           `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by) VALUES ($1,$2,$3,$4)
          ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = EXCLUDED.role
@@ -701,7 +715,7 @@ router.post(
           });
         }
       } else {
-        // Not registered: create invitation token record
+        // Store a pending invitation until the addressee can prove their email.
         const inviteId = require("crypto").randomUUID();
         inviteToken = require("crypto").randomBytes(32).toString("hex");
         await memberClient.query(
@@ -730,42 +744,35 @@ router.post(
       });
       // Send invitation/notification email (best-effort)
       try {
-        const subject =
-          userRes.rowCount > 0
-            ? `You were added to "${ws.name}" on TokenTimer`
-            : `You're invited to join "${ws.name}" on TokenTimer`;
+        const subject = directAccess
+          ? `You were added to "${ws.name}" on TokenTimer`
+          : `You're invited to join "${ws.name}" on TokenTimer`;
         const appUrl = process.env.APP_URL || "http://localhost:5173";
-        const actionUrl =
-          userRes.rowCount > 0
-            ? `${appUrl}/dashboard`
+        const actionUrl = directAccess
+          ? `${appUrl}/dashboard`
+          : existingUser
+            ? `${appUrl}/login`
             : `${appUrl}/register?token=${encodeURIComponent(inviteToken || "")}&email=${encodeURIComponent(normalizedEmail)}`;
-        const ctaText =
-          userRes.rowCount > 0 ? "Open TokenTimer" : "Create your account";
-        const hint =
-          userRes.rowCount > 0
-            ? ""
-            : '<p style="margin-top: 20px;">Please register using this email to get started. After registration, you will automatically have access to this workspace.</p>';
+        const ctaText = directAccess ? "Open TokenTimer" : existingUser ? "Sign in" : "Create your account";
+        const message = directAccess
+          ? `You have been granted ${role} access to the workspace ${ws.name}.`
+          : `You have been invited to the workspace ${ws.name} as ${role}.`;
+        const hint = directAccess
+          ? ""
+          : existingUser
+            ? "Sign in with the invited email address to accept the invitation."
+            : "Register with the invited email address to get access to the workspace.";
         const { html, text, useEmbeddedLogo } = await generateEmailTemplate({
-          title: `Workspace ${userRes.rowCount > 0 ? "Access" : "Invitation"}`,
-          greeting: `Hi ${userRes.rows[0]?.display_name || "there"},`,
+          title: `Workspace ${directAccess ? "Access" : "Invitation"}`,
+          greeting: `Hi ${existingUser?.display_name || "there"},`,
           content: `
-            <p>You have been ${role ? `granted <strong>${role}</strong> access` : "added"} to the workspace <strong>${ws.name}</strong>.</p>
-            ${hint}
+            <p>${escapeHtml(message)}</p>
+            ${hint ? `<p style="margin-top: 20px;">${hint}</p>` : ""}
             <p style="margin-top: 20px; color: #718096; font-size: 14px;">If you did not expect this invitation, please contact your workspace administrator.</p>
           `,
           buttonText: ctaText,
           buttonUrl: actionUrl,
-          plainTextContent: `
-Hi ${userRes.rows[0]?.display_name || "there"},
-
-You have been ${role ? `granted ${role} access` : "added"} to the workspace ${ws.name}.
-
-${userRes.rowCount > 0 ? "" : "Please register using this email to get started. After registration, you will automatically have access to this workspace.\n\n"}
-
-${actionUrl}
-
-If you did not expect this invitation, please contact your workspace administrator.
-          `,
+          plainTextContent: `Hi ${existingUser?.display_name || "there"},\n\n${message}\n\n${hint ? `${hint}\n\n` : ""}${actionUrl}`,
         });
         const emailResult = await sendEmail({
           to: normalizedEmail,

@@ -10,13 +10,13 @@ Keep a recoverable copy of:
 - Deployment configuration: Compose `.env` and mounted configuration files, or Helm values and referenced Kubernetes Secrets. Record the application and database versions used by the backup.
 - The original `SESSION_SECRET`. It signs sessions **and derives the encryption key for stored SMTP/Twilio and integration credentials**. Replacing it invalidates sessions and can make those stored credentials unreadable.
 - When CertOps agents are enabled, `CERTOPS_SIGNING_ENCRYPTION_KEY` and `CERTOPS_REGISTRATION_ENCRYPTION_KEY`, which wrap job-signing private keys and short-lived registration-replay credentials respectively. Existing enrolled-agent credentials are stored as hashes, not encrypted with the registration key. See [Configuration](CONFIGURATION.md).
-- For Enterprise SSO, the complete `SSO_SECRETS_KEYRING` or its `_FILE` contents, including keys referenced by existing encrypted provider secrets. See [Enterprise configuration](https://tokentimer.ch/docs/enterprise/configuration#secrets-keyring-required-for-ui-stored-secrets).
+- When SSO is configured, the complete `SSO_SECRETS_KEYRING` or its `_FILE` contents, including keys referenced by existing encrypted provider secrets. See [SSO configuration](CONFIGURATION.md#single-sign-on).
 
 Store secrets under your organization's access and backup controls. They can be held separately from database dumps, but the restore procedure must recover the matching values. A database dump alone is not a complete recovery set. Agent host state and any certificate private keys held on target hosts need their own host backup procedures.
 
 > **Warning**
 >
-> Restore the matching keys before starting the API and workers. Do not generate replacement keys as a shortcut during recovery. Verify sign-in, settings decryption, and a test alert after restoration; for Enterprise, also verify SSO, and for CertOps, agent communication.
+> Restore the matching keys before starting the API and workers. Verify local administrator access, each active SSO provider, settings decryption, and a test alert. If you use CertOps, also verify agent communication.
 
 <a id="compose"></a>
 

@@ -93,7 +93,7 @@ import {
 import EndpointSslMonitorModal from './components/EndpointSslMonitorModal.jsx';
 import RetireCertificateModal from './components/certops/RetireCertificateModal.jsx';
 import RequireManagerRoute from './components/RequireManagerRoute.jsx';
-import { mcpAuthorizationReturnTo } from './utils/mcpAuthorization.js';
+import { isSsoLoginError, loginNextPath } from './lib/sso-ui-shared.js';
 import { useWorkspaceCertOps } from './components/certops/useCertOps.js';
 import { retireCertificateAndRefreshAssets } from './components/certops/certificateRetirement.js';
 import {
@@ -178,6 +178,9 @@ const OnboardingRoutes = lazy(
 const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
+const SsoProviders = lazy(() => import('./pages/SsoProviders.jsx'));
+const SsoProviderWizard = lazy(() => import('./pages/SsoProviderWizard.jsx'));
+const SsoProviderEdit = lazy(() => import('./pages/SsoProviderEdit.jsx'));
 import { useWorkspace } from './utils/WorkspaceContext.jsx';
 import { onboardingPath } from './utils/onboardingPath.js';
 import { ContactGroupWorkspaceProvider } from './utils/ContactGroupCreationContext.jsx';
@@ -1465,10 +1468,20 @@ function App() {
    * Handle user logout
    */
   const handleLogout = async () => {
+    let ssoLogoutUrl = null;
+    if (session?.ssoProtocol === 'oidc' || session?.ssoProviderSlug) {
+      try {
+        const { data } = await apiClient.get('/api/sso/logout-url');
+        ssoLogoutUrl = data?.url || null;
+      } catch (error) {
+        logger.warn('SSO logout URL lookup failed:', error);
+      }
+    }
     try {
       await authAPI.logout();
       setSession(null);
       setTokens([]);
+      if (ssoLogoutUrl) window.location.assign(ssoLogoutUrl);
     } catch (error) {
       logger.error('Logout failed:', error);
     }
@@ -2493,13 +2506,20 @@ function App() {
                                     )}`}
                                     replace
                                   />
+                                ) : session.isAdmin === true &&
+                                  isSsoLoginError(
+                                    new URLSearchParams(
+                                      window.location.search
+                                    ).get('error')
+                                  ) ? (
+                                  <Login session={session} />
                                 ) : (
                                   <Navigate
                                     to={
-                                      mcpAuthorizationReturnTo(
+                                      loginNextPath(
                                         new URLSearchParams(
                                           window.location.search
-                                        ).get('returnTo')
+                                        )
                                       ) || '/dashboard'
                                     }
                                     replace
@@ -2716,6 +2736,42 @@ function App() {
                                   onNavigateToLanding={handleNavigateToLanding}
                                 />
                               </RequireManagerRoute>
+                            }
+                          />
+                          <Route
+                            path='/sso-providers'
+                            element={
+                              <AdminOnlyRoute session={session}>
+                                <SsoProviders
+                                  session={session}
+                                  onLogout={handleLogout}
+                                  onAccountClick={handleHelpAccountClick}
+                                />
+                              </AdminOnlyRoute>
+                            }
+                          />
+                          <Route
+                            path='/sso-providers/new'
+                            element={
+                              <AdminOnlyRoute session={session}>
+                                <SsoProviderWizard
+                                  session={session}
+                                  onLogout={handleLogout}
+                                  onAccountClick={handleHelpAccountClick}
+                                />
+                              </AdminOnlyRoute>
+                            }
+                          />
+                          <Route
+                            path='/sso-providers/:slug'
+                            element={
+                              <AdminOnlyRoute session={session}>
+                                <SsoProviderEdit
+                                  session={session}
+                                  onLogout={handleLogout}
+                                  onAccountClick={handleHelpAccountClick}
+                                />
+                              </AdminOnlyRoute>
                             }
                           />
                           <Route

@@ -14,14 +14,14 @@ const { migrations, runMigrations } = require("../../apps/api/migrations/migrate
 test("released Core through 108 upgrades to the distribution lifecycle without rewriting its ledger", async () => {
   const original = migrations.slice();
   const lifecycle = new Set([86, 87, 88, 89, 90, 91, 96, 97]);
-  const pending = new Set([...lifecycle, 109, 110, 111, 112, 113, 114, 122, 127]);
+  const inReleasedLedger = ({ version }) => version <= 108 && !lifecycle.has(version);
   try {
     assert.equal(
       (await pool.query("SELECT to_regclass('public.migrations') AS name")).rows[0].name,
       null,
       "Use a fresh database",
     );
-    migrations.splice(0, migrations.length, ...original.filter((entry) => !pending.has(entry.version)));
+    migrations.splice(0, migrations.length, ...original.filter(inReleasedLedger));
     await runMigrations();
     const released = (await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
     assert.equal(released.at(-1).version, 108);
@@ -32,7 +32,7 @@ test("released Core through 108 upgrades to the distribution lifecycle without r
     migrations.splice(0, migrations.length, ...original);
     await runMigrations();
     const upgraded = (await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
-    assert.deepEqual(upgraded.filter((row) => !pending.has(row.version)), released);
+    assert.deepEqual(upgraded.filter(inReleasedLedger), released);
     assert.deepEqual(upgraded.filter((row) => lifecycle.has(row.version)).map((row) => row.version), [...lifecycle]);
     assert.equal(upgraded.find((row) => row.version === 112).name, "certops_retirement_dossiers");
     assert.equal((await pool.query("SELECT to_regclass('public.certops_material_retirement_dossiers') AS name")).rows[0].name, "certops_material_retirement_dossiers");

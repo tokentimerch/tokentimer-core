@@ -349,6 +349,18 @@ posture.
 Kubernetes auth is out of scope unless operators confirm AppRole is
 insufficient.
 
+## Single sign-on
+
+To manage provider secrets in the dashboard, give every API replica the same `SSO_SECRETS_KEYRING_FILE` or `SSO_SECRETS_KEYRING`. The JSON shape is `{"primary":"k1","keys":{"k1":"<base64 key>"}}`. Generate 32 random bytes per key. Store the keyring separately from the database and restrict access to the API identity.
+
+- **Compose.** For dashboard setup, put `SSO_SECRETS_KEYRING` in the deployment's `.env` and recreate the API. For file-based bootstrap, copy `sso-providers.example.json` beside the Compose file as `sso-providers.json`. Remove the inline keyring, put the keyring in `secrets/sso-keyring.json`, and set the referenced provider secrets and SAML certificate in `secrets/sso.env`. Add the SSO override to the install command. [Compose override](../deploy/compose/docker-compose.sso.yml)
+- **Helm.** For dashboard setup, put `SSO_SECRETS_KEYRING` in a namespace Secret and reference it via `api.envFrom`. For bootstrap, mount the manifest ConfigMap and add the referenced secrets to the same Secret. Supply the example values alongside your deployment values. [Helm values](../deploy/helm/examples/values-sso.yaml)
+- **Network.** The API blocks private IdP addresses by default. Set `SSO_ALLOWED_IDP_CIDRS` to the intended IPv4 CIDRs in the Compose `.env` or Helm `api.env`, then recreate the API containers or roll out the pods.
+- **First administrator.** Keep the local bootstrap enabled for recovery. To skip it on a fresh SSO-only installation, bootstrap at least one working provider with `config.bootstrap_admin_groups` set to groups emitted for the intended administrator. Sign in and verify access to System Settings before inviting users.
+- **Rotation and rollback.** Distribute the new key to all replicas while retaining the old key. Switch the primary, restart the API and run `node apps/api/scripts/rotate-sso-secrets.js` inside the API container. Keep old keys with backups that need them. Before adopting an existing database, back up PostgreSQL, the manifest, external secret references and matching keyring together. To roll back, stop writers and restore that set with the previous images.
+
+See [authentication and provider setup](AUTHENTICATION.md#single-sign-on).
+
 ## Integration base URLs
 
 The Vault, GitLab, GitHub and Azure Key Vault inventory scans connect to an address the user types in. By default the API refuses base URLs that point at private, loopback, link-local or other reserved addresses (including hostnames that resolve to them) and answers with 400 `INTEGRATION_PRIVATE_ADDRESS_BLOCKED`. A self-hosted GitLab, GitHub Enterprise or Vault on your own network is a legitimate target: set `INTEGRATION_ALLOW_PRIVATE_IPS=true` (Helm `config.integrationAllowPrivateIps`) on the API to allow it. The `*_ADDRESS_ALLOWLIST` host lists still apply on top. This is separate from `WEBHOOK_ALLOW_PRIVATE_IPS`, which only covers webhooks.
