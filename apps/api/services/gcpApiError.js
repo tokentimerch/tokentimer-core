@@ -1,5 +1,7 @@
 "use strict";
 
+const { OUTBOUND_POLICY_DENIED } = require("@tokentimer/config/network");
+
 /**
  * Turn a GCP axios/API failure into an operator-facing sentence.
  * Axios's default "Request failed with status code 403" hides whether
@@ -78,6 +80,7 @@ function disabledApiHint(kindLabel) {
 }
 
 function formatGcpApiError(error, kindLabel) {
+  if (error?.code === OUTBOUND_POLICY_DENIED) return error.message;
   const prefix = kindLabel ? `${kindLabel}: ` : "";
   const status = error?.status || error?.response?.status || null;
   const data = gcpErrorPayload(error);

@@ -9,6 +9,7 @@
 const { isIP } = require("node:net");
 const dns = require("node:dns/promises");
 const { isPrivateOrReservedIP } = require("./webhookSafety");
+const { assertOutboundUrl, OUTBOUND_POLICY_DENIED } = require("@tokentimer/config/network");
 
 const BLOCKED_CODE = "INTEGRATION_PRIVATE_ADDRESS_BLOCKED";
 
@@ -64,14 +65,19 @@ function blockedResult(host) {
  * connection error.
  *
  * @param {URL} url
- * @param {{ lookup?: Function }} [options]
+ * @param {{ lookup?: Function, proxyMode?: "direct" | "axios" | "node" | "fetch" }} [options]
  * @returns {Promise<{ allowed: true } | { allowed: false, code: string, message: string }>}
  */
 async function checkIntegrationAddress(url, options = {}) {
-  if (!shouldEnforceIntegrationAddressCheck()) return { allowed: true };
-
   const host = bareHostname(url?.hostname);
   if (!host) return { allowed: true };
+  try {
+    assertOutboundUrl(url, { proxyMode: options.proxyMode });
+  } catch (error) {
+    if (error.code !== OUTBOUND_POLICY_DENIED) throw error;
+    return { allowed: false, code: error.code, message: error.message };
+  }
+  if (!shouldEnforceIntegrationAddressCheck()) return { allowed: true };
   if (host === "localhost" || host.endsWith(".localhost")) {
     return blockedResult(host);
   }

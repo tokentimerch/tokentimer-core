@@ -1,5 +1,6 @@
 "use strict";
 
+const { assertOutboundUrl } = require("@tokentimer/config/network");
 const LOGIN_BASE_URL = "https://login.microsoftonline.com";
 const TOKEN_TIMEOUT_MS = 10000;
 const MAX_FIELD_LENGTH = 5000;
@@ -68,6 +69,7 @@ function tenantGuidFromOpenIdConfig(body) {
 }
 
 async function timedJsonFetch(fetchFn, url, init, failedMessage) {
+  assertOutboundUrl(url, { proxyMode: "fetch" });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TOKEN_TIMEOUT_MS);
   let response;

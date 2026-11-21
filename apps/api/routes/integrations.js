@@ -1,6 +1,7 @@
 const { metricSourceDimensions } = require("../services/autoSyncMetricLabels");
 const { logger } = require("../utils/logger");
 const { checkIntegrationAddress } = require("../utils/integrationAddressGuard");
+const { OUTBOUND_POLICY_DENIED } = require("@tokentimer/config/network");
 const { writeAudit } = require("../services/audit");
 const { requireAuth } = require("../middleware/auth");
 const {
@@ -36,7 +37,7 @@ const {
   VAULT_AUTH_USER_MESSAGES,
 } = require("../services/vaultAuth");
 const { scanGitLab } = require("../services/gitlabIntegration");
-const { scanGitHub } = require("../services/githubIntegration");
+const { resolveGitHubApiBase, scanGitHub } = require("../services/githubIntegration");
 const { scanAWS, detectAWSRegions } = require("../services/awsIntegration");
 const {
   normalizeAwsSweepRegions,
@@ -297,10 +298,10 @@ router.post(
               .json(withQuota({ error: "Vault address not allowed" }));
           }
         }
-        const guard = await checkIntegrationAddress(u);
+        const guard = await checkIntegrationAddress(u, { proxyMode: "fetch" });
         if (!guard.allowed) {
           return res
-            .status(400)
+            .status(guard.code === OUTBOUND_POLICY_DENIED ? 403 : 400)
             .json(withQuota({ error: guard.message, code: guard.code }));
         }
       } catch (e) {
@@ -394,6 +395,9 @@ router.post(
         });
       }
     } catch (e) {
+      if (e?.code === OUTBOUND_POLICY_DENIED) {
+        return res.status(403).json(withQuota({ error: e.message, code: e.code }));
+      }
       const errorRef = generateErrorReference();
       logger.error("Vault scan failed", {
         errorReference: errorRef,
@@ -509,10 +513,10 @@ router.post(
             return res.status(400).json({ error: "Vault address not allowed" });
           }
         }
-        const guard = await checkIntegrationAddress(u);
+        const guard = await checkIntegrationAddress(u, { proxyMode: "fetch" });
         if (!guard.allowed) {
           return res
-            .status(400)
+            .status(guard.code === OUTBOUND_POLICY_DENIED ? 403 : 400)
             .json({ error: guard.message, code: guard.code });
         }
       } catch (e) {
@@ -523,6 +527,9 @@ router.post(
       const mounts = await listMounts({ address, ...parsedAuth.credentials });
       res.json({ mounts });
     } catch (e) {
+      if (e?.code === OUTBOUND_POLICY_DENIED) {
+        return res.status(403).json({ error: e.message, code: e.code });
+      }
       const errorRef = generateErrorReference();
       logger.error("Vault mounts failed", {
         errorReference: errorRef,
@@ -1038,10 +1045,10 @@ router.post(
               .json(withQuota({ error: "GitLab address not allowed" }));
           }
         }
-        const guard = await checkIntegrationAddress(u);
+        const guard = await checkIntegrationAddress(u, { proxyMode: "axios" });
         if (!guard.allowed) {
           return res
-            .status(400)
+            .status(guard.code === OUTBOUND_POLICY_DENIED ? 403 : 400)
             .json(withQuota({ error: guard.message, code: guard.code }));
         }
       } catch (_) {
@@ -1143,6 +1150,9 @@ router.post(
         logger.debug("Non-critical operation failed", { error: _err.message });
       }
     } catch (e) {
+      if (e?.code === OUTBOUND_POLICY_DENIED) {
+        return res.status(403).json(withQuota({ error: e.message, code: e.code }));
+      }
       const errorRef = generateErrorReference();
       logger.error("GitLab scan failed", {
         errorReference: errorRef,
@@ -1256,10 +1266,10 @@ router.post(
               .json(withQuota({ error: "GitHub address not allowed" }));
           }
         }
-        const guard = await checkIntegrationAddress(u);
+        const guard = await checkIntegrationAddress(new URL(resolveGitHubApiBase(baseUrl)), { proxyMode: "axios" });
         if (!guard.allowed) {
           return res
-            .status(400)
+            .status(guard.code === OUTBOUND_POLICY_DENIED ? 403 : 400)
             .json(withQuota({ error: guard.message, code: guard.code }));
         }
       } catch (_) {
@@ -1362,6 +1372,9 @@ router.post(
         logger.debug("Non-critical operation failed", { error: _err.message });
       }
     } catch (e) {
+      if (e?.code === OUTBOUND_POLICY_DENIED) {
+        return res.status(403).json(withQuota({ error: e.message, code: e.code }));
+      }
       const errorRef = generateErrorReference();
       logger.error("GitHub scan failed", {
         errorReference: errorRef,
@@ -1481,6 +1494,9 @@ router.post(
         logger.debug("Non-critical operation failed", { error: _err.message });
       }
     } catch (e) {
+      if (e?.code === OUTBOUND_POLICY_DENIED) {
+        return res.status(403).json({ error: e.message, code: e.code });
+      }
       const errorRef = generateErrorReference();
       logger.error("AWS region detection failed", {
         errorReference: errorRef,
@@ -1664,6 +1680,9 @@ router.post(
         logger.debug("Non-critical operation failed", { error: _err.message });
       }
     } catch (e) {
+      if (e?.code === OUTBOUND_POLICY_DENIED) {
+        return res.status(403).json(withQuota({ error: e.message, code: e.code }));
+      }
       const errorRef = generateErrorReference();
       logger.error("AWS scan failed", {
         errorReference: errorRef,
@@ -1783,10 +1802,10 @@ router.post(
               );
           }
         }
-        const guard = await checkIntegrationAddress(u);
+        const guard = await checkIntegrationAddress(u, { proxyMode: "axios" });
         if (!guard.allowed) {
           return res
-            .status(400)
+            .status(guard.code === OUTBOUND_POLICY_DENIED ? 403 : 400)
             .json(withQuota({ error: guard.message, code: guard.code }));
         }
       } catch (_) {
@@ -1884,6 +1903,9 @@ router.post(
         logger.warn("Audit write failed", { error: _err.message });
       }
     } catch (e) {
+      if (e?.code === OUTBOUND_POLICY_DENIED) {
+        return res.status(403).json(withQuota({ error: e.message, code: e.code }));
+      }
       const errorRef = generateErrorReference();
       logger.error("Azure scan failed", {
         errorReference: errorRef,
@@ -2024,6 +2046,9 @@ router.post(
         logger.debug("Non-critical operation failed", { error: _err.message });
       }
     } catch (e) {
+      if (e?.code === OUTBOUND_POLICY_DENIED) {
+        return res.status(403).json(withQuota({ error: e.message, code: e.code }));
+      }
       const errorRef = generateErrorReference();
       logger.error("GCP scan failed", {
         errorReference: errorRef,
@@ -2226,6 +2251,9 @@ router.post(
         logger.warn("Audit write failed", { error: _err.message });
       }
     } catch (e) {
+      if (e?.code === OUTBOUND_POLICY_DENIED) {
+        return res.status(403).json(withQuota({ error: e.message, code: e.code }));
+      }
       const errorRef = generateErrorReference();
       logger.error("Azure AD scan failed", {
         errorReference: errorRef,
