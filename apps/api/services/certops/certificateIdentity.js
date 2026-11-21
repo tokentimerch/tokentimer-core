@@ -1464,6 +1464,7 @@ async function readdManagingSource({
     fail("CERTOPS_MANAGEMENT_CONFIG_INVALID", "Renewal profile not found");
   }
   return inTransaction(client, async (tx) => {
+    await acquireManagedCertificateImportLock(tx, workspaceId);
     const mc = await tx.query(
       `SELECT * FROM managed_certificates
       WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
@@ -1499,12 +1500,32 @@ async function readdManagingSource({
     if (open) failOpenPeriod(open, { reason: openPeriodReason });
     if (renewalProfileId) {
       const profile = await tx.query(
-        `SELECT 1 FROM certificate_profiles
+        `SELECT public_metadata FROM certificate_profiles
         WHERE workspace_id = $1 AND id = $2`,
         [workspaceId, renewalProfileId],
       );
       if (!profile.rowCount)
         fail("CERTOPS_MANAGEMENT_CONFIG_INVALID", "Renewal profile not found");
+      const target = profile.rows[0].public_metadata?.renewalProfile?.target;
+      if (target?.type === "windows-iis") {
+        const source = mc.rows[0];
+        const previous = await tx.query(`SELECT cp.public_metadata#>>'{renewalProfile,target,type}' AS target_type
+          FROM certops_management_periods p
+          LEFT JOIN certificate_profiles cp ON cp.workspace_id=p.workspace_id AND cp.id=p.renewal_profile_id
+          WHERE p.workspace_id=$1 AND p.managed_certificate_id=$2
+          ORDER BY p.started_at DESC,p.id DESC LIMIT 1`, [workspaceId, managedCertificateId]);
+        if (previous.rows[0]?.target_type === "windows-cert-store" ||
+            (source.source === "agent_windows" && /\/windows_store_v2\/LocalMachine\/My\//i.test(source.source_ref || ""))) {
+          fail("CERTOPS_WINDOWS_CONSENT_REFUSED", "Choose a Windows Store renewal profile for this registration. Configure IIS updates separately.");
+        }
+        await require("./windowsIisConsent").assertIndependentIisTarget({
+          client: tx, workspaceId, agentId: mc.rows[0].deployed_agent_id, target,
+        });
+      } else if (target?.type === "windows-cert-store") {
+        await require("./windowsIisConsent").assertStoreRenewalAvailable({
+          client: tx, workspaceId, certificate: mc.rows[0],
+        });
+      }
     }
     const identity = await tx.query(
       `SELECT id, lifecycle_status FROM certops_certificate_identities
@@ -1514,7 +1535,6 @@ async function readdManagingSource({
     if (["revoked", "decommissioned"].includes(identity.rows[0]?.lifecycle_status)) {
       fail("CERTOPS_CERTIFICATE_RETIRED", "Observe a fresh replacement certificate before re-adding management");
     }
-    await acquireManagedCertificateImportLock(tx, workspaceId);
     await tx.query("SELECT certops_admit_management($1::uuid, $2::uuid)", [
       workspaceId,
       identity.rows[0]?.id || null,

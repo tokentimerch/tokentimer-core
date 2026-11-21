@@ -1490,6 +1490,19 @@ async function claimJobs({
         env,
       });
       if (!eligibility.eligible) continue;
+      if (["renew", "issue"].includes(row.operation) && row.payload?.target?.type === "windows-iis") {
+        // Avoid taking a claim while the operator is changing its owner. Never
+        // wait on the management lock while holding the selected job rows.
+        if (!await acquireManagedCertificateImportLock(client, row.workspace_id, { skipLocked: true })) continue;
+        try {
+          await require("./windowsIisConsent").assertIndependentIisTarget({
+            client, workspaceId: row.workspace_id, agentId: agent.id, target: row.payload.target,
+          });
+        } catch (error) {
+          if (error.code !== "CERTOPS_WINDOWS_CONSENT_REFUSED") throw error;
+          continue;
+        }
+      }
       if(row.payload?.materialCleanup){
         try{await require("./materialCleanup").resolveCleanupDefaults({client,workspaceId:row.workspace_id,operation:row.operation,subjectId:row.subject_id,payload:row.payload,assignedAgentId:row.assigned_agent_id,jobId:row.id,forClaim:true});}
         catch(error){

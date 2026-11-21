@@ -303,6 +303,7 @@ async function setWindowsIisConsumer({ workspaceId, periodId, targetId, enabled,
   const client=await dbPool.connect();
   try {
     await client.query("BEGIN");
+    await require("./inventory").acquireManagedCertificateImportLock(client, workspaceId);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`windows-iis-consent:${workspaceId}`]);
     let result;
     if (enabled) result=await enableWindowsIisConsumer({ client,workspaceId,periodId,targetId,actorUserId });
@@ -317,7 +318,34 @@ async function setWindowsIisConsumer({ workspaceId, periodId, targetId, enabled,
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
 }
 
-async function assertIndependentIisTarget({ client, workspaceId, agentId, target }) {
+function normalizedSelector(binding) {
+  try { return iisSelectorKey(binding); }
+  catch { return null; }
+}
+
+function observedSelector(row) {
+  return normalizedSelector({
+    port: row.windows_port, sniHost: row.windows_sni_host, address: row.bound_address,
+  });
+}
+
+// Compare the latest observation of each listener on the owning agent. A
+// stale or offline agent does not release a previously observed association.
+const IIS_OBSERVATIONS = `
+  FROM certops_agents a
+  JOIN certificate_targets ct ON ct.workspace_id=a.workspace_id
+    AND ct.public_metadata->>'agentId'=a.agent_id
+  JOIN LATERAL (
+    SELECT ci.managed_certificate_id,ci.observed_fingerprint_sha256,ci.presence_state
+    FROM certificate_instances ci
+    WHERE ci.workspace_id=ct.workspace_id AND ci.target_id=ct.id
+    ORDER BY ci.captured_at DESC NULLS LAST,ci.id DESC LIMIT 1
+  ) latest ON true
+  WHERE a.workspace_id=$1 AND a.id=$2
+    AND ct.source='agent_windows' AND ct.location_kind='iis_binding'
+    AND ct.windows_store='My' AND latest.presence_state IS DISTINCT FROM 'confirmed_absent'`;
+
+async function assertIndependentIisTarget({ client, workspaceId, agentId, target, recovery = false }) {
   if (target?.type !== "windows-iis" || !agentId) return;
   const selector=iisSelectorKey(target.binding);
   const row=(await client.query(`SELECT c.id FROM certops_windows_iis_renewal_consumers c
@@ -325,6 +353,56 @@ async function assertIndependentIisTarget({ client, workspaceId, agentId, target
     JOIN certops_management_periods p ON p.workspace_id=o.workspace_id AND p.id=o.management_period_id AND p.ended_at IS NULL
     WHERE c.workspace_id=$1 AND c.agent_id=$2 AND c.selector_key=$3 AND c.removed_at IS NULL LIMIT 1`,[workspaceId,agentId,selector])).rows[0];
   if (row) throw refusal("Renewal is managed by the Windows Store registration. Update the Store certificate instead.");
+  if (recovery) return;
+  const observed = await client.query(`SELECT ct.windows_port,ct.windows_sni_host,
+    ct.public_metadata->>'boundAddress' AS bound_address
+    ${IIS_OBSERVATIONS} AND ct.windows_port=$3
+    AND EXISTS (
+      SELECT 1 FROM managed_certificates mc
+      JOIN certops_management_periods p ON p.workspace_id=mc.workspace_id
+        AND p.managed_certificate_id=mc.id AND p.ended_at IS NULL AND p.automation_enabled=true
+      JOIN certificate_profiles cp ON cp.workspace_id=p.workspace_id AND cp.id=p.renewal_profile_id
+      JOIN certops_certificate_identities i ON i.workspace_id=p.workspace_id AND i.id=p.current_identity_id
+      WHERE mc.workspace_id=a.workspace_id AND mc.deployed_agent_id=a.id
+        AND i.lifecycle_status='active' AND mc.status NOT IN ('revoked','decommissioned')
+        AND i.fingerprint_sha256=certops_normalize_fingerprint(mc.fingerprint_sha256)
+        AND i.fingerprint_sha256=certops_normalize_fingerprint(latest.observed_fingerprint_sha256)
+        AND cp.public_metadata#>>'{renewalProfile,target,type}'='windows-cert-store'
+        AND cp.public_metadata#>>'{renewalProfile,target,store}'='My'
+    )`, [workspaceId,agentId,target.binding.port]);
+  if (observed.rows.some(item => observedSelector(item) === selector)) {
+    throw refusal("Renewal is managed by the Windows Store registration. Update the Store certificate instead.");
+  }
 }
 
-module.exports = { listWindowsRenewal, setWindowsIisConsumer, assertIndependentIisTarget, enableWindowsIisConsumer, disableWindowsIisConsumer, authorizeWindowsIisConsumer, snapshotWindowsIisConsumers, checkWindowsIisConsumerForAgent };
+async function assertStoreRenewalAvailable({ client, workspaceId, certificate }) {
+  if (!certificate.deployed_agent_id || !certificate.fingerprint_sha256) return;
+  const observed = await client.query(`SELECT ct.windows_port,ct.windows_sni_host,
+    ct.public_metadata->>'boundAddress' AS bound_address,
+    (SELECT cp.public_metadata#>'{renewalProfile,target}' FROM certops_management_periods p
+      JOIN certificate_profiles cp ON cp.workspace_id=p.workspace_id AND cp.id=p.renewal_profile_id
+      WHERE p.workspace_id=ct.workspace_id AND p.managed_certificate_id=latest.managed_certificate_id
+        AND p.ended_at IS NULL AND p.automation_enabled=true) AS target
+    ${IIS_OBSERVATIONS}
+    AND certops_normalize_fingerprint(latest.observed_fingerprint_sha256)=certops_normalize_fingerprint($3)
+    AND latest.managed_certificate_id IS DISTINCT FROM $4::uuid`,
+  [workspaceId,certificate.deployed_agent_id,certificate.fingerprint_sha256,certificate.id]);
+  const selectors = new Set(observed.rows.map(observedSelector).filter(Boolean));
+  if (observed.rows.some(item => {
+    const selector = observedSelector(item);
+    return selector && item.target?.type === "windows-iis" && normalizedSelector(item.target.binding) === selector;
+  })) {
+    throw refusal("Stop the existing IIS renewal for this certificate before configuring Windows Store renewal.");
+  }
+  if (!selectors.size) return;
+  const running = await client.query(`SELECT payload->'target' AS target FROM certificate_jobs
+    WHERE workspace_id=$1 AND (assigned_agent_id=$2 OR claimed_by_agent_id=$2)
+      AND operation IN ('issue','renew','continue-enrollment')
+      AND status IN ('claimed','running','orphaned_unknown_effect')
+      AND payload->'target'->>'type'='windows-iis'`, [workspaceId,certificate.deployed_agent_id]);
+  if (running.rows.some(item => selectors.has(normalizedSelector(item.target?.binding)))) {
+    throw refusal("Resolve the existing IIS renewal job before configuring Windows Store renewal.");
+  }
+}
+
+module.exports = { listWindowsRenewal, setWindowsIisConsumer, assertIndependentIisTarget, assertStoreRenewalAvailable, enableWindowsIisConsumer, disableWindowsIisConsumer, authorizeWindowsIisConsumer, snapshotWindowsIisConsumers, checkWindowsIisConsumerForAgent };

@@ -304,19 +304,96 @@ export default function AdcsProfileWizard({
       .then(async page => {
         if (cancelled) return;
         let next = targetsForName(page.items || [], reference.trim());
+        const windowsItems = (page.items || []).filter(
+          item =>
+            item.identityId &&
+            (item.sources || []).some(
+              source => source.source === 'agent_windows'
+            )
+        );
+        const results = await Promise.allSettled(
+          windowsItems.map(item =>
+            getWindowsRenewal(workspaceId, item.identityId)
+          )
+        );
+        const matches = results
+          .filter(
+            result =>
+              result.status === 'fulfilled' &&
+              Array.isArray(result.value?.groups)
+          )
+          .map(result => result.value);
+        const unknownIds = new Set(
+          results.flatMap((result, index) =>
+            result.status === 'rejected' || !Array.isArray(result.value?.groups)
+              ? (windowsItems[index].sources || [])
+                  .filter(source => source.source === 'agent_windows')
+                  .map(source => source.managedCertificateId)
+              : []
+          )
+        );
+        if (cancelled) return;
         if (destination === 'windows-cert-store') {
-          const matches = await Promise.all(
-            (page.items || [])
-              .filter(item => item.identityId)
-              .map(item => getWindowsRenewal(workspaceId, item.identityId))
-          );
-          if (cancelled) return;
           const ids = new Set(
             matches.flatMap(item =>
               (item.groups || []).map(group => group.managedCertificateId)
             )
           );
-          next = next.filter(item => ids.has(item.managedCertificateId));
+          next = next
+            .filter(
+              item =>
+                ids.has(item.managedCertificateId) ||
+                unknownIds.has(item.managedCertificateId)
+            )
+            .map(item =>
+              unknownIds.has(item.managedCertificateId)
+                ? { ...item, canAttach: false, ownershipUnknown: true }
+                : item
+            );
+        } else {
+          const storeIds = new Set(
+            matches.flatMap(item =>
+              item.groups.map(group => group.managedCertificateId)
+            )
+          );
+          const dependentIds = new Set(
+            matches.flatMap(item =>
+              (item.groups || [])
+                .filter(
+                  group =>
+                    group.profileId && group.ready === true && !group.ambiguous
+                )
+                .flatMap(group =>
+                  (group.bindings || [])
+                    .filter(binding => binding.relationship === 'observed')
+                    .map(binding => binding.managedCertificateId)
+                )
+            )
+          );
+          const unresolvedIds = new Set([
+            ...unknownIds,
+            ...matches.flatMap(item =>
+              (item.groups || []).flatMap(group =>
+                (group.bindings || [])
+                  .filter(
+                    binding =>
+                      group.ambiguous ||
+                      (group.profileId && !group.ready) ||
+                      binding.relationship !== 'observed'
+                  )
+                  .map(binding => binding.managedCertificateId)
+              )
+            ),
+          ]);
+          next = next.map(target =>
+            storeIds.has(target.managedCertificateId)
+              ? { ...target, canAttach: false, storeRegistration: true }
+              : dependentIds.has(target.managedCertificateId)
+                ? { ...target, canAttach: false, storeOwned: true }
+                : unresolvedIds.has(target.managedCertificateId)
+                  ? { ...target, canAttach: false, ownershipUnknown: true }
+                  : target
+          );
         }
         setTargets(next);
         setSelectedId(
@@ -464,7 +541,7 @@ export default function AdcsProfileWizard({
         <ModalHeader {...modal.headerProps}>
           <DashboardModalTitle>New AD CS renewal profile</DashboardModalTitle>
           <DashboardModalDescription>
-            Choose a confirmed issuer, describe the IIS binding, then attach the
+            Choose a confirmed issuer and renewal destination, then attach the
             profile to a certificate already in inventory.
           </DashboardModalDescription>
         </ModalHeader>
@@ -810,10 +887,21 @@ export default function AdcsProfileWizard({
                   <Alert status='warning' borderRadius='md'>
                     <AlertIcon />
                     <AlertDescription fontSize='sm'>
-                      {blocked[0].label} is already managed, and this screen
-                      cannot change that registration. Open it in Certificates,
-                      stop managing, then start managing again and choose this
-                      profile. {sweepSentence(dnsName, leadTime)}
+                      {blocked[0].storeRegistration ? (
+                        'Choose a Windows Store renewal profile for this registration. Configure IIS updates separately.'
+                      ) : blocked[0].ownershipUnknown ? (
+                        'IIS renewal ownership cannot be confirmed. Check the Windows renewal settings before attaching this profile.'
+                      ) : blocked[0].storeOwned ? (
+                        'Renewal for this IIS binding is managed by its Windows Store registration. Configure IIS updates there.'
+                      ) : (
+                        <>
+                          {blocked[0].label} is already managed, and this screen
+                          cannot change that registration. Open it in
+                          Certificates, stop managing, then start managing again
+                          and choose this profile.{' '}
+                          {sweepSentence(dnsName, leadTime)}
+                        </>
+                      )}
                     </AlertDescription>
                   </Alert>
                 ) : null}

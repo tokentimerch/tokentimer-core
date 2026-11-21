@@ -8,9 +8,9 @@
  *
  * Job requirements are derived through renewalProfile.js/jobs.js semantics,
  * then evaluated with the same pure predicate used by real dispatch. Filesystem
- * discoveries pin through their legacy discovery-agent identity; Windows IIS
- * discoveries pin through deployed_agent_id because the store and binding are
- * host-local. Other paths remain open to every genuinely eligible agent.
+ * discoveries pin through their legacy discovery-agent identity. Windows Store
+ * renewals and IIS discoveries pin through deployed_agent_id because the store
+ * and binding are host-local. Other paths remain open to eligible agents.
  * Unknown or malformed persisted eligibility facts fail closed to Unknown,
  * never Healthy.
  *
@@ -383,6 +383,9 @@ function partialCapabilitySummary(declaredOperations) {
 }
 
 function ineligiblePinSummary(reason, declaredOperations) {
+  if (reason === "windows_store_only_unavailable") {
+    return "The owning agent needs a qualified Windows build with fresh support for Windows Store renewal.";
+  }
   if (reason === "iis_explicit_ip_capability_unavailable") {
     return "The assigned agent needs a qualified Windows build with a fresh declaration for explicit-IP IIS bindings.";
   }
@@ -660,11 +663,20 @@ function resolveRenewalPathForRow({
 
   const profileMetadata = parseMetadata(certificateRow.profile_public_metadata);
   const renewalProfile = profileMetadata.renewalProfile;
-  const bindingAddress = renewalProfile?.target?.type === "windows-iis" ? renewalProfile.target.binding?.address : null;
-  if (bindingAddress != null && !["*", "0.0.0.0"].includes(bindingAddress) && !certificateRow.deployed_agent_id) {
-    return { renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
+  const target = renewalProfile?.target;
+  const storeOnly = target?.type === "windows-cert-store";
+  const bindingAddress = target?.type === "windows-iis" ? target.binding?.address : null;
+  const explicitIisAddress = bindingAddress != null && !["*", "0.0.0.0"].includes(bindingAddress);
+  const requiresOwningAgent = storeOnly || explicitIisAddress;
+  if (requiresOwningAgent && !certificateRow.deployed_agent_id) {
+    return {
+      renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
       renewalPathReason: RENEWAL_PATH_REASONS.TOPOLOGY_UNKNOWN,
-      renewalPathSummary: "An explicit-IP IIS binding needs an owning agent before it can renew.", dependencies: [] };
+      renewalPathSummary: storeOnly
+        ? "A Windows Store certificate needs an owning agent before it can renew."
+        : "An explicit-IP IIS binding needs an owning agent before it can renew.",
+      dependencies: [],
+    };
   }
   let jobRequirements;
   try {
@@ -702,9 +714,7 @@ function resolveRenewalPathForRow({
     now,
     env,
     jobRequirements,
-    forceDeployedAgentPin: renewalProfile?.target?.type === "windows-iis" &&
-      renewalProfile.target.binding?.address != null &&
-      !["*", "0.0.0.0"].includes(renewalProfile.target.binding.address),
+    forceDeployedAgentPin: requiresOwningAgent,
   });
   if (
     eligibilityIndeterminate &&

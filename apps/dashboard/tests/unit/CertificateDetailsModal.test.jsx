@@ -804,6 +804,19 @@ describe('CertificateDetailsModal', () => {
     ).toBeInTheDocument();
   });
 
+  it('scopes the read-only footer to metadata when showing certificate management', () => {
+    renderModal({
+      isViewer: true,
+      identityPanel: <button>Renewal settings</button>,
+    });
+    expect(
+      screen.getByText('Certificate metadata is read-only.')
+    ).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: 'Renewal settings' })
+    ).toBeEnabled();
+  });
+
   it('omits empty summary items, rows, and data-only sections in read mode', () => {
     renderModal({
       token: {

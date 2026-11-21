@@ -126,6 +126,98 @@ describe('AD CS wizard when the certificate is already managed', () => {
   beforeEach(() => {
     replaceCalls.length = 0;
     replaceResults = [];
+    getWindowsRenewal.mockReset().mockResolvedValue({ groups: [] });
+  });
+
+  it('does not call Windows ownership for an unrelated filesystem registration', async () => {
+    getWindowsRenewal.mockRejectedValue(new Error('older API'));
+    expect(await openAtAttachStep(staleInventory)).toBeInTheDocument();
+    expect(getWindowsRenewal).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unrelated filesystem registration usable when Windows ownership fails', async () => {
+    getWindowsRenewal.mockRejectedValue(new Error('older API'));
+    const attach = await openAtAttachStep([
+      ...staleInventory,
+      {
+        managedCertificateId: 'iis',
+        source: 'agent_windows',
+        currentIdentityId: 'identity-1',
+        startedAt: '2026-09-01',
+        periodId: OPEN_PERIOD,
+      },
+    ]);
+    expect(attach).toBeInTheDocument();
+    expect(
+      await screen.findByText(/ownership cannot be confirmed/)
+    ).toBeInTheDocument();
+  });
+
+  it('does not attach an IIS profile to a binding owned by a Store renewal', async () => {
+    getWindowsRenewal.mockResolvedValue({
+      groups: [
+        {
+          profileId: 'store-profile',
+          managedCertificateId: 'store',
+          ready: true,
+          ambiguous: false,
+          bindings: [{ managedCertificateId: 'iis', relationship: 'observed' }],
+        },
+      ],
+    });
+    listCertificates.mockResolvedValue({
+      items: [
+        {
+          identityId: 'identity-1',
+          commonName: 'app.example',
+          sources: [
+            {
+              managedCertificateId: 'store',
+              source: 'agent_windows',
+              currentIdentityId: 'identity-1',
+              startedAt: '2026-09-01T00:00:00Z',
+              periodId: 'other-period',
+            },
+            {
+              managedCertificateId: 'iis',
+              source: 'agent_windows',
+              currentIdentityId: 'identity-1',
+              startedAt: '2026-09-01T00:00:00Z',
+              periodId: OPEN_PERIOD,
+            },
+          ],
+        },
+      ],
+    });
+    render(
+      <ChakraProvider>
+        <WizardHost />
+      </ChakraProvider>
+    );
+    fireEvent.change(screen.getByLabelText('Profile name'), {
+      target: { value: 'IIS profile' },
+    });
+    fireEvent.change(screen.getByLabelText('AD CS issuer'), {
+      target: { value: 'issuer-1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.change(screen.getByLabelText('Certificate name'), {
+      target: { value: 'app.example' },
+    });
+    fireEvent.change(screen.getByLabelText('IIS site'), {
+      target: { value: 'Default Web Site' },
+    });
+    fireEvent.change(screen.getByLabelText('IIS port'), {
+      target: { value: '443' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
+    expect(
+      await screen.findByText(/Choose a Windows Store renewal profile/)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Attach and enable automation' })
+    ).not.toBeInTheDocument();
   });
 
   it('attaches an ended period returned by the grouped certificate API', async () => {
