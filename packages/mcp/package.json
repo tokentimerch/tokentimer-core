@@ -13,6 +13,7 @@
   "scripts": {
     "start": "node bin/tokentimer-mcp.js",
     "test": "node --test --test-force-exit src/**/*.test.js",
+    "test:windows": "node --test --test-force-exit --test-concurrency=1 src/**/*.test.js",
     "test:e2e": "node --test --test-force-exit e2e/**/*.e2e.test.js",
     "lint": "eslint ."
   },
