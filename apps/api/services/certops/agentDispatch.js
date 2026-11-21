@@ -1458,29 +1458,20 @@ async function claimJobs({
         env,
       });
       if (!eligibility.eligible) continue;
-      const target = row.payload?.target;
-      const storeRenewal = row.operation === "renew" && row.subject_type === "managed_certificate" &&
-        target?.type === "windows-cert-store" && target.store === "My";
-      const independentIis = ["renew", "issue"].includes(row.operation) && target?.type === "windows-iis";
-      if (storeRenewal || independentIis) {
+      if (["renew", "issue"].includes(row.operation) && row.payload?.target?.type === "windows-iis") {
         // Avoid taking a claim while the operator is changing its owner. Never
         // wait on the management lock while holding the selected job rows.
         if (!await acquireManagedCertificateImportLock(client, row.workspace_id, { skipLocked: true })) continue;
         try {
-          const { assertIndependentIisTarget, assertNoCompetingStoreRenewal } = require("./windowsIisConsent");
-          if (storeRenewal) {
-            await assertNoCompetingStoreRenewal({
-              client, workspaceId: row.workspace_id, agentId: agent.id, certificateId: row.subject_id,
-            });
-          } else {
-            await assertIndependentIisTarget({ client, workspaceId: row.workspace_id, agentId: agent.id, target });
-          }
+          await require("./windowsIisConsent").assertIndependentIisTarget({
+            client, workspaceId: row.workspace_id, agentId: agent.id, target: row.payload.target,
+          });
         } catch (error) {
           if (error.code !== "CERTOPS_WINDOWS_CONSENT_REFUSED") throw error;
           // Hold new jobs intended for this agent. An unassigned job may
           // still be legitimate on another host. Existing leases and retries
           // retain their own reconciliation rules.
-          if (independentIis && row.status === "pending" && row.attempt_count === 0 && row.assigned_agent_id === agent.id) {
+          if (row.status === "pending" && row.attempt_count === 0 && row.assigned_agent_id === agent.id) {
             const message = row.enrollment_id
               ? "The Windows Store registration now owns this IIS binding. Cancel this queued enrollment under AD CS and configure IIS updates on the Store registration."
               : "The Windows Store registration now owns this IIS binding. Configure IIS updates on the Store registration.";
@@ -1604,6 +1595,21 @@ async function claimJobs({
             staleHash: row.approved_payload_hash,
             currentHash,
           });
+          continue;
+        }
+      }
+
+      if (row.operation === "renew" && row.subject_type === "managed_certificate" &&
+          row.payload?.target?.type === "windows-cert-store" && row.payload.target.store === "My") {
+        // Invalidate stale approvals first. Never wait for the management
+        // lock while holding selected jobs, and never grant competing claims.
+        if (!await acquireManagedCertificateImportLock(client, row.workspace_id, { skipLocked: true })) continue;
+        try {
+          await require("./windowsIisConsent").assertNoCompetingStoreRenewal({
+            client, workspaceId: row.workspace_id, agentId: agent.id, certificateId: row.subject_id,
+          });
+        } catch (error) {
+          if (error.code !== "CERTOPS_WINDOWS_CONSENT_REFUSED") throw error;
           continue;
         }
       }
