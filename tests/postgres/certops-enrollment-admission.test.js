@@ -918,7 +918,8 @@ test("retirement or credential rotation wins against already authenticated agent
       assert.equal(await Promise.race([settled.then(() => "settled"), new Promise(resolve => setTimeout(() => resolve("waiting"), 100))]), "waiting");
       await writer.query("COMMIT");
       const results = await settled;
-      assert.ok(results.every(result => result.status === "rejected" && result.reason.code === "CERTOPS_AGENT_CREDENTIAL_INVALID"), JSON.stringify(results));
+      const expected = mutation === "retire" ? "CERTOPS_AGENT_RETIRED" : "CERTOPS_AGENT_CREDENTIAL_STALE";
+      assert.ok(results.every(result => result.status === "rejected" && result.reason.code === expected), JSON.stringify(results));
     } catch (error) { await writer.query("ROLLBACK"); throw error; } finally { writer.release(); }
   }
 });
@@ -1075,7 +1076,7 @@ for (const hasIisConsumers of [false, true]) test(`AD CS proof recovery verifies
       if (mutation === "legacy") await client.query("UPDATE certops_adcs_expected_identity_receipts SET receipt_claim_expires_at=NULL WHERE id=$1", [first.receiptId]);
       if (mutation === "credential") await client.query("UPDATE certops_agents SET credential_hash=$2 WHERE id=$1", [f.agentId, "ef".repeat(32)]);
       await assert.rejects(recovery.witnessCommittedAdcsIdentityTx({ client, agent, jobId: job.id, receiptId: first.receiptId }),
-        mutation === "credential" ? { code: "CERTOPS_AGENT_CREDENTIAL_INVALID" } : /not observed within the original claim/);
+        mutation === "credential" ? { code: "CERTOPS_AGENT_CREDENTIAL_STALE" } : /not observed within the original claim/);
       await client.query("ROLLBACK TO SAVEPOINT invalid_commit_witness");
     }
     await recovery.witnessCommittedAdcsIdentityTx({ client, agent, jobId: job.id, receiptId: first.receiptId });

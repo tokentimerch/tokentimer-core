@@ -83,9 +83,9 @@ test("persisted ACME state accepts only the current owner claim and idempotent r
     deps: { enforceAgentSequence: async () => { advanced = true; }, assertEvidenceClaimOwnership: async () => ({ claimId }),
       createCertificateEvidence: async () => { throw new Error("must not persist"); } } };
   await pool.query("UPDATE certops_agents SET credential_hash=$2 WHERE id=$1", [agentId, "f".repeat(64)]);
-  await assert.rejects(persistAgentJobEvidenceBatch(batch), { code: "CERTOPS_AGENT_CREDENTIAL_INVALID" });
+  await assert.rejects(persistAgentJobEvidenceBatch(batch), { code: "CERTOPS_AGENT_CREDENTIAL_STALE" });
   await pool.query("UPDATE certops_agents SET credential_hash=$2,status='retired',retired_at=NOW() WHERE id=$1", [agentId, digest]);
-  await assert.rejects(persistAgentJobEvidenceBatch(batch), { code: "CERTOPS_AGENT_CREDENTIAL_INVALID" });
+  await assert.rejects(persistAgentJobEvidenceBatch(batch), { code: "CERTOPS_AGENT_RETIRED" });
   assert.equal(advanced, false);
 }, { timeout: 120000 });
 
