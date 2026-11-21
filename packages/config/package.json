@@ -6,8 +6,14 @@
   "type": "module",
   "exports": {
     ".": "./src/index.js",
-    "./network": "./src/network.js",
+    "./network": {
+      "import": "./src/network.js",
+      "require": "./src/network.cjs"
+    },
     "./database": "./src/database.js"
+  },
+  "dependencies": {
+    "proxy-from-env": "2.1.0"
   },
   "scripts": {
     "test": "node --test src/**/*.test.js"
