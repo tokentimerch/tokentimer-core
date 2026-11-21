@@ -49,7 +49,10 @@
       "issue": 232,
       "edition": "core",
       "horizon": "pre-v1",
-      "inRoadmap": true
+      "inRoadmap": true,
+      "implementationPrs": [
+        788
+      ]
     },
     {
       "id": "owners",

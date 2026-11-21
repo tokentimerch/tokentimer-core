@@ -6,6 +6,7 @@ const {
   getRequestContext,
   attachRequestContext,
   requestCorrelation,
+  runWithRequestCorrelation,
 } = require("../../apps/api/utils/request-context");
 
 test("concurrent HTTP requests keep their own correlation through async work", async (t) => {
@@ -77,4 +78,21 @@ test("ending one response does not clear another active request", async () => {
   assert.equal(await firstResult, undefined);
   assert.equal((await secondResult).correlationId, req.correlationId);
   second.emit("finish");
+});
+
+test("correlated worker work keeps its reference only until that work settles", async () => {
+  const id = "a2bcde12-3456-4789-abcd-0123456789ab";
+  let detachedWork;
+  await runWithRequestCorrelation(id, async () => {
+    await Promise.resolve();
+    assert.deepEqual(getRequestContext(), { correlationId: id });
+    detachedWork = new Promise((resolve) => {
+      setImmediate(() => resolve(getRequestContext()));
+    });
+  });
+  assert.equal(getRequestContext(), undefined);
+  assert.equal(await detachedWork, undefined);
+  await runWithRequestCorrelation("not-issued-by-the-api", () => {
+    assert.equal(getRequestContext(), undefined);
+  });
 });

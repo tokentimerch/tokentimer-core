@@ -23,6 +23,84 @@ beforeEach(() => {
 });
 
 describe('API error request references', () => {
+  it('refreshes an explicitly expired diagnostics CSRF token once and preserves privacy settings', async () => {
+    const {
+      default: apiClient,
+      reportDashboardError,
+      resetCsrfToken,
+    } = await import('../../src/utils/apiClient.js');
+    const post = vi.spyOn(apiClient, 'post');
+    const get = vi.spyOn(apiClient, 'get');
+    const csrfRejection = {
+      response: { status: 403, data: { code: 'EBADCSRFTOKEN' } },
+    };
+    get.mockResolvedValue({ data: { csrfToken: 'test-refreshed-token' } });
+    post.mockRejectedValueOnce(csrfRejection).mockResolvedValueOnce({
+      status: 204,
+      headers: { 'x-request-id': id },
+    });
+    try {
+      await expect(reportDashboardError('render')).resolves.toBe(id);
+      expect(get).toHaveBeenCalledExactlyOnceWith(
+        '/api/csrf-token',
+        expect.objectContaining({
+          adapter: 'fetch',
+          fetchOptions: { referrerPolicy: 'no-referrer', redirect: 'error' },
+          _dashboardDiagnostics: true,
+        })
+      );
+      expect(post).toHaveBeenCalledTimes(2);
+
+      post.mockClear().mockRejectedValue(csrfRejection);
+      get.mockClear();
+      await expect(reportDashboardError('render')).resolves.toBeNull();
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(post).toHaveBeenCalledTimes(2);
+
+      post.mockClear().mockRejectedValue({ response: { status: 429 } });
+      get.mockClear();
+      await expect(reportDashboardError('render')).resolves.toBeNull();
+      expect(get).not.toHaveBeenCalled();
+      expect(post).toHaveBeenCalledTimes(1);
+    } finally {
+      resetCsrfToken();
+      post.mockRestore();
+      get.mockRestore();
+    }
+  });
+
+  it('reports only fixed error categories and ignores references on rejected or missing reports', async () => {
+    const { default: apiClient, reportDashboardError } =
+      await import('../../src/utils/apiClient.js');
+    window.history.replaceState(null, '', '/certops/renewals?token=fixture');
+    const post = vi.spyOn(apiClient, 'post');
+    post
+      .mockResolvedValueOnce({ status: 204, headers: { 'x-request-id': id } })
+      .mockResolvedValueOnce({
+        status: 204,
+        headers: { 'x-request-id': 'untrusted-text' },
+      })
+      .mockRejectedValueOnce(new Error('network unavailable'));
+    try {
+      await expect(reportDashboardError('render')).resolves.toBe(id);
+      expect(post).toHaveBeenCalledWith(
+        '/api/diagnostics/dashboard',
+        { kind: 'render', area: 'certops' },
+        expect.objectContaining({
+          adapter: 'fetch',
+          fetchOptions: { referrerPolicy: 'no-referrer', redirect: 'error' },
+        })
+      );
+      await expect(reportDashboardError('chunk-load')).resolves.toBeNull();
+      await expect(reportDashboardError('render')).resolves.toBeNull();
+      await expect(reportDashboardError('fixture')).resolves.toBeNull();
+      expect(post).toHaveBeenCalledTimes(3);
+    } finally {
+      post.mockRestore();
+      window.history.replaceState(null, '', '/');
+    }
+  });
+
   it.each([
     { 'x-request-id': id },
     { 'X-Request-Id': id },
