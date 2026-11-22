@@ -200,11 +200,44 @@ describe("platform: permission application", () => {
     assert.ok(icacls.args.includes(`*${OWN_SID}:(OI)(CI)(F)`));
   });
 
+  it("lets administrators traverse state without inheritable or write rights", () => {
+    const spawn = fakeSpawn({
+      whoami: () => ({ stdout: `"nt authority\\system","${platform.SYSTEM_SID}"\r\n` }),
+      icacls: icaclsSaveHandler("D:PAI(A;OICI;FA;;;SY)(A;;0x1200a9;;;BA)"),
+      powershell: () => ({ stdout: `${platform.SYSTEM_SID}\r\n` }),
+    });
+    platform.applyRestrictivePermissions("C:\\state", {
+      kind: "directory", includeAdministrators: true, platform: "win32", spawn,
+      tmpDir: os.tmpdir(),
+    });
+    const grant = spawn.calls.find((call) => call.args.includes("/grant:r"));
+    assert.ok(grant.args.includes(`*${platform.ADMINISTRATORS_SID}:(RX)`));
+    assert.ok(grant.args.includes(`*${platform.SYSTEM_SID}:(OI)(CI)(F)`));
+  });
+
+  it("grants administrators access to config without changing secret-file defaults", () => {
+    const spawn = fakeSpawn({
+      whoami: whoamiHandler,
+      icacls: icaclsSaveHandler(`D:PAI(A;;FA;;;${OWN_SID})(A;;FA;;;SY)(A;;FA;;;BA)`),
+    });
+    platform.applyRestrictivePermissions("C:\\state\\config.json", {
+      includeAdministrators: true, platform: "win32", spawn, tmpDir: os.tmpdir(),
+    });
+    const grant = spawn.calls.find((call) => call.args.includes("/grant:r"));
+    assert.ok(grant.args.includes(`*${platform.ADMINISTRATORS_SID}:(F)`));
+  });
+
   it("resolves whoami through System32 so Git Bash cannot shadow it", () => {
     const spawn = fakeSpawn({ whoami: whoamiHandler });
     const sid = platform.currentUserSid({ spawn, useCache: false });
     assert.equal(sid, OWN_SID);
     assert.equal(spawn.calls[0].file, platform.windowsSystem32Tool("whoami"));
+  });
+
+  it("uses Windows PowerShell from System32 for owner checks, independent of PATH", () => {
+    const spawn = fakeSpawn({});
+    assert.equal(platform.readWindowsOwnerSid("C:\\state\\config.json", { spawn }), OWN_SID);
+    assert.equal(spawn.calls[0].file, path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
   });
 
   it("collapses the grant list when the agent already runs as SYSTEM", () => {
@@ -293,7 +326,7 @@ describe("platform: permission application", () => {
       icacls: icaclsSaveHandler(`D:PAI(A;;FA;;;${OWN_SID})(A;;FA;;;SY)`),
     });
     const bareSpawn = (file, args) => {
-      if (file === "powershell") return { error: Object.assign(new Error("nope"), { code: "ENOENT" }) };
+      if (path.parse(file).name.toLowerCase() === "powershell") return { error: Object.assign(new Error("nope"), { code: "ENOENT" }) };
       return spawn(file, args);
     };
     assert.throws(
@@ -602,6 +635,27 @@ describe("platform: clearWindowsServiceBootstrapToken", () => {
       status: 0, stdout: "Environment REG_MULTI_SZ " + (args[5] === "^" && alternate ? alternate : entries).join(args[5]),
     } : { status: 0 } });
   }
+
+  it("scrubs only the selected generation's service after checking ownership", () => {
+    const serviceName = `TokenTimerAgent-${"a".repeat(64)}`;
+    const key = `HKLM\\SYSTEM\\CurrentControlSet\\Services\\${serviceName}`;
+    const entries = ["TOKENTIMER_AGENT_CONFIG_DIR=C:\\generation\\state", "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_secret"];
+    const spawn = registrySpawn(entries);
+    assert.equal(platform.clearWindowsServiceBootstrapToken({ configDir: "C:\\generation\\state", serviceName, platform: "win32", spawn }).cleared, true);
+    assert.deepEqual(spawn.calls.map((call) => call.args[1]), [key, key, key]);
+    const wrongOwner = registrySpawn(entries);
+    assert.equal(platform.clearWindowsServiceBootstrapToken({ configDir: "C:\\other\\state", serviceName, platform: "win32", spawn: wrongOwner }).cleared, false);
+    assert.deepEqual(wrongOwner.calls.map((call) => call.args[0]), ["query"]);
+  });
+
+  it("rejects malformed service names without querying the registry", () => {
+    for (const serviceName of [null, "", "OtherService", "TokenTimerAgent-", `TokenTimerAgent-${"A".repeat(64)}`, `TokenTimerAgent-${"a".repeat(63)}`, `TokenTimerAgent-${"a".repeat(64)}\\Other`, `TokenTimerAgent-${"a".repeat(64)}\n`, `TokenTimerAgent-${"a".repeat(64)}\0`, "TokenTimerAgent\\Other", "../TokenTimerAgent", "TokenTimerAgent\nOther"]) {
+      const spawn = registrySpawn([]);
+      const result = platform.clearWindowsServiceBootstrapToken({ configDir: "C:\\state", serviceName, platform: "win32", spawn });
+      assert.deepEqual(result, { attempted: false, cleared: false, reason: "invalid Windows service name" });
+      assert.deepEqual(spawn.calls, []);
+    }
+  });
 
   it("refuses a manually run agent whose config does not own the installed service", () => {
     const spawn = registrySpawn(["TOKENTIMER_AGENT_CONFIG_DIR=C:\\installed\\state", "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_other"]);

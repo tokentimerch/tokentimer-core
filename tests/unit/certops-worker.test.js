@@ -1488,6 +1488,7 @@ describe("certops maintenance worker", () => {
         CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "off",
         CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED: "false",
         CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED: "false",
+        CERTOPS_SWEEP_IIS_PROOF_PURGE_ENABLED: "false",
         CERTOPS_SWEEP_ENROLLMENT_CONTINUATIONS_ENABLED: "false",
       },
       log: silentLogger,
@@ -1675,6 +1676,7 @@ describe("certops maintenance worker", () => {
             CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED: "false",
             CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED: "false",
             CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED: "false",
+        CERTOPS_SWEEP_IIS_PROOF_PURGE_ENABLED: "false",
         CERTOPS_SWEEP_ENROLLMENT_CONTINUATIONS_ENABLED: "false",
           },
           log: silentLogger,
@@ -1716,6 +1718,7 @@ describe("certops maintenance worker", () => {
         CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED: "false",
         CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED: "false",
         CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED: "false",
+        CERTOPS_SWEEP_IIS_PROOF_PURGE_ENABLED: "false",
         CERTOPS_SWEEP_ENROLLMENT_CONTINUATIONS_ENABLED: "false",
       },
       log: silentLogger,
@@ -1745,6 +1748,7 @@ describe("certops maintenance worker", () => {
       CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED: "false",
       CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED: "false",
       CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED: "false",
+        CERTOPS_SWEEP_IIS_PROOF_PURGE_ENABLED: "false",
       CERTOPS_SWEEP_ENROLLMENT_CONTINUATIONS_ENABLED: "false",
     };
     const run = (env, sweeper) =>

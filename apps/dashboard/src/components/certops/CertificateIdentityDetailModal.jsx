@@ -5,6 +5,9 @@ import CertOpsBadge, {
 } from './CertOpsBadge.jsx';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
   Box,
   Button,
   FormControl,
@@ -29,12 +32,17 @@ import DashboardDetailsSection from '../DashboardDetailsSection.jsx';
 import CopyableId from '../CopyableId.jsx';
 import CertificateDetailsModal from './CertificateDetailsModal.jsx';
 import CertificateObservationHistory from './CertificateObservationHistory.jsx';
+import IisReassociation from './IisReassociation.jsx';
+import WindowsCertificateUsage from './WindowsCertificateUsage.jsx';
 import {
   getCertificate,
   getCertificateIdentity,
   getManagedCertificatesForToken,
+  getWindowsRenewal,
+  setWindowsIisConsumer,
   listCertOpsRenewalProfiles,
   readdManagingSource,
+  replaceManagingSource,
   stopManagingSource,
 } from './certopsApi';
 import {
@@ -43,22 +51,6 @@ import {
   locationKindLabel,
   sourceLabel,
 } from './certopsFormat.js';
-
-const WINDOWS_REGISTRATION_LABELS = {
-  windows_store: 'Windows certificate store',
-  iis_binding: 'IIS binding',
-  http_sys: 'HTTP.sys binding',
-};
-
-function registrationLabel(source) {
-  if (source.source !== 'agent_windows') return sourceLabel(source.source);
-  const match = source.sourceRef?.match(
-    /^[^/]+\/([^/]+)\/(windows_store|iis_binding|http_sys)\/(.+)$/
-  );
-  if (!match) return sourceLabel(source.source);
-  const [, host, kind, slot] = match;
-  return `${WINDOWS_REGISTRATION_LABELS[kind]} · ${host} · ${slot}`;
-}
 
 function SectionContent({ children }) {
   return (
@@ -102,6 +94,62 @@ function LocationStatus({ location }) {
   );
 }
 
+// Windows discovery gives each store entry and binding its own stable source.
+// Keep the full reference available, but make the target readable to operators.
+function registrationLabel(source, includeHostname = true) {
+  if (source.source !== 'agent_windows') return sourceLabel(source.source);
+  const storeV2 = String(source.sourceRef || '').match(
+    /^[^/]+\/host-sha256-[a-f0-9]{64}\/windows_store_v2\/([^/]+)\/([^/]+)\/sha256-[a-f0-9]{64}$/i
+  );
+  if (storeV2)
+    return `Windows store copy · ${includeHostname && source.targetHostname ? `${source.targetHostname} · ` : ''}${storeV2[1]}/${storeV2[2]}`;
+  const match = String(source.sourceRef || '').match(
+    /^[^/]+\/([^/]+)\/(windows_store|iis_binding|http_sys)\/(.+)$/i
+  );
+  if (!match) return sourceLabel(source.source);
+  const [, host, kind, slot] = match;
+  const label = {
+    windows_store: 'Windows certificate store',
+    iis_binding: 'IIS binding',
+    http_sys: 'HTTP.sys binding',
+  }[kind.toLowerCase()];
+  return `${label} · ${includeHostname ? `${host} · ` : ''}${slot}`;
+}
+
+function registrationOptionLabel(source, certificateName) {
+  if (source.source !== 'agent_windows' || typeof certificateName !== 'string')
+    return registrationLabel(source);
+  const match = String(source.sourceRef || '').match(
+    /^[^/]+\/([^/]+)\/windows_store\/(LocalMachine)\/([^/]+)\/(.+)$/i
+  );
+  if (!match || match[4].toLowerCase() !== certificateName.toLowerCase())
+    return registrationLabel(source);
+  return `Windows certificate store · ${match[1]} · ${match[2]}\\${match[3]}`;
+}
+
+function sourceHostname(source) {
+  if (source.targetHostname) return source.targetHostname;
+  if (source.source !== 'agent_windows') return null;
+  const match = String(source.sourceRef || '').match(
+    /^[^/]+\/([^/]+)\/(?:windows_store|iis_binding|http_sys)\//i
+  );
+  return match?.[1] || null;
+}
+
+function SourceCell({ item }) {
+  const hostname = sourceHostname(item);
+  return (
+    <>
+      <Text fontSize='sm'>{sourceLabel(item.source)}</Text>
+      {hostname ? (
+        <Text fontSize='xs' color='dashboard.modal.muted'>
+          {hostname}
+        </Text>
+      ) : null}
+    </>
+  );
+}
+
 /** One certificate detail view: token fields, every source, and every location. */
 export default function CertificateIdentityDetailModal(props) {
   const { workspaceId, certificate, canManage } = props;
@@ -122,6 +170,16 @@ function IdentityDetailSession({
   onChanged,
   focusDeployments = false,
 }) {
+  const certificateKey = certificate?.identityId || certificate?.id || null;
+  const session = useRef({ isOpen, version: 0 });
+  useLayoutEffect(() => {
+    session.current = { isOpen, version: session.current.version + 1 };
+    return () => {
+      session.current.version += 1;
+    };
+  }, [workspaceId, certificateKey, isOpen, canManage]);
+  const isCurrent = version =>
+    session.current.isOpen && session.current.version === version;
   const [detail, setDetail] = useState(null);
   const [token, setToken] = useState(null);
   const [certificateFields, setCertificateFields] = useState(null);
@@ -129,6 +187,9 @@ function IdentityDetailSession({
   const [contactGroups, setContactGroups] = useState([]);
   const [workspaceContacts, setWorkspaceContacts] = useState([]);
   const [profiles, setProfiles] = useState([]);
+  const [windowsGroups, setWindowsGroups] = useState([]);
+  const [windowsError, setWindowsError] = useState('');
+  const [windowsStatus, setWindowsStatus] = useState('loading');
   const [profileIds, setProfileIds] = useState({});
   const [showHistory, setShowHistory] = useState(false);
   const [showStopped, setShowStopped] = useState(false);
@@ -136,14 +197,39 @@ function IdentityDetailSession({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [selectedSourceId, setSelectedSourceId] = useState('');
-  const requestGeneration = useRef(0);
-
+  const storeOwnerForBinding = source =>
+    windowsGroups.find(
+      group =>
+        group.profileId &&
+        profiles.some(
+          profile =>
+            profile.id === group.profileId &&
+            profile.renewalProfile?.target?.type === 'windows-cert-store'
+        ) &&
+        !group.ambiguous &&
+        group.bindings?.some(
+          binding =>
+            binding.managedCertificateId === source.managedCertificateId &&
+            binding.relationship === 'observed'
+        )
+    );
+  const bindingOwnershipUnknown = source =>
+    source.source === 'agent_windows' &&
+    /\/iis_binding\//i.test(source.sourceRef || '') &&
+    (windowsStatus !== 'ready' ||
+      windowsGroups.some(group =>
+        group.bindings?.some(
+          binding =>
+            binding.managedCertificateId === source.managedCertificateId &&
+            (group.ambiguous ||
+              binding.relationship !== 'observed' ||
+              (group.profileId &&
+                !profiles.some(profile => profile.id === group.profileId)))
+        )
+      ));
   useLayoutEffect(() => {
     setBusy(false);
-    return () => {
-      requestGeneration.current += 1;
-    };
-  }, [isOpen]);
+  }, [isOpen, workspaceId, certificateKey]);
 
   const latestSourceById = new Map();
   for (const source of detail?.sources || []) {
@@ -156,15 +242,23 @@ function IdentityDetailSession({
     Boolean(source.periodEndedAt || source.endedAt);
   // With exactly one current registration, preselect it so the operator does
   // not have to open the dropdown. Ended ones stay one click away.
-  const currentSourceOptions = sourceOptions.filter(
+  const renewalChoices = sourceOptions.filter(
+    source => !storeOwnerForBinding(source)
+  );
+  const currentSourceOptions = renewalChoices.filter(
     source => !isEndedSource(source)
   );
   const defaultManagedId =
     sourceOptions.length > 1 && currentSourceOptions.length === 1
       ? currentSourceOptions[0].managedCertificateId
       : '';
+  const selectedSource = sourceOptions.find(
+    source => source.managedCertificateId === selectedSourceId
+  );
   const selectedManagedId =
-    selectedSourceId ||
+    (selectedSource && renewalChoices.includes(selectedSource)
+      ? selectedSourceId
+      : '') ||
     defaultManagedId ||
     (sourceOptions.length === 1
       ? sourceOptions[0].managedCertificateId
@@ -176,6 +270,7 @@ function IdentityDetailSession({
   useEffect(() => {
     if (!isOpen || !workspaceId || !certificate) return undefined;
     let active = true;
+    setBusy(false);
     setDetail(certificate);
     setSelectedSourceId(certificate.selectedManagedCertificateId || '');
     setToken(null);
@@ -185,7 +280,26 @@ function IdentityDetailSession({
     setShowStopped(false);
     setShowLocationHistory(false);
     setProfileIds({});
+    setWindowsGroups([]);
+    setWindowsError('');
+    setWindowsStatus('loading');
     if (certificate.identityId) {
+      if (canManage)
+        getWindowsRenewal(workspaceId, certificate.identityId)
+          .then(value => {
+            if (active) {
+              if (!Array.isArray(value.groups))
+                throw new Error('Invalid Windows renewal response');
+              setWindowsGroups(value.groups);
+              setWindowsStatus('ready');
+            }
+          })
+          .catch(() => {
+            if (active) {
+              setWindowsStatus('error');
+              setWindowsError('Windows renewal settings could not be loaded.');
+            }
+          });
       getCertificateIdentity(workspaceId, certificate.identityId)
         .then(value => {
           if (active) setDetail(value);
@@ -384,59 +498,134 @@ function IdentityDetailSession({
     sourceOptions.length,
   ]);
 
-  const refresh = async generation => {
-    if (requestGeneration.current !== generation) return;
+  const refresh = async version => {
+    if (!isCurrent(version)) return;
     if (!certificate.identityId) {
       onChanged?.();
       onClose?.();
       return;
     }
-    const refreshed = await getCertificateIdentity(
+    const value = await getCertificateIdentity(
       workspaceId,
       certificate.identityId
     );
-    if (requestGeneration.current !== generation) return;
-    setDetail(refreshed);
-    onChanged?.();
+    if (!isCurrent(version)) return;
+    setDetail(value);
+    if (canManage) {
+      try {
+        const value = await getWindowsRenewal(
+          workspaceId,
+          certificate.identityId
+        );
+        if (!isCurrent(version)) return;
+        if (!Array.isArray(value.groups))
+          throw new Error('Invalid Windows renewal response');
+        setWindowsGroups(value.groups);
+        setWindowsStatus('ready');
+        setWindowsError('');
+      } catch {
+        if (isCurrent(version)) {
+          setWindowsGroups([]);
+          setWindowsStatus('error');
+          setWindowsError('Windows renewal settings could not be loaded.');
+        }
+      }
+    }
+    if (isCurrent(version)) onChanged?.();
   };
 
   const stop = async periodId => {
-    const generation = requestGeneration.current;
+    const version = session.current.version;
     setBusy(true);
     setError('');
     try {
       const result = await stopManagingSource(workspaceId, periodId);
-      if (requestGeneration.current !== generation) return;
+      if (!isCurrent(version)) return;
       if (result.runningJobs) {
         setError(
           `${result.runningJobs} operation(s) are already running and may still complete.`
         );
       }
-      await refresh(generation);
+      await refresh(version);
     } catch (err) {
-      if (requestGeneration.current === generation)
+      if (isCurrent(version))
         setError(err?.response?.data?.error || err.message);
     } finally {
-      if (requestGeneration.current === generation) setBusy(false);
+      if (isCurrent(version)) setBusy(false);
     }
   };
 
   const readd = async managedCertificateId => {
-    const generation = requestGeneration.current;
+    const version = session.current.version;
     setBusy(true);
     setError('');
     try {
       const profileId = profileIds[managedCertificateId] || '';
+      const source = [
+        ...(detail.sources || []),
+        ...(detail.restartableSources || []),
+      ].find(item => item.managedCertificateId === managedCertificateId);
+      if (source && storeOwnerForBinding(source) && profileId) {
+        throw new Error(
+          'Renewal is managed by the Windows Store registration. Configure IIS updates there.'
+        );
+      }
+      if (source && bindingOwnershipUnknown(source) && profileId) {
+        throw new Error(
+          'IIS renewal ownership cannot be confirmed. Check Windows renewal settings first.'
+        );
+      }
       await readdManagingSource(workspaceId, managedCertificateId, {
         renewalProfileId: profileId || null,
         automationEnabled: Boolean(profileId),
       });
-      await refresh(generation);
+      await refresh(version);
     } catch (err) {
-      if (requestGeneration.current === generation)
+      if (isCurrent(version))
         setError(err?.response?.data?.error || err.message);
     } finally {
-      if (requestGeneration.current === generation) setBusy(false);
+      if (isCurrent(version)) setBusy(false);
+    }
+  };
+
+  const updateWindowsRenewal = async (group, profileId) => {
+    const version = session.current.version;
+    setBusy(true);
+    setError('');
+    try {
+      await replaceManagingSource(workspaceId, group.managedCertificateId, {
+        periodId: group.periodId,
+        renewalProfileId: profileId,
+        automationEnabled: true,
+      });
+      await refresh(version);
+      return isCurrent(version);
+    } catch (err) {
+      if (isCurrent(version))
+        setError(err?.response?.data?.error || err.message);
+      return false;
+    } finally {
+      if (isCurrent(version)) setBusy(false);
+    }
+  };
+
+  const toggleWindowsConsumer = async (group, binding, enabled) => {
+    const version = session.current.version;
+    setBusy(true);
+    setError('');
+    try {
+      await setWindowsIisConsumer(
+        workspaceId,
+        group.periodId,
+        binding.targetId,
+        enabled
+      );
+      await refresh(version);
+    } catch (err) {
+      if (isCurrent(version))
+        setError(err?.response?.data?.error || err.message);
+    } finally {
+      if (isCurrent(version)) setBusy(false);
     }
   };
 
@@ -459,9 +648,23 @@ function IdentityDetailSession({
       !source.periodEndedAt &&
       (!detail.identityId || source.currentIdentityId === detail.identityId)
   );
-  // Keep one current/latest period per registration in the default view.
-  // A stopped registration remains available to restart without exposing all
-  // its older periods. Rotation history cannot restart the old fingerprint.
+  const activeProfileCounts = new Map();
+  for (const source of activeSources) {
+    if (source.renewalProfileId) {
+      activeProfileCounts.set(
+        source.renewalProfileId,
+        (activeProfileCounts.get(source.renewalProfileId) || 0) + 1
+      );
+    }
+  }
+  const showAdvancedRegistrations = windowsGroups.some(
+    group => group.bindings?.length || group.ambiguous
+  );
+  const duplicateRoles = new Map(
+    windowsGroups.map(group => [group.periodId, group.duplicateRole])
+  );
+  // When a current registration exists, show stopped registrations in history.
+  // If all registrations are stopped, keep the restart action accessible.
   const latestSources = new Map();
   const openSourceIds = new Set();
   for (const source of detail.sources || []) {
@@ -514,6 +717,8 @@ function IdentityDetailSession({
     ...(managedCertificateId ? { id: managedCertificateId } : {}),
     lifecycleStatus: detail.lifecycleStatus,
     lifecycleDisplay: detail.lifecycleDisplay,
+    observedRevocation: detail.observedRevocation,
+    revocationObservable: detail.revocationObservable,
     status:
       detail.lifecycleStatus && detail.lifecycleStatus !== 'active'
         ? detail.lifecycleStatus
@@ -679,7 +884,9 @@ function IdentityDetailSession({
                               : 'Evidence unknown'}
                         </Text>
                       </Td>
-                      <Td>{sourceLabel(location.source)}</Td>
+                      <Td>
+                        <SourceCell item={location} />
+                      </Td>
                       <Td>
                         <Text fontSize='xs' color='dashboard.modal.muted'>
                           {formatDateTime(location.capturedAt)}
@@ -719,19 +926,63 @@ function IdentityDetailSession({
           ) ? (
             <Text fontSize='xs' color='dashboard.modal.muted' mt={2}>
               Showing up to 20 previous observations per location. All records
-              remain in the audit history.
+              remain in Observation history.
             </Text>
           ) : null}
         </SectionContent>
       </DashboardDetailsSection>
       <DashboardDetailsSection
         title='Certificate management'
-        description='Registrations that track this certificate and can automate renewal.'
+        description='Review renewal settings and service bindings for this certificate.'
         icon={Settings}
         enclosed
         mb={0}
       >
         <SectionContent>
+          {windowsError ? (
+            <Alert status='warning' mb={3}>
+              <AlertIcon />
+              <AlertDescription>{windowsError}</AlertDescription>
+            </Alert>
+          ) : null}
+          {canManage
+            ? sourceOptions
+                .filter(
+                  source =>
+                    source.renewalProfileId &&
+                    (String(source.sourceRef || '').includes(
+                      '/windows_store/'
+                    ) ||
+                      /\/iis_binding\/[^/]+:\d+$/.test(
+                        String(source.sourceRef || '')
+                      )) &&
+                    !isEndedSource(source)
+                )
+                .map(source => (
+                  <IisReassociation
+                    key={source.managedCertificateId}
+                    workspaceId={workspaceId}
+                    sourceId={source.managedCertificateId}
+                    onChanged={() => {
+                      onChanged?.();
+                      onClose?.();
+                    }}
+                  />
+                ))
+            : null}
+          {canManage && windowsGroups.length > 0 ? (
+            <WindowsCertificateUsage
+              groups={windowsGroups}
+              certificateName={detail.commonName || detail.name}
+              workspaceId={workspaceId}
+              canManage={canManage}
+              busy={busy}
+              profiles={profiles}
+              onSelect={setSelectedSourceId}
+              onProfile={updateWindowsRenewal}
+              onToggle={toggleWindowsConsumer}
+            />
+          ) : null}
           {sourceOptions.length > 1 ? (
             <FormControl mb={3}>
               <FormLabel fontSize='sm' mb={1}>
@@ -746,12 +997,12 @@ function IdentityDetailSession({
                 {defaultManagedId ? null : (
                   <option value=''>Select a management registration</option>
                 )}
-                {sourceOptions.map((source, index) => (
+                {renewalChoices.map((source, index) => (
                   <option
                     key={source.managedCertificateId}
                     value={source.managedCertificateId}
                   >
-                    {registrationLabel(source)} ·{' '}
+                    {registrationOptionLabel(source, detail.commonName)} ·{' '}
                     {canRestart(source)
                       ? 'Stopped'
                       : isEndedSource(source)
@@ -775,212 +1026,274 @@ function IdentityDetailSession({
               ) : null}
             </FormControl>
           ) : null}
-          {hasStopped && activeSources.length ? (
+          {[...activeProfileCounts.values()].some(count => count > 1) ? (
+            <Alert status='warning' borderRadius='md' mb={3}>
+              <AlertIcon />
+              <AlertDescription fontSize='sm'>
+                The same renewal profile is assigned to multiple registrations.
+                Check each target and its renewal settings before starting a
+                renewal.
+              </AlertDescription>
+            </Alert>
+          ) : null}
+          <Box as={showAdvancedRegistrations ? 'details' : 'div'}>
+            {showAdvancedRegistrations ? (
+              <Box
+                as='summary'
+                cursor='pointer'
+                fontSize='xs'
+                color='dashboard.modal.muted'
+                mb={3}
+              >
+                Advanced registrations and history
+              </Box>
+            ) : null}
+            {hasStopped && activeSources.length ? (
+              <FormControl display='flex' alignItems='center' mb={3}>
+                <Switch
+                  id='certificate-management-stopped'
+                  isChecked={showStopped}
+                  onChange={event => setShowStopped(event.target.checked)}
+                  mr={2}
+                />
+                <FormLabel
+                  htmlFor='certificate-management-stopped'
+                  mb={0}
+                  fontSize='sm'
+                >
+                  Show stopped registrations
+                </FormLabel>
+              </FormControl>
+            ) : null}
             <FormControl display='flex' alignItems='center' mb={3}>
               <Switch
-                id='certificate-management-stopped'
-                isChecked={showStopped}
-                onChange={event => setShowStopped(event.target.checked)}
+                id='certificate-management-history'
+                isChecked={showHistory}
+                onChange={event => setShowHistory(event.target.checked)}
                 mr={2}
               />
               <FormLabel
-                htmlFor='certificate-management-stopped'
+                htmlFor='certificate-management-history'
                 mb={0}
                 fontSize='sm'
               >
-                Show stopped registrations
+                Show ended periods
               </FormLabel>
             </FormControl>
-          ) : null}
-          <FormControl display='flex' alignItems='center' mb={3}>
-            <Switch
-              id='certificate-management-history'
-              isChecked={showHistory}
-              onChange={event => setShowHistory(event.target.checked)}
-              mr={2}
-            />
-            <FormLabel
-              htmlFor='certificate-management-history'
-              mb={0}
-              fontSize='sm'
-            >
-              Show ended periods
-            </FormLabel>
-          </FormControl>
-          {visibleSources.length ? (
-            <TableContainer overflowX='auto' whiteSpace='normal'>
-              <Table
-                aria-label='Certificate management'
-                size='sm'
-                tableLayout='fixed'
-                minW='640px'
-                sx={{
-                  'th, td': {
-                    borderColor: 'dashboard.modal.border',
-                    verticalAlign: 'top',
-                    whiteSpace: 'normal',
-                    overflowWrap: 'anywhere',
-                  },
-                  th: { color: 'dashboard.modal.muted' },
-                }}
-              >
-                <Thead>
-                  <Tr>
-                    <Th w='32%'>Registration</Th>
-                    <Th w='21%'>Management period</Th>
-                    <Th w='13%'>State</Th>
-                    <Th w='16%'>Renewal</Th>
-                    <Th w='18%'>Actions</Th>
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {visibleSources.map(source => {
-                    const current = activeSources.includes(source);
-                    const canReadd = canRestart(source);
-                    return (
-                      <Tr
-                        key={`${source.periodId || source.managedCertificateId}-${source.startedAt || 'replacement'}`}
-                      >
-                        <Td>
-                          <Text fontSize='sm' fontWeight='semibold'>
-                            {registrationLabel(source)}
-                          </Text>
-                          {source.sourceRef ? (
-                            <Box
-                              as='details'
-                              maxW='100%'
-                              overflowWrap='anywhere'
-                              sx={{
-                                '& .chakra-text': {
-                                  whiteSpace: 'normal',
-                                  overflowWrap: 'anywhere',
-                                },
-                              }}
-                            >
-                              <Box as='summary' cursor='pointer' fontSize='xs'>
-                                Source reference
-                              </Box>
-                              <CopyableId id={source.sourceRef} size='xs' />
-                            </Box>
-                          ) : null}
-                        </Td>
-                        <Td>
-                          <Text fontSize='xs' color='dashboard.modal.muted'>
-                            {source.restartCandidate ? (
-                              'No active period'
-                            ) : (
-                              <>
-                                {formatDate(source.startedAt)} –{' '}
-                                {source.endedAt || source.periodEndedAt
-                                  ? formatDate(
-                                      source.endedAt || source.periodEndedAt
-                                    )
-                                  : 'present'}
-                              </>
-                            )}
-                          </Text>
-                        </Td>
-                        <Td>
-                          <CertOpsBadge
-                            textTransform='none'
-                            whiteSpace='normal'
-                            colorScheme={current ? 'green' : 'gray'}
-                          >
-                            {current
-                              ? 'Managing'
-                              : canReadd
-                                ? 'Stopped'
-                                : 'Ended'}
-                          </CertOpsBadge>
-                        </Td>
-                        <Td>
-                          <Text fontSize='xs'>
-                            {source.renewalProfileId
-                              ? profiles.find(
-                                  profile =>
-                                    profile.id === source.renewalProfileId
-                                )?.name || 'Renewal profile assigned'
-                              : 'No automatic renewal'}
-                          </Text>
-                        </Td>
-                        <Td>
-                          {canManage && current ? (
-                            <Button
-                              size='xs'
-                              isDisabled={busy}
-                              onClick={() => stop(source.periodId)}
-                            >
-                              Stop managing
-                            </Button>
-                          ) : null}
-                          {canManage && canReadd ? (
-                            <VStack align='stretch' spacing={2}>
-                              <Select
-                                aria-label={`Renewal settings for ${source.sourceRef || source.managedCertificateId}`}
-                                size='xs'
-                                value={
-                                  profileIds[source.managedCertificateId] || ''
-                                }
-                                onChange={event =>
-                                  setProfileIds(previous => ({
-                                    ...previous,
-                                    [source.managedCertificateId]:
-                                      event.target.value,
-                                  }))
-                                }
+            {visibleSources.length ? (
+              <TableContainer overflowX='auto' whiteSpace='normal'>
+                <Table
+                  aria-label='Certificate management'
+                  size='sm'
+                  tableLayout='fixed'
+                  minW='640px'
+                  sx={{
+                    'th, td': {
+                      borderColor: 'dashboard.modal.border',
+                      verticalAlign: 'top',
+                      whiteSpace: 'normal',
+                      overflowWrap: 'anywhere',
+                    },
+                    th: { color: 'dashboard.modal.muted' },
+                  }}
+                >
+                  <Thead>
+                    <Tr>
+                      <Th w='24%'>Registration</Th>
+                      <Th w='15%'>Source</Th>
+                      <Th w='18%'>Management period</Th>
+                      <Th w='11%'>State</Th>
+                      <Th w='15%'>Renewal</Th>
+                      <Th w='17%'>Actions</Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {visibleSources.map(source => {
+                      const current = activeSources.includes(source);
+                      const canReadd = canRestart(source);
+                      const duplicateRole = duplicateRoles.get(source.periodId);
+                      return (
+                        <Tr
+                          key={`${source.periodId || source.managedCertificateId}-${source.startedAt || 'replacement'}`}
+                        >
+                          <Td>
+                            <Text fontSize='sm' fontWeight='semibold'>
+                              {registrationLabel(source, false)}
+                            </Text>
+                            {duplicateRole ? (
+                              <Text fontSize='xs' color='orange.400'>
+                                {duplicateRole === 'issued'
+                                  ? 'Keep for renewal'
+                                  : 'Duplicate Store observation'}
+                              </Text>
+                            ) : null}
+                            {source.sourceRef ? (
+                              <Box
+                                as='details'
+                                maxW='100%'
+                                overflowWrap='anywhere'
+                                sx={{
+                                  '& .chakra-text': {
+                                    whiteSpace: 'normal',
+                                    overflowWrap: 'anywhere',
+                                  },
+                                }}
                               >
-                                <option value=''>
-                                  Track without automatic renewal
-                                </option>
-                                {profiles.map(profile => (
-                                  <option key={profile.id} value={profile.id}>
-                                    {profile.name || profile.id}
-                                  </option>
-                                ))}
-                              </Select>
+                                <Box
+                                  as='summary'
+                                  cursor='pointer'
+                                  fontSize='xs'
+                                  color='dashboard.modal.muted'
+                                >
+                                  Source reference
+                                </Box>
+                                <CopyableId id={source.sourceRef} size='xs' />
+                              </Box>
+                            ) : null}
+                          </Td>
+                          <Td>
+                            <SourceCell item={source} />
+                          </Td>
+                          <Td>
+                            <Text fontSize='xs' color='dashboard.modal.muted'>
+                              {source.restartCandidate ? (
+                                'No active period'
+                              ) : (
+                                <>
+                                  {formatDate(source.startedAt)} –{' '}
+                                  {source.endedAt || source.periodEndedAt
+                                    ? formatDate(
+                                        source.endedAt || source.periodEndedAt
+                                      )
+                                    : 'present'}
+                                </>
+                              )}
+                            </Text>
+                          </Td>
+                          <Td>
+                            <CertOpsBadge
+                              textTransform='none'
+                              whiteSpace='normal'
+                              colorScheme={current ? 'green' : 'gray'}
+                            >
+                              {current
+                                ? 'Managing'
+                                : canReadd
+                                  ? 'Stopped'
+                                  : 'Ended'}
+                            </CertOpsBadge>
+                          </Td>
+                          <Td>
+                            <Text fontSize='xs'>
+                              {source.renewalProfileId
+                                ? profiles.find(
+                                    profile =>
+                                      profile.id === source.renewalProfileId
+                                  )?.name || 'Renewal profile assigned'
+                                : 'No automatic renewal'}
+                            </Text>
+                          </Td>
+                          <Td>
+                            {canManage && current ? (
                               <Button
                                 size='xs'
-                                whiteSpace='normal'
-                                h='auto'
-                                minH={6}
-                                py={1}
                                 isDisabled={busy}
-                                onClick={() =>
-                                  readd(source.managedCertificateId)
-                                }
+                                onClick={() => stop(source.periodId)}
                               >
-                                Start managing again
+                                Stop managing
                               </Button>
-                              <Text fontSize='xs' color='dashboard.modal.muted'>
-                                Starts a new period for this registration.
-                                Earlier periods stay in history.
-                              </Text>
-                            </VStack>
-                          ) : null}
-                        </Td>
-                      </Tr>
-                    );
-                  })}
-                </Tbody>
-              </Table>
-            </TableContainer>
-          ) : (
-            <Text fontSize='sm'>
-              No active registrations. Show ended periods to view past
-              management.
-            </Text>
-          )}
-          {hiddenPeriodCount > 0 ? (
-            <Text fontSize='xs' mt={2} color='dashboard.modal.muted'>
-              {hiddenPeriodCount} earlier or ended period(s) hidden.
-            </Text>
-          ) : null}
-          {detail.sourceCount > (detail.sources || []).length ? (
-            <Text fontSize='xs' mt={2}>
-              Showing {(detail.sources || []).length} of {detail.sourceCount}{' '}
-              source periods.
-            </Text>
-          ) : null}
+                            ) : null}
+                            {canManage && canReadd ? (
+                              <VStack align='stretch' spacing={2}>
+                                {storeOwnerForBinding(source) ? (
+                                  <Text fontSize='xs'>
+                                    Renewal is managed by the Windows Store
+                                    registration. Configure IIS updates there.
+                                  </Text>
+                                ) : bindingOwnershipUnknown(source) ? (
+                                  <Text fontSize='xs'>
+                                    IIS renewal ownership cannot be confirmed.
+                                    Check Windows renewal settings first.
+                                  </Text>
+                                ) : null}
+                                <Select
+                                  aria-label={`Renewal settings for ${source.sourceRef || source.managedCertificateId}`}
+                                  size='xs'
+                                  value={
+                                    profileIds[source.managedCertificateId] ||
+                                    ''
+                                  }
+                                  onChange={event =>
+                                    setProfileIds(previous => ({
+                                      ...previous,
+                                      [source.managedCertificateId]:
+                                        event.target.value,
+                                    }))
+                                  }
+                                >
+                                  <option value=''>
+                                    Track without automatic renewal
+                                  </option>
+                                  {profiles.map(profile => (
+                                    <option
+                                      key={profile.id}
+                                      value={profile.id}
+                                      disabled={Boolean(
+                                        storeOwnerForBinding(source) ||
+                                        bindingOwnershipUnknown(source)
+                                      )}
+                                    >
+                                      {profile.name || profile.id}
+                                    </option>
+                                  ))}
+                                </Select>
+                                <Button
+                                  size='xs'
+                                  whiteSpace='normal'
+                                  h='auto'
+                                  minH={6}
+                                  py={1}
+                                  isDisabled={busy}
+                                  onClick={() =>
+                                    readd(source.managedCertificateId)
+                                  }
+                                >
+                                  Start managing again
+                                </Button>
+                                <Text
+                                  fontSize='xs'
+                                  color='dashboard.modal.muted'
+                                >
+                                  Starts a new period for this registration.
+                                  Earlier periods stay in history.
+                                </Text>
+                              </VStack>
+                            ) : null}
+                          </Td>
+                        </Tr>
+                      );
+                    })}
+                  </Tbody>
+                </Table>
+              </TableContainer>
+            ) : (
+              <Text fontSize='sm'>
+                No active registrations. Show ended periods to view past
+                management.
+              </Text>
+            )}
+            {hiddenPeriodCount > 0 ? (
+              <Text fontSize='xs' mt={2} color='dashboard.modal.muted'>
+                {hiddenPeriodCount} stopped or ended period(s) hidden.
+              </Text>
+            ) : null}
+            {detail.sourceCount > (detail.sources || []).length ? (
+              <Text fontSize='xs' mt={2}>
+                Showing {(detail.sources || []).length} of {detail.sourceCount}{' '}
+                source periods.
+              </Text>
+            ) : null}
+          </Box>
         </SectionContent>
       </DashboardDetailsSection>
       {error ? (

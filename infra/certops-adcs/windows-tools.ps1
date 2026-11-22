@@ -6,6 +6,7 @@ capability selection is never a released build claim.
 param([Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{40}$')][string]$CandidateSha,
   [Parameter(Mandatory)][string]$ApiPublicPemBase64,
   [ValidateSet('2019','2022','2025')][string]$WindowsVersion = '2022',
+  [ValidateSet('0','1')][string]$BundledWindowsRuntime = '0',
   [ValidateNotNullOrEmpty()][string]$QualificationRoot = 'C:\ttqualification')
 $ErrorActionPreference = 'Stop'
 # Keep transfer progress local to this noninteractive bootstrap.
@@ -88,7 +89,26 @@ if ($LASTEXITCODE -ne 0) { throw 'Isolated qualification capability compilation 
 $toolsStage='api-trust'
 [IO.File]::WriteAllBytes("$root\api-public.pem",[Convert]::FromBase64String($ApiPublicPemBase64))
 $toolsStage='package-build'
-& "$nodeDirectory\node.exe" scripts/certops-agent-package.js "$source\packages\agent" "$root\package-candidate" $CandidateSha 'adcs-enroll-v1' | Out-Null
+$packageArgs=@("$source\packages\agent", "$root\package-candidate", $CandidateSha, 'adcs-enroll-v1')
+if($BundledWindowsRuntime -eq '1'){
+  # The packager checks both ZIP digests and the embedded executables against
+  # its pinned runtime manifest. This is not publisher-signature validation.
+  $pinsJson=& "$nodeDirectory\node.exe" -e "const p=require('./packages/agent/scripts/windows-runtime-package');process.stdout.write(JSON.stringify({version:p.VERSION,runtimes:p.RUNTIMES}))"
+  if($LASTEXITCODE -ne 0){throw 'Bundled runtime pins unavailable'}
+  $pins=$pinsJson | ConvertFrom-Json
+  if($pins.version -notmatch '^\d+\.\d+\.\d+$'){throw 'Invalid bundled runtime version'}
+  $runtimeDir="$root\bundled-runtime-input"
+  New-Item -ItemType Directory -Path $runtimeDir | Out-Null
+  foreach($arch in @('amd64','arm64')){
+    $pin=$pins.runtimes.$arch
+    if($pin.upstream -notin @('x64','arm64') -or $pin.zipSha256 -notmatch '^[a-f0-9]{64}$'){throw 'Invalid bundled runtime pin'}
+    $name="node-v$($pins.version)-win-$($pin.upstream).zip"
+    Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 "https://nodejs.org/dist/v$($pins.version)/$name" -OutFile (Join-Path $runtimeDir $name)
+    if((Get-FileHash -LiteralPath (Join-Path $runtimeDir $name) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pin.zipSha256){throw 'Bundled runtime download digest mismatch'}
+  }
+  $packageArgs += $runtimeDir
+}
+& "$nodeDirectory\node.exe" scripts/certops-agent-package.js @packageArgs | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Canonical agent package creation failed' }
 $toolsStage='package-verify'
 $packageReceiptPath="$root\package-candidate\artifact.json"

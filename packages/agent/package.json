@@ -48,9 +48,11 @@
     "scripts/tokentimer-agent.service",
     "scripts/host-sandbox.js",
     "scripts/validate-server-url.js",
+    "scripts/check-node-engine.js",
     "scripts/check-shipped-sources.js",
     "scripts/sync-vendor.js",
     "scripts/pack-release.js",
+    "scripts/windows-runtime-package.js",
     "README.md",
     "LICENSE*",
     "package.json"

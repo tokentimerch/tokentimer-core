@@ -75,6 +75,14 @@ function certificateRow(overrides = {}) {
 }
 
 describe("CertOps certificate renewal-state derivation", () => {
+  it("does not promise automatic renewal when the management period disables it", () => {
+    const disabled = deriveCertificateRenewalState(certificateRow({ management_automation_enabled: false }));
+    assert.equal(disabled.state, "disabled");
+    assert.equal(disabled.renewsFrom, null);
+    assert.match(disabled.detail, /management/i);
+    const enabled = deriveCertificateRenewalState(certificateRow({ management_automation_enabled: true }));
+    assert.equal(enabled.state, "auto");
+  });
   it("reports auto with the scheduler's own renewal window for a complete profile", () => {
     const renewal = deriveCertificateRenewalState(certificateRow(), {
       env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" },

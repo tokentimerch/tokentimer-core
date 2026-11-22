@@ -384,7 +384,8 @@ export default function CertOpsCertificates() {
       source: filters.source || undefined,
       excludeRetired,
       includeObservedRetired: retiredStatusSelected,
-      unmanaged: showUnmanaged ? undefined : false,
+      unmanaged:
+        showUnmanaged || filters.status === 'revoked' ? undefined : false,
       q: filters.q || undefined,
       sort: sort.key,
       direction: sort.direction,
@@ -394,6 +395,7 @@ export default function CertOpsCertificates() {
     if (!retiredStatusSelected && isRetiredCertificate(item)) return false;
     if (
       !showUnmanaged &&
+      filters.status !== 'revoked' &&
       item.managed === false &&
       !(isRetiredCertificate(item) && item.stillObserved)
     )

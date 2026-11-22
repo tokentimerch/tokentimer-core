@@ -12,13 +12,20 @@ Resolution order (`resolveConfigDir`): explicit argument >
 - Linux/macOS: `~/.config/tokentimer-agent`
 - Windows: `%APPDATA%\tokentimer-agent`
 
-The directory is created with mode 0700 and the mode is re-asserted on every
-write (best-effort on Windows, where POSIX modes are not meaningful). Files
-inside it:
+On Linux/macOS the directory uses mode 0700. On Windows the agent restricts
+access with ACLs: local Administrators can traverse the state directory and
+edit `config.json` in place, while agent secrets retain separate restricted
+ACLs. The installer also repairs legacy configuration permissions during an
+upgrade without changing the configuration. Use an elevated editor that writes the existing file in place; editors
+that replace it may need a different save method because Administrators cannot
+create or delete files in the state directory. Restart the service after edits.
+A local administrator can take ownership of files, so these ACLs do not protect
+secrets from a determined administrator.
+Files inside it:
 
 | File | Contents | Mode |
 |------|----------|------|
-| `config.json` | Non-secret runtime config (below) | inherited |
+| `config.json` | Non-secret runtime config (below) | 0600; Windows: agent, SYSTEM and Administrators |
 | `credential` | Registration credential `ttagent_<id>_<secret>` | 0600 |
 | `signing-key-pin.json` | Pinned control-plane job-signing public key (`signingKeyId`, `publicKeyPem`) | 0600 |
 | `replay-store.json` | Consumed-nonce replay cache (default location) | 0600 |
@@ -94,11 +101,11 @@ Top level:
 | `declaredTargetSelectors` | string[] | `[]` | Target names this agent accepts. A non-empty list is sent again on every heartbeat, so adding a DNS name and restarting the agent publishes it. An empty list does not clear the stored names. |
 | `declaredCommandProfileNames` | string[] | `[]` | Sent at registration and on every heartbeat (a list, even an empty one), so adding or removing a profile and restarting the agent updates the control plane. An agent older than 0.18.0 sends it only at registration. |
 | `policy` | object or null | null | Agent-local allowlists (below). Null means every allowlist is empty: default deny. |
-| `discovery` | object or null | null | Null disables discovery entirely. |
-| `windowsDiscovery` | object or null | enabled | Windows only: `{ "enabled": true, "intervalMs": 1800000, "stores": ["My"] }`. Omit it to use these defaults; it does nothing on other platforms. |
-| `observedRevocation` | object or null | disabled | Set `enabled: true` and permit HTTP(S) responder origins in `allowedOrigins`; optionally add PEM-only `trustAnchorFiles` and `intermediateFiles`. New installer configurations enable monitoring with an empty allowlist. System trust is read each scan with Node 22.19 or later. Checks follow discovery cadence (Windows: 30 minutes; filesystem: 60 minutes by default), may extend the scan, and reuse one result per certificate/chain within that scan. HTTP(S) base and delta CRLs are supported; LDAP-only CRLs are unsupported. Without usable current OCSP or CRL data, the result is unknown. Distrusted roots must be removed from local trust; trust anchors do not have a revocation check. |
+| `discovery` | object or null | null | Filesystem discovery is off until `discovery.directories` is configured. The default interval is 60 minutes. |
+| `windowsDiscovery` | object or null | enabled | Windows scans `LocalMachine\\My` every 30 minutes and also observes stores referenced by IIS or HTTP.sys bindings. For GPO-distributed CA certificates, use `stores: ["My", "Root", "CA"]`. |
+| `observedRevocation` | object or null | disabled for existing configurations without the block | New installers enable monitoring with an empty allowlist. Add approved HTTP(S) responder origins to `allowedOrigins` and restart the agent. Checks follow the discovery cadence and reuse results within each scan. Optional PEM files provide `trustAnchorFiles` and `intermediateFiles`. |
 | `execution` | object or null | null | Null is treated as `{ enabled: false }` (observe-only mode). |
-| `caBundlePath` | string or null | null | Path to a PEM CA bundle trusted for the agent-to-control-plane HTTPS channel (private-CA control planes). Env override: `TOKENTIMER_AGENT_CA_BUNDLE`. Fail-loud at startup: a missing/unreadable file, a file without a `BEGIN CERTIFICATE` block, or a file containing private key material aborts before any network call. When set, the bundle replaces the default trust store for control-plane requests (it does not extend it); plain `http` URLs are unaffected. When unset, the OS trust store applies (`NODE_EXTRA_CA_CERTS` remains a coarser process-wide alternative). |
+| `caBundlePath` | string or null | null | Path to a PEM CA bundle trusted for the agent-to-control-plane HTTPS channel (private-CA control planes). Env override: `TOKENTIMER_AGENT_CA_BUNDLE`. Fail-loud at startup: a missing/unreadable file, a file without a `BEGIN CERTIFICATE` block, or a file containing private key material aborts before any network call. When set, the bundle replaces the default trust store for control-plane requests (it does not extend it); plain `http` URLs are unaffected. When unset, Node's default CA trust applies; the [Windows installer](install-windows.md) enables system CA trust on supported Node versions. |
 | `dnsProviders` | object or null | null | Native DNS-01 solver configuration (see "DNS-01 providers" in [DNS and ACME](dns-and-acme.md)). Maps provider id to `{ credentialsFile: <absolute path>, ...non-secret options }`, plus a reserved `zoneProviderMap` key (zone to provider id). Credentials never live in `config.json`, only the path to a 0600 credentials file does. Fail-loud validation: unknown provider ids, relative paths, and `zoneProviderMap` entries naming unconfigured providers abort startup. |
 | `dnsPropagation` | object or null | defaults | Post-mutation DNS wait: `{ timeoutMs` (default 120000), `intervalMs` (default 2000), `resolvers` (optional recursive resolver IPs), `checkAuthoritative` (default true), `verificationMode` (`all` default, or `quorum`), `quorumCount` (required positive integer in quorum mode, else null) `}`. Used by `certops-dns-hook` after present/cleanup. See "DNS-01 providers" in [DNS and ACME](dns-and-acme.md) for the verification-mode semantics. |
 | `allowInsecureLocalHttp` | boolean | false | Permits a plain `http://` `serverUrl`, and only for loopback hosts (`localhost` / `127/8` / `::1` / `*.localhost`). Development only; the installer's `--allow-insecure-local-http` writes it. |
@@ -149,6 +156,14 @@ the agent configuration and restart the agent:
 "observedRevocation": { "enabled": true, "allowedOrigins": ["http://pki.example.test"] }
 ```
 
+Revocation checks connect directly to each responder; they do not use proxy environment variables or follow redirects. DNS answers containing loopback or link-local addresses are refused, as are responses larger than 8 MiB. Publish a directly reachable HTTP(S) endpoint and allow its origin.
+
+HTTP(S) base and delta CRLs are supported. Allow both advertised origins.
+LDAP-only locations and restricted CRL scopes are unsupported. The agent uses
+Node’s system trust API when available. If system trust is unavailable, supply
+PEM trust anchors. Root trust anchors themselves have no revocation check.
+Upgrade the control plane and console before agents.
+
 Each reported observation is retained as workspace evidence; the inventory shows
 the latest result and, when a check fails, the last verified result. Evidence
 has no separate revocation retention setting and is deleted with the workspace.
@@ -157,6 +172,10 @@ For unknown or stale results, check allowed responder origins, network reachabil
 CA trust and published CRL/OCSP validity. Correct the cause and wait for the next
 scan; restart after changing local configuration. A retained revoked finding
 remains visible until a fresh verified result supersedes it.
+
+If IIS returns HTTP 404.11 for an AD CS delta CRL URL containing `+`, allow
+double escaping only on the dedicated CRL publication directory and verify the
+URL from the agent. This relaxes request filtering for that directory.
 
 `discovery` block:
 
@@ -170,7 +189,7 @@ remains visible until a fresh verified result supersedes it.
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `enabled` | boolean | false | Opt-in; an upgraded agent never starts executing without it. |
-| `dryRun` | boolean | true | Refuses real mutating jobs; real read-only AD CS preflight is handled separately. Action planning requires a signed job with `mode: "dry_run"` and `enabled: true`; it does not convert real jobs into plans (see [Execution](execution.md)). |
+| `dryRun` | boolean | true | Refuses real mutating jobs. Action planning requires a signed job with `mode: "dry_run"` and `enabled: true` (see [Execution](execution.md)). Real read-only AD CS preflight can still run. Windows cleanup of pending requests, orphan keys and superseded certificates requires `enabled: true` and `dryRun: false`. |
 | `keysDir` | string | `<configDir>/keys` | Private keys, 0600 in 0700 dir. |
 | `replayStorePath` | string | `<configDir>/replay-store.json` | Persisted replay cache. |
 | `outboxDir` | string | `<configDir>/outbox` | Durable queue for terminal results/evidence that could not be delivered yet, so an outage does not lose a completed job's outcome. Retention-capped (5000 entries / 7 days); see the [state-directory table](configuration.md#config-directory) for the `dead-letter/` quarantine subdirectory and its own retention. |

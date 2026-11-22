@@ -13,7 +13,7 @@ const { runMigrations } = requireMigrateModule();
 const { pool } = require("../../apps/api/db/database");
 const {
   claimJobs,
-} = require("../../apps/api/services/certops/agentDispatch");
+} = require("./helpers/authenticated-agent-dispatch");
 const {
   AGENT_KIND_DIAGNOSTIC,
   AGENT_KIND_NORMAL,
@@ -140,9 +140,13 @@ describe("CertOps diagnostic-agent isolation (real database)", function () {
   }
 
   async function claimJobsFull(agent, supportedActions) {
+    // Exercise the same credential binding that the production middleware
+    // establishes before dispatch, instead of passing an unbound fixture.
+    const authenticated = await validateAgentCredential({ client: pool, rawCredential: agent.credential });
+    expect(authenticated.valid).to.equal(true);
     const result = await claimJobs({
       dbPool: pool,
-      agent,
+      agent: authenticated.agent,
       envelope: { agentId: agent.agentId, protocolVersion: "1.0.0" },
       body: { supportedActions, maxJobs: 10 },
       deps: {

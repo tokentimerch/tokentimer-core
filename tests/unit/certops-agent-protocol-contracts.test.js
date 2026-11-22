@@ -331,6 +331,18 @@ describe("CertOps agent protocol contracts", () => {
     );
   });
 
+  it("accepts bounded IIS absence proofs and rejects unrecognized proof fields", () => {
+    const validate = createAjv().getSchema(agentProtocolSchema.$id);
+    const proof = { evidenceId:"proof-1", targetHost:"pilot.example.test", site:"Default Web Site", port:443,
+      address:"192.0.2.10", fingerprintSha256:"a".repeat(64), thumbprint:"b".repeat(40), observedAt:"2026-07-20T12:00:00.000Z" };
+    const message=envelope("iis-absence-proof", { proofs:[proof] }, { sequence:1 });
+    assert.equal(validate(message),true,JSON.stringify(validate.errors));
+    assert.equal(validate({...message,body:{proofs:[]}}),false);
+    assert.equal(validate({...message,body:{proofs:Array(17).fill(proof)}}),false);
+    assert.equal(validate({...message,body:{proofs:[{...proof,secret:"unexpected"}]}}),false);
+    assert.deepEqual(validateEnvelopeShape(message),[]);
+  });
+
   it("treats the sequence counter as optional and bounded (integer >= 1)", () => {
     const validate = createAjv().getSchema(agentProtocolSchema.$id);
 

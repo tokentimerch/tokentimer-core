@@ -17,6 +17,7 @@ const { EventEmitter } = require("node:events");
 
 const {
   handleClaimedJob,
+  completedJobLeaseLossOutcome,
   UNVERIFIED_JOB_ID_PLACEHOLDER,
   buildExecutionContext,
   buildJobPolicyDescriptor,
@@ -26,6 +27,7 @@ const {
   runDiscoveryScan,
   runRevisionedDiscoveryScan,
   runWindowsDiscoveryScan,
+  runWindowsIisDeployTail,
   registerIfNeeded,
   createCandidateAgentId,
   resolveClaimSupportedActions,
@@ -55,6 +57,43 @@ const {
   AGENT_TRUST_STORE_PREREQUISITES,
   AGENT_CANDIDATE_CAPABILITIES,
 } = require("./index.js");
+
+it("refuses unqualified or ambiguous explicit-IP IIS work before any mutation", async () => {
+  let mutated = false;
+  const target = { type: "windows-iis", store: "My", binding: { site: "site", port: 443, address: "192.0.2.10" } };
+  const options = { target, onBeforeMutation: () => { mutated = true; } };
+  const unqualified = await runWindowsIisDeployTail(options);
+  assert.equal(unqualified.status, "blocked");
+  assert.match(unqualified.errorMessage, /not qualified/);
+  const ambiguous = await runWindowsIisDeployTail({ ...options, target: { ...target,
+    binding: { ...target.binding, sniHost: "app.example.test" } } });
+  assert.equal(ambiguous.status, "blocked");
+  assert.match(ambiguous.errorMessage, /without an SNI selector/);
+  assert.equal(mutated, false);
+  const dispatched = await executeJob({ job: { action: "renew", issuerKind: "adcs", target },
+    executionContext: { execution: {} } });
+  assert.equal(dispatched.status, "blocked");
+  assert.match(dispatched.errorMessage, /not qualified/);
+});
+
+it("preserves recovery after a completed AD CS or ACME store job loses its lease", () => {
+  const abort = { status: "blocked", errorMessage: "lease lost" };
+  for (const issuerKind of ["adcs", "acme"]) {
+    for (const action of ["renew", "continue-enrollment"]) {
+      const outcome = completedJobLeaseLossOutcome({ issuerKind, action, target: { type: "windows-cert-store" } }, { status: "succeeded" }, abort);
+      assert.equal(outcome.status, "orphaned_unknown_effect");
+      assert.match(outcome.errorMessage, /needsOperatorReconciliation=true/);
+      const { FIXTURES } = require("../../contracts/certops/agent-protocol-parity-fixtures.cjs");
+      const message = structuredClone(FIXTURES.find(f => f.id === "result-orphaned_unknown_effect-valid").message);
+      Object.assign(message.body, outcome);
+      const validation = require("./protocol/schemaValidation").validateAgentProtocolMessage(message);
+      assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+    }
+  }
+  assert.strictEqual(completedJobLeaseLossOutcome({ action: "adcs-installation-proof", target: { type: "windows-cert-store" } }, { status: "succeeded" }, abort), abort);
+  assert.strictEqual(completedJobLeaseLossOutcome({ action: "renew", target: { type: "windows-cert-store" } }, { status: "dry_run_complete" }, abort), abort);
+  assert.strictEqual(completedJobLeaseLossOutcome({ action: "renew", target: { type: "windows-iis" } }, { status: "succeeded" }, abort), abort);
+});
 const {
   markSideEffectReached,
   recordWindowsCngContainer,
@@ -189,6 +228,103 @@ function claimedJob(overrides = {}) {
   };
 }
 
+describe("store-only qualification boundary", () => {
+  it("selects the Windows AD CS executor for the future store target without enabling it", () => {
+    const { isAdcsWindowsTarget } = require("./index");
+    assert.equal(isAdcsWindowsTarget({ keyMode: "os-store-managed", target: { type: "windows-cert-store" } }), true);
+    assert.equal(isAdcsWindowsTarget({ keyMode: "os-store-managed", target: { type: "windows-iis" } }), true);
+    assert.equal(isAdcsWindowsTarget({ keyMode: "agent-local", target: { type: "windows-cert-store" } }), false);
+    assert.equal(isAdcsWindowsTarget({ keyMode: "os-store-managed", target: { type: "file" } }), false);
+  });
+  it("requires the issuer-specific embedded Windows qualification", () => {
+    const { isStoreOnlyQualified } = require("./index");
+    const job = { issuerKind: "adcs" };
+    const present = items => items;
+    const absent = () => [];
+    assert.equal(isStoreOnlyQualified(job, { windows: true, filter: absent }), false);
+    assert.equal(isStoreOnlyQualified(job, { windows: true, filter: present }), true);
+    assert.equal(isStoreOnlyQualified(job, { windows: false, filter: present }), false);
+    assert.equal(isStoreOnlyQualified({ issuerKind: "acme" }, { windows: true, filter: absent }), false);
+    assert.equal(isStoreOnlyQualified({ issuerKind: "acme" }, { windows: true, filter: present }), true);
+  });
+  it("does not advertise a proof-only action in the current unqualified build", () => {
+    const { resolveClaimSupportedActions, AGENT_DECLARED_CAPABILITIES } = require("./index");
+    assert.equal(AGENT_DECLARED_CAPABILITIES.includes("adcs-store-proof-only-v1"), false);
+    assert.equal(resolveClaimSupportedActions({ enabled: true }).includes("adcs-installation-proof"), false);
+  });
+  it("blocks store-only execution before invoking an issuer or store mutation", async () => {
+    for (const issuerKind of ["adcs", "acme"]) {
+      const result = await executeJob({
+        job: {
+          action: "renew",
+          issuerKind,
+          target: { type: "windows-cert-store", reference: "app.example.com", store: "My" },
+        },
+        jobId: "store-only-test",
+        executionContext: { execution: {} },
+        client: {},
+      });
+      assert.equal(result.status, "blocked");
+      assert.match(result.errorMessage, /not qualified/);
+    }
+  });
+
+  it("authorizes a Store renewal's IIS consumer through the live claim client", async (t) => {
+    const capabilities = require("./capabilities");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tt-store-consent-"));
+    const manifestPath = path.join(directory, "qualified.cjs");
+    fs.writeFileSync(manifestPath, 'module.exports = { qualified: ["windows-store-iis-consumers-v1"] };');
+    capabilities._setManifestModulePathForTests(manifestPath);
+    t.after(() => {
+      capabilities._resetQualifiedCapabilitiesCacheForTests();
+      fs.unlinkSync(manifestPath);
+      fs.rmdirSync(directory);
+    });
+
+    const jobId = "a8b3d87b-b4f6-4aa2-b22e-c388ab00ccbc";
+    const claimId = "a42f2a64-78b8-4cf7-9e7c-f7a92a15b8ae";
+    const consumerId = "ad3a786b-5665-4f72-aa41-b5e7bc9a13fe";
+    const enrollmentId = "7aa5ff6e-9601-46da-92ba-5e809aecfe76";
+    const evidence = [];
+    const authorization = { jobId, claimId, consumerId, authorizationRevision: 1 };
+    const leaseClient = {
+      authorizeIisConsumer(request) {
+        assert.deepEqual(request, authorization);
+        return Promise.resolve(true);
+      },
+    };
+    const fingerprintSha256 = new crypto.X509Certificate(TEST_CERT_PEM)
+      .fingerprint256.replaceAll(":", "").toLowerCase();
+    t.mock.method(require("./windows-cert-store/store-only"), "installStoreOnlyCertificate",
+      () => Promise.resolve({ status: "succeeded", storeProof: { fingerprintSha256 } }));
+    t.mock.method(require("./windows-iis/store-consumer-tail"), "runStoreConsumerTail",
+      async ({ client, reportOutcome }) => {
+        assert.equal(await client.authorizeIisConsumer(authorization), true);
+        await reportOutcome({ id: consumerId, ok: true });
+        return { allAttempted: true, outcomes: [{ ok: true }] };
+      });
+
+    const result = await runWindowsIisDeployTail({
+      jobId,
+      client: {
+        reportEvidence(body) {
+          evidence.push(body);
+          return Promise.resolve();
+        },
+      },
+      certificatePem: TEST_CERT_PEM,
+      target: { type: "windows-cert-store", reference: "app.example.test", store: "My" },
+      leaseOpts: { leaseClient, jobId, claimId },
+      storeEnrollmentId: enrollmentId,
+      storeDestinationSha256: "ab".repeat(32),
+      storeConsumerSnapshot: { iisConsumers: [{ consumerId, authorizationRevision: 1 }] },
+    });
+    assert.deepEqual(result, { status: "succeeded", keyRotated: null });
+    assert.equal(evidence.length, 2);
+    assert.ok(evidence.every((body) => body.claimId === claimId));
+  });
+});
+
 describe("buildJobPolicyDescriptor", () => {
   it("maps validated metadata policy dimensions and target reference", () => {
     const descriptor = buildJobPolicyDescriptor(claimedJob({
@@ -314,7 +450,7 @@ describe("runDiscoveryScan", () => {
     fs.writeFileSync(path.join(dir, "server.crt"), TEST_CERT_PEM, "utf8");
     const client = createRecordingClient();
     let seen;
-    await runDiscoveryScan({ directories: [dir], client, checkRevocation: async (item) => {
+    await runDiscoveryScan({ directories: [dir], client, observationRevision: 42, checkRevocation: async (item) => {
       seen = item;
       return { verdict: "revoked", chainStatus: "valid", checkedAt: new Date(Date.now() - 1000).toISOString(), validUntil: new Date(Date.now() + 60000).toISOString() };
     } });
@@ -322,6 +458,7 @@ describe("runDiscoveryScan", () => {
     const item = client.calls.reportEvidence[0].evidenceItems[0];
     const metadata = Object.fromEntries(item.metadata.map(({ name, value }) => [name, value]));
     assert.equal(metadata.observedRevocationVerdict, "revoked");
+    assert.equal(metadata.observedRevocationRevision, "42");
     assert.equal(metadata.observedChainStatus, "valid");
     assert.doesNotMatch(JSON.stringify(item), /BEGIN CERTIFICATE|PRIVATE KEY/);
   });
@@ -453,9 +590,10 @@ describe("runWindowsDiscoveryScan", () => {
       assert.equal(includePublicCertificate, true);
       return [{ locationKind: "windows_store", locationSlot: "LocalMachine/My/test", fingerprintSha256, certificatePem: TEST_CERT_PEM, subject: "CN=test", issuer: "CN=test", thumbprint: WINDOWS_THUMBPRINT, storeLocation: "LocalMachine", storeName: "My" }];
     };
-    await runWindowsDiscoveryScan({ client, collect, checkRevocation: async () => ({ verdict: "issuer_revoked", chainStatus: "valid", checkedAt: new Date(Date.now() - 1000).toISOString(), validUntil: new Date(Date.now() + 60000).toISOString() }) });
+    await runWindowsDiscoveryScan({ client, collect, observationRevision: 43, checkRevocation: async () => ({ verdict: "issuer_revoked", chainStatus: "valid", checkedAt: new Date(Date.now() - 1000).toISOString(), validUntil: new Date(Date.now() + 60000).toISOString() }) });
     const item = client.calls.reportEvidence[0].evidenceItems[0];
     assert.equal(item.metadata.find((entry) => entry.name === "observedRevocationVerdict").value, "issuer_revoked");
+    assert.equal(item.metadata.find((entry) => entry.name === "observedRevocationRevision").value, "43");
     assert.doesNotMatch(JSON.stringify(item), /BEGIN CERTIFICATE|PRIVATE KEY/);
   });
 
@@ -580,6 +718,16 @@ describe("runWindowsDiscoveryScan", () => {
     assert.equal(byName.port, "443");
     assert.equal(byName.sniHost, "example.com");
     assert.equal(byName.thumbprint, WINDOWS_THUMBPRINT);
+  });
+
+  it("reports the observed IP address for a non-SNI IIS binding", async () => {
+    const client = createRecordingClient();
+    const collect = () => [{ locationKind: "iis_binding", locationSlot: "site:443@192.0.2.10",
+      fingerprintSha256: "b".repeat(64), siteName: "site", port: 443, boundAddress: "192.0.2.10",
+      storeLocation: "LocalMachine", storeName: "My", thumbprint: WINDOWS_THUMBPRINT }];
+    await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+    const metadata = Object.fromEntries(client.calls.reportEvidence[0].evidenceItems[0].metadata.map(x => [x.name, x.value]));
+    assert.equal(metadata.boundAddress, "192.0.2.10");
   });
 
   it("includes http_sys-specific port metadata without sniHost/siteName", async () => {
@@ -724,6 +872,27 @@ describe("registerIfNeeded", () => {
     assert.equal(clearCalls[0].configDir, dir);
   });
 
+  it("reports an invalid service name when registry cleanup is refused", async () => {
+    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ serverUrl: "https://cp.example.com", agentId: "agent-existing" }), "utf8");
+    writeCredential(dir, "ttagent_agent-existing_0123456789abcdef");
+    const logs = [];
+    await registerIfNeeded({
+      client: createRecordingClient(),
+      config: loadConfigFrom(dir),
+      configDir: dir,
+      env: { TOKENTIMER_AGENT_SERVICE_NAME: "invalid" },
+      log: (line) => logs.push(line),
+      platformModule: {
+        isWindows: () => true,
+        clearWindowsServiceBootstrapToken: ({ serviceName }) => {
+          assert.equal(serviceName, "invalid");
+          return { attempted: false, cleared: false, reason: "invalid Windows service name" };
+        },
+      },
+    });
+    assert.equal(logs.some((line) => line.includes("invalid Windows service name")), true);
+  });
+
   it("fails loudly when a credential exists but agentId is missing (inconsistent dir)", async () => {
     fs.writeFileSync(
       path.join(dir, "config.json"),
@@ -850,12 +1019,13 @@ describe("registerIfNeeded", () => {
       client,
       config: loadConfigFrom(dir),
       configDir: dir,
-      env: { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: "bootstrap-raw-token" },
+      env: { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: "bootstrap-raw-token", TOKENTIMER_AGENT_SERVICE_NAME: `TokenTimerAgent-${"a".repeat(64)}` },
       platformModule,
     });
 
     assert.equal(clearCalls.length, 1);
     assert.equal(clearCalls[0].configDir, dir);
+    assert.equal(clearCalls[0].serviceName, `TokenTimerAgent-${"a".repeat(64)}`);
   });
 
   it("logs, but does not throw, when the Windows registry scrub cannot confirm success", async () => {
@@ -4235,7 +4405,7 @@ describe("renew chain deployment", () => {
     assert.match(
       outcome.errorMessage,
       process.platform === "win32"
-        ? /AD CS renew requires keyMode os-store-managed and a windows-iis target/
+        ? /AD CS renew requires keyMode os-store-managed and a Windows certificate target/
         : /has not qualified adcs-enroll-v1/,
     );
     assert.equal(acmeExecFileImpl.calls.length, 0);
@@ -5462,6 +5632,103 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
     assert.equal(persisted.lifecycleState, "removed");
   });
 
+  const retentionBoundaries = ["binding lookup", "key inventory", "handshake", "delstore", "delkey"];
+  for (const stopPoint of [...retentionBoundaries, "in-flight delstore"]) {
+    it(`preserves retention state when stopping after ${stopPoint} and resumes safely`, async () => {
+      const inFlight = stopPoint === "in-flight delstore";
+      const boundary = inFlight ? "delstore" : stopPoint;
+      workDir = makeTempConfigDir();
+      const replacement = new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).fingerprint.replace(/:/g, "").toUpperCase();
+      const row = seedRow(workDir, { replacementThumbprint: replacement });
+      const readIssued = () => require("./windows-cert-store").readIssuedContainerRecord({ stateDir: workDir, containerName: CONTAINER_NAME });
+      recordIssuedContainer({ stateDir: workDir, containerName: CONTAINER_NAME, jobId: "job-old" });
+      const issued = readIssued();
+      const stopped = new AbortController();
+      const steps = [];
+      let removeCalls = 0;
+      let certificatePresent = true;
+      let keyPresent = true;
+      let shouldInterrupt = true;
+      let childExited = false;
+      const execFallback = makeSweepExecStub();
+      const connectFallback = makeHandshakeStub();
+      const stopAt = (step) => {
+        steps.push(step);
+        if (shouldInterrupt && step === boundary) stopped.abort();
+      };
+      const options = {
+        stateDir: workDir, retentionHours: 24,
+        execFileImpl(file, args, options, callback) {
+          if (isHttpSysBindingQuery(file, args)) {
+            process.nextTick(() => {
+              callback(null, httpSysBindingsJson([{ ipPort: "0.0.0.0:443", thumbprint: replacement }]), "");
+              stopAt("binding lookup");
+            });
+            return;
+          }
+          if (args[0] === "--key-survivors") {
+            execFallback(file, args, options, (...result) => {
+              callback(...result);
+              stopAt("key inventory");
+            });
+            return;
+          }
+          if (args[0] === "-delstore") {
+            assert.deepEqual(args, ["-delstore", "My", OLD_THUMBPRINT]);
+            if (inFlight && shouldInterrupt) {
+              const child = new EventEmitter();
+              child.kill = () => setImmediate(() => {
+                assert.throws(() => acquireStoreLock(workDir, "My"), { code: "STORE_LOCKED" });
+                childExited = true;
+                child.emit("exit");
+              });
+              queueMicrotask(() => stopAt("delstore"));
+              return child;
+            }
+            execFallback(file, args, options, (...result) => {
+              certificatePresent = false;
+              callback(...result);
+              stopAt("delstore");
+            });
+            return;
+          }
+          assert.deepEqual(args, ["-csp", "Microsoft Software Key Storage Provider", "-delkey", CONTAINER_NAME]);
+          process.nextTick(() => {
+            if (keyPresent) {
+              keyPresent = false;
+              removeCalls++;
+              callback(null, "", "");
+            } else {
+              callback(Object.assign(new Error("key absent"), { code: 1 }), "", "0x80090016 (NTE_BAD_KEYSET)");
+            }
+            stopAt("delkey");
+          });
+        },
+        connectImpl(options) {
+          const socket = connectFallback(options);
+          socket.once("secureConnect", () => stopAt("handshake"));
+          return socket;
+        },
+      };
+      const first = await runTestSweep({ ...options, signal: stopped.signal });
+      assert.deepEqual(steps, retentionBoundaries.slice(0, retentionBoundaries.indexOf(boundary) + 1));
+      assert.deepEqual(first.removed, []);
+      assert.deepEqual(first.deferred, []);
+      assert.deepEqual(readLedgerRow(ledgerDirFor(workDir), OLD_THUMBPRINT), row);
+      assert.deepEqual(readIssued(), issued);
+      assert.equal(certificatePresent, inFlight || !["delstore", "delkey"].includes(boundary));
+      assert.equal(removeCalls, boundary === "delkey" ? 1 : 0);
+      if (inFlight) assert.equal(childExited, true);
+      shouldInterrupt = false;
+      const retried = await runTestSweep(options);
+      assert.deepEqual(retried.removed, [OLD_THUMBPRINT]);
+      assert.equal(readLedgerRow(ledgerDirFor(workDir), OLD_THUMBPRINT).lifecycleState, "removed");
+      assert.equal(readIssued(), null);
+      assert.equal(certificatePresent, false);
+      assert.equal(removeCalls, 1);
+    });
+  }
+
   it("holds the actual store mutex while gathering native facts and deleting an eligible predecessor", async () => {
     workDir = makeTempConfigDir();
     const currentThumbprint = new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).fingerprint.replace(/:/g, "").toUpperCase();
@@ -6469,6 +6736,19 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
     assert.equal(persisted.row.state, "installed");
   });
 
+  it("does not install trust when the last mandatory lease check is refused or unavailable", async () => {
+    if (!AGENT_TRUST_STORE_PREREQUISITES.candidate) return;
+    for (const renewLease of [async () => ({ok:false,status:409,code:'CERTOPS_AGENT_CERTIFICATE_REVOKED'}), async () => { throw new Error('offline'); }]) {
+      let mutations=0;
+      const outcome=await executeTrustJob({job:distributeTrustJob(),jobId:'job-trust-1',action:'distribute-trust',jobMode:'real',
+        policyEngine:trustPolicyEngine(AGENT_TRUST_STORE_PREREQUISITES.family),client:createRecordingClient(),log:silentLog,
+        executionContext:makeExecutionContext(),trustStoreSeams:fakeSeamsForCurrentFamily(),
+        leaseOpts:{leaseClient:{renewLease},jobId:'job-trust-1',claimId:'claim-1',log:silentLog},onBeforeMutation:()=>{mutations++;}});
+      assert.equal(outcome.status,'blocked');
+      assert.equal(mutations,0);
+    }
+  });
+
   it("executeJob dispatches distribute-trust/revoke-trust actions to executeTrustJob (not the renew/deploy/reload 'unsupported action' branch)", async () => {
     // Deliberately malformed (missing anchorType), so this proves ROUTING
     // to executeTrustJob's own field-validation gate rather than ever
@@ -6662,7 +6942,7 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
 
 
 
-describe("revocation scan ordering", () => {
+describe("discovery scan ordering", () => {
   it("reserves revisions before concurrent checks and keeps them across restart", async () => {
     const { createSequenceAllocator } = require("./config");
     const directory = makeTempConfigDir();
@@ -6690,5 +6970,4 @@ describe("revocation scan ordering", () => {
       fs.rmSync(directory, { recursive: true, force: true });
     }
   });
-
 });

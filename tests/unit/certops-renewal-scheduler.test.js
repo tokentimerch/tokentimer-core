@@ -138,6 +138,7 @@ function createSchedulerPool({
     async query(sql, params) {
       const normalized = normalizeSql(sql);
       scanQueries.push({ sql: normalized, params });
+      if (normalized.includes("FROM operational_notifications")) return {rows:[]};
       // Checked before the generic COUNT(*) branch: the auto-renew-disabled
       // count is also a COUNT(*) query, so ordering here matters.
       if (normalized.includes("disabled_count")) {
@@ -383,6 +384,20 @@ describe("certops renewal scheduler", () => {
     );
     assert.strictEqual(sqls.at(-1), "COMMIT");
     assert.strictEqual(client.released, true);
+  });
+
+  it("pins an explicit-IP IIS renewal to its owning agent", async () => {
+    const target = { type: "windows-iis", reference: "iis-01/default-web-site", store: "My",
+      binding: { site: "Default Web Site", port: 443, address: "192.0.2.10" } };
+    const pool = createSchedulerPool({ dueRows: [dueCertificate({ deployed_agent_id: "agent-owner",
+      renewalProfileOverrides: { keyRotationPolicy: { rotateOnRenew: true }, deploymentTargets: [target], target } })] });
+    let options;
+    const summary = await runRenewalSchedulerSweep({ dbPool: pool, env: {},
+      jobCreator: async value => { options = value; return { job: { id: "job-ip" }, created: true }; },
+      auditWriter: async () => {} });
+    assert.equal(summary.created, 1);
+    assert.equal(options.assignedAgentId, "agent-owner");
+    assert.equal(options.payload.target.binding.address, "192.0.2.10");
   });
 
   it("names the store/binding on CERTOPS_JOB_CREATED_AUTOMATIC for a windows-iis renewal, not certPath", async () => {

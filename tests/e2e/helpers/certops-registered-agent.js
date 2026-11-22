@@ -6,6 +6,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
+const { bindAuthenticatedCredential } = require("../../../apps/api/services/certops/agentCredentialFence");
 async function createRegisteredAgent(fixture, baseUrl, declaredCapabilities = [], registrationOptions = {}) {
   const agentId = crypto.randomUUID();
   const prefix = `/api/v1/workspaces/${fixture.workspaceId}/certops`;
@@ -25,6 +26,9 @@ async function createRegisteredAgent(fixture, baseUrl, declaredCapabilities = []
   }
   const bootstrap = await fixture.request(`${prefix}/agent-bootstrap-tokens`, "POST", { name: "Registered protocol fixture", expiresAt: new Date(Date.now() + 3600000).toISOString() }); assert.equal(bootstrap.status, 201);
   const registration = await machine("register", "register", { bootstrapTokenId: bootstrap.body.token.id, registrationId: crypto.randomUUID(), hostname: "registered-protocol-fixture", platform: registrationOptions.platform || "linux", agentVersion: "1.0.0", declaredCapabilities, ...(registrationOptions.declaredCommandProfileNames ? { declaredCommandProfileNames: registrationOptions.declaredCommandProfileNames } : {}), ...(registrationOptions.supportedDnsProviders ? { supportedDnsProviders: registrationOptions.supportedDnsProviders } : {}), ...(registrationOptions.declaredTargetSelectors ? { declaredTargetSelectors: registrationOptions.declaredTargetSelectors } : {}) }, bootstrap.body.plaintextToken); assert.equal(registration.status, 201); credential = registration.body.credential;
+  function bindForService(id) {
+    return bindAuthenticatedCredential({ id, agentId, workspaceId: fixture.workspaceId }, credential);
+  }
   async function claimJob(input) {
     const created = await fixture.request(`${prefix}/jobs`, "POST", input); assert.equal(created.status, 201, JSON.stringify(created.body));
     const claimed = await machine("jobs/claim", "claim", { maxJobs: 1, supportedActions: [input.operation] }); assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
@@ -32,7 +36,7 @@ async function createRegisteredAgent(fixture, baseUrl, declaredCapabilities = []
     assert.ok(job, `Agent did not claim standalone ${input.operation} fixture`);
     return { jobId: created.body.job.id, claimId: String(job.claimId), job };
   }
-  return { agentId, machine, renewLease, claimJob,
+  return { agentId, machine, bindForService, renewLease, claimJob,
     signingKeyId: registration.body.signingKeyId, signingPublicKeyPem: registration.body.signingPublicKeyPem,
     claimNoop: () => claimJob({ operation: "noop" }),
   };

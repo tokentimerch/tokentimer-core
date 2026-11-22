@@ -14,6 +14,10 @@ import { logger } from "../logger.js";
 import { randomUUID } from "node:crypto";
 import alertEligibility from "@tokentimer/alert-eligibility";
 import {
+  ADCS_PREFLIGHT_INCIDENT_TYPE, INCIDENT_EMAIL_CAP_SQL,
+  sendAdcsPreflightIncidentEmail,
+} from "./adcsPreflightEmails.js";
+import {
   sendEmailNotification,
   buildOperationalIncidentEmail,
 } from "../notify/email.js";
@@ -223,6 +227,7 @@ export async function sendOperationalIncidentEmail(
     workspaceId,
     tokenId = null,
     category,
+    type = null,
     title,
     message = null,
     metadata = {},
@@ -230,6 +235,14 @@ export async function sendOperationalIncidentEmail(
   sendEmail = sendEmailNotification,
 ) {
   if (!notificationId || !workspaceId || !category || !title) return;
+  // Distribution/agent CertOps incidents have their own routing and must not
+  // enter this generic retry path. Only the reviewed preflight type is opted in.
+  if (category === "certops") {
+    if (type !== ADCS_PREFLIGHT_INCIDENT_TYPE) return;
+    return sendAdcsPreflightIncidentEmail(
+      client, { notificationId, workspaceId }, sendEmail, { dailyCap: DAILY_EMAIL_CAP },
+    );
+  }
   const failedChannels = [
     ...(Array.isArray(metadata?.failed_channels)
       ? metadata.failed_channels
@@ -277,9 +290,7 @@ export async function sendOperationalIncidentEmail(
     claimed = true;
 
     const capRes = await client.query(
-      `SELECT COUNT(*)::int AS c
-         FROM operational_notifications
-        WHERE workspace_id = $1 AND email_sent_at > NOW() - INTERVAL '24 hours'`,
+      INCIDENT_EMAIL_CAP_SQL,
       [workspaceId],
     );
     if ((capRes.rows[0]?.c || 0) >= DAILY_EMAIL_CAP) {
@@ -364,10 +375,10 @@ export async function retryPendingOperationalIncidentEmails(
   sendEmail = sendEmailNotification,
 ) {
   const pending = await client.query(
-    `SELECT id, workspace_id, token_id, category, dedupe_key, title, message, metadata
+    `SELECT id, workspace_id, token_id, category, type, dedupe_key, title, message, metadata
        FROM operational_notifications
       WHERE severity = 'critical'
-        AND category <> 'certops'
+        AND (category <> 'certops' OR type = 'adcs_preflight_blocked')
         AND resolved_at IS NULL
         AND email_sent_at IS NULL
         AND (email_claimed_at IS NULL OR email_claimed_at < NOW() - ($1 * INTERVAL '1 minute'))
@@ -422,6 +433,7 @@ export async function retryPendingOperationalIncidentEmails(
         workspaceId: row.workspace_id,
         tokenId: row.token_id,
         category: row.category,
+        type: row.type,
         title: row.title,
         message: row.message,
         metadata: row.metadata,

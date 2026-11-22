@@ -116,3 +116,30 @@ test("unknown and conflicting history remains rejected before SQL", () => {
     ]),
   );
 });
+
+test("the two existing feature histories upgrade and replay without changing applied identities", () => {
+  for (const missing of [[113, 114, 115], [112]]) {
+    const recorded = migrations.filter((row) => !missing.includes(row.version))
+      .map(({ version, name }) => ({ version, name }));
+    const plan = composeMigrations(migrations, recorded);
+    for (const row of recorded) assert.equal(plan.find((item) => item.version === row.version)?.name, row.name);
+    for (const version of [109, 110, 112, 113, 114, 115]) assert.ok(plan.some((row) => row.version === version));
+    assert.deepEqual(composeMigrations(migrations, plan), plan);
+  }
+});
+
+test("the initial credential rotation preview survives each upgrade prefix", () => {
+  const versions = new Set([...Array.from({ length: 85 }, (_, i) => i + 1), 92, 93, 94, 95, 98]);
+  const history = migrations.filter(({ version }) => versions.has(version))
+    .map(({ version, name }) => ({ version, name }));
+  history.push({ version: 99, name: "agent_credential_rotations" });
+  const plan = composeMigrations(migrations, history);
+  const applied = plan.map(({ version, name }) => ({ version, name }));
+  assert.deepEqual(applied.slice(0, history.length), history);
+  for (let length = history.length; length <= applied.length; length++) {
+    assert.deepEqual(composeMigrations(migrations, applied.slice(0, length)), plan);
+  }
+  assert.throws(() => composeMigrations(migrations, history.filter(({ version }) => version !== 98)), /Unsupported/);
+  assert.throws(() => composeMigrations(migrations, history.map((row) => row.version === 99
+    ? { ...row, name: "unknown_rotation" } : row)), /Unsupported/);
+});

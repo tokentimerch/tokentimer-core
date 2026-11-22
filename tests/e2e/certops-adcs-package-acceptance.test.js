@@ -11,7 +11,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const net = require("node:net");
 const { spawnSync } = require("node:child_process");
-const { extractVerified, verifyInstalled, digest, ADCS_ACCEPTANCE_SCENARIOS } = require("../../scripts/certops-agent-package");
+const { extractVerified, verifyInstalled, verifyBundledArchive, verifyBundledRuntimeEvidence, digest, ADCS_ACCEPTANCE_SCENARIOS } = require("../../scripts/certops-agent-package");
 const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 const { createApiFixture } = require("./helpers/certops-api-fixture");
 const browserJourney = require("./helpers/certops-adcs-browser-journey");
@@ -38,8 +38,20 @@ test("AD CS operator journey uses the verified package and documented installer"
   const runtime = JSON.parse(fs.readFileSync("C:\\ttqualification\\runtime.json", "utf8"));
   const artifact = JSON.parse(fs.readFileSync(runtime.agentPackageReceipt, "utf8"));
   assert.equal(artifact.candidateSha, process.env.GITHUB_SHA);
+  const bundled = process.env.CERTOPS_EXPECT_BUNDLED_WINDOWS_RUNTIME === "1";
+  if (!bundled) assert.equal(artifact.archiveKind, undefined);
+  if (bundled) {
+    assert.equal(artifact.archiveKind, "windows-bundled-amd64");
+    assert.equal(path.basename(runtime.agentPackage), artifact.archive);
+  }
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-domain-adcs-package-"));
   applyRestrictivePermissions(workDir, { kind: "directory" });
+  // A private TEMP directory under a user-writable ancestor is insufficient
+  // for the installer's bundled-runtime tree checks.
+  const extractionParent = bundled
+    ? fs.mkdtempSync(path.join(ps("[Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)"), "TokenTimer-AdcsFixture-"))
+    : workDir;
+  if (bundled) applyRestrictivePermissions(extractionParent, { kind: "directory" });
   const installedRoot = "C:\\ProgramData\\TokenTimerAgent", configDir = path.join(installedRoot, "state");
   assert.equal(fs.existsSync(installedRoot), false, "Refuse any pre-existing canonical installation");
   assert.notEqual(spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status, 0);
@@ -73,7 +85,8 @@ test("AD CS operator journey uses the verified package and documented installer"
       gate.report.nativeEnvironment={...native,osFamily:"windows",windowsVersion:version,language,measurement:"native"};
     });
     await gate.scenario("adcs-package-checksum-and-extraction", async () => {
-      ({ root: packageRoot, files } = extractVerified({ tarball: runtime.agentPackage, expectedSha256: artifact.sha256, destination: path.join(workDir, "extracted") }));
+      ({ root: packageRoot, files } = extractVerified({ tarball: runtime.agentPackage, expectedSha256: artifact.sha256, destination: path.join(extractionParent, "extracted") }));
+      if (bundled) verifyBundledArchive(packageRoot, files, artifact);
     });
     const installer = path.join(packageRoot, "scripts/install-agent.ps1");
     await gate.scenario("adcs-package-documented-default-root-install", async () => {
@@ -87,6 +100,11 @@ test("AD CS operator journey uses the verified package and documented installer"
       verifyInstalled(files, path.join(installedRoot, "app"));
       await until(async () => (await fixture.request(`${api}/agents`)).body.items?.some(row => row.lastSeenAt));
       assert.equal(ps("(Get-Service TokenTimerAgent).Status"), "Running");
+      if (bundled) {
+        const evidence = JSON.parse(ps(`$s=Get-CimInstance Win32_Service -Filter "Name='TokenTimerAgent'";if(!$s -or $s.State -ne 'Running'){throw 'agent service unavailable'};$children=@(Get-CimInstance Win32_Process | Where-Object {$_.ParentProcessId -eq $s.ProcessId -and $_.Name -ieq 'node.exe'});$childPath=if($children.Count -eq 1){$children[0].ExecutablePath}else{$null};$hash=if($childPath){(Get-FileHash -LiteralPath $childPath -Algorithm SHA256).Hash}else{$null};@{serviceAccount=$s.StartName;childCount=$children.Count;childPath=$childPath;childSha256=$hash}|ConvertTo-Json -Compress`));
+        verifyBundledRuntimeEvidence(evidence, artifact);
+        gate.report.bundledRuntime = evidence;
+      }
     });
     const agentRow = await until(async () => (await fixture.request(`${api}/agents`)).body.items?.[0]);
     const settingsFile = path.join(configDir, "config.json"), settings = JSON.parse(fs.readFileSync(settingsFile, "utf8"));

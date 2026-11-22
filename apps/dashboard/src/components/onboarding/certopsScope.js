@@ -72,6 +72,7 @@ const VARIANT_KEYS = [
   'acmeShellPath',
   'iisSite',
   'iisPort',
+  'iisAddress',
   'sniHost',
   'configReviewed',
   'executionAcknowledged',
@@ -89,6 +90,7 @@ const VARIANT_KEYS = [
   'dryRunRequestKey',
   'dryRunRequestAgentId',
   'issueJobId',
+  'storeIssueJobId',
   'issueAttempt',
   'issueReloadService',
 ];
@@ -119,6 +121,7 @@ export function chooseInfrastructure(
     // The installer confirmation was about the previous agent.
     delete next.installerKey;
     delete next.chosenAgentConfirmed;
+    delete next.storeIssueJobId;
   }
   if (agentId) next.chosenAgentId = agentId;
   else if (agentId === null) delete next.chosenAgentId;
@@ -136,6 +139,7 @@ export function chooseIssuer(certops, objective, issuerId) {
   const next = mergeCertops(certops, objective, { objective });
   if ((issuerId || undefined) !== before.chosenIssuerId) {
     delete next.chosenIssuerConfirmed;
+    delete next.storeIssueJobId;
   }
   if (issuerId) next.chosenIssuerId = issuerId;
   else delete next.chosenIssuerId;

@@ -136,7 +136,7 @@ function fsyncParentDirectory(filePath) {
   fsyncDirectorySync(path.dirname(filePath));
 }
 
-function writeFileAtomically(filePath, contents, mode) {
+function writeFileAtomically(filePath, contents, mode, { operatorConfig = false } = {}) {
   const temporaryPath = `${filePath}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`;
   let fd;
   try {
@@ -149,7 +149,7 @@ function writeFileAtomically(filePath, contents, mode) {
     // POSIX re-asserts the mode; win32 gets a real restricted ACL. A failure
     // here is fatal: an unprotected credential/config file is not an
     // acceptable outcome of a successful write.
-    applyRestrictivePermissions(filePath, { kind: "file", mode });
+    applyRestrictivePermissions(filePath, { kind: "file", mode, includeAdministrators: operatorConfig });
     fsyncParentDirectory(filePath);
   } catch (err) {
     if (fd !== undefined) {
@@ -235,14 +235,14 @@ function resolveConfigDir(explicitDir) {
 /**
  * Ensures the config directory exists with restrictive permissions,
  * re-asserting them on every call (defense in depth against a prior looser
- * mode). On win32 this is a real ACL: inheritance removed, owner plus SYSTEM
- * only, inheritable so state files created inside start out restricted.
+ * mode). On win32 the service identity and SYSTEM get inheritable access;
+ * Administrators get non-inheritable read/traverse access to the directory.
  * @param {string} configDir
  * @returns {void}
  */
 function ensureConfigDir(configDir) {
   fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
-  applyRestrictivePermissions(configDir, { kind: "directory", mode: 0o700 });
+  applyRestrictivePermissions(configDir, { kind: "directory", mode: 0o700, includeAdministrators: true });
 }
 
 function readConfigFile(configDir) {
@@ -1041,7 +1041,28 @@ function validateAdcsObject(value) {
 
 function loadAgentConfig({ configDir } = {}) {
   const resolvedDir = resolveConfigDir(configDir);
-  const fileConfig = readConfigFile(resolvedDir);
+  let fileConfig;
+  if (process.platform === "win32") {
+    const configPath = path.join(resolvedDir, CONFIG_FILE_NAME);
+    const stats = fs.lstatSync(configPath, { throwIfNoEntry: false });
+    if (stats) {
+      if (!stats.isFile() || stats.isSymbolicLink()) {
+        throw new Error(`tokentimer-agent: ${configPath} must be a regular non-symlink file`);
+      }
+      // Refuse inaccessible state before either ACL can repair its access.
+      // Read the authoritative contents only after enforcing permissions.
+      fs.closeSync(fs.openSync(configPath, "r"));
+    }
+    if (stats || fs.existsSync(resolvedDir)) {
+      ensureConfigDir(resolvedDir);
+    }
+    if (stats) {
+      applyRestrictivePermissions(configPath, { kind: "file", includeAdministrators: true });
+    }
+    fileConfig = stats ? readConfigFile(resolvedDir) : {};
+  } else {
+    fileConfig = readConfigFile(resolvedDir);
+  }
 
   const serverUrl = process.env.TOKENTIMER_AGENT_SERVER_URL || fileConfig.serverUrl;
   if (typeof serverUrl !== "string" || serverUrl.length === 0) {
@@ -1205,7 +1226,7 @@ function writeAgentIdentity(configDir, { agentId }) {
   const configPath = path.join(configDir, CONFIG_FILE_NAME);
   const existing = readConfigFile(configDir);
   const merged = { ...existing, agentId };
-  writeFileAtomically(configPath, `${JSON.stringify(merged, null, 2)}\n`, 0o600);
+  writeFileAtomically(configPath, `${JSON.stringify(merged, null, 2)}\n`, 0o600, { operatorConfig: true });
 }
 
 /**
@@ -1692,6 +1713,9 @@ function createSequenceAllocator(configDir) {
   return {
     next() {
       const candidate = lastAllocated + 1;
+      if (!Number.isSafeInteger(candidate) || candidate > Number.MAX_SAFE_INTEGER - SEQUENCE_RESERVATION_BLOCK + 1) {
+        throw new Error("Agent sequence exhausted");
+      }
       if (candidate > reservedThrough) {
         // Durable write FIRST, allocation second: a crash between the two
         // wastes a block but can never reuse a value.

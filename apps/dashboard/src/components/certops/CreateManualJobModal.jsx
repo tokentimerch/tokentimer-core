@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -55,11 +55,11 @@ import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showError, showSuccess } from '../../utils/toast.js';
 
 /**
- * Client-side idempotency key for a trust-op submission. `crypto.randomUUID`
- * is available in every browser this dashboard supports; the fallback only
- * guards against a test/SSR environment without a `crypto` global.
+ * Client-side idempotency key for a job submission. `crypto.randomUUID`
+ * is used when available. The fallback also supports HTTP installations
+ * where the browser only exposes `crypto.getRandomValues`.
  */
-function generateIdempotencyKey() {
+function generateIdempotencyKey(prefix = 'trust') {
   if (
     typeof crypto !== 'undefined' &&
     typeof crypto.randomUUID === 'function'
@@ -75,7 +75,7 @@ function generateIdempotencyKey() {
     const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(
       ''
     );
-    return `trust-${hex}`;
+    return `${prefix}-${hex}`;
   }
   throw new Error('Secure random is unavailable');
 }
@@ -374,6 +374,7 @@ export default function CreateManualJobModal({
   const [subjectId, setSubjectId] = useState('');
   const [adcsRenewalState, setAdcsRenewalState] = useState('idle');
   const [idempotencyKey, setIdempotencyKey] = useState('');
+  const renewalIntent = useRef(null);
   const [assignedAgentId, setAssignedAgentId] = useState('');
   const [payloadMode, setPayloadMode] = useState('fields');
   const [payloadText, setPayloadText] = useState('');
@@ -587,6 +588,7 @@ export default function CreateManualJobModal({
     !(isDistributeTrust && trustOwnerMode === 'new' && !trustNewOwner.trim());
 
   const resetForm = () => {
+    renewalIntent.current = null;
     setOperation('');
     setJobMode('real');
     setExecutor('agent');
@@ -891,6 +893,16 @@ export default function CreateManualJobModal({
       const effectiveRequiresApproval =
         requiresApproval || certOpsRequireApprovalAlways === true;
       if (effectiveRequiresApproval) body.requiresApproval = true;
+      if (operation === 'renew' && !body.idempotencyKey) {
+        const intent = JSON.stringify(body);
+        if (renewalIntent.current?.intent !== intent) {
+          renewalIntent.current = {
+            intent,
+            key: generateIdempotencyKey('renewal'),
+          };
+        }
+        body.idempotencyKey = renewalIntent.current.key;
+      }
       const { job } = await createJob(workspaceId, body);
       showSuccess(
         'Job created',
@@ -1200,7 +1212,7 @@ export default function CreateManualJobModal({
                   </FormHelperText>
                 ) : null}
               </FormControl>
-              {operation === 'noop' ? (
+              {!isControllerIssue && operation === 'noop' ? (
                 <FormControl>
                   <FormLabel fontSize='sm'>Execution mode</FormLabel>
                   <Select
@@ -1212,8 +1224,9 @@ export default function CreateManualJobModal({
                     <option value='dry_run'>Simulation (dry run)</option>
                   </Select>
                   <FormHelperText>
-                    Simulation checks signed job dispatch. Successful jobs
-                    report Dry-run complete.
+                    A simulation checks signed job dispatch without making
+                    changes on the agent. The expected result is Dry-run
+                    complete.
                   </FormHelperText>
                 </FormControl>
               ) : null}
@@ -1478,7 +1491,9 @@ export default function CreateManualJobModal({
                 <FormHelperText>
                   {isIssue
                     ? 'Required for issue: a retried request with the same key returns the existing job instead of provisioning a second certificate.'
-                    : 'Optional. Reusing a key returns the existing job instead of creating a duplicate.'}
+                    : isRenew
+                      ? 'Optional. A key is generated when blank and reused while retrying the same request.'
+                      : 'Optional. Reusing a key returns the existing job instead of creating a duplicate.'}
                 </FormHelperText>
               </FormControl>
               {isControllerIssue ? null : (
