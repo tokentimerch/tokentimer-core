@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-22 (Core 0.20.0, main bbf87f4a).
+Last reviewed: 2026-11-22 (Core 0.20.0, main 08ea77ce).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -50,6 +50,8 @@ called stable while they are open.
   Core ACME, step-ca, and webhook issuers. CA-backed revoke,
   replace-compromised, decommission, and verify-revocation. Encrypted
   issuer credentials fail closed if the key is missing.
+  The first increment validates ACME directories through the issuer API.
+  CA-backed revocation, step-ca and webhook connectors remain open.
 - **Operational diagnostics**
   ([#232](https://github.com/tokentimerch/tokentimer-core/issues/232)).
   Correlation identifiers across API and workers; production error
