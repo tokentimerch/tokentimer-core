@@ -385,6 +385,11 @@ function makeMockPool(issuer) {
     if (/^SELECT type, config FROM sso_providers WHERE slug = \$1 AND enabled FOR SHARE/i.test(flat)) {
       return { rows: [{ type: "oidc", config: { issuer: state.issuer } }], rowCount: 1 };
     }
+    if (/^SELECT 1 FROM sso_providers WHERE slug = \$1 AND enabled FOR SHARE$/i.test(flat)) {
+      return params[0] === PROVIDER_SLUG
+        ? { rows: [{ "?column?": 1 }], rowCount: 1 }
+        : { rows: [], rowCount: 0 };
+    }
     if (matches(flat, /^SELECT ei\.id AS link_id, u\.\*, u\.auth_method AS auth_method_before FROM external_identities ei JOIN users u ON u\.id = ei\.user_id WHERE ei\.provider_slug = \$1 AND ei\.subject_id = \$2/i)) {
       const [providerSlug, subjectId] = params;
       const link = state.links.find(
