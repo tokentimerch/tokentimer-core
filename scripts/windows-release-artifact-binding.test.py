@@ -147,5 +147,41 @@ class CandidateBindingTests(unittest.TestCase):
             binding.validate_binding(archive, sbom, output.read_bytes(), **self.params)
 
 
+class PilotRepackTests(unittest.TestCase):
+    def test_repack_changes_only_the_approved_signing_targets(self):
+        scripts = Path(__file__).resolve().parent
+        spec = importlib.util.spec_from_file_location("pilot_archive", scripts / "windows-signing-pilot-archive.py")
+        pilot = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pilot)
+        targets = json.loads(subprocess.check_output([
+            "node", "-e", "console.log(JSON.stringify(require(process.argv[1]).OWNED))",
+            str(scripts / "windows-signing-targets.cjs"),
+        ]))
+        unsigned_members = [(f"package/{target}", 0o644, b"unsigned") for target in targets]
+        runtime = "package/runtime/amd64/node.exe"
+        unsigned_members.append((runtime, 0o644, b"upstream runtime"))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            stage = root / "stage"
+            pilot.extract(unsigned_members, stage)
+            for target in targets:
+                (stage / "package" / target).write_bytes(b"signed")
+
+            repacked = root / "signed.tgz"
+            pilot.repack(unsigned_members, stage, targets, repacked)
+            with tarfile.open(repacked, "r:gz") as archive:
+                self.assertEqual(archive.getnames(), [name for name, _, _ in unsigned_members])
+                for target in targets:
+                    self.assertEqual(archive.extractfile(f"package/{target}").read(), b"signed")
+                self.assertEqual(archive.extractfile(runtime).read(), b"upstream runtime")
+
+            with self.assertRaisesRegex(ValueError, "distinct signing targets"):
+                pilot.repack(unsigned_members, stage, [targets[0], *targets[:-1]], root / "duplicate.tgz")
+            (stage / runtime).write_bytes(b"different runtime")
+            with self.assertRaisesRegex(ValueError, "Unexpected signing delta"):
+                pilot.repack(unsigned_members, stage, targets, root / "modified-runtime.tgz")
+
+
 if __name__ == '__main__':
     unittest.main()

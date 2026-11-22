@@ -352,6 +352,8 @@ insufficient.
 
 ## Integration base URLs
 
+Use `OUTBOUND_ALLOWLIST` (Helm `config.outboundAllowlist`) to restrict app-initiated integration, webhook, email, WhatsApp, endpoint and metrics connections. List exact hosts, wildcard domains or literal IP ranges. Set `OFFLINE_MODE=true` (Helm `config.offlineMode`) to deny these connections when the list is empty. Domain discovery is disabled with a policy because Subfinder selects its own external sources. Existing webhook and integration private-address restrictions still apply. Include any forward-proxy host used by those requests. Use the exact destination hostname in `NO_PROXY` when your proxy is outside the allowlist. Existing monitors show when policy blocks checks. After allowing a host, use a manual check to verify recovery. Production webhook tests and delivery require HTTPS. Deployment-internal database and worker-to-API connections run independently of this policy.
+
 The Vault, GitLab, GitHub and Azure Key Vault inventory scans connect to an address the user types in. By default the API refuses base URLs that point at private, loopback, link-local or other reserved addresses (including hostnames that resolve to them) and answers with 400 `INTEGRATION_PRIVATE_ADDRESS_BLOCKED`. A self-hosted GitLab, GitHub Enterprise or Vault on your own network is a legitimate target: set `INTEGRATION_ALLOW_PRIVATE_IPS=true` (Helm `config.integrationAllowPrivateIps`) on the API to allow it. The `*_ADDRESS_ALLOWLIST` host lists still apply on top. This is separate from `WEBHOOK_ALLOW_PRIVATE_IPS`, which only covers webhooks.
 
 ## Proxy

@@ -4329,6 +4329,8 @@ paths:
                     type: array
                     items:
                       type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/integrations/aws/scan:
     post:
       tags: [Integrations]
@@ -4667,7 +4669,9 @@ paths:
       summary: Send test webhook
       operationId: sendTestWebhook
       description: >-
-        Sends a test webhook payload to validate destination settings. For
+        Sends a test webhook payload to validate destination settings.
+        Production requires HTTPS for both testing and delivery. An HTTP URL
+        is rejected with status 400 and code WEBHOOK_INVALID_URL. For
         non-generic kinds (slack, teams, discord, pagerduty) the destination
         host must match the built-in provider allowlist (Slack, Discord,
         Teams, PagerDuty, and Power Automate/Logic Apps hosts) or a host added
@@ -6263,6 +6267,13 @@ paths:
                     items:
                       type: object
                       additionalProperties: true
+                      properties:
+                        outbound_policy_blocked:
+                          type: boolean
+                          description: The current outbound policy blocks scheduled checks for this endpoint.
+                        outbound_manual_check_blocked:
+                          type: boolean
+                          description: The current outbound policy blocks the manual HTTP check for this endpoint.
         "500":
           $ref: "#/components/responses/InternalError"
     post:
@@ -6308,6 +6319,8 @@ paths:
                 additionalProperties: true
         "400":
           $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/domains/{domainId}:
@@ -6390,6 +6403,8 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "500":
@@ -6612,6 +6627,7 @@ paths:
         Duplicate imports are skipped when a matching token already exists.
         Optionally creates endpoint monitors (`domain_monitors`) for each discovered hostname when
         `monitorOptions.enabled` is true. Existing monitors for the same workspace and URL are left untouched.
+        The outbound policy can block new monitors while the certificate imports still succeed.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -6729,6 +6745,9 @@ paths:
                       existing:
                         type: integer
                         description: Hostnames that already had a monitor in this workspace.
+                      blocked:
+                        type: integer
+                        description: New monitors skipped because the outbound policy blocks their scheduled checks.
         "400":
           $ref: "#/components/responses/BadRequest"
         "500":

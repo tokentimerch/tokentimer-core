@@ -1,3 +1,4 @@
+const { assertOutboundUrl, getNetworkConfig } = require("@tokentimer/config/network");
 const axios = require("axios");
 const { logger } = require("../utils/logger");
 const systemSettings = require("./systemSettings");
@@ -148,7 +149,9 @@ async function sendWhatsApp({
     }
     params.append("From", `whatsapp:${from}`);
 
+    assertOutboundUrl(url, { proxyMode: "axios" });
     const res = await axios.post(url, params, {
+      ...(getNetworkConfig().outboundPolicyEnabled ? { maxRedirects: 0 } : {}),
       auth: { username: auth.sid, password: auth.token },
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",

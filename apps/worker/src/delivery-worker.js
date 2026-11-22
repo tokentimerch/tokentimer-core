@@ -1,3 +1,4 @@
+import { OUTBOUND_POLICY_DENIED } from "@tokentimer/config/network";
 import { pool, withClient } from "./db.js";
 import { isNodeEntrypoint } from "./is-node-entrypoint.js";
 import { warnIfNodeUseEnvProxyUnsupported } from "./proxy-compat-check.js";
@@ -1515,6 +1516,7 @@ const shutdown = async (signal) => {
 
 const TERMINAL_WEBHOOK_CODES = new Set([
   "WEBHOOK_PRIVATE_IP_BLOCKED",
+  OUTBOUND_POLICY_DENIED,
   "WEBHOOK_INVALID_URL",
   "WEBHOOK_INVALID_SCHEME",
   "WEBHOOK_HOST_NOT_ALLOWED",
