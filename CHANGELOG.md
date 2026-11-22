@@ -13,11 +13,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Observed certificate revocation.** Windows and Linux agents report leaf and issuing-CA revocation through OCSP and HTTP(S) CRLs, including delta CRLs. Unavailable checks retain the last verified finding. Managers can filter the observation history for a registration in certificate details. **Operator action:** allow the responder origins in `observedRevocation.allowedOrigins`; new installer configurations enable monitoring with an empty allowlist. LDAP-only CRLs remain unsupported. See [agent configuration](docs/certops/agent/configuration.md) and [GPO trust distribution](docs/certops/adcs-gpo-trust.md).
 - **Windows Store AD CS issuance and renewal.** Qualified agents install certificates with protected keys in `LocalMachine\My`. New Store registrations track expiry with automatic renewal off by default. A due renewal requests a fresh CA check when needed. **Operator action:** enable a Store profile on the owning registration and opt in each IIS binding that should update, up to 32 per Store registration. Verify the certificate the service serves. See [Windows Store renewal](docs/certops/agent/adcs.md#operator-sequence).
+- **AD CS preflight.** Automatic renewal retries temporary CA check failures. Critical preflight notifications open the affected issuer in CertOps Renewals. See [automatic preflight refresh](docs/certops/agent/adcs.md#automatic-preflight-refresh).
 - **Asset expiration in auto-sync metrics.** Detailed creation metrics can include verified expiry for new inventory. **Operator guidance:** allow and select `expiration` to include the date or time in creation alerts. See the [auto-sync metrics guide](docs/AUTO_SYNC.md#asset-expiration-labels).
+
+### Changed
+
+- **Windows agent installer.** Classic installs preserve explicit service TLS trust and enrolled identity. A controlled reinstall requires verified restored state and leaves the service disabled for inspection. See the [Windows installation guide](docs/certops/agent/install-windows.md).
 
 ### Fixed
 
 - **Integration discovery and cleanup.** GitLab and GitHub scans now follow additional pages, including GitHub Actions secrets. Scopes with failed or invalid list results are ineligible for cleanup. Auto-sync retains existing associations when a requested scope is incomplete, and one-time imports skip cleanup when an item fails to import.
+- **Manual certificate renewals.** Retrying the same request in an open dialog returns the original job if it was already created.
 
 ### Security
 
