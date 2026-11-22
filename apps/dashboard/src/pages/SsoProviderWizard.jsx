@@ -111,6 +111,7 @@ export default function SsoProviderWizard({
   const [issuer, setIssuer] = useState('');
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
+  const [requestOktaGroups, setRequestOktaGroups] = useState(true);
   const [metadataUrl, setMetadataUrl] = useState('');
   const [metadataXml, setMetadataXml] = useState('');
   const [parsedSaml, setParsedSaml] = useState(null);
@@ -200,7 +201,10 @@ export default function SsoProviderWizard({
           ? {
               issuer: issuer.trim(),
               client_id: clientId.trim(),
-              scopes: 'openid profile email',
+              scopes:
+                templateId === 'okta' && requestOktaGroups
+                  ? 'openid profile email groups'
+                  : 'openid profile email',
             }
           : {
               entry_point: parsedSaml?.entryPoint || '',
@@ -564,6 +568,21 @@ export default function SsoProviderWizard({
                           SSO secrets keyring is configured.
                         </FormHelperText>
                       </FormControl>
+                      {templateId === 'okta' && (
+                        <FormControl>
+                          <Checkbox
+                            isChecked={requestOktaGroups}
+                            onChange={e => setRequestOktaGroups(e.target.checked)}
+                          >
+                            Request groups for role mapping
+                          </Checkbox>
+                          <FormHelperText>
+                            Configure an ID token group claim in Okta. Clear
+                            this option if your authorization server uses a
+                            different scope for groups.
+                          </FormHelperText>
+                        </FormControl>
+                      )}
                     </>
                   ) : (
                     <>

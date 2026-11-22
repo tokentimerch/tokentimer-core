@@ -77,6 +77,46 @@ describe('Core provider administration', () => {
     });
   });
 
+  it.each([true, false])(
+    'saves the Okta groups scope when the role mapping option is %s',
+    async includeGroups => {
+      api.post.mockResolvedValueOnce({ data: { slug: 'okta-office' } });
+      api.post.mockResolvedValueOnce({ data: { ok: true, checks: [] } });
+      mount(<SsoProviderWizard session={{}} />);
+      await screen.findByRole('heading', { name: 'Choose protocol' });
+      click('Continue');
+      await screen.findByRole('heading', { name: 'IdP template' });
+      enter(/^Template$/, 'okta');
+      click('Continue');
+      await screen.findByRole('heading', { name: 'Provider details' });
+      enter(/^Display name/, 'Office');
+      enter(/^Issuer URL/, 'https://example.okta.com');
+      enter(/^Client ID/, 'test-client');
+      enter(/^Client secret/, 'synthetic-fixture');
+      const option = screen.getByRole('checkbox', {
+        name: 'Request groups for role mapping',
+      });
+      expect(option.checked).toBe(true);
+      if (!includeGroups) fireEvent.click(option);
+      click('Continue');
+      await screen.findByRole('heading', { name: 'Register URLs in your IdP' });
+      click('Continue');
+      await screen.findByRole('heading', { name: 'Verification' });
+      click('Save and run test');
+      await screen.findByRole('heading', { name: 'Enable sign-in' });
+      expect(api.post).toHaveBeenCalledWith(
+        '/api/admin/sso/providers',
+        expect.objectContaining({
+          config: expect.objectContaining({
+            scopes: includeGroups
+              ? 'openid profile email groups'
+              : 'openid profile email',
+          }),
+        })
+      );
+    }
+  );
+
   it.each(['oidc', 'saml'])(
     'saves %s disabled before testing and then activates the named provider',
     async protocol => {
