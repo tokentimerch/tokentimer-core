@@ -1,4 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
@@ -8,6 +14,7 @@ const h = vi.hoisted(() => ({
   management: { status: 'ready', canManage: true, retry: () => {} },
   outlet: { killSwitchResolved: true, certOpsPaused: false },
   wizardProps: null,
+  listIssuers: vi.fn(),
 }));
 
 vi.mock('react-router', async importOriginal => ({
@@ -34,7 +41,7 @@ vi.mock('../../src/components/certops/certopsEnrollmentsApi', () => ({
   dispatchIssuerPreflight: vi.fn(),
   enrollmentStateLabel: s => s,
   listEnrollments: async () => ({ items: [], pagination: { total: 0 } }),
-  listIssuers: async () => ({ items: [], pagination: { total: 0 } }),
+  listIssuers: (...args) => h.listIssuers(...args),
   proposeEnrollmentRequestId: vi.fn(),
 }));
 vi.mock('../../src/components/certops/AdcsIssuerWizard.jsx', () => ({
@@ -86,9 +93,75 @@ beforeEach(() => {
   h.management = { status: 'ready', canManage: true, retry: () => {} };
   h.outlet = { killSwitchResolved: true, certOpsPaused: false };
   h.wizardProps = null;
+  h.listIssuers
+    .mockReset()
+    .mockResolvedValue({ items: [], pagination: { total: 0 } });
 });
 
 describe('New AD CS issuer deep link', () => {
+  it('retains the requested issuer while role and workspace data are loading', async () => {
+    h.management = { status: 'loading', canManage: false, retry: () => {} };
+    let resolve;
+    h.listIssuers.mockImplementation(
+      () =>
+        new Promise(done => {
+          resolve = done;
+        })
+    );
+    const handled = vi.fn();
+    const tree = () => (
+      <MemoryRouter>
+        <ChakraProvider>
+          <DashboardThemeProvider>
+            <CertOpsAdcs focusIssuerId={AGENT} onFocusHandled={handled} />
+          </DashboardThemeProvider>
+        </ChakraProvider>
+      </MemoryRouter>
+    );
+    const { rerender } = render(tree());
+    h.management = { status: 'ready', canManage: true, retry: () => {} };
+    rerender(tree());
+    await waitFor(() => expect(h.listIssuers).toHaveBeenCalled());
+    expect(handled).not.toHaveBeenCalled();
+    const safe = {
+      caConfig: 'ca.example.test\\Simulated CA',
+      template: 'WebServer',
+      templateCheck: { verdict: 'safe' },
+      caCheck: { verdict: 'safe' },
+      caCertificates: [],
+    };
+    await act(async () =>
+      resolve({
+        items: [
+          {
+            id: 'first',
+            kind: 'adcs',
+            name: 'First CA',
+            currentVersion: 1,
+            lastPreflight: safe,
+          },
+          {
+            id: AGENT,
+            kind: 'adcs',
+            name: 'Target CA',
+            currentVersion: 1,
+            lastPreflight: safe,
+          },
+        ],
+        pagination: { total: 2 },
+      })
+    );
+    await waitFor(() => expect(handled).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('button', { name: 'Check again' })
+      ).toHaveLength(1)
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    expect(
+      screen.getByRole('combobox', { name: 'Agent for Target CA' })
+    ).toBeInTheDocument();
+  });
   it('opens the section and the dialog, then clears the request', async () => {
     renderRenewals(
       `/certops/renewals?workspace=ws-1&action=new-adcs-issuer&agentId=${AGENT}&template=WebServer`

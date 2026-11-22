@@ -23,6 +23,7 @@
  * public job payload fields. It never touches private key material.
  */
 
+const crypto = require("node:crypto");
 const { pool } = require("../../db/database");
 const { logger } = require("../../utils/logger");
 const {
@@ -56,11 +57,12 @@ const {
   resolveRenewalPerCaCap,
 } = require("./renewalCapacity");
 const { writeAudit } = require("../audit");
-const { createEnrollment, findOpenEnrollment } = require("./certificateEnrollments");
+const { createEnrollment, findOpenEnrollment, dispatchPreflight, retryDryRunBlockedRenewal, isSafeRetryableAutomaticEnrollment } = require("./certificateEnrollments");
 const { validateAdcsRenewalProfile } = require("./adcsRenewalRules");
 const {
   loadCurrentAdcsIssuerVersion,
   loadQualifyingAdcsAgents,
+  findEligibleAdcsPreflightAgent,
 } = require("./adcsPreflightGate");
 
 const {
@@ -233,6 +235,42 @@ function renewalIdempotencyKey(certificateId, notAfter) {
   return `certops-renewal:${certificateId}:${epoch}`;
 }
 
+async function retryableAdcsRenewalKey(dbPool, workspaceId, initialKey) {
+  // Fixed-width sequence and refusal streak allow the unique idempotency index
+  // to locate the latest retry without walking an ever-growing chain of jobs.
+  // Server supersession resets the streak and may be replanned immediately.
+  const prefix = `certops-adcs-retry:${crypto.createHash("sha256").update(initialKey).digest("hex")}:`;
+  const latest = await dbPool.query(
+    `SELECT id,idempotency_key FROM certificate_jobs
+      WHERE workspace_id=$1 AND idempotency_key >= $2 AND idempotency_key <= $3
+      ORDER BY idempotency_key DESC LIMIT 1`, [workspaceId, `${prefix}000000000000`, `${prefix}999999999999`],
+  );
+  let previous = latest.rows[0];
+  let retry = 0;
+  let refusalStreak = 0;
+  if (previous) {
+    const suffix = previous.idempotency_key.slice(prefix.length);
+    if (!/^\d{12}$/.test(suffix)) return { existingId: previous.id };
+    retry = Number(suffix.slice(0,10));
+    refusalStreak = Number(suffix.slice(10));
+    if (retry === 0 || refusalStreak > 2) return { existingId: previous.id };
+  } else {
+    const initial = await dbPool.query(
+      `SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND idempotency_key=$2 LIMIT 1`,
+      [workspaceId, initialKey],
+    );
+    previous = initial.rows[0];
+    if (!previous) return { key: initialKey };
+  }
+  const refusal = await isSafeRetryableAutomaticEnrollment(dbPool, workspaceId, previous.id);
+  const cooldownMs = Math.min(15 * 60 * 1000 * (2 ** refusalStreak), 60 * 60 * 1000);
+  if (!refusal || (!refusal.superseded_before_claim && Date.now() - new Date(refusal.updated_at).getTime() < cooldownMs) || retry >= 9999999999) {
+    return { existingId: previous.id };
+  }
+  const nextStreak = refusal.superseded_before_claim ? 0 : Math.min(refusalStreak + 1, 2);
+  return { key: `${prefix}${String(retry + 1).padStart(10, "0")}${String(nextStreak).padStart(2, "0")}`, previousJobId: previous.id };
+}
+
 /**
  * Certificates due for renewal: managed, expiring within the threshold, not
  * retired, linked to a profile that has not been switched off, and without an
@@ -249,7 +287,15 @@ async function findCertificatesDueForRenewal({
   adaptive = true,
   batchSize = DEFAULT_BATCH_SIZE,
   terminalStatuses,
+  workspaceId = null,
+  issuerId = null,
+  issuerIds = null,
 } = {}) {
+  const params = [String(thresholdDays),terminalStatuses,batchSize,AUTO_RENEW_DISABLED_PROFILE_STATUSES];
+  let scope = "";
+  if (workspaceId != null) { params.push(workspaceId); scope += ` AND mc.workspace_id=$${params.length}`; }
+  if (issuerId != null) { params.push(issuerId); scope += ` AND cp.issuer_id=$${params.length}`; }
+  if (issuerIds != null) { params.push(issuerIds); scope += ` AND cp.issuer_id=ANY($${params.length}::uuid[])`; }
   const result = await db.query(
     `SELECT mc.id,
             mc.workspace_id,
@@ -257,6 +303,13 @@ async function findCertificatesDueForRenewal({
             mc.subject_alt_names,
             mc.not_after,
             mc.key_mode,
+            mc.deployed_agent_id,
+            mc.source,
+            mc.source_ref,
+            mc.fingerprint_sha256,
+            (SELECT period.id FROM certops_management_periods period
+              WHERE period.workspace_id=mc.workspace_id AND period.managed_certificate_id=mc.id
+                AND period.ended_at IS NULL LIMIT 1) AS management_period_id,
             mc.profile_id,
             cp.name AS profile_name,
             cp.key_mode AS profile_key_mode,
@@ -281,6 +334,9 @@ async function findCertificatesDueForRenewal({
        LEFT JOIN certificate_issuers ci
          ON ci.workspace_id = cp.workspace_id AND ci.id = cp.issuer_id
       WHERE mc.not_after IS NOT NULL
+        AND mc.reconciliation_reason IS DISTINCT FROM 'windows_store_identity_conflict'
+        AND NOT (mc.source = 'agent_windows' AND
+          POSITION('/windows_store/' IN COALESCE(mc.source_ref, '')) > 0)
         AND NOT EXISTS (SELECT 1 FROM certops_certificate_identities identity
           WHERE identity.workspace_id = mc.workspace_id
             AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
@@ -316,14 +372,10 @@ async function findCertificatesDueForRenewal({
              AND cj.subject_id = mc.id::text
              AND NOT (cj.status = ANY($2::text[]))
         )
-      ORDER BY mc.not_after ASC
+      ${scope}
+      ORDER BY mc.not_after ASC,mc.id
       LIMIT $3`,
-    [
-      String(thresholdDays),
-      terminalStatuses,
-      batchSize,
-      AUTO_RENEW_DISABLED_PROFILE_STATUSES,
-    ],
+    params,
   );
   return result.rows;
 }
@@ -421,6 +473,7 @@ async function createAutomaticAdcsRenewal({
   mode,
   env,
   auditWriter,
+  preflightDispatcher = dispatchPreflight,
 }) {
   const issuer = await dbPool.query(
     `SELECT kind FROM certificate_issuers WHERE workspace_id = $1 AND id = $2`,
@@ -429,6 +482,26 @@ async function createAutomaticAdcsRenewal({
   if (issuer.rows[0]?.kind !== "adcs") return null;
 
   const fields = adcsFieldsFromProfile(certificate);
+  const binding = fields.target?.type === "windows-iis" ? fields.target.binding : null;
+  const explicitIp = binding?.address != null && binding.address !== "*" && binding.address !== "0.0.0.0";
+  if (explicitIp) {
+    if (!certificate.deployed_agent_id) {
+      const error = new Error("the explicit-IP IIS binding has no owning agent");
+      error.code = CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
+      throw error;
+    }
+    const result = await dbPool.query(`SELECT platform,declared_capabilities,capabilities_updated_at
+      FROM certops_agents WHERE workspace_id=$1 AND id=$2 AND status='active'`,
+    [certificate.workspace_id, certificate.deployed_agent_id]);
+    const owner = result.rows[0];
+    if (owner?.platform !== "win32" || !require("./agentJobEligibility").hasFreshCapability({
+      declaredCapabilities: owner.declared_capabilities, capabilitiesUpdatedAt: owner.capabilities_updated_at,
+      capability: "iis-explicit-ip-v1", env })) {
+      const error = new Error("the owning agent is not qualified for explicit-IP IIS renewal");
+      error.code = CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
+      throw error;
+    }
+  }
   // Evidence must describe the confirmed version (config, template, pinned key)
   // and come from a preflight job created after confirmation. Template ACLs can
   // change in AD without the name changing, so an older check does not qualify.
@@ -440,51 +513,69 @@ async function createAutomaticAdcsRenewal({
   // Declaring the target is not enough: the agent must hold a fresh, safe
   // adcs-preflight against this CA, so a renewal never goes to an agent that
   // cannot reach the CA. Renewal health applies the same check.
-  const [agent] = await loadQualifyingAdcsAgents({
+  const eligibleAgents = await loadQualifyingAdcsAgents({
     db: dbPool,
     workspaceId: certificate.workspace_id,
     issuerId: certificate.profile_issuer_id,
     reference: fields.target.reference,
     version,
+    target: fields.target,
+    ownerId: fields.target.type === "windows-cert-store" || explicitIp ? certificate.deployed_agent_id : null,
+    env,
   });
+  const storeOnly = fields.target.type === "windows-cert-store";
+  if (storeOnly && !certificate.deployed_agent_id) {
+    const error = new Error("the Windows store installation has no owning agent");
+    error.code = CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
+    throw error;
+  }
+  const agent = storeOnly || explicitIp
+    ? eligibleAgents.find(candidate => String(candidate.id) === String(certificate.deployed_agent_id))
+    : eligibleAgents[0];
   if (!agent) {
-    const declared = await dbPool.query(
-      `SELECT 1
-         FROM certops_agents
-        WHERE workspace_id = $1
-          AND status = 'active'
-          AND declared_target_selectors @> jsonb_build_array($2::text)
-        LIMIT 1`,
-      [certificate.workspace_id, fields.target.reference],
-    );
+    const candidate = await findEligibleAdcsPreflightAgent({db:dbPool,
+      workspaceId:certificate.workspace_id,reference:fields.target.reference,target:fields.target,
+      ownerId:storeOnly || explicitIp ? certificate.deployed_agent_id : null,env});
+    if (version?.confirmed_at && version?.ca_key_sha256 && version?.ca_config && version?.template) {
+      await preflightDispatcher({
+        client: dbPool,
+        workspaceId: certificate.workspace_id,
+        issuerId: certificate.profile_issuer_id,
+        agentId: candidate?.id || certificate.deployed_agent_id || null,
+        caConfig: version.ca_config,
+        template: version.template,
+        automatic: true,
+        confirmedAt: version.confirmed_at,
+        ...(!candidate ? { unavailableTarget:fields.target.reference } : {}),
+        env,
+      });
+    }
     const error = new Error(
-      declared.rows[0]
-        ? "no agent has a safe adcs-preflight for this CA within the preflight freshness window; run the CA check from the agent"
-        : "no active agent declares this AD CS renewal target",
+      candidate
+        ? (storeOnly ? "the owning agent needs a fresh safe AD CS preflight" : "no agent has a safe adcs-preflight for this CA within the preflight freshness window")
+        : "no active Windows agent that supports AD CS preflight declares this renewal target",
     );
-    error.code = declared.rows[0]
+    error.code = candidate
       ? CERTOPS_ADCS_AGENT_NOT_PREPARED
       : CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
     throw error;
   }
   const open = await findOpenEnrollment(dbPool, certificate.workspace_id, certificate.id);
-  if (open) return { job: { id: null, operation: "renew" }, created: false };
+  if (open) {
+    const retry = await retryDryRunBlockedRenewal({ client: dbPool, workspaceId: certificate.workspace_id,
+      enrollmentId: open.id, eligibleAgentIds: (explicitIp ? [agent] : eligibleAgents).map(candidate => String(candidate.id)), env });
+    return { job: retry || { id: null, operation: "renew" }, created: Boolean(retry) };
+  }
 
-  const idempotencyKey = renewalIdempotencyKey(
+  const initialKey = renewalIdempotencyKey(
     certificate.id,
     certificate.not_after,
   );
-  const existingJob = await dbPool.query(
-    `SELECT id
-       FROM certificate_jobs
-      WHERE workspace_id = $1
-        AND idempotency_key = $2
-      LIMIT 1`,
-    [certificate.workspace_id, idempotencyKey],
-  );
-  if (existingJob.rows[0]) {
-    return { job: { id: existingJob.rows[0].id, operation: "renew" }, created: false };
+  const retryDecision = await retryableAdcsRenewalKey(dbPool, certificate.workspace_id, initialKey);
+  if (retryDecision.existingId) {
+    return { job: { id: retryDecision.existingId, operation: "renew" }, created: false };
   }
+  const idempotencyKey = retryDecision.key;
 
   let created;
   try {
@@ -498,21 +589,19 @@ async function createAutomaticAdcsRenewal({
       mode,
       env,
       idempotencyKey,
-      target: {
-        type: "windows-iis",
-        reference: fields.target.reference,
-        store: fields.target.store,
-        binding: {
-          site: fields.target.binding.site,
-          port: fields.target.binding.port,
-          ...(fields.target.binding.sniHost
-            ? { sniHost: fields.target.binding.sniHost }
-            : {}),
-        },
-      },
+      target: fields.target,
       authorizedDnsNames: fields.authorizedDnsNames,
       keyAlgorithm: fields.keyAlgorithm,
       keySize: fields.keySize,
+      ...(idempotencyKey !== initialKey ? { expectedAutomationRetry: {
+        issuerId: certificate.profile_issuer_id, notAfter: certificate.not_after,
+        source: certificate.source, sourceRef: certificate.source_ref,
+        fingerprint: certificate.fingerprint_sha256, periodId: certificate.management_period_id,
+        requireOwner: storeOnly || explicitIp,
+        previousJobId: retryDecision.previousJobId,
+        caConfig: version.ca_config, template: version.template, caKeySha256: version.ca_key_sha256,
+        confirmedAt: version.confirmed_at,
+      } } : {}),
     });
   } catch (error) {
     if (["CERTOPS_ENROLLMENT_REPLAY", "CERTOPS_ENROLLMENT_OPEN"].includes(error?.code)) {
@@ -594,7 +683,21 @@ async function createRenewalJobForCertificate({
       env,
     });
 
-    const outcome = await jobCreator({
+    const storeOnly = payload.target?.type === "windows-cert-store";
+    const iisAddress = payload.target?.type === "windows-iis" ? payload.target.binding?.address : null;
+    const explicitIis = iisAddress != null && iisAddress !== "*" && iisAddress !== "0.0.0.0";
+    if (explicitIis && !certificate.deployed_agent_id) {
+      const error = new Error("the explicit-IP IIS binding has no owning agent");
+      error.code = CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
+      throw error;
+    }
+    if (explicitIis && payload.publication) {
+      const error = new Error("explicit-IP IIS renewal with shared publication is not yet supported");
+      error.code = CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
+      throw error;
+    }
+    const creator = storeOnly ? require("./acmeStoreIssuance").createAcmeStoreRenewalTx : jobCreator;
+    const outcome = await creator({
       client,
       workspaceId: certificate.workspace_id,
       operation: "renew",
@@ -607,7 +710,9 @@ async function createRenewalJobForCertificate({
         certificate.id,
         certificate.not_after,
       ),
-      payload,
+      payload: storeOnly ? { reason: "scheduled-renewal" } : payload,
+      ...(storeOnly ? { transactionOwned: true, assignedAgentId: certificate.deployed_agent_id } : {}),
+      ...(explicitIis ? { assignedAgentId: certificate.deployed_agent_id } : {}),
       ...(payload.publication ? { assignedAgentId: (await client.query(
         "SELECT issuer_agent_id FROM certops_distribution_groups WHERE workspace_id=$1 AND id=$2 AND state='active'",
         [certificate.workspace_id, payload.publication.groupId])).rows[0]?.issuer_agent_id } : {}),
@@ -868,6 +973,14 @@ async function runRenewalSchedulerSweep({
       }
     }
 
+    // Reconcile once per issuer after committed admissions, including open
+    // incidents whose last certificate was stopped, renewed or removed.
+    try {
+      await require("./adcsPreflightIncidents").reconcilePendingPreflightIncidents({db:dbPool,env,certificates:dueCertificates});
+    } catch(error) {
+      summary.errors.push({error:"AD CS preflight incident reconciliation failed"});
+      logger?.warn?.("certops-preflight-incidents-failed",{code:error.code || "incident_projection_failed"});
+    }
     return summary;
   } finally {
     if (summary.lockAcquired) {
@@ -911,7 +1024,14 @@ async function loadCertificateRenewalRows({
             cp.public_metadata AS profile_public_metadata,
             cp.renew_before_days AS profile_renew_before_days,
             cp.issuer_id AS profile_issuer_id,
-            ci.kind AS profile_issuer_kind`;
+            ci.kind AS profile_issuer_kind,
+            EXISTS (
+              SELECT 1 FROM certops_management_periods period
+               WHERE period.workspace_id = mc.workspace_id
+                 AND period.managed_certificate_id = mc.id
+                 AND period.ended_at IS NULL
+                 AND period.automation_enabled = TRUE
+            ) AS management_automation_enabled`;
   const scheduleColumns = `,
             ${leadTime} AS effective_renew_before_days,
             mc.not_after
@@ -1001,6 +1121,7 @@ module.exports = {
   isValidCaEndpointUrl,
   normalizeCaBucket,
   renewalIdempotencyKey,
+  retryableAdcsRenewalKey,
   resolveRenewalPerCaCap,
   resolveRenewalThresholdDays,
   runRenewalSchedulerSweep,

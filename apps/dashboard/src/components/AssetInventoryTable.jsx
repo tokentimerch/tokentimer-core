@@ -1,8 +1,3 @@
-import {
-  CertificateLifecycleBadge,
-  ObservedRevocationBadge,
-  hasObservedRevocationContext,
-} from './certops/CertOpsBadge.jsx';
 import { useCallback } from 'react';
 import {
   formatContactGroupNames,
@@ -49,6 +44,11 @@ import {
   certificateLifecycleDescriptor,
   AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
 } from './certops/certopsFormat';
+import {
+  CertificateLifecycleBadge,
+  ObservedRevocationBadge,
+  hasObservedRevocationContext,
+} from './certops/CertOpsBadge.jsx';
 import DeploymentBadge from './certops/DeploymentBadge.jsx';
 import useDistributionSummaries from './certops/useDistributionSummaries.js';
 import { domainValueToUrl } from '../utils/domains.jsx';

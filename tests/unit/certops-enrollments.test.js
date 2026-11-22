@@ -1,5 +1,8 @@
 "use strict";
 
+const { bindAuthenticatedAgent } = require("../../apps/api/services/certops/agentCredentialFence");
+const FIXTURE_CREDENTIAL_HASH = "a".repeat(64);
+
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -32,7 +35,8 @@ const {
 const { PREFLIGHT_PER_HOUR } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const { validateSignedJob } = require("../../packages/contracts/certops/validate-signed-job.cjs");
 const { migrations } = require("../../apps/api/migrations/migrate");
-const { claimJobs } = require("../../apps/api/services/certops/agentDispatch");
+const { claimJobs: claimJobsImpl } = require("../../apps/api/services/certops/agentDispatch");
+const claimJobs = options => claimJobsImpl({ ...options, deps: { assertCurrentAgentCredential: async () => {}, ...options.deps } });
 const Ajv = require("ajv");
 const addFormats = require("ajv-formats");
 const jobPayloadSchema = require("../../packages/contracts/certops/job-payload.schema.json");
@@ -60,6 +64,12 @@ function snapshotInput() {
 }
 
 describe("AD CS enrollment lifecycle", () => {
+  it("freezes the destination and exact predecessor, including null for first issue", () => {
+    const store = { destinationType: "windows-cert-store", destinationSha256: "cd".repeat(32), predecessorFingerprintSha256: null };
+    assert.equal(freezeSnapshot({ ...snapshotInput(), ...store }).snapshot.predecessorFingerprintSha256, null);
+    assert.equal(freezeSnapshot({ ...snapshotInput(), ...store, predecessorFingerprintSha256: "ef".repeat(32) }).snapshot.predecessorFingerprintSha256, "ef".repeat(32));
+    assert.throws(() => freezeSnapshot({ ...snapshotInput(), destinationType: "windows-cert-store", predecessorFingerprintSha256: null }));
+  });
   it("fails closed on an unknown issuer kind", () => {
     assert.equal(assertIssuerKind("acme"), "acme");
     assert.equal(assertIssuerKind("adcs"), "adcs");
@@ -701,7 +711,7 @@ describe("enrollment rows", () => {
     assert.equal(request.payload.enrollment, undefined, "stored payload must not carry enrollment");
 
     const stored = db.enrollments.get(ENROLLMENT);
-    const agent = {
+    const agent = bindAuthenticatedAgent({
       id: stored.agent_id,
       workspaceId: WORKSPACE,
       agentId: "agent-01",
@@ -712,7 +722,7 @@ describe("enrollment rows", () => {
       pinnedSigningKeyId: null,
       lastSeenAt: null,
       retiredAt: null,
-    };
+    }, FIXTURE_CREDENTIAL_HASH);
     const claimRow = {
       id: JOB_ID,
       workspace_id: WORKSPACE,
@@ -745,6 +755,8 @@ describe("enrollment rows", () => {
           assert.deepEqual(params, [WORKSPACE, ENROLLMENT, stored.certificate_id, stored.agent_id, JOB_ID]);
           return { rows: [{ state: stored.state }] };
         }
+        if (sql.includes("to_regclass('certops_agent_credential_rotations')")) return { rows: [{ rotation_table: null }] };
+      if (sql.includes("SELECT credential_hash, status FROM certops_agents")) return { rows: [{ credential_hash: FIXTURE_CREDENTIAL_HASH, status: "active" }] };
         if (sql.includes("SELECT last_sequence")) return { rows: [{ last_sequence: 0 }] };
         if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
         if (sql.includes("SELECT declared_target_selectors")) {
@@ -760,6 +772,8 @@ describe("enrollment rows", () => {
         }
         if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: [claimRow] };
         if (sql.includes("SET status = 'claimed'")) return { rows: [claimRow] };
+        if (sql.includes("SELECT iis_reassociation_requires_absence,fingerprint_sha256,source_ref,key_mode,key_reference FROM managed_certificates"))
+          return { rows: [{ iis_reassociation_requires_absence:false, fingerprint_sha256:"a".repeat(64) }] };
         throw new Error(`unexpected claim query: ${sql}`);
       },
     };
@@ -1415,6 +1429,68 @@ describe("enrollment rows", () => {
     );
   });
 
+  it("deduplicates automatic preflight requests inside the workspace lock", async () => {
+    let created = false;
+    const confirmedAt = new Date();
+    const queries = [];
+    const db = { async query(sql) {
+      queries.push(sql);
+      if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: false }] };
+      if (sql.includes("FROM certificate_issuers i JOIN")) return { rows: [{ version:1,ca_config:"ca.example.com\\CA",template:"WebServer",ca_key_sha256:"ab".repeat(32),confirmed_at:confirmedAt }] };
+      if (sql.includes("FROM certificate_jobs") && sql.includes("ORDER BY preflight_seq")) return { rows: [{ id:JOB_ID,status:"pending" }] };
+      return { rows: [] };
+    } };
+    const result = await dispatchPreflight({
+      client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
+      agentId: "22222222-2222-4222-8222-222222222222",
+      caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt,
+      createJob: async () => { created = true; },
+    });
+    assert.equal(result, null);
+    assert.equal(created, false);
+    assert.ok(queries.some((sql) => sql.includes("pg_advisory_xact_lock")));
+    assert.ok(queries.some((sql) => sql.includes("FOR SHARE")));
+  });
+
+  it("does not schedule automatic preflight in a paused workspace", async () => {
+    const db = { async query(sql) {
+      if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: true }] };
+      return { rows: [] };
+    } };
+    await assert.rejects(dispatchPreflight({
+      client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
+      agentId: "22222222-2222-4222-8222-222222222222",
+      caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt: new Date(),
+    }), { code: "CERTOPS_WORKSPACE_PAUSED" });
+  });
+
+  it("schedules one automatic read-only preflight using the existing issuer path", async () => {
+    const confirmedAt = new Date();
+    const db = { async query(sql) {
+      if (sql.includes("FROM workspaces")) return { rows: [{ id: WORKSPACE, certops_paused: false }] };
+      if (sql.includes("FROM certificate_issuers i JOIN")) return { rows: [{ version:1,ca_config:"ca.example.com\\CA",template:"WebServer",ca_key_sha256:"ab".repeat(32),confirmed_at:confirmedAt }] };
+      if (sql.includes("SELECT id FROM certificate_jobs")) return { rows: [] };
+      if (sql.includes("SELECT count(*)")) return { rows: [{ n: 0 }] };
+      if (sql.includes("RETURNING preflight_seq")) return { rows: [{ preflight_seq: 1 }] };
+      return { rows: [] };
+    } };
+    let request;
+    const job = await dispatchPreflight({
+      client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
+      agentId: "22222222-2222-4222-8222-222222222222",
+      caConfig: "ca.example.com\\CA", template: "WebServer", automatic: true,
+      env: { CERTOPS_ENABLED: "true" }, confirmedAt, audit: async () => {},
+      createJob: async (options) => { request = options; return { id: JOB_ID }; },
+    });
+    assert.equal(job.id, JOB_ID);
+    assert.equal(request.source, "automation");
+    assert.equal(request.payload.action, "adcs-preflight");
+    assert.equal(request.payload.mode, "real");
+    assert.equal(request.assignedAgentId, "22222222-2222-4222-8222-222222222222");
+  });
+
   it("stores a preflight result only for the succeeded job's CA and template", async () => {
     const caConfig = "ca01.corp.example.com\\Corp Issuing CA 01";
     const template = "TokenTimerWebServer";
@@ -1547,7 +1623,8 @@ describe("enrollment rows", () => {
         throw new Error(sql);
       },
     };
-    const issuers = await listIssuers({ client: db, workspaceId: WORKSPACE });
+    const issuers = await listIssuers({ client: db, workspaceId: WORKSPACE,
+      readinessLoader: async () => ({ checks: [], agents: [] }) });
     assert.equal(issuers.items[0].revalidationRequired, true);
     assert.equal(issuers.items[0].lastPreflight.caCertificates[0].certificateB64, undefined);
     assert.equal(issuers.items[0].lastPreflight.caCertificates[0].keySha256, "ab".repeat(32));
@@ -1564,6 +1641,8 @@ describe("enrollment rows", () => {
       async query(sql, params) {
         if (sql.includes("ORDER BY i.name")) {
           assert.equal(params[1], 1);
+          assert.match(sql, /jsonb_agg\(history ORDER BY history.preflight_seq DESC NULLS LAST,history.created_at DESC,history.id DESC\)/);
+          assert.match(sql, /LIMIT 100/);
           return { rows: [] };
         }
         if (sql.includes("count(*)")) return { rows: [{ n: 0 }] };

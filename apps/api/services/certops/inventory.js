@@ -1,6 +1,5 @@
 "use strict";
 
-const { observedRevocationPrioritySql } = require("./certificateSecurity");
 
 const { pool } = require("../../db/database");
 const {
@@ -10,6 +9,7 @@ const {
 } = require("./parser");
 const { containsPrivateKeyMaterial, containsGenericSecretMaterial } = require("../../utils/secretMaterial");
 const { resolveListSort } = require("./listSorting");
+const { classifyCertificateSecurity, observedRevocationPrioritySql } = require("./certificateSecurity");
 const {
   CERT_RENEWAL_FAILED_ALERT_PREFIX,
   RETIRED_CERT_UNSENT_ALERT_STATUSES,
@@ -232,7 +232,14 @@ function fingerprintsFromCertificates(certificates) {
   ];
 }
 
-async function acquireManagedCertificateImportLock(client, workspaceId) {
+async function acquireManagedCertificateImportLock(client, workspaceId, { skipLocked = false } = {}) {
+  if (skipLocked) {
+    const result = await client.query(
+      `SELECT pg_try_advisory_xact_lock(hashtext('certops_managed_cert_quota_' || $1::text)) AS locked`,
+      [workspaceId],
+    );
+    return result.rows[0].locked;
+  }
   await client.query(
     `SELECT pg_advisory_xact_lock(hashtext('certops_managed_cert_quota_' || $1::text))`,
     [workspaceId],
@@ -373,6 +380,10 @@ function toInventoryRecord(row) {
     identityId: row.identity_id || null,
     lifecycleStatus: row.lifecycle_status || null,
     observedRevocation: row.observed_revocation || null,
+    securityStatus: classifyCertificateSecurity({
+      observedRevocation: row.observed_revocation,
+      lifecycleStatus: row.lifecycle_status,
+    }),
     tokenId: row.token_id,
     profileId: row.profile_id,
     status: row.status,
@@ -777,11 +788,11 @@ async function ensureManagedCertificateToken(
   options,
   existingManagedCertificate = null,
 ) {
-  if (options.tokenId) return options.tokenId;
+  if (!options.forceNewToken && options.tokenId) return options.tokenId;
   // Discovery has already resolved this source inside its workspace. Reusing
   // its linked token allocates nothing; unchanged or stopped-source captures
   // must remain writable while another transaction holds quota admission.
-  if (existingManagedCertificate?.token_id) return existingManagedCertificate.token_id;
+  if (!options.forceNewToken && existingManagedCertificate?.token_id) return existingManagedCertificate.token_id;
 
   // Allocation must share the inventory admission lock: two concurrent
   // imports otherwise both find no token, insert separate tokens, and only
@@ -790,13 +801,13 @@ async function ensureManagedCertificateToken(
   // the same lock ordering instead of introducing an inverse lock pair.
   await acquireManagedCertificateImportLock(client, options.workspaceId);
 
-  const existing =
+  const existing = options.forceNewToken ? null :
     existingManagedCertificate ||
     (await existingManagedCertificateForToken(client, certificate, options));
   if (existing?.token_id) return existing.token_id;
 
   const domains = certificateDomainsFor(certificate);
-  const existingToken = await existingCertOpsToken(
+  const existingToken = options.forceNewToken ? null : await existingCertOpsToken(
     client,
     certificate,
     options,
@@ -1970,8 +1981,10 @@ async function linkReconciledCertificateToken({
   certificate,
   existingTokenId = null,
   createdBy = null,
+  isolateFromEndpoint = false,
 }) {
-  const tokenId =
+  if (isolateFromEndpoint) await acquireManagedCertificateImportLock(client, workspaceId);
+  let tokenId =
     existingTokenId ||
     (await ensureManagedCertificateToken(
       client,
@@ -1983,6 +1996,23 @@ async function linkReconciledCertificateToken({
       },
       null,
     ));
+
+  if (isolateFromEndpoint) {
+    // Serialize against concurrent monitor references before deciding whether
+    // updating this token would rewrite endpoint expiry and its alert queue.
+    await client.query("SELECT id FROM tokens WHERE workspace_id=$1 AND id=$2 FOR UPDATE", [workspaceId, tokenId]);
+    const shared = await client.query(
+      `SELECT 1 WHERE EXISTS (SELECT 1 FROM domain_monitors WHERE workspace_id=$1 AND token_id=$2)
+        OR EXISTS (SELECT 1 FROM certificate_targets WHERE workspace_id=$1 AND token_id=$2)
+        OR EXISTS (SELECT 1 FROM certificate_instances WHERE workspace_id=$1 AND token_id=$2)
+        OR EXISTS (SELECT 1 FROM managed_certificates WHERE workspace_id=$1 AND token_id=$2 AND id<>$3::uuid)`,
+      [workspaceId, tokenId, certificateId],
+    );
+    if (shared.rows.length) {
+      tokenId = await ensureManagedCertificateToken(client, certificate,
+        { workspaceId, createdBy, tokenNotesSourceLabel: "agent issuance", forceNewToken: true }, null);
+    }
+  }
 
   await updateCertificateTokenFacts({ client, workspaceId, tokenId, certificate });
 

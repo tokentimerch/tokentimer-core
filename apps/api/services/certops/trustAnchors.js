@@ -38,6 +38,7 @@ const {
 } = require("../../../../packages/contracts/certops/validate-trust-result.cjs");
 const { getAgentById, getAgentsByIds } = require("./agentRegistry");
 const { evaluateAgentJobEligibility } = require("./agentJobEligibility");
+const { isObservedCertificateCompromised } = require("./certificateSecurity");
 
 // --- Error codes ---
 const CERTOPS_TRUST_ANCHOR_INVALID = "CERTOPS_TRUST_ANCHOR_INVALID";
@@ -1286,6 +1287,9 @@ async function runCreateTrustJob(client, params) {
       CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
     );
   }
+  if (operation === "distribute-trust" && await isObservedCertificateCompromised(client, workspaceId, anchor.fingerprint_sha256)) {
+    throw trustAnchorError("This CA certificate is observed as revoked or has a revoked issuer; it cannot be distributed", CERTOPS_TRUST_ANCHOR_NOT_ACTIVE);
+  }
 
   // Derived from the anchor's own anchor_type, the same signed value the
   // agent routes on - never accepted from a caller. See
@@ -1830,6 +1834,9 @@ async function revalidateTrustJobForDispatch({ client, job }) {
 
   if (job.operation === "distribute-trust" && anchor.status !== "active") {
     return denyAndUnwind("trust_anchor_retired");
+  }
+  if (job.operation === "distribute-trust" && await isObservedCertificateCompromised(client, workspaceId, anchor.fingerprint_sha256)) {
+    return denyAndUnwind("trust_anchor_observed_revoked");
   }
 
   const installation = await client.query(

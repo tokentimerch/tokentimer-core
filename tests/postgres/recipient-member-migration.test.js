@@ -29,7 +29,7 @@ test("normal runner appends member verification to the released ledger and resta
   function migrate(beforeMember = false) {
     const source = `
       const m = require(${JSON.stringify(entry)});
-      ${beforeMember ? "m.migrations.splice(m.migrations.findIndex(row => row.version === 110));" : ""}
+      ${beforeMember ? "m.migrations.splice(m.migrations.findIndex(row => row.version >= 110));" : ""}
       m.runMigrations().then(() => process.exit(0), e => { console.error(e); process.exit(1); });
     `;
     const result = spawnSync(process.execPath, ["-e", source], { env, encoding: "utf8", timeout: 45000, maxBuffer: 8 * 1024 * 1024 });
@@ -43,12 +43,17 @@ test("normal runner appends member verification to the released ledger and resta
     assert.equal(before.at(-1).name, "certops_period_creator_delete");
     migrate();
     const after = (await target.query("SELECT * FROM migrations ORDER BY version")).rows;
-    assert.deepEqual(after.filter(row => row.version <= 109), before);
+    assert.deepEqual(after.slice(0, before.length), before);
     assert.equal(after.find(row => row.version === 110).name, "recipient_member_verification");
     assert.equal(after.find(row => row.version === 111).name, "auto_sync_owner_username");
+    assert.equal(after.find(row => row.version === 112).name, "certops_retirement_dossiers");
     assert.equal(after.find(row => row.version === 113).name, "certops_material_reconciliation");
-    assert.equal(after.find(row => row.version === 114).name, "distribution_pagerduty_recovery");
     assert.equal(after.find(row => row.version === 122).name, "certops_observed_revocation");
+    assert.equal(after.find(row => row.version === 123).name, "agent_credential_rotations");
+    assert.equal(after.find(row => row.version === 124).name, "agent_credential_rotation_ack");
+    assert.equal(after.find(row => row.version === 114).name, "distribution_pagerduty_recovery");
+    assert.equal(after.find(({ version }) => version === 125).name, "certops_adcs_preflight_lookup_index");
+    assert.equal(after.find(({ version }) => version === 126).name, "certops_adcs_receipt_deadline");
     assert.equal(after.at(-1).version, 127);
     assert.equal(after.at(-1).name, "auto_sync_creation_expiration");
     assert.ok((await target.query("SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='recipient_verified_email'")).rowCount);

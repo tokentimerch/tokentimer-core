@@ -62,6 +62,7 @@ async function fixture({ ordinary = false, published = true, neverStarted = fals
       );
     }
   }
+  const agentCredential = crypto.randomBytes(32).toString("hex");
   const issuer = (
     await pool.query(
       `INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
@@ -70,7 +71,7 @@ async function fixture({ ordinary = false, published = true, neverStarted = fals
         workspaceId,
         uuid(),
         `ttagent_${crypto.randomBytes(8).toString("hex")}`,
-        crypto.randomBytes(32).toString("hex"),
+        crypto.createHash("sha256").update(agentCredential).digest("hex"),
       ],
     )
   ).rows[0].id;
@@ -245,6 +246,7 @@ async function fixture({ ordinary = false, published = true, neverStarted = fals
     workspaceId,
     destination,
     issuer,
+    agentCredential,
     certificateId,
     groupId,
     materialVersionId,
@@ -634,8 +636,9 @@ test("transfer terminalizes every unstarted publication admission state and leav
       assert.equal(after.attempt_count, 0);
       const agent = (await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1", [f.issuer])).rows[0];
       const claimed = await api("./services/certops/agentDispatch").claimJobs({
-        agent: { id: f.issuer, workspaceId: f.workspaceId, agentId: agent.agent_id,
-          status: "active", protocolVersion: "1.0.0", agentVersion: "0.17.3" },
+        agent: api("./services/certops/agentCredentialFence").bindAuthenticatedCredential(
+          { id: f.issuer, workspaceId: f.workspaceId, agentId: agent.agent_id,
+            status: "active", protocolVersion: "1.0.0", agentVersion: "0.17.3" }, f.agentCredential),
         body: { supportedActions: ["renew"], maxJobs: 1 },
       });
       assert.deepEqual(claimed.jobs, []);

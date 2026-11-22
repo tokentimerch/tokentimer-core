@@ -265,6 +265,87 @@ router.post(
 );
 
 router.post(
+  "/api/v1/workspaces/:id/certops/enrollments/:enrollmentId/recover-installation-proof",
+  getApiLimiter(), requireCertOpsEnabled, requireRecoverySessionUser, authorize("certops.issuer.manage"),
+  async (req, res) => {
+    const body = req.body;
+    if (!UUID.test(String(req.params.enrollmentId || "")) || !body || typeof body !== "object" || Array.isArray(body) ||
+        Object.keys(body).some(key => !["orphanedJobId", "reason"].includes(key)) || !UUID.test(String(body.orphanedJobId || ""))) {
+      return res.status(400).json({ error: "Proof recovery accepts the orphaned job identifier and reason", code: "CERTOPS_SNAPSHOT_INVALID" });
+    }
+    const client = await require("../db/database").pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Agent dispatch takes this lock before the workspace lock.
+      await client.query(`SELECT a.id FROM certops_agents a JOIN certificate_enrollments e
+        ON e.workspace_id=a.workspace_id AND e.agent_id=a.id
+        WHERE e.workspace_id=$1 AND e.id=$2::uuid FOR SHARE OF a`, [req.workspace.id, req.params.enrollmentId]);
+      await require("../services/certops/workspaceKillSwitch").lockWorkspaceForCertOpsSideEffect({ client, workspaceId: req.workspace.id, env: process.env });
+      const recovery = require("../services/certops/adcsProofRecovery");
+      const intent = await recovery.prepareAdcsProofRecoveryTx({ client, workspaceId: req.workspace.id,
+        enrollmentId: req.params.enrollmentId, originalJobId: body.orphanedJobId, reason: body.reason, actorUserId: req.user.id });
+      let queued = null;
+      if (intent.intentId) {
+        try { queued = await recovery.queueAdcsProofRecoveryTx({ client, workspaceId: req.workspace.id, intentId: intent.intentId, actorUserId: req.user.id }); }
+        catch (error) { if (error.code !== "CERTOPS_ADCS_PROOF_AGENT_UNAVAILABLE") throw error; }
+      }
+      await client.query("COMMIT");
+      const state = queued?.state || (intent.intentId ? "transport_unavailable" : intent.state);
+      return res.status(queued?.created ? 201 : 200).json({ ...intent, state, ...(queued ? { job: queued.job } : {}) });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      return fail(res, error);
+    } finally { client.release(); }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/acme-store-enrollments/by-job/:jobId",
+  getApiLimiter(), requireCertOpsEnabled, requireRecoverySessionUser, authorize("certops.issuer.manage"),
+  async (req, res) => {
+    if (!UUID.test(String(req.params.jobId || ""))) return res.status(404).json({ error: "Enrollment not found", code: "CERTOPS_ENROLLMENT_NOT_FOUND" });
+    try {
+      const enrollment = await require("../services/certops/acmeStorePersistence").lookupAcmeStoreRecoveryByJob({
+        client: require("../db/database").pool, workspaceId: req.workspace.id, jobId: req.params.jobId,
+      });
+      if (!enrollment) return res.status(404).json({ error: "Enrollment not found", code: "CERTOPS_ENROLLMENT_NOT_FOUND" });
+      return res.json(enrollment);
+    } catch (error) { return fail(res, error); }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/acme-store-enrollments/:enrollmentId/recover",
+  getApiLimiter(), requireCertOpsEnabled, requireRecoverySessionUser, authorize("certops.issuer.manage"),
+  async (req, res) => {
+    const body = req.body;
+    if (!UUID.test(String(req.params.enrollmentId || "")) || !body || typeof body !== "object" || Array.isArray(body) ||
+        Object.keys(body).some(key => !["orphanedJobId", "acknowledgeUnknownEffect", "reason"].includes(key)) ||
+        !UUID.test(String(body.orphanedJobId || "")) || body.acknowledgeUnknownEffect !== true) {
+      return res.status(400).json({ error: "Recovery requires the orphaned job identifier, explicit acknowledgement and reason", code: "CERTOPS_SNAPSHOT_INVALID" });
+    }
+    let client;
+    try {
+      client = await require("../db/database").pool.connect();
+      await client.query("BEGIN");
+      // Match dispatch lock ordering and take the final agent lock mode up front.
+      await client.query(`SELECT a.id FROM certops_agents a JOIN certops_acme_store_enrollments e
+        ON e.workspace_id=a.workspace_id AND e.agent_id=a.id
+        WHERE e.workspace_id=$1 AND e.id=$2::uuid FOR UPDATE OF a`, [req.workspace.id, req.params.enrollmentId]);
+      await require("../services/certops/workspaceKillSwitch").lockWorkspaceForCertOpsSideEffect({ client, workspaceId: req.workspace.id, env: process.env });
+      const result = await require("../services/certops/acmeStorePersistence").continueAcmeStoreEnrollmentTx({ client,
+        workspaceId: req.workspace.id, enrollmentId: req.params.enrollmentId, orphanedJobId: body.orphanedJobId,
+        acknowledgeUnknownEffect: body.acknowledgeUnknownEffect, reason: body.reason, actorUserId: req.user.id });
+      await client.query("COMMIT");
+      return res.status(result.created ? 201 : 200).json(result);
+    } catch (error) {
+      if (client) await client.query("ROLLBACK");
+      return fail(res, error);
+    } finally { if (client) client.release(); }
+  },
+);
+
+router.post(
   "/api/v1/workspaces/:id/certops/enrollments/:enrollmentId/recover",
   getApiLimiter(),
   requireCertOpsEnabled,

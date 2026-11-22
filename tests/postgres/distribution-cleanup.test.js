@@ -132,7 +132,10 @@ test("stale cleanup authority does not starve later work or create a fence",asyn
     VALUES($1,'renew','pending','api',$2::jsonb,$3) RETURNING id`,[f.workspaceId,JSON.stringify({domain:"example.test"}),f.issuer])).rows[0];
   await pool.query("UPDATE workspaces SET certops_distribution_authorization_revision=certops_distribution_authorization_revision+1 WHERE id=$1",[f.workspaceId]);
   const row=(await pool.query("SELECT * FROM certops_agents WHERE id=$1",[f.issuer])).rows[0];
-  const agent={id:row.id,workspaceId:f.workspaceId,agentId:row.agent_id,agentVersion:row.agent_version,protocolVersion:row.protocol_version};
+  const agent=require("../../apps/api/services/certops/agentCredentialFence").bindAuthenticatedCredential({
+    id: row.id, workspaceId: f.workspaceId, agentId: row.agent_id, agentVersion: row.agent_version,
+    protocolVersion: row.protocol_version, status: row.status,
+  }, f.credentialForAgent(f.issuer));
   await require("../../apps/api/services/certops/jobSigning").ensureActiveSigningKey();
   const claimed=await require("../../apps/api/services/certops/agentDispatch").claimJobs({agent,body:{maxJobs:1,supportedActions:["cleanup-from-store","renew"]}});
   assert.equal(claimed.jobs.length,1);
@@ -148,7 +151,7 @@ test("cleanup uses real signed dispatch, claim-bound receipts and the existing s
   assert.equal(routing.required_target_selector,null,"The group reference is not an issuer target selector");
   assert.equal(routing.payload.target.reference,f.groupId,"The signed cleanup still identifies its group");
   const row=(await pool.query("SELECT agent_id,agent_version,protocol_version FROM certops_agents WHERE id=$1",[f.issuer])).rows[0];
-  const agent={id:f.issuer,workspaceId:f.workspaceId,agentId:row.agent_id,agentVersion:row.agent_version,protocolVersion:row.protocol_version,status:"active"};
+  const agent=require("../../apps/api/services/certops/agentCredentialFence").bindAuthenticatedCredential({id:f.issuer,workspaceId:f.workspaceId,agentId:row.agent_id,agentVersion:row.agent_version,protocolVersion:row.protocol_version,status:"active"},f.credentialForAgent(f.issuer));
   await signing.ensureActiveSigningKey();const pin=await signing.getActiveSigningKeyPublicInfo();
   assert.equal((await dispatch.claimJobs({agent,envelope:{sequence:1},body:{maxJobs:1,supportedActions:["cleanup-from-store"]}})).jobs.length,0);
   await approveJob({workspaceId:f.workspaceId,jobId:requested.jobId,approverUserId:f.approver});
@@ -171,7 +174,7 @@ test("cleanup completion rolls its receipt, audit, nonce and terminal transition
   const f=await setup(t),requested=await request(f),dispatch=require("../../apps/api/services/certops/agentDispatch"),signing=require("../../apps/api/services/certops/jobSigning");
   await approveJob({workspaceId:f.workspaceId,jobId:requested.jobId,approverUserId:f.approver});
   const row=(await pool.query("SELECT * FROM certops_agents WHERE id=$1",[f.issuer])).rows[0];
-  const agent={id:f.issuer,workspaceId:f.workspaceId,agentId:row.agent_id,agentVersion:row.agent_version,protocolVersion:row.protocol_version,status:"active"};
+  const agent=require("../../apps/api/services/certops/agentCredentialFence").bindAuthenticatedCredential({id:f.issuer,workspaceId:f.workspaceId,agentId:row.agent_id,agentVersion:row.agent_version,protocolVersion:row.protocol_version,status:"active"},f.credentialForAgent(f.issuer));
   await signing.ensureActiveSigningKey();const pin=await signing.getActiveSigningKeyPublicInfo();
   const claimed=await dispatch.claimJobs({agent,envelope:{sequence:1},body:{maxJobs:1,supportedActions:["cleanup-from-store"]}});
   const verified=require("../../packages/agent/src/signing").verifyJobEnvelope({claimed:claimed.jobs[0],publicKeyPem:pin.publicKeyPem,pinnedSigningKeyId:pin.signingKeyId});

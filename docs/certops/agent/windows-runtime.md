@@ -8,6 +8,9 @@ Advanced reference for CNG custody, IIS binding behavior, crash recovery, and re
 
 The agent supports native Windows service installation. Its runtime differs from Linux in the following areas:
 
+- **IIS addresses:** automatic renewal through the console targets a wildcard IP listener, or an SNI hostname. Do not use that renewal flow for a non-SNI binding restricted to a specific IP address; discovery alone does not make that address a supported renewal target. Check the IIS binding before enabling renewal.
+- **IIS discovery:** the agent needs the IIS WebAdministration module and permission to read binding SSL flags to identify the site safely. If those flags cannot be read, the certificate remains visible as an HTTP.sys binding without an IIS site association.
+- **Explicit-IP reassociation:** this capability is not yet qualified for release. In a qualified test build, the agent checks eligible bindings every minute; the controller accepts a successful check for at most two minutes. Keep the agent clock synchronized with the control plane. Hosts with more than 64 candidate bindings are not checked, and a wildcard or unreadable IIS, HTTP.sys, or certificate-store inventory blocks reassociation. IPv6 address variants are not qualified. Reassociated registrations currently support renewal and continuation only; other deployment and reload actions are refused. Recheck the binding before deployment: a successful check does not lock Windows configuration.
 - Windows state uses validated ACLs through `icacls`; POSIX-mode assertions do not apply. See [Windows installation](install-windows.md) for the permission model.
 - Directory fsync after the deploy rename is skipped on win32 (opening a
   directory for fsync fails there); the file-content fsync before rename
@@ -144,18 +147,18 @@ The agent supports native Windows service installation. Its runtime differs from
 - **The `http.sys` and certificate-store queries run under PowerShell
   Constrained Language Mode** (AppLocker or WDAC enforcement), since they
   only use constructs that mode allows.
-- **A non-SNI binding on the same port always takes precedence over an SNI
-  binding, and a deploy to an SNI binding now warns when one exists.** This
-  is `http.sys`'s own dispatch rule, not something either binding's
-  configuration can override: a client connecting to an address with its
-  own `ipport=` binding gets that certificate regardless of the SNI
-  hostname it sent. After a successful SNI (`hostnameport=`) deploy, the
-  agent checks for a shadowing `ipport=` binding on the same port -- the
-  IPv4 wildcard (`0.0.0.0`), the IPv6 wildcard (`[::]`), and any other
-  concrete IP -- and surfaces a non-fatal `precedenceWarning` in the
-  deploy-succeeded evidence when one is found, rather than staying silent
-  about a real, non-obvious gotcha. This is detection only: the agent
-  cannot change `http.sys`'s own precedence rule, only warn about it.
+- **IIS binding precedence:** an HTTP.sys SNI binding can serve a different
+  certificate from an IIS wildcard binding. For a wildcard deployment, the
+  agent checks HTTP.sys bindings against the certificate's DNS names and
+  rejects a conflicting binding. It verifies concrete DNS names and matching
+  SNI bindings over TLS; for each wildcard DNS name it probes one example.
+  Other hostnames are not verified: check them separately. Deployment fails
+  if the DNS names or HTTP.sys inventory cannot be read safely, or if more
+  than 32 DNS names and matching SNI bindings require checks. After a
+  conflict detected following a change, inspect the binding before retrying.
+  For an SNI deployment, check any
+  `precedenceWarning` about a specific-IP binding and verify the certificate
+  served at each relevant address.
 
 ## Related
 

@@ -62,7 +62,13 @@ function verifyReport(report, root = path.resolve(__dirname, "../../..")) {
   for (const file of REQUIRED_SOURCES) { const rows = report.fixtureSources.filter(row => row.file === file); assert.equal(rows.length, 1); assert.deepEqual(rows[0], { file, sha256: digest(file) }); }
   return true;
 }
+function assertAcceptedInstallExperimentAvailable(phase) {
+  if ([PHASE, "bound-before-complete"].includes(phase)) {
+    throw new Error("Accepted-install experiment is disabled: active observation-loss interruption and atomic descendant containment are not qualified");
+  }
+}
 async function qualifyObservedInstallRecovery(context, phase = PHASE) {
+  assertAcceptedInstallExperimentAvailable(phase);
   assert.ok([PHASE, "bound-before-complete"].includes(phase));
   const bound = phase === "bound-before-complete";
   const variant = bound ? require("./certops-adcs-bound-install-recovery") : { FLAGS, REQUIRED_SOURCES, verifyReport };
@@ -167,4 +173,4 @@ async function qualifyObservedInstallRecovery(context, phase = PHASE) {
   if (primary) throw primary; return report;
 }
 const qualifyAcceptedInstallRecovery = context => qualifyObservedInstallRecovery(context, PHASE);
-module.exports = { qualifyAcceptedInstallRecovery, qualifyObservedInstallRecovery, startObserver, verifyFault, verifyReport, PHASE, FLAGS, REQUIRED_SOURCES };
+module.exports = { assertAcceptedInstallExperimentAvailable, qualifyAcceptedInstallRecovery, qualifyObservedInstallRecovery, startObserver, verifyFault, verifyReport, PHASE, FLAGS, REQUIRED_SOURCES };

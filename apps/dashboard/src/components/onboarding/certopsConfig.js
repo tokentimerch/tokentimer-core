@@ -335,7 +335,7 @@ export const REGISTRATION_NOTES = [
 // --write-path only applies to the Linux service sandbox. The Windows
 // installer takes the flag for parity but does not use it.
 export const WINDOWS_REGISTRATION_NOTES = [
-  'On the server, download the agent package for your TokenTimer version and check its checksum, with the commands below. Node.js 22 or 24 must be installed on the server.',
+  'On the server, download the agent package and check its checksum using the commands below. First use an empty folder owned by Administrators or SYSTEM and protected from unprivileged changes. Select legacy for published releases and use Node.js 22 or 24 in a protected location. Bundled packages are unavailable until publisher verification is supported.',
   'Extract it and open an elevated PowerShell in the extracted folder, the one that contains scripts\\install-agent.ps1.',
   'Run the install command below from that folder. Add --dry-run first to see what it will change.',
   'The installer asks for the bootstrap token with a hidden prompt: paste the token there. Do not put it on the command line.',
@@ -355,6 +355,14 @@ export function buildPackageCommand(os) {
   if (os === 'windows') {
     return [
       "$Version = '<version>'   # your TokenTimer version, for example 0.18.0",
+      "$PackageType = (Read-Host 'Package type (legacy; bundled is not yet available)').Trim().ToLowerInvariant()",
+      "if ($PackageType -eq 'bundled') {",
+      '  $Machine = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }',
+      "  $Architecture = switch (\"$Machine\".ToUpperInvariant()) { 'AMD64' { 'amd64' } 'ARM64' { 'arm64' } default { throw 'Unsupported Windows architecture' } }",
+      '  $Archive = "tokentimer-agent-$Version-windows-$Architecture.tgz"',
+      "  throw 'Bundled agent installation requires publisher verification, which is not available yet'",
+      '}',
+      "if ($PackageType -ne 'legacy') { throw 'Select legacy or bundled' }",
       '$Base = "https://github.com/tokentimerch/tokentimer-core/releases/download/v$Version"',
       '$Archive = "tokentimer-agent-$Version.tgz"',
       'Invoke-WebRequest "$Base/$Archive" -OutFile $Archive',
@@ -396,6 +404,31 @@ export function agentRestartCommandFor(os) {
  * Observe-only agent configuration: it registers and reports discovery, and
  * never claims jobs, because execution stays disabled.
  */
+export function parseRevocationOrigins(value = '') {
+  const origins = String(value)
+    .split(/[\s,]+/)
+    .filter(Boolean);
+  if (origins.length > 128) return { ok: false };
+  for (const origin of origins) {
+    if (origin.length > 2048) return { ok: false };
+    try {
+      const url = new URL(origin);
+      if (
+        !['http:', 'https:'].includes(url.protocol) ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash ||
+        url.pathname !== '/'
+      )
+        return { ok: false };
+    } catch {
+      return { ok: false };
+    }
+  }
+  return { ok: true, origins: [...new Set(origins)] };
+}
+
 export function buildObserveConfig({ os, directories = [] }) {
   const config = {
     execution: { enabled: false, dryRun: true },
@@ -632,6 +665,7 @@ function buildWindowsIssueJob({
   iisSite,
   iisPort,
   iisStore,
+  iisAddress,
   sniHost,
   acmeProfile,
   assignedAgentId,
@@ -639,6 +673,15 @@ function buildWindowsIssueJob({
 }) {
   const list = (names || []).map(n => String(n).trim()).filter(Boolean);
   const binding = { site: iisSite, port: Number(iisPort) };
+  const address = String(iisAddress || '').trim();
+  if (
+    address &&
+    !['*', '0.0.0.0'].includes(address) &&
+    String(sniHost || '').trim()
+  ) {
+    throw new Error('A specific IIS IP address cannot be combined with SNI.');
+  }
+  if (address) binding.address = address;
   if (String(sniHost || '').trim()) binding.sniHost = String(sniHost).trim();
   return {
     operation: 'issue',
@@ -675,6 +718,7 @@ export function buildIssueJob({
   iisSite = 'Default Web Site',
   iisPort = 443,
   iisStore = 'My',
+  iisAddress = '',
   sniHost = '',
   acmeProfile = WINDOWS_ACME_PROFILE,
   assignedAgentId,
@@ -689,6 +733,7 @@ export function buildIssueJob({
       iisSite,
       iisPort,
       iisStore,
+      iisAddress,
       sniHost,
       acmeProfile,
       assignedAgentId,

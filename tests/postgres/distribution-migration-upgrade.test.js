@@ -48,6 +48,10 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
     const beforeVerificationLedger=(await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
     assert.equal(beforeVerificationLedger.at(-1).version, 108);
     assert.equal((await pool.query("SELECT to_regclass('public.certops_material_retirement_dossiers') AS name")).rows[0].name, null);
+    // Current rollout admission reads this additive observation column. Seed
+    // it without changing the historical ledger before constructing old data;
+    // the observed-revocation migration later applies the same idempotent DDL.
+    await pool.query("ALTER TABLE certops_slot_observations ADD COLUMN observed_revocation jsonb");
     const {fixture}=require("../helpers/distribution-lifecycle-fixture.cjs");
     const operations=require("../../apps/api/services/certops/distributionOperations");
     // Current rollout admission also inspects the future staging-job column.
@@ -110,7 +114,7 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
       if(delivered)await pool.query("INSERT INTO alert_queue(user_id,certops_agent_id,alert_key,threshold_days,due_date,channels,status) VALUES($1,$2,$3,0,CURRENT_DATE,'[]'::jsonb,'sent')",[f.actor,f.consumer,`cert_distribution:${incident.id}:2:resolved`]);
     }
     await pool.query("ALTER TABLE certops_consumer_deployments DROP COLUMN staging_job_id");
-    migrations.push(...pending.filter(entry=>[90,91,96,97,109,110,111,112,113,114,122].includes(entry.version)));
+    migrations.push(...pending.filter(entry=>[90,91,96,97,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126].includes(entry.version)));
     await runMigrations();
     assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=89 OR (version BETWEEN 92 AND 108 AND version NOT IN (96,97)) ORDER BY version")).rows,beforeVerificationLedger);
     assert.equal((await pool.query("SELECT to_regclass('public.certops_material_retirement_dossiers') AS name")).rows[0].name, "certops_material_retirement_dossiers");
@@ -257,7 +261,18 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
   {"version":112,"name":"certops_retirement_dossiers"},
   {"version":113,"name":"certops_material_reconciliation"},
   {"version":114,"name":"distribution_pagerduty_recovery"},
+  {"version":115,"name":"store_issuance_explicit_renewal_consent"},
+  {"version":116,"name":"certops_acme_store_enrollment_identity"},
+  {"version":117,"name":"certops_adcs_expected_identity_receipts"},
+  {"version":118,"name":"certops_windows_iis_consent"},
+  {"version":119,"name":"certops_material_adcs_operation_union"},
+  {"version":120,"name":"certops_iis_absence_proofs"},
+  {"version":121,"name":"certops_enrollment_jobs_index"},
   {"version":122,"name":"certops_observed_revocation"},
+  {"version":123,"name":"agent_credential_rotations"},
+  {"version":124,"name":"agent_credential_rotation_ack"},
+  {"version":125,"name":"certops_adcs_preflight_lookup_index"},
+  {"version":126,"name":"certops_adcs_receipt_deadline"},
 ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition

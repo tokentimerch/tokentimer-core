@@ -133,6 +133,7 @@ const {
   closeClaimStreamSafely,
   purgeExpiredAgentLogs,
 } = require("../../api/services/certops/agentJobLogs.js");
+const { purgeExpiredIisAbsenceProofs } = require("../../api/services/certops/iisAbsenceProof.js");
 export { DEFAULT_AGENT_OFFLINE_AFTER_MS, resolveAgentOfflineAfterMs };
 
 const TERMINAL_JOB_STATUSES = new Set(
@@ -215,6 +216,10 @@ export const CERTOPS_SWEEP_CONFIG = Object.freeze({
   "agent-log-purge": Object.freeze({
     enableEnv: "CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED",
     timeoutEnv: "CERTOPS_SWEEP_AGENT_LOG_PURGE_TIMEOUT_MS",
+  }),
+  "iis-proof-purge": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_IIS_PROOF_PURGE_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_IIS_PROOF_PURGE_TIMEOUT_MS",
   }),
   "enrollment-continuations": Object.freeze({
     enableEnv: "CERTOPS_SWEEP_ENROLLMENT_CONTINUATIONS_ENABLED",
@@ -1878,6 +1883,12 @@ export async function runCertOpsMaintenance({
     },
   );
 
+  results.iisProofPurge = await runIsolated(
+    "iis-proof-purge", log,
+    () => withClientFn((client) => purgeExpiredIisAbsenceProofs({ client })),
+    { enabled: isSweepEnabled("iis-proof-purge", env), timeoutMs: resolveSweepTimeoutMs("iis-proof-purge", env) },
+  );
+
   log.info("CertOps maintenance worker finished", {
     leaseReaper:
       results.leaseReaper.status === "success"
@@ -1923,6 +1934,8 @@ export async function runCertOpsMaintenance({
       results.agentLogPurge.status === "success"
         ? results.agentLogPurge.result
         : results.agentLogPurge.status,
+    iisProofPurge:
+      results.iisProofPurge.status === "success" ? results.iisProofPurge.result : results.iisProofPurge.status,
   });
 
   await pushMetricsFn("certops").catch((e) =>

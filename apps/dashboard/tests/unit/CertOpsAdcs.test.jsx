@@ -399,13 +399,23 @@ describe('CertOpsAdcs', () => {
   it('keeps asking for a preflight verdict after dispatch', async () => {
     canManageMock.mockReturnValue(true);
     listAgentsMock.mockResolvedValue({
-      items: [{ id: 'agent-1', name: 'member-1' }],
+      items: [
+        { id: 'agent-1', name: 'member-1' },
+        { id: 'win', name: 'Windows member', platform: 'win32' },
+        { id: 'linux', name: 'Linux member', platform: 'linux' },
+      ],
     });
     listIssuersMock.mockResolvedValue({ items: [issuer()] });
     dispatchIssuerPreflightMock.mockResolvedValue({ job: { id: 'job-1' } });
 
     renderPage();
     await screen.findByRole('button', { name: /Run check for Issuing CA/ });
+    expect(
+      screen.getByRole('option', { name: 'Windows member' })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('option', { name: 'Linux member' })
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByLabelText('CA config for Issuing CA')
     ).not.toBeInTheDocument();

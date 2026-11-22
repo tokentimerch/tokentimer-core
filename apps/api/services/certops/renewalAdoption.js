@@ -202,9 +202,18 @@ async function loadWindowsRenewalTopology({
             ct.windows_site,
             ct.windows_port,
             ct.windows_sni_host,
+            ct.public_metadata AS target_metadata,
+            mc.subject_alt_names,
+            ci.presence_state,
+            ci.captured_at,
             a.id AS agent_row_id,
+            a.agent_id AS agent_public_id,
+            a.platform AS agent_platform,
+            a.declared_capabilities,
+            a.capabilities_updated_at,
             a.declared_target_selectors
        FROM certificate_instances ci
+       JOIN managed_certificates mc ON mc.workspace_id = ci.workspace_id AND mc.id = ci.managed_certificate_id
        JOIN certificate_targets ct
          ON ct.workspace_id = ci.workspace_id AND ct.id = ci.target_id
        JOIN certops_agents a
@@ -227,6 +236,16 @@ async function loadWindowsRenewalTopology({
   }
   if (byTarget.size !== 1) return null;
   const row = [...byTarget.values()][0];
+  const address = row.target_metadata?.boundAddress;
+  const explicitIp = typeof address === "string" && address !== "*" && address !== "0.0.0.0";
+  const captured = row.captured_at ? new Date(row.captured_at).getTime() : NaN;
+  const now = Date.now();
+  const explicitIpReady = explicitIp && !address.includes("%") && require("node:net").isIP(address) !== 0 &&
+    !row.windows_sni_host && row.target_metadata?.keyPresent === true && row.agent_platform === "win32" &&
+    row.target_metadata?.agentId === row.agent_public_id && row.presence_state === "confirmed_present" &&
+    Number.isFinite(captured) && captured <= now && now - captured <= 24 * 60 * 60 * 1000 &&
+    require("./agentJobEligibility").hasFreshCapability({ declaredCapabilities: row.declared_capabilities,
+      capabilitiesUpdatedAt: row.capabilities_updated_at, capability: "iis-explicit-ip-v1" });
   const selectors = Array.isArray(row.declared_target_selectors)
     ? row.declared_target_selectors.filter((value) => typeof value === "string" && value)
     : [];
@@ -234,12 +253,17 @@ async function loadWindowsRenewalTopology({
     typeof row.target_reference === "string" && row.target_reference.trim()
       ? row.target_reference.trim()
       : null;
+  const exactSanSelectors = explicitIpReady && Array.isArray(row.subject_alt_names)
+    ? selectors.filter(selector => row.subject_alt_names.some(name => typeof name === "string" && name.toLowerCase() === selector.toLowerCase()))
+    : [];
   const targetReference =
     storedReference && selectors.includes(storedReference)
       ? storedReference
-      : null;
+      : exactSanSelectors.length === 1 ? exactSanSelectors[0] : null;
   if (
     !targetReference ||
+    (explicitIp && !explicitIpReady) ||
+    (row.target_metadata?.observationOnly === true && !explicitIpReady) ||
     typeof row.windows_store !== "string" ||
     !WINDOWS_STORE_NAME_PATTERN.test(row.windows_store) ||
     typeof row.windows_site !== "string" ||
@@ -264,6 +288,7 @@ async function loadWindowsRenewalTopology({
         site: row.windows_site,
         port: row.windows_port,
         sniHost: row.windows_sni_host || null,
+        ...(explicitIpReady ? { address } : {}),
       },
       thumbprintSha1: null,
     },

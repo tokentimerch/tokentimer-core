@@ -11,6 +11,7 @@
  */
 
 const { getAgentsByIds } = require("./agentRegistry");
+const { IIS_STORE_OWNERSHIP_CHANGED } = require("./windowsRenewalOwnership");
 const {
   ADCS_ENROLL_CAPABILITY_REASON,
   explainAgentJobEligibility,
@@ -27,6 +28,9 @@ function declaredOperations(agent) {
 }
 
 function messageForEligibility({ job, agent, reason }) {
+  if (reason === "iis_explicit_ip_capability_unavailable") {
+    return "The assigned agent needs a qualified Windows build with a fresh declaration for explicit-IP IIS bindings.";
+  }
   if (reason === "agent_retired") {
     return "This agent has been retired and can no longer claim any job.";
   }
@@ -79,6 +83,10 @@ function isAgentOffline(agent) {
 
 function pendingReasonForJob(job, agent) {
   if (!job || !AWAITING_EXECUTION_STATUSES.has(job.status)) return null;
+
+  if (job.errorCode === IIS_STORE_OWNERSHIP_CHANGED) {
+    return { code: "iis_store_ownership_changed", message: job.errorMessage };
+  }
 
   if (job.status === "claimed") {
     return {

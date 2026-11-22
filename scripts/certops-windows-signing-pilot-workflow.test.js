@@ -28,6 +28,9 @@ test("pilot requires one exact reviewed source and protected main workflow SHA",
   assert.deepEqual(checkout.with, { ref: "${{ env.PILOT_SOURCE }}", "persist-credentials": false });
   assert.match(build.steps[0].run, /\.commit\.verification\.verified == true/);
   const packageCommands = build.steps.find(step => step.id === "package").run;
+  assert.match(packageCommands, /pack-release\.js[^\n]*--windows-store-iis-qualification/);
+  assert.match(packageCommands, /windows-store-only-adcs-v1", "windows-store-iis-consumers-v1/);
+  assert.match(packageCommands, /assert\.equal\(read\("qualified-capabilities\.generated\.js"\), renderGeneratedModule\(expected\)\)/);
   assert.match(packageCommands, /test "\$\(git rev-parse HEAD\)" = "\$PILOT_SOURCE"/);
   const restore = packageCommands.match(/^git restore --source="\$PILOT_SOURCE" --worktree -- \\\n  packages\/agent\/bin\/tokentimer-observed-revocation-linux-amd64 \\\n  packages\/agent\/bin\/tokentimer-observed-revocation-linux-arm64$/m);
   assert.ok(restore);

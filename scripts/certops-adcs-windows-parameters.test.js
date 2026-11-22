@@ -84,7 +84,11 @@ function invoke(runtime, file, env) {
   // PowerShell itself removes incompatible inherited module paths when crossing
   // versions. Node's direct process launch must provide the same clean startup.
   const childEnv = Object.fromEntries(Object.entries(env).filter(([key]) => key.toLowerCase() !== "psmodulepath"));
-  return spawnSync(runtime, ["-NoProfile", "-NonInteractive", "-File", file], { encoding: "utf8", windowsHide: true, timeout: 20000, env: childEnv });
+  const result = spawnSync(runtime, ["-NoProfile", "-NonInteractive", "-File", file], {
+    encoding: "utf8", windowsHide: true, timeout: 45000, env: childEnv,
+  });
+  if (result.error) throw result.error;
+  return result;
 }
 function executeGuest(runtime, state, script) {
   const guest = path.join(state.dir, "guest.ps1");

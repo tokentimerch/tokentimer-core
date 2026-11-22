@@ -9,6 +9,15 @@ on:
     branches: [main, master]
   workflow_dispatch:
     inputs:
+      native_windows_revocation:
+        description: Also run disposable Windows native revocation qualification
+        required: false
+        default: false
+        type: boolean
+      expected_sha:
+        description: Exact Core commit required for native revocation qualification
+        required: false
+        type: string
       native_windows_material:
         description: Also run disposable Windows IIS material qualification
         required: false
@@ -21,7 +30,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.native_windows_revocation && '-native-windows-revocation' || '' }}
   cancel-in-progress: true
 
 env:
@@ -30,6 +39,44 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  adcs_simulated_lab:
+    name: AD CS simulated integration lab
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: "11.28.8"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Start actual application and simulated protocol agents
+        run: pnpm adcs:lab up --simulated
+      - name: Verify PostgreSQL orchestration, renewal, recovery and SMTP
+        run: pnpm adcs:lab verify
+      - name: Follow received email in actual dashboard and manually recheck
+        run: pnpm adcs:lab browser
+      - name: Remove only owned simulated lab resources
+        if: always()
+        run: pnpm adcs:lab clean
+      - name: Retain sanitized simulated evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: adcs-simulated-lab
+          include-hidden-files: true
+          path: |
+            .tmp/adcs-local-lab/verification.json
+            .tmp/adcs-local-lab/smtp-evidence.json
+            .tmp/adcs-local-lab/browser-verification.json
+            .tmp/adcs-local-lab/browser-*.png
+            .tmp/adcs-local-lab/worker.log
+            .tmp/adcs-local-lab/supervisor.log
+
   dependency_audit:
     name: Dependency Audit
     runs-on: ubuntu-latest
@@ -366,7 +413,10 @@ jobs:
         run: pnpm run certops:integrity-check
 
       - name: Prove concurrent enrollment admission on isolated PostgreSQL
-        run: node --test --test-force-exit tests/postgres/certops-enrollment-admission.test.js
+        run: node --test --test-force-exit --test-concurrency=1 tests/postgres/certops-enrollment-admission.test.js tests/postgres/certops-adcs-preflight-incidents.test.js
+
+      - name: Verify Core and preview migration upgrades on isolated PostgreSQL
+        run: node --test --test-force-exit --test-concurrency=1 tests/postgres/certops-store-migration-upgrade.test.js tests/postgres/certops-observed-preview-migration-upgrade.test.js
 
       - name: Run AD CS API qualification on the existing test stack
         env:
@@ -549,6 +599,13 @@ jobs:
           DB_NAME: pr498_retirement_preview_ci_test
           CERTOPS_ENABLED: "true"
         run: node --test --test-force-exit tests/postgres/retirement-preview-migration-upgrade.test.js
+      - name: Validate OAuth retention migration history
+        env:
+          RV_TEST_DB_HOST: ${{ env.DB_HOST }}
+          RV_TEST_DB_PORT: ${{ env.DB_PORT }}
+          RV_TEST_DB_USER: ${{ env.DB_USER }}
+          RV_TEST_DB_PASSWORD: ${{ env.DB_PASSWORD }}
+        run: node --test --test-force-exit tests/postgres/operator-oauth-retention-history.test.js
       - name: Verify alert date serialization across host timezones
         run: node --test tests/postgres/alert-queue-timezones.test.js
       - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability
@@ -1005,6 +1062,9 @@ jobs:
           tar -xzf "$actionlint_directory/actionlint.tar.gz" -C "$actionlint_directory" actionlint
           chmod 0755 "$actionlint_directory/actionlint"
           echo "$actionlint_directory" >> "$GITHUB_PATH"
+      - name: Lint all GitHub Actions workflows
+        if: runner.os == 'Linux'
+        run: actionlint -shellcheck= -pyflakes=
       - name: Install checksum-pinned Windows Actions schema validator
         if: runner.os == 'Windows'
         shell: pwsh
@@ -1028,6 +1088,14 @@ jobs:
         env:
           CERTOPS_WINDOWS_DISPOSABLE_HOST: '1'
         run: node scripts/certops-credential-weak-acl-support.js
+      - name: Check synthetic bundled installation policy
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          & ./scripts/certops-installer-fresh.test.ps1
+          if (-not $?) { throw 'Synthetic installer policy failed in Windows PowerShell' }
+          pwsh -NoProfile -NonInteractive -File ./scripts/certops-installer-fresh.test.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic installer policy failed in PowerShell 7' }
       - name: Exercise installer activation using owned temporary files
         if: runner.os == 'Windows'
         shell: powershell
@@ -1050,6 +1118,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Temporary response barrier supporting controls failed' }
       - name: Run complete qualification tooling including all AD CS language package gates
         run: pnpm run test:certops:qualification
+      - name: Test Windows store qualification safeguards
+        if: runner.os == 'Windows'
+        run: node --test tests/e2e/helpers/certops-acme-ca-watch.test.js tests/e2e/helpers/certops-acme-store-native-qualification.test.js
       - name: Run complete release collector inventory
         if: runner.os == 'Linux'
         run: pnpm run test:certops:release-collector
@@ -1076,9 +1147,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Credential fixtures use the user profile, not the shared checkout.
+      # Native credential checks start PowerShell. Serialize test files so
+      # cold starts on the Windows runner can finish within the ACL timeout.
       - name: Run MCP adapter tests including native Windows credential ACLs
-        run: pnpm --filter @tokentimer/mcp test
+        run: pnpm --filter @tokentimer/mcp test:windows
 
       - name: Lint agent package
         run: pnpm run lint:agent
@@ -1099,13 +1171,53 @@ jobs:
       - name: Dry-run install-agent.ps1
         shell: pwsh
         run: |
-          ./packages/agent/scripts/install-agent.ps1 `
-            --api-url https://example.com `
-            --workspace-id ws_ci_dry_run `
-            --bootstrap-token ttboot_ci_dry_run_placeholder_token_value `
-            --write-path "C:\certs\ci-example" `
-            --reload-service nginx `
-            --dry-run
+          $dryRunArgs = @('--api-url', 'https://example.com', '--workspace-id', 'ws_ci_dry_run',
+            '--bootstrap-token', 'ttboot_ci_dry_run_placeholder_token_value',
+            '--write-path', 'C:\certs\ci-example', '--reload-service', 'nginx', '--dry-run')
+          $source = (Resolve-Path ./packages/agent).Path
+          $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            & "$source/scripts/install-agent.ps1" @dryRunArgs
+            exit $LASTEXITCODE
+          }
+          $programFiles = (Resolve-Path -LiteralPath $env:ProgramFiles).ProviderPath.TrimEnd('\')
+          $fixture = Join-Path $programFiles ("TokenTimerDryRun-" + [guid]::NewGuid().ToString('N'))
+          $priorPath = $env:PATH
+          try {
+            $acl = [Security.AccessControl.DirectorySecurity]::new()
+            $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
+            if ($PSVersionTable.PSEdition -eq 'Desktop') {
+              $null = [IO.Directory]::CreateDirectory($fixture, $acl)
+            } else {
+              $null = [IO.FileSystemAclExtensions]::CreateDirectory($acl, $fixture)
+            }
+            $runtime = (New-Item -ItemType Directory -Path "$fixture\runtime").FullName
+            Copy-Item -LiteralPath (Get-Command node.exe -CommandType Application).Source -Destination "$runtime\node.exe"
+            $copyCode = & {
+              # Robocopy uses exit codes 1 through 7 for successful work.
+              $PSNativeCommandUseErrorActionPreference = $false
+              & robocopy.exe $source "$fixture\package" /E /XD node_modules .git /XJ /R:0 /W:0 /NFL /NDL /NP | Out-Host
+              $LASTEXITCODE
+            }
+            if ($copyCode -lt 0 -or $copyCode -ge 8) { throw 'Unable to copy the dry-run package' }
+            & icacls.exe $fixture /setowner '*S-1-5-32-544' /T /Q
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to set the dry-run fixture owner' }
+            $env:PATH = "$runtime;$priorPath"
+            & "$fixture\package\scripts\install-agent.ps1" @dryRunArgs
+            if ($LASTEXITCODE -ne 0) { throw 'Elevated installer dry-run failed' }
+          } finally {
+            $env:PATH = $priorPath
+            $item = Get-Item -LiteralPath $fixture -ErrorAction SilentlyContinue
+            if ($item) {
+              $resolved = (Resolve-Path -LiteralPath $item.FullName).ProviderPath
+              if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                  $resolved -ine $fixture -or [IO.Path]::GetDirectoryName($resolved) -ine $programFiles -or
+                  [IO.Path]::GetFileName($resolved) -cnotmatch '^TokenTimerDryRun-[a-f0-9]{32}$') {
+                throw 'Refusing to remove an unexpected dry-run fixture path'
+              }
+              Remove-Item -LiteralPath $resolved -Recurse -Force
+            }
+          }
 
       - name: Dry-run install-agent.ps1 --uninstall
         shell: pwsh
@@ -1356,3 +1468,83 @@ jobs:
             grype-results-worker.sarif
             grype-results-k8s-controller.sarif
           if-no-files-found: ignore
+
+  windows_observed_revocation_native:
+    name: Windows native observed revocation
+    if: github.event_name == 'workflow_dispatch' && inputs.native_windows_revocation == true
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require the exact candidate
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          if ($env:EXPECTED_SHA -cnotmatch '^[a-f0-9]{40}$' -or $env:EXPECTED_SHA -cne $env:GITHUB_SHA) { throw 'Candidate SHA mismatch' }
+          if ($env:RUNNER_ENVIRONMENT -cne 'github-hosted') { throw 'A disposable GitHub-hosted runner is required' }
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: '11.28.8'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: packages/agent/reference/observed-revocation/go.mod
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Verify fixture guards and cleanup
+        run: node --test packages/agent/reference/observed-revocation/windows-native-safety.test.cjs
+      - name: Exercise real Windows store discovery through the API
+        shell: pwsh
+        env:
+          CERTOPS_REVOCATION_NATIVE_WINDOWS: '1'
+          DB_HOST: 127.0.0.1
+          DB_PORT: '5432'
+          DB_NAME: revocation_test
+          DB_USER: postgres
+          DB_PASSWORD: root
+          PGPASSWORD: root
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $service = Get-Service -Name 'postgresql-x64-17' -ErrorAction Stop
+          if ($service.Status -ne 'Stopped') { throw 'Expected the hosted runner database service to be stopped' }
+          if (-not (Test-Path -LiteralPath $env:PGDATA -PathType Container)) { throw 'Hosted runner PostgreSQL data directory is unavailable' }
+          $psql = Join-Path $env:PGBIN 'psql.exe'
+          if (-not (Test-Path -LiteralPath $psql -PathType Leaf)) { throw 'Hosted runner PostgreSQL client is unavailable' }
+          $private = @(Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
+            $_.IPAddress -match '^10\.' -or $_.IPAddress -match '^192\.168\.' -or $_.IPAddress -match '^172\.(1[6-9]|2\d|3[01])\.'
+          } | Select-Object -ExpandProperty IPAddress)
+          if ($private.Count -eq 0) { throw 'No private IPv4 address is available for the fixture responder' }
+          $env:CERTOPS_REVOCATION_TEST_IP = $private[0]
+          $env:CERTOPS_REVOCATION_TEST_HELPER = Join-Path $env:GITHUB_WORKSPACE 'packages/agent/bin/tokentimer-observed-revocation-windows-amd64.exe'
+          $ownedDatabase = $false
+          $startedService = $false
+          try {
+            Add-Content -LiteralPath (Join-Path $env:PGDATA 'postgresql.conf') -Value "`nlisten_addresses = '127.0.0.1'"
+            Set-Service -Name $service.Name -StartupType Manual
+            Start-Service -Name $service.Name
+            $startedService = $true
+            & $psql -X -w -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE revocation_test'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create isolated maintenance database' }
+            $ownedDatabase = $true
+            New-Item -ItemType Directory -Path (Split-Path -Parent $env:CERTOPS_REVOCATION_TEST_HELPER) -Force | Out-Null
+            Push-Location packages/agent/reference/observed-revocation
+            try {
+              go build -mod=readonly -trimpath -buildvcs=false -o $env:CERTOPS_REVOCATION_TEST_HELPER ./cmd/observed-revocation
+              if ($LASTEXITCODE -ne 0) { throw 'Could not build candidate helper' }
+              node windows-native-orchestrator.cjs
+              if ($LASTEXITCODE -ne 0) { throw 'Native revocation qualification failed' }
+            } finally { Pop-Location }
+          } finally {
+            try {
+              if ($ownedDatabase) {
+                & $psql -X -w -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE revocation_test WITH (FORCE)'
+                if ($LASTEXITCODE -ne 0) { throw 'Owned maintenance database cleanup failed' }
+              }
+            } finally {
+              if ($startedService) { Stop-Service -Name $service.Name -ErrorAction Stop }
+            }
+          }

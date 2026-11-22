@@ -314,6 +314,7 @@ module.exports = {
   CERTOPS_API_TOKEN_WORKSPACE_MISMATCH,
   CERTOPS_API_TOKEN_SESSION_IDENTITY_FORBIDDEN,
   bearerTokenFromRequest,
+  hasSessionIdentity,
   createCertOpsApiTokenAuth,
   requireCertOpsApiToken: createCertOpsApiTokenAuth,
   safeApiTokenIdentity,

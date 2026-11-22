@@ -866,6 +866,74 @@ describe("renewalPathHealth: native AD CS profiles", () => {
   });
 });
 
+describe("renewalPathHealth: AD CS Windows Store ownership", () => {
+  function storeRow(overrides = {}) {
+    return certRow({
+      key_mode: "os-store-managed",
+      source: "agent_issuance",
+      deployed_agent_id: "agent-a",
+      profile_issuer_kind: "adcs",
+      profile_public_metadata: {
+        renewalProfile: {
+          target: { type: "windows-cert-store", reference: "app.example.com", store: "My" },
+          sanPolicy: { sans: ["app.example.com"] },
+          keyAlgorithm: "rsa",
+          keySize: 2048,
+        },
+      },
+      ...overrides,
+    });
+  }
+
+  function storeAgents() {
+    return buildAgentIndex(["agent-a", "agent-b"].map((id) => ({
+      ...onlineAgentRow({ id, targetSelectors: ["app.example.com"] }),
+      platform: "win32",
+      declared_capabilities: ["adcs-enroll-v1", "windows-store-only-adcs-v1", "evidence-claim-binding-v1"],
+    })));
+  }
+
+  it("marks an issued Windows Store certificate healthy on its qualified owning agent", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: storeRow(),
+      agentIndex: storeAgents(),
+      now: NOW,
+      adcsPreflightIndex: freshPreflightIndex(["agent-a", "agent-b"]),
+    });
+
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.deepEqual(result.dependencies.map((agent) => agent.agentRowId), ["agent-a"]);
+  });
+
+  it("keeps a Windows Store renewal unavailable when the owner lacks Store capability", () => {
+    const agentIndex = storeAgents();
+    agentIndex.byRowId.get("agent-a").declaredCapabilities = ["adcs-enroll-v1", "evidence-claim-binding-v1"];
+    const result = resolveRenewalPathForRow({
+      certificateRow: storeRow(),
+      agentIndex,
+      now: NOW,
+      adcsPreflightIndex: freshPreflightIndex(["agent-a", "agent-b"]),
+    });
+
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE);
+    assert.match(result.renewalPathSummary, /owning agent.*Windows Store renewal/);
+    assert.deepEqual(result.dependencies, []);
+  });
+
+  it("explains when a Windows Store certificate has no recorded owning agent", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: storeRow({ deployed_agent_id: null }),
+      agentIndex: storeAgents(),
+      now: NOW,
+      adcsPreflightIndex: freshPreflightIndex(["agent-a", "agent-b"]),
+    });
+
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.match(result.renewalPathSummary, /owning agent/);
+    assert.deepEqual(result.dependencies, []);
+  });
+});
+
 describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
   // An ACME-shaped profile moved onto an AD CS issuer: it keeps schemaVersion
   // and the ACME fields, and gains the Windows/IIS target AD CS requires.
@@ -903,6 +971,18 @@ describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
     candidate.capabilitiesUpdatedAt = new Date(updatedAtMs).toISOString();
     return agentIndex;
   }
+
+  it("shows the owning agent's missing explicit-IP capability for AD CS", () => {
+    const profile = switchedAdcsProfile();
+    profile.target.binding.address = "192.0.2.10";
+    profile.deploymentTargets[0].binding.address = "192.0.2.10";
+    const index = adcsIndex({ declaredCapabilities: ["adcs-enroll-v1"] });
+    index.byRowId.get("agent-a").platform = "win32";
+    const result = resolveRenewalPathForRow({ certificateRow: switchedRow({ source: "agent_windows",
+      deployed_agent_id: "agent-a", profile_public_metadata: { renewalProfile: profile } }), agentIndex: index, now: NOW });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.match(result.renewalPathSummary, /explicit-IP IIS/);
+  });
 
   it("missing declaration -> Renewal path unavailable naming adcs-enroll-v1, not healthy", () => {
     const result = resolveRenewalPathForRow({
