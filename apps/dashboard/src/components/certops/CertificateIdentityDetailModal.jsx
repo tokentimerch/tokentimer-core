@@ -24,21 +24,22 @@ import {
   Th,
   Thead,
   Tr,
-  Tooltip,
   VStack,
 } from '@chakra-ui/react';
 import apiClient, { tokenAPI, workspaceAPI } from '../../utils/apiClient';
-import { HardDrive, Info, MapPin, Server, Settings } from 'lucide-react';
+import { MapPin, Settings } from 'lucide-react';
 import DashboardDetailsSection from '../DashboardDetailsSection.jsx';
 import CopyableId from '../CopyableId.jsx';
 import CertificateDetailsModal from './CertificateDetailsModal.jsx';
 import CertificateObservationHistory from './CertificateObservationHistory.jsx';
 import IisReassociation from './IisReassociation.jsx';
+import WindowsCertificateUsage from './WindowsCertificateUsage.jsx';
 import {
   getCertificate,
   getCertificateIdentity,
   getManagedCertificatesForToken,
   getWindowsRenewal,
+  setWindowsIisConsumer,
   listCertOpsRenewalProfiles,
   readdManagingSource,
   replaceManagingSource,
@@ -115,6 +116,17 @@ function registrationLabel(source, includeHostname = true) {
   return `${label} · ${includeHostname ? `${host} · ` : ''}${slot}`;
 }
 
+function registrationOptionLabel(source, certificateName) {
+  if (source.source !== 'agent_windows' || typeof certificateName !== 'string')
+    return registrationLabel(source);
+  const match = String(source.sourceRef || '').match(
+    /^[^/]+\/([^/]+)\/windows_store\/(LocalMachine)\/([^/]+)\/(.+)$/i
+  );
+  if (!match || match[4].toLowerCase() !== certificateName.toLowerCase())
+    return registrationLabel(source);
+  return `Windows certificate store · ${match[1]} · ${match[2]}\\${match[3]}`;
+}
+
 function sourceHostname(source) {
   if (source.targetHostname) return source.targetHostname;
   if (source.source !== 'agent_windows') return null;
@@ -135,31 +147,6 @@ function SourceCell({ item }) {
         </Text>
       ) : null}
     </>
-  );
-}
-
-function storeHasMatchingIis(source, sources, identityId) {
-  if (source?.source !== 'agent_windows') return false;
-  const store = /\/windows_store(?:_v2)?\//i.test(source.sourceRef || '')
-    ? sourceHostname(source)
-    : null;
-  return Boolean(
-    store &&
-    sources.some(other => {
-      if (
-        other.source !== 'agent_windows' ||
-        other.endedAt ||
-        other.periodEndedAt ||
-        (identityId && other.currentIdentityId !== identityId)
-      )
-        return false;
-      const binding = String(other.sourceRef || '').match(
-        /^[^/]+\/([^/]+)\/iis_binding\//i
-      );
-      return (
-        binding && sourceHostname(other)?.toLowerCase() === store.toLowerCase()
-      );
-    })
   );
 }
 
@@ -202,6 +189,7 @@ function IdentityDetailSession({
   const [profiles, setProfiles] = useState([]);
   const [windowsGroups, setWindowsGroups] = useState([]);
   const [windowsError, setWindowsError] = useState('');
+  const [windowsStatus, setWindowsStatus] = useState('loading');
   const [profileIds, setProfileIds] = useState({});
   const [showHistory, setShowHistory] = useState(false);
   const [showStopped, setShowStopped] = useState(false);
@@ -209,6 +197,36 @@ function IdentityDetailSession({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [selectedSourceId, setSelectedSourceId] = useState('');
+  const storeOwnerForBinding = source =>
+    windowsGroups.find(
+      group =>
+        group.profileId &&
+        profiles.some(
+          profile =>
+            profile.id === group.profileId &&
+            profile.renewalProfile?.target?.type === 'windows-cert-store'
+        ) &&
+        !group.ambiguous &&
+        group.bindings?.some(
+          binding =>
+            binding.managedCertificateId === source.managedCertificateId &&
+            binding.relationship === 'observed'
+        )
+    );
+  const bindingOwnershipUnknown = source =>
+    source.source === 'agent_windows' &&
+    /\/iis_binding\//i.test(source.sourceRef || '') &&
+    (windowsStatus !== 'ready' ||
+      windowsGroups.some(group =>
+        group.bindings?.some(
+          binding =>
+            binding.managedCertificateId === source.managedCertificateId &&
+            (group.ambiguous ||
+              binding.relationship !== 'observed' ||
+              (group.profileId &&
+                !profiles.some(profile => profile.id === group.profileId)))
+        )
+      ));
   useLayoutEffect(() => {
     setBusy(false);
   }, [isOpen, workspaceId, certificateKey]);
@@ -220,18 +238,16 @@ function IdentityDetailSession({
       latestSourceById.set(source.managedCertificateId, source);
   }
   const sourceOptions = [...latestSourceById.values()];
-  const eligibleRenewalChoices = sourceOptions.filter(
-    source =>
-      !storeHasMatchingIis(source, detail?.sources || [], detail?.identityId)
-  );
   const isEndedSource = source =>
     Boolean(source.periodEndedAt || source.endedAt);
   // With exactly one current registration, preselect it so the operator does
   // not have to open the dropdown. Ended ones stay one click away.
-  const currentSourceOptions = eligibleRenewalChoices.filter(
+  const renewalChoices = sourceOptions.filter(
+    source => !storeOwnerForBinding(source)
+  );
+  const currentSourceOptions = renewalChoices.filter(
     source => !isEndedSource(source)
   );
-  const renewalChoices = eligibleRenewalChoices;
   const defaultManagedId =
     sourceOptions.length > 1 && currentSourceOptions.length === 1
       ? currentSourceOptions[0].managedCertificateId
@@ -240,13 +256,7 @@ function IdentityDetailSession({
     source => source.managedCertificateId === selectedSourceId
   );
   const selectedManagedId =
-    (selectedSource &&
-    renewalChoices.includes(selectedSource) &&
-    !storeHasMatchingIis(
-      selectedSource,
-      detail?.sources || [],
-      detail?.identityId
-    )
+    (selectedSource && renewalChoices.includes(selectedSource)
       ? selectedSourceId
       : '') ||
     defaultManagedId ||
@@ -272,15 +282,23 @@ function IdentityDetailSession({
     setProfileIds({});
     setWindowsGroups([]);
     setWindowsError('');
+    setWindowsStatus('loading');
     if (certificate.identityId) {
       if (canManage)
         getWindowsRenewal(workspaceId, certificate.identityId)
           .then(value => {
-            if (active) setWindowsGroups(value.groups || []);
+            if (active) {
+              if (!Array.isArray(value.groups))
+                throw new Error('Invalid Windows renewal response');
+              setWindowsGroups(value.groups);
+              setWindowsStatus('ready');
+            }
           })
           .catch(() => {
-            if (active)
+            if (active) {
+              setWindowsStatus('error');
               setWindowsError('Windows renewal settings could not be loaded.');
+            }
           });
       getCertificateIdentity(workspaceId, certificate.identityId)
         .then(value => {
@@ -500,11 +518,17 @@ function IdentityDetailSession({
           certificate.identityId
         );
         if (!isCurrent(version)) return;
-        setWindowsGroups(value.groups || []);
+        if (!Array.isArray(value.groups))
+          throw new Error('Invalid Windows renewal response');
+        setWindowsGroups(value.groups);
+        setWindowsStatus('ready');
         setWindowsError('');
       } catch {
-        if (isCurrent(version))
+        if (isCurrent(version)) {
+          setWindowsGroups([]);
+          setWindowsStatus('error');
           setWindowsError('Windows renewal settings could not be loaded.');
+        }
       }
     }
     if (isCurrent(version)) onChanged?.();
@@ -541,20 +565,61 @@ function IdentityDetailSession({
         ...(detail.sources || []),
         ...(detail.restartableSources || []),
       ].find(item => item.managedCertificateId === managedCertificateId);
-      if (
-        source &&
-        storeHasIisBinding(source) &&
-        profiles.find(profile => profile.id === profileId)?.renewalProfile
-          ?.target?.type === 'windows-iis'
-      ) {
+      if (source && storeOwnerForBinding(source) && profileId) {
         throw new Error(
-          'Assign the IIS renewal profile to the IIS binding instead of its store copy.'
+          'Renewal is managed by the Windows Store registration. Configure IIS updates there.'
+        );
+      }
+      if (source && bindingOwnershipUnknown(source) && profileId) {
+        throw new Error(
+          'IIS renewal ownership cannot be confirmed. Check Windows renewal settings first.'
         );
       }
       await readdManagingSource(workspaceId, managedCertificateId, {
         renewalProfileId: profileId || null,
         automationEnabled: Boolean(profileId),
       });
+      await refresh(version);
+    } catch (err) {
+      if (isCurrent(version))
+        setError(err?.response?.data?.error || err.message);
+    } finally {
+      if (isCurrent(version)) setBusy(false);
+    }
+  };
+
+  const updateWindowsRenewal = async (group, profileId) => {
+    const version = session.current.version;
+    setBusy(true);
+    setError('');
+    try {
+      await replaceManagingSource(workspaceId, group.managedCertificateId, {
+        periodId: group.periodId,
+        renewalProfileId: profileId,
+        automationEnabled: true,
+      });
+      await refresh(version);
+      return isCurrent(version);
+    } catch (err) {
+      if (isCurrent(version))
+        setError(err?.response?.data?.error || err.message);
+      return false;
+    } finally {
+      if (isCurrent(version)) setBusy(false);
+    }
+  };
+
+  const toggleWindowsConsumer = async (group, binding, enabled) => {
+    const version = session.current.version;
+    setBusy(true);
+    setError('');
+    try {
+      await setWindowsIisConsumer(
+        workspaceId,
+        group.periodId,
+        binding.targetId,
+        enabled
+      );
       await refresh(version);
     } catch (err) {
       if (isCurrent(version))
@@ -592,60 +657,12 @@ function IdentityDetailSession({
       );
     }
   }
-  const windowsLocations = activeSources
-    .filter(source => source.source === 'agent_windows')
-    .map(source => ({
-      source,
-      match: String(source.sourceRef || '').match(
-        /^[^/]+\/([^/]+)\/(windows_store|iis_binding)\/(.+)$/i
-      ),
-    }))
-    .filter(item => item.match);
-  const hasStoreAndIis = windowsLocations.some(
-    item =>
-      item.match[2].toLowerCase() === 'windows_store' &&
-      windowsLocations.some(
-        other =>
-          other.match[2].toLowerCase() === 'iis_binding' &&
-          other.match[1].toLowerCase() === item.match[1].toLowerCase()
-      )
+  const showAdvancedRegistrations = windowsGroups.some(
+    group => group.bindings?.length || group.ambiguous
   );
-  const storeHasIisBinding = source =>
-    storeHasMatchingIis(source, detail.sources || [], detail.identityId);
-  const duplicateStores = activeSources.filter(
-    source =>
-      storeHasIisBinding(source) &&
-      source.renewalProfileId &&
-      source.periodId &&
-      activeSources.some(
-        other =>
-          other !== source &&
-          other.renewalProfileId === source.renewalProfileId &&
-          /\/iis_binding\//i.test(other.sourceRef || '')
-      )
+  const duplicateRoles = new Map(
+    windowsGroups.map(group => [group.periodId, group.duplicateRole])
   );
-  const correctDuplicateRenewal = async () => {
-    const version = session.current.version;
-    setBusy(true);
-    setError('');
-    try {
-      for (const source of duplicateStores) {
-        if (!isCurrent(version)) return;
-        await replaceManagingSource(workspaceId, source.managedCertificateId, {
-          periodId: source.periodId,
-          renewalProfileId: null,
-          automationEnabled: false,
-        });
-      }
-      await refresh(version);
-    } catch (err) {
-      if (isCurrent(version))
-        setError(err?.response?.data?.error || err.message);
-      await refresh(version);
-    } finally {
-      if (isCurrent(version)) setBusy(false);
-    }
-  };
   // When a current registration exists, show stopped registrations in history.
   // If all registrations are stopped, keep the restart action accessible.
   const latestSources = new Map();
@@ -916,7 +933,7 @@ function IdentityDetailSession({
       </DashboardDetailsSection>
       <DashboardDetailsSection
         title='Certificate management'
-        description='One certificate can have separate registrations for its stored copy and service bindings. Each registration has its own renewal settings.'
+        description='Review renewal settings and service bindings for this certificate.'
         icon={Settings}
         enclosed
         mb={0}
@@ -953,94 +970,20 @@ function IdentityDetailSession({
                   />
                 ))
             : null}
-          {hasStoreAndIis && !windowsGroups.some(group => group.profileId) ? (
-            <Box
-              mb={3}
-              p={3}
-              borderWidth='1px'
-              borderRadius='md'
-              borderColor='dashboard.modal.border'
-            >
-              <Text fontSize='xs' color='dashboard.modal.muted' mb={2}>
-                Renewal target
-              </Text>
-              {renewalChoices.length > 1 ? (
-                <Select
-                  aria-label='Renewal target'
-                  size='sm'
-                  value={selectedManagedId || ''}
-                  onChange={event => setSelectedSourceId(event.target.value)}
-                >
-                  <option value=''>Select a target</option>
-                  {renewalChoices.map(source => (
-                    <option
-                      key={source.managedCertificateId}
-                      value={source.managedCertificateId}
-                    >
-                      {registrationLabel(source)}
-                    </option>
-                  ))}
-                </Select>
-              ) : null}
-              {windowsLocations
-                .filter(
-                  item => item.source.managedCertificateId === selectedManagedId
-                )
-                .map(({ source, match }) => (
-                  <HStack
-                    key={source.managedCertificateId}
-                    align='start'
-                    spacing={3}
-                  >
-                    <Box
-                      as={Server}
-                      boxSize={5}
-                      mt={1}
-                      color='dashboard.modal.muted'
-                    />
-                    <Box>
-                      <Text fontSize='sm' fontWeight='semibold'>
-                        IIS · {match[3]}
-                      </Text>
-                      <Text fontSize='xs' color='dashboard.modal.muted'>
-                        {match[1]}
-                      </Text>
-                      <HStack mt={2} spacing={1}>
-                        <Box as={HardDrive} boxSize={3} />
-                        <Text fontSize='xs' color='dashboard.modal.muted'>
-                          Windows store:{' '}
-                          {windowsLocations
-                            .filter(
-                              item =>
-                                item.match[2].toLowerCase() ===
-                                  'windows_store' &&
-                                item.match[1].toLowerCase() ===
-                                  match[1].toLowerCase()
-                            )
-                            .map(item =>
-                              item.match[3].split('/').slice(0, 2).join('\\')
-                            )
-                            .filter(
-                              (value, index, all) =>
-                                all.indexOf(value) === index
-                            )
-                            .join(', ')}
-                        </Text>
-                        <Tooltip label='Renewing this target installs the certificate in Windows and updates this IIS binding. The store copy is included, so it has no separate renewal choice.'>
-                          <Box
-                            as='button'
-                            type='button'
-                            aria-label='How IIS renewal updates the Windows store'
-                          >
-                            <Info size={14} />
-                          </Box>
-                        </Tooltip>
-                      </HStack>
-                    </Box>
-                  </HStack>
-                ))}
-            </Box>
-          ) : sourceOptions.length > 1 ? (
+          {canManage && windowsGroups.length > 0 ? (
+            <WindowsCertificateUsage
+              groups={windowsGroups}
+              certificateName={detail.commonName || detail.name}
+              workspaceId={workspaceId}
+              canManage={canManage}
+              busy={busy}
+              profiles={profiles}
+              onSelect={setSelectedSourceId}
+              onProfile={updateWindowsRenewal}
+              onToggle={toggleWindowsConsumer}
+            />
+          ) : null}
+          {sourceOptions.length > 1 ? (
             <FormControl mb={3}>
               <FormLabel fontSize='sm' mb={1}>
                 Management registration
@@ -1059,7 +1002,7 @@ function IdentityDetailSession({
                     key={source.managedCertificateId}
                     value={source.managedCertificateId}
                   >
-                    {registrationLabel(source)} ·{' '}
+                    {registrationOptionLabel(source, detail.commonName)} ·{' '}
                     {canRestart(source)
                       ? 'Stopped'
                       : isEndedSource(source)
@@ -1087,24 +1030,14 @@ function IdentityDetailSession({
             <Alert status='warning' borderRadius='md' mb={3}>
               <AlertIcon />
               <AlertDescription fontSize='sm'>
-                {hasStoreAndIis
-                  ? 'Automatic renewal is configured twice for this target. Keep renewal on IIS and track the store copy without a separate renewal.'
-                  : 'The same renewal profile is assigned to multiple registrations. Check each target and its renewal settings before starting a renewal.'}
+                The same renewal profile is assigned to multiple registrations.
+                Check each target and its renewal settings before starting a
+                renewal.
               </AlertDescription>
-              {canManage && duplicateStores.length > 0 ? (
-                <Button
-                  ml={3}
-                  size='sm'
-                  isLoading={busy}
-                  onClick={correctDuplicateRenewal}
-                >
-                  Keep renewal on IIS only
-                </Button>
-              ) : null}
             </Alert>
           ) : null}
-          <Box as={hasStoreAndIis ? 'details' : 'div'}>
-            {hasStoreAndIis ? (
+          <Box as={showAdvancedRegistrations ? 'details' : 'div'}>
+            {showAdvancedRegistrations ? (
               <Box
                 as='summary'
                 cursor='pointer'
@@ -1178,6 +1111,7 @@ function IdentityDetailSession({
                     {visibleSources.map(source => {
                       const current = activeSources.includes(source);
                       const canReadd = canRestart(source);
+                      const duplicateRole = duplicateRoles.get(source.periodId);
                       return (
                         <Tr
                           key={`${source.periodId || source.managedCertificateId}-${source.startedAt || 'replacement'}`}
@@ -1186,6 +1120,13 @@ function IdentityDetailSession({
                             <Text fontSize='sm' fontWeight='semibold'>
                               {registrationLabel(source, false)}
                             </Text>
+                            {duplicateRole ? (
+                              <Text fontSize='xs' color='orange.400'>
+                                {duplicateRole === 'issued'
+                                  ? 'Keep for renewal'
+                                  : 'Duplicate Store observation'}
+                              </Text>
+                            ) : null}
                             {source.sourceRef ? (
                               <Box
                                 as='details'
@@ -1264,21 +1205,16 @@ function IdentityDetailSession({
                             ) : null}
                             {canManage && canReadd ? (
                               <VStack align='stretch' spacing={2}>
-                                {storeHasIisBinding(source) ? (
-                                  <HStack spacing={1}>
-                                    <Text fontSize='xs'>
-                                      IIS renewal unavailable here
-                                    </Text>
-                                    <Tooltip label='This certificate is used by IIS. Assign the IIS renewal profile to the IIS binding to update the service and its store copy together.'>
-                                      <Box
-                                        as='button'
-                                        type='button'
-                                        aria-label='Why IIS renewal is unavailable for this store copy'
-                                      >
-                                        <Info size={14} />
-                                      </Box>
-                                    </Tooltip>
-                                  </HStack>
+                                {storeOwnerForBinding(source) ? (
+                                  <Text fontSize='xs'>
+                                    Renewal is managed by the Windows Store
+                                    registration. Configure IIS updates there.
+                                  </Text>
+                                ) : bindingOwnershipUnknown(source) ? (
+                                  <Text fontSize='xs'>
+                                    IIS renewal ownership cannot be confirmed.
+                                    Check Windows renewal settings first.
+                                  </Text>
                                 ) : null}
                                 <Select
                                   aria-label={`Renewal settings for ${source.sourceRef || source.managedCertificateId}`}
@@ -1302,11 +1238,10 @@ function IdentityDetailSession({
                                     <option
                                       key={profile.id}
                                       value={profile.id}
-                                      disabled={
-                                        profile.renewalProfile?.target?.type ===
-                                          'windows-iis' &&
-                                        storeHasIisBinding(source)
-                                      }
+                                      disabled={Boolean(
+                                        storeOwnerForBinding(source) ||
+                                        bindingOwnershipUnknown(source)
+                                      )}
                                     >
                                       {profile.name || profile.id}
                                     </option>

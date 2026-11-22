@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { bindAuthenticatedAgent } = require("../../apps/api/services/certops/agentCredentialFence");
 
 const { loadRootEnv } = require("../../scripts/load-root-env");
 
@@ -77,6 +78,7 @@ describe("CertOps agent job logs (real database)", function () {
 
   async function createAgent(workspaceId, { capabilities = [] } = {}) {
     const agentId = `agent-${crypto.randomUUID()}`;
+    const credentialHash = crypto.randomBytes(32).toString("hex");
     const inserted = await TestUtils.execQuery(
       `INSERT INTO certops_agents (
          workspace_id, agent_id, name, agent_version, protocol_version,
@@ -90,18 +92,18 @@ describe("CertOps agent job logs (real database)", function () {
         workspaceId,
         agentId,
         `ttagent_${crypto.randomBytes(8).toString("hex")}`,
-        crypto.randomBytes(32).toString("hex"),
+        credentialHash,
         JSON.stringify(capabilities),
       ],
     );
-    return {
+    return bindAuthenticatedAgent({
       id: inserted.rows[0].id,
       agentId,
       workspaceId,
       agentVersion: "0.11.1",
       protocolVersion: "1.0.0",
       status: "active",
-    };
+    }, credentialHash);
   }
 
   async function createJob(workspaceId) {

@@ -124,10 +124,11 @@ certbot certonly --csr <csr.pem> --preferred-challenges dns --manual \
   --logs-dir   <stateDir>/acme/certbot/logs
 ```
 
-On Windows, include the Node executable in the hook string:
-`"<node.exe path>" "<hookPath>" present` or `... cleanup`. A bare `.js` path
-has no useful Windows file association. Certbot no longer officially supports
-Windows; use this format with Git Bash or an unsupported self-built Certbot.
+On Windows, both acme.sh and certbot DNS hooks use the Node executable
+running the agent. Bundled installations do not need Node on `PATH`.
+Install Git Bash and acme.sh separately, with explicit command-profile
+paths. Certbot no longer officially supports Windows; self-built Windows
+certbot installations remain operator-managed.
 
 For acme.sh, `--dns` takes the shipped dnsapi hook **name** (`dns_certops`),
 not an absolute path — acme.sh sources `dnsapi/dns_certops.sh` from its own

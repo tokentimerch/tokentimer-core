@@ -6,6 +6,8 @@ certificates.
 
 Package version tracks the TokenTimer Core release line; see `package.json` for the checkout version. Use the version of the tarball you downloaded when following the commands below. For a complete operator installation guide, see [Linux agent installation](https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install) or [Windows agent installation](https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install-windows).
 
+**Windows with bundled Node.js:** the candidate is fresh-install only and remains unavailable for deployment pending Microsoft publisher-signing verification and acceptance of the exact signed package. See the [Core Windows installation guide](../../docs/certops/agent/install-windows.md) for current prerequisites and acceptance status.
+
 ## Distribution model
 
 **Decision: private package, tarball installer only (not published to the public npm registry).**
@@ -62,6 +64,20 @@ bit-for-bit integrity against a trusted checksum channel (release notes,
 internal artifact store, etc.). Full signing + SBOM should be added when the
 shared release pipeline gains those primitives; do not invent a one-off
 signing scheme only for this package.
+
+The experimental `scripts/agent-sbom-enrich.py` binds executable digests and
+the Node license to a scanned Windows archive and the pinned upstream runtime.
+Supply the archive digest from an independently trusted source. This tool is
+not part of release publishing and does not authenticate the scanner, validate
+the full schema, or prove transitive dependency coverage; maintainers must
+verify those separately before using its output.
+
+On an isolated, unprivileged Linux build runner without network access,
+`scripts/agent-sbom-generate.py`
+can scan, enrich and schema-validate a candidate with independently pinned
+scanner and validator executables. It trusts processes with the same user ID;
+it does not enforce network isolation, sign the result or establish transitive
+dependency completeness.
 
 ## Upgrade / rollback
 

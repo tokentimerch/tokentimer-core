@@ -3654,8 +3654,9 @@ async function runWindowsStoreConsumerTail({ snapshot, certificatePem, jobId, cl
       errorMessage: "Store installation is verified; this build is not qualified for dependent IIS updates." };
   }
   try {
+    // Authorization uses the live claim transport. Outcomes remain buffered as evidence.
     const result = await require("./windows-iis/store-consumer-tail").runStoreConsumerTail({
-      snapshot, certificatePem, jobId, claimId: leaseOpts?.claimId, client, signal,
+      snapshot, certificatePem, jobId, claimId: leaseOpts?.claimId, client: leaseOpts?.leaseClient, signal,
       acquireLock: () => acquireWindowsStoreLocksWithWait(stateDir, "My"),
       execFileImpl: windowsExecFileImpl, connectImpl: windowsConnectImpl,
       ensureLease: async () => {
@@ -7162,13 +7163,12 @@ async function registerIfNeeded({
     }
     deleteBootstrapEnvFile(configDir);
     if (platformModule.isWindows()) {
-      const result = platformModule.clearWindowsServiceBootstrapToken({ configDir });
-      if (result.attempted && !result.cleared) {
+      const result = platformModule.clearWindowsServiceBootstrapToken({ configDir, serviceName: env.TOKENTIMER_AGENT_SERVICE_NAME });
+      if (!result.cleared && (result.attempted || result.reason === "invalid Windows service name")) {
         log(
           `tokentimer-agent: could not confirm the Windows service registry ` +
             `Environment value no longer holds the bootstrap token (${result.reason}); ` +
-            "if this agent runs as the TokenTimerAgent service, check " +
-            "HKLM\\SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent\\Environment manually.",
+            "check the agent service's registry Environment value manually.",
         );
       }
     }

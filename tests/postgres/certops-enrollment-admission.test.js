@@ -613,19 +613,126 @@ test("first store issuance remains tracking-only on proof replay until explicit 
   let period = (await pool.query("SELECT * FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL", [f.workspaceId, certificateId])).rows[0];
   assert.ok(period.renewal_profile_id, "derived profile exists");
   assert.equal(period.automation_enabled, false);
+
+  const issued = (await pool.query("SELECT * FROM managed_certificates WHERE id=$1", [certificateId])).rows[0];
+  const discoveryCredential = randomUUID();
+  const { createHash } = require("node:crypto");
+  const { agent_id: publicAgentId } = (await pool.query(
+    "UPDATE certops_agents SET credential_hash=$2 WHERE id=$1 RETURNING agent_id",
+    [f.agentId, createHash("sha256").update(discoveryCredential).digest("hex")],
+  )).rows[0];
+  const { bindAuthenticatedCredential } = require("../../apps/api/services/certops/agentCredentialFence");
+  const agent = bindAuthenticatedCredential({ id: f.agentId, agentId: publicAgentId, workspaceId: f.workspaceId }, discoveryCredential);
+  const { persistAgentDiscoveryEvidenceBatch } = require("../../apps/api/services/certops/agentObservations");
+  const thumbprint = "a".repeat(40);
+  const discover = async (sequence, storeName, keyPresent = true, targetHost = "agent-host.example.test") => {
+    const result = await persistAgentDiscoveryEvidenceBatch({ dbPool: pool, agent, envelope: { sequence }, evidenceItems: [{
+      evidenceId: randomUUID(), eventType: "certificate.observed", observedAt: new Date().toISOString(),
+      fingerprintSha256: issued.fingerprint_sha256,
+      metadata: [
+        { name: "locationKind", value: "windows_store" },
+        { name: "locationSlot", value: `LocalMachine/${storeName}/${thumbprint}` },
+        { name: "targetHost", value: targetHost },
+        { name: "storeLocation", value: "LocalMachine" },
+        { name: "storeName", value: storeName },
+        { name: "thumbprint", value: thumbprint },
+        { name: "keyPresent", value: keyPresent },
+        { name: "subject", value: "CN=app.example.com" },
+        { name: "validTo", value: issued.not_after.toISOString() },
+      ],
+    }] });
+    return result.items[0];
+  };
+  const observed = await discover(1, "My");
+  assert.equal(observed.managedCertificateId, certificateId, "Store discovery must link to the proven issuance");
+  const repeated = await discover(2, "My");
+  assert.equal(repeated.managedCertificateId, certificateId);
+  assert.equal(repeated.certificateInstanceId, observed.certificateInstanceId);
+  const matching = await pool.query(`SELECT mc.id,p.id AS period_id,p.renewal_profile_id,p.automation_enabled
+    FROM managed_certificates mc JOIN certops_management_periods p ON p.workspace_id=mc.workspace_id AND p.managed_certificate_id=mc.id
+    WHERE mc.workspace_id=$1 AND mc.fingerprint_sha256=$2 AND p.ended_at IS NULL`, [f.workspaceId, issued.fingerprint_sha256]);
+  assert.deepEqual(matching.rows, [{ id: certificateId, period_id: period.id, renewal_profile_id: period.renewal_profile_id, automation_enabled: false }]);
+  const observationEvidence = await pool.query(`SELECT subject_id,metadata->>'managedCertificateId' AS certificate_id
+    FROM certificate_evidence WHERE workspace_id=$1 AND evidence_type='certificate.observed'`, [f.workspaceId]);
+  assert.deepEqual(observationEvidence.rows, Array(2).fill({ subject_id: certificateId, certificate_id: certificateId }));
+  const otherStore = await discover(3, "WebHosting");
+  assert.notEqual(otherStore.managedCertificateId, certificateId);
+  // Model a duplicate discovered by an older control plane before the
+  // issuance result was reconciled. Its period and evidence stay intact.
+  const legacy = (await pool.query(`INSERT INTO managed_certificates
+    (workspace_id,source,source_ref,fingerprint_sha256,name,status,deployed_agent_id,key_mode)
+    SELECT c.workspace_id,'agent_windows',target.source_ref,c.fingerprint_sha256,'Older Store observation',
+      'discovered',c.deployed_agent_id,'os-store-managed'
+    FROM managed_certificates c
+    JOIN certificate_instances ci ON ci.managed_certificate_id=c.id
+    JOIN certificate_targets target ON target.id=ci.target_id
+    WHERE c.id=$1 AND ci.id=$2 RETURNING id`, [certificateId, observed.certificateInstanceId])).rows[0];
+  assert.equal((await discover(4, "My")).managedCertificateId, legacy.id);
+  const { listWindowsRenewal } = require("../../apps/api/services/certops/windowsIisConsent");
+  const groups = () => listWindowsRenewal({ client: pool, workspaceId: f.workspaceId, identityId: period.current_identity_id });
+  const duplicateGroups = (await groups()).groups.filter(group => group.agentId === f.agentId);
+  assert.ok(duplicateGroups.every(group => group.ambiguous));
+  assert.deepEqual(
+    Object.fromEntries(duplicateGroups.map(group => [group.managedCertificateId, group.duplicateRole])),
+    { [certificateId]: "issued", [legacy.id]: "observed" },
+  );
+  const legacyPeriod = duplicateGroups.find(group => group.managedCertificateId === legacy.id).periodId;
+  const identity = require("../../apps/api/services/certops/certificateIdentity");
+  await assert.rejects(identity.replaceManagingSource({ client: pool, workspaceId: f.workspaceId,
+    periodId: legacyPeriod, managedCertificateId: legacy.id, renewalProfileId: period.renewal_profile_id,
+    automationEnabled: true, actorUserId: f.actor }), error => error.code === "CERTOPS_WINDOWS_CONSENT_REFUSED");
+  await identity.stopManagingSource({ client: pool, workspaceId: f.workspaceId, periodId: legacyPeriod, actorUserId: f.actor });
+  const reattached = await discover(5, "My");
+  assert.equal(reattached.managedCertificateId, certificateId);
+  assert.equal(reattached.certificateInstanceId, observed.certificateInstanceId);
+  assert.deepEqual((await groups()).groups.map(group => [group.managedCertificateId, group.ambiguous]), [[certificateId, false]]);
+  assert.equal((await pool.query("SELECT ended_reason FROM certops_management_periods WHERE id=$1", [legacyPeriod])).rows[0].ended_reason, "stopped_by_operator");
+  assert.equal(Number((await pool.query(`SELECT count(*) FROM certificate_evidence WHERE workspace_id=$1
+    AND evidence_type='certificate.observed' AND subject_id=$2`, [f.workspaceId, legacy.id])).rows[0].count), 1);
+
+  const afterDiscovery = (await pool.query("SELECT * FROM managed_certificates WHERE id=$1", [certificateId])).rows[0];
+  assert.deepEqual(afterDiscovery, issued, "discovery must preserve the verified issuance and its key reference");
+  const issuedStoreProfile = period.renewal_profile_id;
+  await identity.stopManagingSource({ client: pool, workspaceId: f.workspaceId, periodId: period.id, actorUserId: f.actor });
+  assert.deepEqual(await groups(), { groups: [], issuedStoreRegistrationIds: [certificateId] });
+  assert.deepEqual(await listWindowsRenewal({ client: pool, workspaceId: randomUUID(), identityId: period.current_identity_id }),
+    { groups: [], issuedStoreRegistrationIds: [] });
+  const tracking = await identity.replaceManagingSource({ client: pool, workspaceId: f.workspaceId,
+    managedCertificateId: certificateId, renewalProfileId: null, automationEnabled: false, actorUserId: f.actor });
+  await assert.rejects(identity.replaceManagingSource({ client: pool, workspaceId: f.workspaceId, periodId: tracking.readded.periodId,
+    managedCertificateId: certificateId, renewalProfileId: f.profile.id, automationEnabled: true, actorUserId: f.actor }),
+  error => error.code === "CERTOPS_WINDOWS_CONSENT_REFUSED");
+  period = (await pool.query("SELECT * FROM certops_management_periods WHERE id=$1", [tracking.readded.periodId])).rows[0];
+  assert.equal(period.renewal_profile_id, null);
   const sweep = () => scheduler.runRenewalSchedulerSweep({ dbPool: pool, env: { CERTOPS_ENABLED: "true" }, auditWriter: async () => {} });
   const automaticJobs = async () => Number((await pool.query("SELECT COUNT(*) FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2::text AND operation='renew' AND source='automation'", [f.workspaceId, certificateId])).rows[0].count);
   await sweep();
   assert.equal(await automaticJobs(), 0);
-  const identity = require("../../apps/api/services/certops/certificateIdentity");
   await identity.replaceManagingSource({ client: pool, workspaceId: f.workspaceId, periodId: period.id,
-    managedCertificateId: certificateId, renewalProfileId: period.renewal_profile_id, automationEnabled: true, actorUserId: f.actor });
+    managedCertificateId: certificateId, renewalProfileId: issuedStoreProfile, automationEnabled: true, actorUserId: f.actor });
   period = (await pool.query("SELECT * FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL", [f.workspaceId, certificateId])).rows[0];
   assert.equal(period.automation_enabled, true);
   await sweep();
   assert.equal(await automaticJobs(), 1);
   await sweep();
   assert.equal(await automaticJobs(), 1);
+
+  await pool.query(`INSERT INTO managed_certificates (workspace_id,status,source,source_ref,name,fingerprint_sha256,
+      key_mode,key_reference,public_metadata,deployed_agent_id)
+    SELECT workspace_id,status,source,$2,name,fingerprint_sha256,key_mode,key_reference,public_metadata,deployed_agent_id
+    FROM managed_certificates WHERE id=$1`, [certificateId, randomUUID()]);
+  const ambiguous = await discover(6, "My");
+  assert.equal(ambiguous.unmanaged, true, "ambiguous issuance retains the observation without selecting an owner");
+  assert.equal(ambiguous.managedCertificateId, null);
+  const beforeNoKey = await pool.query("SELECT source FROM managed_certificates WHERE workspace_id=$1 AND fingerprint_sha256=$2 ORDER BY source",
+    [f.workspaceId, issued.fingerprint_sha256]);
+  assert.deepEqual(beforeNoKey.rows.map(row => row.source), ["agent_issuance", "agent_issuance", "agent_windows", "agent_windows"]);
+
+  const noKey = await discover(7, "My", false, "no-key-slot.example.test");
+  assert.notEqual(noKey.managedCertificateId, certificateId);
+  assert.deepEqual((await pool.query(`SELECT mc.key_mode,p.renewal_profile_id,p.automation_enabled
+    FROM managed_certificates mc JOIN certops_management_periods p ON p.managed_certificate_id=mc.id
+    WHERE mc.id=$1`, [noKey.managedCertificateId])).rows, [{ key_mode: null, renewal_profile_id: null, automation_enabled: false }]);
 });
 
 test("orphaned first store issuance recovers only on its original agent", async () => {
@@ -811,7 +918,8 @@ test("retirement or credential rotation wins against already authenticated agent
       assert.equal(await Promise.race([settled.then(() => "settled"), new Promise(resolve => setTimeout(() => resolve("waiting"), 100))]), "waiting");
       await writer.query("COMMIT");
       const results = await settled;
-      assert.ok(results.every(result => result.status === "rejected" && result.reason.code === "CERTOPS_AGENT_CREDENTIAL_INVALID"), JSON.stringify(results));
+      const expected = mutation === "retire" ? "CERTOPS_AGENT_RETIRED" : "CERTOPS_AGENT_CREDENTIAL_STALE";
+      assert.ok(results.every(result => result.status === "rejected" && result.reason.code === expected), JSON.stringify(results));
     } catch (error) { await writer.query("ROLLBACK"); throw error; } finally { writer.release(); }
   }
 });
@@ -968,7 +1076,7 @@ for (const hasIisConsumers of [false, true]) test(`AD CS proof recovery verifies
       if (mutation === "legacy") await client.query("UPDATE certops_adcs_expected_identity_receipts SET receipt_claim_expires_at=NULL WHERE id=$1", [first.receiptId]);
       if (mutation === "credential") await client.query("UPDATE certops_agents SET credential_hash=$2 WHERE id=$1", [f.agentId, "ef".repeat(32)]);
       await assert.rejects(recovery.witnessCommittedAdcsIdentityTx({ client, agent, jobId: job.id, receiptId: first.receiptId }),
-        mutation === "credential" ? { code: "CERTOPS_AGENT_CREDENTIAL_INVALID" } : /not observed within the original claim/);
+        mutation === "credential" ? { code: "CERTOPS_AGENT_CREDENTIAL_STALE" } : /not observed within the original claim/);
       await client.query("ROLLBACK TO SAVEPOINT invalid_commit_witness");
     }
     await recovery.witnessCommittedAdcsIdentityTx({ client, agent, jobId: job.id, receiptId: first.receiptId });
@@ -1223,12 +1331,29 @@ test("IIS consent requires a fresh matching Store agent and rejects existing ren
       windows_store,windows_site,windows_port,public_metadata)
     VALUES($1,'IIS','windows-iis','agent_windows',$2,'iis_binding','My','Default Web Site',443,$3::jsonb) RETURNING id`,
     [f.workspaceId,randomUUID(),JSON.stringify({ agentId: agent.agent_id })])).rows[0];
+  const sourceRef = randomUUID();
+  // A native rebind keeps the selector and replaces the fingerprint. The
+  // inventory trigger stamps absence on the old row at the same instant,
+  // and UUID order alone would choose the old row in this fixture.
+  const priorFingerprint = randomBytes(32).toString("hex");
+  await pool.query(`INSERT INTO certificate_instances(id,workspace_id,managed_certificate_id,target_id,status,source,source_ref,
+      location_kind,observed_fingerprint_sha256,observed_at)
+    VALUES('ffffffff-ffff-4fff-bfff-ffffffffffff',$1,$2,$3,'discovered','agent_windows',$4,'iis_binding',$5,NOW()-interval '1 minute')`,
+    [f.workspaceId,bindingCert.id,target.id,sourceRef,priorFingerprint]);
   await pool.query(`INSERT INTO certificate_instances(workspace_id,managed_certificate_id,target_id,status,source,source_ref,
       location_kind,observed_fingerprint_sha256,observed_at) VALUES($1,$2,$3,'discovered','agent_windows',$4,'iis_binding',$5,NOW())`,
-    [f.workspaceId,bindingCert.id,target.id,randomUUID(),f.certificate.fingerprint_sha256]);
+    [f.workspaceId,bindingCert.id,target.id,sourceRef,f.certificate.fingerprint_sha256]);
+  const capture = await pool.query(`SELECT presence_state,captured_at FROM certificate_instances
+    WHERE workspace_id=$1 AND target_id=$2 ORDER BY presence_state`, [f.workspaceId,target.id]);
+  assert.deepEqual(capture.rows.map(row => row.presence_state), ["confirmed_absent","confirmed_present"]);
+  assert.deepEqual(capture.rows[0].captured_at, capture.rows[1].captured_at);
+
   const client = await pool.connect();
-  const { enableWindowsIisConsumer } = require('../../apps/api/services/certops/windowsIisConsent');
+  const { assertIndependentIisTarget, enableWindowsIisConsumer } = require('../../apps/api/services/certops/windowsIisConsent');
   try {
+    await assert.rejects(assertIndependentIisTarget({ client, workspaceId: f.workspaceId, agentId: f.agentId,
+      target: { type: "windows-iis", store: "My", reference: profileTarget.reference, binding: { site: "Default Web Site", port: 443 } },
+    }), error => error.code === "CERTOPS_WINDOWS_CONSENT_REFUSED");
     await pool.query("UPDATE certificate_targets SET public_metadata=public_metadata || '{\"observationOnly\":true,\"boundAddress\":\"192.0.2.10\"}'::jsonb WHERE id=$1", [target.id]);
     await client.query('BEGIN');
     await assert.rejects(enableWindowsIisConsumer({ client, workspaceId: f.workspaceId, periodId: period.id,
@@ -1251,6 +1376,7 @@ test("IIS consent requires a fresh matching Store agent and rejects existing ren
     const listed=await require('../../apps/api/services/certops/windowsIisConsent').listWindowsRenewal({ client,workspaceId:f.workspaceId,identityId:identity });
     assert.equal(listed.groups.length,1);
     assert.equal(listed.groups[0].bindings[0].automaticUpdate,true);
+    assert.equal(listed.groups[0].bindings[0].relationship,"observed");
     const enrollment = await manual(f, { target: profileTarget });
     const claim = randomUUID();
     await pool.query(`UPDATE certificate_jobs SET status='running',claimed_by_agent_id=$2,claim_id=$3,
@@ -1291,4 +1417,259 @@ test("IIS consent requires a fresh matching Store agent and rejects existing ren
       targetId: target.id, actorUserId: f.actor, audit: async () => {} }), error => error.code === 'CERTOPS_WINDOWS_CONSENT_REFUSED');
     await client.query('ROLLBACK');
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+});
+
+test("management attachment refuses a second renewal owner before IIS consent exists", async () => {
+  const f = await fixture();
+  const target = { ...TARGET, store: "My" };
+  const { replaceManagingSource } = require("../../apps/api/services/certops/certificateIdentity");
+  const { assertIndependentIisTarget } = require("../../apps/api/services/certops/windowsIisConsent");
+  const createProfile = (name, destination) => profiles.createAdcsRenewalProfile({
+    dbPool: pool, workspaceId: f.workspaceId, actorUserId: f.actor,
+    body: { name, issuerId: f.issuerId, keyAlgorithm: "rsa", keySize: 2048, target: destination },
+  });
+  const storeProfile = await createProfile("Store", { type: "windows-cert-store", reference: target.reference, store: "My" });
+  const iisProfile = await createProfile("IIS", target);
+  await pool.query("UPDATE managed_certificates SET deployed_agent_id=$2 WHERE id=$1", [f.certificate.id, f.agentId]);
+  const agent = (await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1", [f.agentId])).rows[0];
+  const binding = (await pool.query(`INSERT INTO managed_certificates
+    (workspace_id,source,source_ref,fingerprint_sha256,name,status,deployed_agent_id,key_mode)
+    VALUES($1,'agent_windows',$2,$3,'IIS','discovered',$4,'os-store-managed') RETURNING id`,
+  [f.workspaceId, `${agent.agent_id}/host/iis_binding/Shop:443`, f.certificate.fingerprint_sha256, f.agentId])).rows[0];
+  const listener = (await pool.query(`INSERT INTO certificate_targets
+    (workspace_id,name,target_type,source,source_ref,location_kind,windows_store,windows_site,windows_port,public_metadata)
+    VALUES($1,'IIS','windows-iis','agent_windows',$2,'iis_binding','My','Shop',443,$3::jsonb) RETURNING id`,
+  [f.workspaceId, randomUUID(), JSON.stringify({ agentId: agent.agent_id })])).rows[0];
+  await pool.query(`INSERT INTO certificate_instances
+    (workspace_id,managed_certificate_id,target_id,status,source,source_ref,location_kind,
+     observed_fingerprint_sha256,observed_at,presence_state)
+    VALUES($1,$2,$3,'discovered','agent_windows',$4,'iis_binding',$5,NOW(),'confirmed_present')`,
+  [f.workspaceId,binding.id,listener.id,randomUUID(),f.certificate.fingerprint_sha256]);
+  const replace = async (id, profileId) => {
+    const period = (await pool.query(`SELECT id FROM certops_management_periods
+      WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL`, [f.workspaceId, id])).rows[0];
+    return replaceManagingSource({ workspaceId: f.workspaceId, periodId: period?.id, managedCertificateId: id,
+      renewalProfileId: profileId, automationEnabled: Boolean(profileId), actorUserId: f.actor });
+  };
+  const refused = error => error.code === "CERTOPS_WINDOWS_CONSENT_REFUSED";
+
+  // Both directions share the workspace lock, so one attachment wins and
+  // the refused transaction preserves the other registration.
+  const attempts = await Promise.allSettled([
+    replace(f.certificate.id, storeProfile.id),
+    replace(binding.id, iisProfile.id),
+  ]);
+  assert.equal(attempts.filter(result => result.status === "fulfilled").length, 1);
+  assert.ok(refused(attempts.find(result => result.status === "rejected").reason));
+  if (attempts[1].status === "fulfilled") {
+    await replace(binding.id, null);
+    await replace(f.certificate.id, storeProfile.id);
+  }
+
+  assert.equal(Number((await pool.query("SELECT count(*) FROM certops_windows_iis_renewal_consumers WHERE workspace_id=$1",
+    [f.workspaceId])).rows[0].count), 0);
+  await assert.rejects(replace(f.certificate.id, iisProfile.id), refused);
+  const stillStore = await pool.query(`SELECT renewal_profile_id FROM certops_management_periods
+    WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL`, [f.workspaceId, f.certificate.id]);
+  assert.equal(stillStore.rows[0].renewal_profile_id, storeProfile.id);
+  await assert.rejects(replace(binding.id, iisProfile.id), refused);
+  const stillTracked = await pool.query(`SELECT renewal_profile_id FROM certops_management_periods
+    WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL`, [f.workspaceId, binding.id]);
+  assert.equal(stillTracked.rows[0].renewal_profile_id, null);
+
+  const gate = { client: pool, workspaceId: f.workspaceId, agentId: f.agentId, target };
+  await assert.rejects(assertIndependentIisTarget(gate), refused);
+  await assert.rejects(manual(f, { certificateId: binding.id, target }), refused);
+  assert.equal(Number((await pool.query("SELECT count(*) FROM certificate_enrollments WHERE certificate_id=$1",
+    [binding.id])).rows[0].count), 0);
+  await assertIndependentIisTarget({ ...gate, target: { ...target, binding: { ...target.binding, port: 444 } } });
+  await pool.query("UPDATE certops_agents SET status='offline' WHERE id=$1", [f.agentId]);
+  await assert.rejects(assertIndependentIisTarget(gate), refused);
+  await pool.query("UPDATE certificate_instances SET presence_state='confirmed_absent' WHERE target_id=$1", [listener.id]);
+  await assertIndependentIisTarget(gate);
+
+  const credential = randomUUID();
+  await pool.query(`UPDATE certops_agents SET credential_hash=$2,status='active',last_seen_at=NOW(),
+    declared_capabilities=declared_capabilities || '["windows-cert-store-v1","iis-binding-v1"]'::jsonb, capabilities_updated_at=NOW()
+    WHERE id=$1`, [f.agentId, require("node:crypto").createHash("sha256").update(credential).digest("hex")]);
+  const queued = await manual(f, { certificateId: binding.id, target });
+  const claim = () => require("../../apps/api/services/certops/agentDispatch").claimJobs({
+    dbPool: pool,
+    agent: require("../../apps/api/services/certops/agentCredentialFence").bindAuthenticatedCredential({
+      id: f.agentId, agentId: agent.agent_id, workspaceId: f.workspaceId, status: "active",
+      platform: "win32", protocolVersion: "1.0.0", agentVersion: "0.18.1",
+    }, credential),
+    body: { maxJobs: 1, supportedActions: ["renew"] },
+    env: { CERTOPS_ENABLED: "true" },
+    deps: { enforceAgentSequence: async () => {}, signJobForDispatch: async ({ job }) => job },
+  });
+  await pool.query("UPDATE certificate_instances SET presence_state='confirmed_present' WHERE target_id=$1", [listener.id]);
+  assert.deepEqual((await claim()).jobs, []);
+  const jobDetails = () => require("../../apps/api/services/certops/jobs").getCertificateJobById({
+    client: pool, workspaceId: f.workspaceId, jobId: queued.jobId,
+  });
+  const held = await jobDetails();
+  assert.equal(held.status, "pending");
+  assert.equal(held.errorCode, "CERTOPS_IIS_STORE_OWNERSHIP_CHANGED");
+  assert.equal(held.pendingReason.code, "iis_store_ownership_changed");
+  assert.match(held.pendingReason.message, /Cancel this queued enrollment/);
+  await pool.query("UPDATE certificate_instances SET presence_state='confirmed_absent' WHERE target_id=$1", [listener.id]);
+  assert.deepEqual((await claim()).jobs, [], "an older IIS enrollment must remain held when the observed binding changes");
+  await enrollments.cancelEnrollment({ client: pool, workspaceId: f.workspaceId,
+    enrollmentId: queued.enrollmentId, actorUserId: f.actor, audit: async () => {} });
+  assert.equal((await jobDetails()).status, "cancelled");
+  const replacement = await manual(f, { certificateId: binding.id, target });
+  assert.equal((await claim()).jobs[0]?.jobId, replacement.jobId);
+});
+
+test("Store renewal admits one registration per agent and fingerprint and defers older ambiguous jobs", async () => {
+  const f = await fixture();
+  const target = { type: "windows-cert-store", reference: TARGET.reference, store: "My" };
+  const credential = randomUUID();
+  const agent = (await pool.query(`UPDATE certops_agents SET credential_hash=$2,last_seen_at=NOW(),
+    declared_capabilities=declared_capabilities || '["windows-cert-store-v1"]'::jsonb, capabilities_updated_at=NOW()
+    WHERE id=$1 RETURNING agent_id`, [f.agentId, require("node:crypto").createHash("sha256").update(credential).digest("hex")])).rows[0];
+  await pool.query(`UPDATE certificate_profiles SET public_metadata=jsonb_set(public_metadata,'{renewalProfile,target}',$2::jsonb)
+    WHERE id=$1`, [f.profile.id, JSON.stringify(target)]);
+  await pool.query(`UPDATE managed_certificates SET source='agent_windows',source_ref=$2, key_mode='os-store-managed',
+    deployed_agent_id=$3 WHERE id=$1`, [f.certificate.id, `${agent.agent_id}/host-a/windows_store_v2/LocalMachine/My/leaf`, f.agentId]);
+  const duplicate = (await pool.query(`INSERT INTO managed_certificates
+    (workspace_id,source,source_ref,fingerprint_sha256,name,common_name,status,not_after,key_mode,deployed_agent_id)
+    SELECT workspace_id,source,$2,fingerprint_sha256,name,common_name,status,not_after,key_mode,deployed_agent_id
+    FROM managed_certificates WHERE id=$1 RETURNING id`,
+  [f.certificate.id, `${agent.agent_id}/host-b/windows_store_v2/LocalMachine/My/leaf`])).rows[0];
+  const identity = require("../../apps/api/services/certops/certificateIdentity");
+  const periodFor = async id => (await pool.query(`SELECT * FROM certops_management_periods
+    WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL`, [f.workspaceId, id])).rows[0];
+  const attach = async id => identity.replaceManagingSource({ client: pool, workspaceId: f.workspaceId,
+    managedCertificateId: id, periodId: (await periodFor(id)).id, renewalProfileId: f.profile.id,
+    automationEnabled: true, actorUserId: f.actor });
+  const isCompetingOwner = error => error.code === "CERTOPS_WINDOWS_CONSENT_REFUSED" &&
+    /competing Windows Store renewal/.test(error.message);
+  const ids = [f.certificate.id, duplicate.id];
+  const results = await Promise.allSettled(ids.map(attach));
+  const winnerIndex = results.findIndex(result => result.status === "fulfilled");
+  assert.notEqual(winnerIndex, -1);
+  assert.ok(isCompetingOwner(results[1 - winnerIndex].reason));
+  const [winner, other] = [ids[winnerIndex], ids[1 - winnerIndex]];
+  assert.equal((await periodFor(other)).automation_enabled, false);
+
+  const queued = await manual(f, { certificateId: winner, target });
+  const otherPeriod = await periodFor(other);
+  // Inspect a previously admitted configuration using production paths.
+  await pool.query(`UPDATE certops_management_periods SET renewal_profile_id=$2,automation_enabled=true WHERE id=$1`,
+    [otherPeriod.id, f.profile.id]);
+  await assert.rejects(manual(f, { certificateId: other, target }), isCompetingOwner);
+  const dispatch = require("../../apps/api/services/certops/agentDispatch");
+  const storeAgent = require("../../apps/api/services/certops/agentCredentialFence").bindAuthenticatedCredential({
+    id: f.agentId, agentId: agent.agent_id, workspaceId: f.workspaceId, status: "active",
+    platform: "win32", protocolVersion: "1.0.0", agentVersion: "0.18.1",
+  }, credential);
+  const claim = () => dispatch.claimJobs({ dbPool: pool, agent: storeAgent,
+    body: { maxJobs: 1, supportedActions: ["renew"] }, env: { CERTOPS_ENABLED: "true" },
+    deps: { enforceAgentSequence: async () => {}, signJobForDispatch: async ({ job }) => job },
+  });
+  assert.deepEqual((await claim()).jobs, []);
+  await identity.stopManagingSource({ client: pool, workspaceId: f.workspaceId, periodId: otherPeriod.id, actorUserId: f.actor });
+  const claimed = (await claim()).jobs[0];
+  assert.equal(claimed.jobId, queued.jobId);
+  const renewLease = () => dispatch.renewJobLease({ dbPool: pool, agent: storeAgent,
+    jobId: claimed.jobId, claimId: claimed.claimId, envelope: {},
+    deps: { enforceAgentSequence: async () => {},
+      extendJobNonceExpiry: async () => ({ expiresAt: new Date(Date.now() + 60000).toISOString() }) },
+  });
+  assert.equal((await renewLease()).status, "running");
+  const tracked = await identity.readdManagingSource({ client: pool, workspaceId: f.workspaceId,
+    managedCertificateId: other, renewalProfileId: null, automationEnabled: false, actorUserId: f.actor });
+  await pool.query("UPDATE certops_management_periods SET renewal_profile_id=$2,automation_enabled=true WHERE id=$1",
+    [tracked.periodId, f.profile.id]);
+  const stillRunning = await renewLease();
+  assert.equal(stillRunning.status, "running");
+  assert.equal(stillRunning.claimId, claimed.claimId);
+});
+
+test("Store renewal limits IIS consent under concurrent enablement and survives older oversized sets", async () => {
+  const f = await fixture();
+  const target = { type: "windows-cert-store", reference: TARGET.reference, store: "My" };
+  const agent = (await pool.query(`UPDATE certops_agents SET last_seen_at=NOW(),
+    declared_capabilities=declared_capabilities || '["windows-store-iis-consumers-v1"]'::jsonb,
+    capabilities_updated_at=NOW() WHERE id=$1 RETURNING agent_id`, [f.agentId])).rows[0];
+  await pool.query(`UPDATE certificate_profiles SET public_metadata=jsonb_set(public_metadata,'{renewalProfile,target}',$2::jsonb)
+    WHERE id=$1`, [f.profile.id, JSON.stringify(target)]);
+  await pool.query("UPDATE managed_certificates SET deployed_agent_id=$2 WHERE id=$1", [f.certificate.id, f.agentId]);
+  const period = (await pool.query(`UPDATE certops_management_periods SET renewal_profile_id=$3
+    WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL RETURNING id,current_identity_id`,
+  [f.workspaceId, f.certificate.id, f.profile.id])).rows[0];
+  const listenerCert = (await pool.query(`INSERT INTO managed_certificates(workspace_id,source,source_ref,fingerprint_sha256,name,status)
+    VALUES($1,'agent_windows',$2,$3,'IIS','discovered') RETURNING id`,
+  [f.workspaceId, randomUUID(), f.certificate.fingerprint_sha256])).rows[0];
+  const listeners = (await pool.query(`INSERT INTO certificate_targets(workspace_id,name,target_type,source,source_ref,location_kind,
+      windows_store,windows_site,windows_port,public_metadata)
+    SELECT $1,'IIS','windows-iis','agent_windows','iis-cap-test:' || port,'iis_binding','My','Default Web Site',
+      port,jsonb_build_object('agentId',$2::text)
+    FROM generate_series(8400,8433) AS port RETURNING id,windows_port`, [f.workspaceId, agent.agent_id])).rows
+    .sort((a, b) => a.windows_port - b.windows_port);
+  await pool.query(`INSERT INTO certificate_instances
+    (workspace_id,managed_certificate_id,target_id,status,source,source_ref,location_kind,observed_fingerprint_sha256,observed_at)
+    SELECT workspace_id,$2,id,'discovered','agent_windows',source_ref,'iis_binding',$3,NOW()
+    FROM certificate_targets WHERE workspace_id=$1 AND id=ANY($4::uuid[])`,
+  [f.workspaceId, listenerCert.id, f.certificate.fingerprint_sha256, listeners.map(listener => listener.id)]);
+  const { authorizeWindowsIisConsumer, listWindowsRenewal, setWindowsIisConsumer, snapshotWindowsIisConsumers } =
+    require("../../apps/api/services/certops/windowsIisConsent");
+  const consent = (listener, enabled = true) => setWindowsIisConsumer({ dbPool: pool, workspaceId: f.workspaceId,
+    periodId: period.id, targetId: listener.id, enabled, actorUserId: f.actor });
+  const snapshot = () => snapshotWindowsIisConsumers({ client: pool, workspaceId: f.workspaceId,
+    certificateId: f.certificate.id, agentId: f.agentId });
+  const first = await consent(listeners[0]);
+  for (const listener of listeners.slice(1, 31)) await consent(listener);
+  const candidates = listeners.slice(31, 33);
+  const results = await Promise.allSettled(candidates.map(listener => consent(listener)));
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+  const rejectedIndex = results.findIndex(result => result.status === "rejected");
+  assert.equal(results[rejectedIndex].reason.code, "CERTOPS_WINDOWS_CONSENT_REFUSED");
+  assert.match(results[rejectedIndex].reason.message, /at most 32/);
+  assert.deepEqual(await consent(listeners[0]), first);
+  assert.equal((await snapshot()).length, 32);
+  const listed = await listWindowsRenewal({ client: pool, workspaceId: f.workspaceId, identityId: period.current_identity_id });
+  assert.equal(listed.groups[0].bindings.find(binding => binding.targetId === candidates[rejectedIndex].id).canEnable, false);
+  await consent(listeners[0], false);
+  await consent(candidates[rejectedIndex]);
+  const capped = await snapshot();
+  assert.equal(capped.length, 32);
+
+  const overflow = listeners[33];
+  const { iisSelectorKey } = require("../../apps/api/services/certops/windowsRenewalOwnership");
+  const earlier = await manual(f, { target });
+  const claimId = randomUUID();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`UPDATE certificate_jobs SET status='running',claimed_by_agent_id=$2,claim_id=$3,
+      lease_expires_at=NOW()+interval '5 minutes' WHERE id=$1`, [earlier.jobId, f.agentId, claimId]);
+    const { consumerId, authorizationRevision } = capped[0];
+    const canUpdate = () => authorizeWindowsIisConsumer({ client, agent: { id: f.agentId, workspaceId: f.workspaceId },
+      jobId: earlier.jobId, claimId, consumerId, authorizationRevision });
+    assert.equal(await canUpdate(), true);
+    await pool.query(`INSERT INTO certops_windows_iis_renewal_consumers
+      (workspace_id,owner_id,agent_id,target_id,selector_key,automatic_update,authorized_by,authorized_at)
+      SELECT workspace_id,id,agent_id,$3,$4,true,$5,clock_timestamp()
+      FROM certops_windows_store_renewal_owners WHERE workspace_id=$1 AND management_period_id=$2`,
+    [f.workspaceId, period.id, overflow.id, iisSelectorKey({ port: overflow.windows_port }), f.actor]);
+    assert.equal(await canUpdate(), false, "an earlier signed set cannot authorize an IIS update after the cap is exceeded");
+  } finally {
+    await client.query("ROLLBACK");
+    client.release();
+  }
+  await enrollments.cancelEnrollment({ client: pool, workspaceId: f.workspaceId,
+    enrollmentId: earlier.enrollmentId, actorUserId: f.actor, audit: async () => {} });
+  assert.deepEqual(await snapshot(), []);
+  const oversized = await listWindowsRenewal({ client: pool, workspaceId: f.workspaceId, identityId: period.current_identity_id });
+  assert.equal(oversized.groups[0].ready, false);
+  assert.match(oversized.groups[0].readinessReason, /at most 32/);
+  const enrollment = await manual(f, { target });
+  const frozen = (await pool.query("SELECT convert_from(snapshot_bytes,'UTF8')::jsonb AS snapshot FROM certificate_enrollments WHERE id=$1",
+    [enrollment.enrollmentId])).rows[0].snapshot;
+  assert.deepEqual(frozen.iisConsumers || [], []);
+  await consent(overflow, false);
+  assert.equal((await snapshot()).length, 32);
 });

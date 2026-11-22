@@ -9,9 +9,12 @@ test("consent check fences credentials and advances sequence before a fail-close
   const credential = "test-credential";
   const agent = bindAuthenticatedCredential({ id: "agent", workspaceId: "workspace", agentId: "public-agent" }, credential);
   const queries = [];
-  const client = { async query(sql) {
+  const client = { async query(sql, params) {
     queries.push(sql);
-    if (sql.includes("credential_hash FROM certops_agents")) return { rows: [{ status: "active", agent_id: "public-agent", credential_hash: crypto.createHash("sha256").update(credential).digest("hex") }] };
+    if (sql.includes("SELECT credential_hash, status FROM certops_agents")) {
+      assert.deepEqual(params, ["agent", "workspace", "public-agent"]);
+      return { rows: [{ status: "active", credential_hash: crypto.createHash("sha256").update(credential).digest("hex") }] };
+    }
     if (sql.includes("UPDATE certops_agents")) return { rows: [{ id: "agent" }] };
     return { rows: [] };
   }, release() { queries.push("RELEASE"); } };
@@ -19,7 +22,7 @@ test("consent check fences credentials and advances sequence before a fail-close
     jobId: "job", claimId: "claim", consumerId: "consumer", authorizationRevision: 1, sequence: 1 });
   assert.deepEqual(result, { allowed: false });
   assert.equal(queries[0], "BEGIN");
-  assert.match(queries[1], /credential_hash FROM certops_agents/);
+  assert.match(queries[1], /FROM certops_agents WHERE id = \$1 AND workspace_id = \$2 AND agent_id = \$3 FOR UPDATE$/);
   assert.match(queries[2], /UPDATE certops_agents/);
   assert.match(queries[3], /FROM certops_windows_iis_renewal_consumers/);
   assert.equal(queries[4], "COMMIT");
@@ -31,9 +34,10 @@ test("consent check refuses a stale credential before looking up consent", async
   const queries = [];
   const client = { async query(sql) { queries.push(sql); return { rows: [] }; }, release() { queries.push("RELEASE"); } };
   await assert.rejects(checkWindowsIisConsumerForAgent({ dbPool: { connect: async () => client }, agent,
-    jobId: "job", claimId: "claim", consumerId: "consumer", authorizationRevision: 1, sequence: 1 }), { code: "CERTOPS_AGENT_CREDENTIAL_INVALID" });
+    jobId: "job", claimId: "claim", consumerId: "consumer", authorizationRevision: 1, sequence: 1 }), { code: "CERTOPS_AGENT_CREDENTIAL_STALE" });
   assert.equal(queries[2], "ROLLBACK");
   assert.equal(queries[3], "RELEASE");
+  assert.equal(queries.length, 4);
 });
 test("agent consent route validates and forwards only bounded request fields", async () => {
   const { iisConsentHandler } = require("../../apps/api/routes/certops-agent")._test;

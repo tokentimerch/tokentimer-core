@@ -5020,13 +5020,15 @@ migrations.push({
   sql: fs.readFileSync(require("path").join(__dirname, "122-certops-observed-revocation.sql"), "utf8"),
 });
 
+migrations.push({ version: 123, name: "agent_credential_rotations", sql: fs.readFileSync(require("path").join(__dirname, "123-agent-credential-rotations.sql"), "utf8") });
+migrations.push({ version: 124, name: "agent_credential_rotation_ack", sql: fs.readFileSync(require("path").join(__dirname, "124-agent-rotation-ack.sql"), "utf8") });
 migrations.push({
   version: 127,
   name: "auto_sync_creation_expiration",
   sql: fs.readFileSync(require("path").join(__dirname, "127-auto-sync-creation-expiration.sql"), "utf8"),
 });
 
-const { composeMigrations } = require("./compose-migrations");
+const { composeMigrations, assertUnambiguousRotationHistory } = require("./compose-migrations");
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored
 // the CertOps numbering. Those installations already have v45 in the ledger,
@@ -5463,6 +5465,7 @@ const canonicalMigrations = migrations.slice();
 require("./migration-reservations.cjs").validateMigrationReservations(canonicalMigrations);
 
 function resolveMigrationPlan(recorded) {
+  assertUnambiguousRotationHistory(recorded, canonicalMigrations);
   // The Enterprise adapter and upgrade tests may supply an already composed
   // executor list. Preserve that trusted composition and validate its ledger.
   const composed = migrations.length !== canonicalMigrations.length ||
@@ -5505,6 +5508,21 @@ async function applyPostCommitSql(client, migration) {
   await client.query(migration.postCommitSql);
 }
 
+// A missing retention entry behind later migrations is ambiguous. Only the
+// original bounded grant constraint matches the expected pre-migration schema.
+// This check does not establish the origin or integrity of the ledger.
+async function assertPendingOauthRetentionSchema(client, lock = false) {
+  if (lock) await client.query("LOCK TABLE operator_oauth_grants IN ACCESS EXCLUSIVE MODE");
+  const { rows } = await client.query(`SELECT pg_get_constraintdef(c.oid) AS definition, c.convalidated AS validated
+    FROM pg_constraint c
+    WHERE c.conrelid = to_regclass(format('%I.%I', current_schema(), 'operator_oauth_grants'))
+      AND c.conname = 'operator_oauth_grants_generation_count_check' AND c.contype = 'c'`);
+  if (rows.length !== 1 || !rows[0].validated ||
+      rows[0].definition !== 'CHECK (((generation_count >= 0) AND (generation_count <= 10000)))') {
+    throw new Error('Unsupported Core migration history: missing operator OAuth retention entry has unexpected schema');
+  }
+}
+
 async function runMigrations() {
   logger.info("Starting database migrations...");
 
@@ -5539,6 +5557,21 @@ async function runMigrations() {
     validateMigrationHistory(result.rows);
     const plannedMigrations = resolveMigrationPlan(result.rows);
     const executedVersions = result.rows.map((row) => row.version);
+    const retentionGap = plannedMigrations.find((migration) =>
+      migration.name === 'operator_oauth_retention' && !executedVersions.includes(migration.version) &&
+      executedVersions.some((version) => version > migration.version));
+    if (retentionGap) {
+      const oauth = plannedMigrations.find((migration) => migration.name === 'operator_oauth');
+      if (oauth && !executedVersions.includes(oauth.version)) {
+        const dependent = plannedMigrations.find((migration) => migration.name === 'operator_connection_lifetimes');
+        const existing = await client.query(`SELECT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+          WHERE n.nspname=current_schema() AND c.relname IN ('operator_oauth_clients','operator_oauth_authorizations','operator_oauth_grants','operator_oauth_tokens')) AS present`);
+        if (existing.rows[0].present || (dependent && executedVersions.includes(dependent.version)))
+          throw new Error('Unsupported Core migration history: missing operator OAuth entry has existing schema or dependent migration');
+      } else {
+        await assertPendingOauthRetentionSchema(client);
+      }
+    }
     logger.info(`Found ${executedVersions.length} executed migrations`, {
       versions: executedVersions,
     });
@@ -5610,6 +5643,7 @@ async function runMigrations() {
         );
         await client.query("BEGIN");
         try {
+          if (migration === retentionGap) await assertPendingOauthRetentionSchema(client, true);
           await applyMigrationSql(client, migration);
           await client.query(
             "INSERT INTO migrations (version, name) VALUES ($1, $2)",

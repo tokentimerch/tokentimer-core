@@ -232,7 +232,14 @@ function fingerprintsFromCertificates(certificates) {
   ];
 }
 
-async function acquireManagedCertificateImportLock(client, workspaceId) {
+async function acquireManagedCertificateImportLock(client, workspaceId, { skipLocked = false } = {}) {
+  if (skipLocked) {
+    const result = await client.query(
+      `SELECT pg_try_advisory_xact_lock(hashtext('certops_managed_cert_quota_' || $1::text)) AS locked`,
+      [workspaceId],
+    );
+    return result.rows[0].locked;
+  }
   await client.query(
     `SELECT pg_advisory_xact_lock(hashtext('certops_managed_cert_quota_' || $1::text))`,
     [workspaceId],

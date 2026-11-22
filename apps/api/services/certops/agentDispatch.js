@@ -12,6 +12,7 @@
  */
 
 const { pool } = require("../../db/database");
+const { assertCurrentAgentCredential } = require("./agentCredentialFence");
 const crypto = require("node:crypto");
 const {
   consumeBootstrapToken,
@@ -85,6 +86,7 @@ const {
   wireActionForOperation,
 } = require("./agentJobEligibility");
 const { isTrustAnchorOperation } = require("./jobs");
+const { IIS_STORE_OWNERSHIP_CHANGED } = require("./windowsRenewalOwnership");
 const {
   JOB_LOG_STREAM_CAPABILITY,
   MAX_BATCH_BYTES,
@@ -455,7 +457,26 @@ async function registerAgent({
     );
     if (existingReplay) {
       try {
-        return registrationReplayResponse(existingReplay);
+        const replay = registrationReplayResponse(existingReplay);
+        // The original registration response is replayable only while its
+        // credential is still current. Serialize this check with credential
+        // replacement and retirement; a cached response must not resurrect a
+        // retired or superseded credential.
+        const current = await client.query(
+          `SELECT credential_hash, status
+             FROM certops_agents
+            WHERE workspace_id = $1 AND agent_id = $2
+            FOR UPDATE`,
+          [tokenRow.workspace_id, existingReplay.agent_id],
+        );
+        const hash = current.rows[0]?.credential_hash;
+        const candidate = crypto.createHash("sha256").update(replay.credential).digest();
+        if (current.rows[0]?.status === "retired" ||
+            typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash) ||
+            !crypto.timingSafeEqual(candidate, Buffer.from(hash, "hex"))) {
+          throw serviceError("Bootstrap token could not be consumed", CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED);
+        }
+        return replay;
       } catch (error) {
         // Corrupt/unreadable envelope: treat as replay-not-available so a
         // still-active token can mint fresh, and a spent token hard-rejects.
@@ -720,7 +741,7 @@ async function recordHeartbeat({
     : null;
 
   return await withTransaction(dbPool, async (client) => {
-    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
+    await (deps.assertCurrentAgentCredential || assertCurrentAgentCredential)({ client, agent });
     // Sequence enforcement runs after auth (route middleware) and before
     // the heartbeat write; a regression rejects the message with no
     // last_seen_at (or any other) update.
@@ -1000,12 +1021,26 @@ async function claimJobs({
   const nonceTtlSeconds = dispatchNonceTtlSeconds(env);
 
   return await withTransaction(dbPool, async (client) => {
-    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
+    await (deps.assertCurrentAgentCredential || assertCurrentAgentCredential)({ client, agent });
     // Sequence enforcement first (post-auth, pre-dispatch): a regression
     // rejects the poll before any workspace lock or job selection. Inside
     // the transaction, so a claim that later fails rolls the counter back
     // with everything else.
     await enforceSequence({ client, agentRowId: agent.id, envelope });
+    // Persisted in-progress rotations must block claims even if an operator
+    // later disables the feature flag. Older databases may not have the table;
+    // with the feature enabled that schema mismatch fails closed.
+    const rotationSchema = await client.query("SELECT to_regclass('certops_agent_credential_rotations') AS rotation_table");
+    if (!rotationSchema.rows[0]?.rotation_table) {
+      if (env.CERTOPS_AGENT_ROTATION_ALL_API_FENCED === "true") {
+        throw serviceError("Agent rotation schema unavailable", "CERTOPS_AGENT_ROTATION_SCHEMA_UNAVAILABLE");
+      }
+    } else {
+      const pendingRotation = await client.query(`SELECT 1 FROM certops_agent_credential_rotations
+        WHERE agent_id = $1 AND (state = 'committed' OR (state = 'pending' AND expires_at > NOW())) LIMIT 1`, [agent.id]);
+      // Existing external effects still require separate reconciliation.
+      if (pendingRotation.rows.length) return { jobs: [], logStreams: [] };
+    }
 
     // H8 hard floor: blocked agents must not claim or execute jobs.
     // "outdated" remains advisory and does not reject claims.
@@ -1226,6 +1261,7 @@ async function claimJobs({
           AND (
             (
               status = 'pending'
+              AND cj.error_code IS DISTINCT FROM '${IIS_STORE_OWNERSHIP_CHANGED}'
               AND (scheduled_for IS NULL OR scheduled_for <= NOW())
               AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
               -- Work an assistant connection asked for is not started once that
@@ -1456,6 +1492,33 @@ async function claimJobs({
         env,
       });
       if (!eligibility.eligible) continue;
+      if (["renew", "issue"].includes(row.operation) && row.payload?.target?.type === "windows-iis") {
+        // Avoid taking a claim while the operator is changing its owner. Never
+        // wait on the management lock while holding the selected job rows.
+        if (!await acquireManagedCertificateImportLock(client, row.workspace_id, { skipLocked: true })) continue;
+        try {
+          await require("./windowsIisConsent").assertIndependentIisTarget({
+            client, workspaceId: row.workspace_id, agentId: agent.id, target: row.payload.target,
+          });
+        } catch (error) {
+          if (error.code !== "CERTOPS_WINDOWS_CONSENT_REFUSED") throw error;
+          // Hold new jobs intended for this agent. An unassigned job may
+          // still be legitimate on another host. Existing leases and retries
+          // retain their own reconciliation rules.
+          if (row.status === "pending" && row.attempt_count === 0 && row.assigned_agent_id === agent.id) {
+            const message = row.enrollment_id
+              ? "The Windows Store registration now owns this IIS binding. Cancel this queued enrollment under AD CS and configure IIS updates on the Store registration."
+              : "The Windows Store registration now owns this IIS binding. Configure IIS updates on the Store registration.";
+            await client.query(`UPDATE certificate_jobs SET error_code=$3,error_message=$4,
+                status=CASE WHEN enrollment_id IS NULL THEN 'rejected' ELSE status END,
+                completed_at=CASE WHEN enrollment_id IS NULL THEN clock_timestamp() ELSE completed_at END,
+                updated_at=clock_timestamp()
+              WHERE workspace_id=$1 AND id=$2 AND status='pending' AND attempt_count=0`,
+            [row.workspace_id, row.id, IIS_STORE_OWNERSHIP_CHANGED, message]);
+          }
+          continue;
+        }
+      }
       if(row.payload?.materialCleanup){
         try{await require("./materialCleanup").resolveCleanupDefaults({client,workspaceId:row.workspace_id,operation:row.operation,subjectId:row.subject_id,payload:row.payload,assignedAgentId:row.assigned_agent_id,jobId:row.id,forClaim:true});}
         catch(error){
@@ -1566,6 +1629,21 @@ async function claimJobs({
             staleHash: row.approved_payload_hash,
             currentHash,
           });
+          continue;
+        }
+      }
+
+      if (row.operation === "renew" && row.subject_type === "managed_certificate" &&
+          row.payload?.target?.type === "windows-cert-store" && row.payload.target.store === "My") {
+        // Invalidate stale approvals first. Never wait for the management
+        // lock while holding selected jobs, and never grant competing claims.
+        if (!await acquireManagedCertificateImportLock(client, row.workspace_id, { skipLocked: true })) continue;
+        try {
+          await require("./windowsIisConsent").assertNoCompetingStoreRenewal({
+            client, workspaceId: row.workspace_id, agentId: agent.id, certificateId: row.subject_id,
+          });
+        } catch (error) {
+          if (error.code !== "CERTOPS_WINDOWS_CONSENT_REFUSED") throw error;
           continue;
         }
       }
@@ -1921,7 +1999,7 @@ async function renewJobLease({
   }
 
   return await withTransaction(dbPool, async (client) => {
-    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
+    await (deps.assertCurrentAgentCredential || assertCurrentAgentCredential)({ client, agent });
     await enforceSequence({ client, agentRowId: agent.id, envelope });
 
     const locked = await client.query(
@@ -2763,7 +2841,7 @@ async function ingestResult({
     // hanging, but acquiring the lock in the same order here removes the
     // possibility entirely; enforceSequence's own lock on this row later
     // in the transaction is then a no-op re-entrant lock.
-    await (deps.assertCurrentAgentCredential || require("./agentCredentialFence").assertCurrentAgentCredential)({ client, agent });
+    await (deps.assertCurrentAgentCredential || assertCurrentAgentCredential)({ client, agent });
 
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,

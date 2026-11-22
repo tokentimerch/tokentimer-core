@@ -89,12 +89,13 @@ periods, deleted registrations, and previous certificate associations. Their
 history is preserved even when hidden. A registration that has rotated to a
 different fingerprint cannot restart the old certificate from this view.
 
-For confirmed Windows dependencies, Store renewal can update explicitly authorized
-IIS bindings; discovery alone grants no update permission. The certificate details
-page no longer provides a control for Store-to-IIS authorization. Use **Start
-managing again** below for eligible stopped registrations. Existing IIS profiles
-require explicit consolidation, and replacing Store management requires IIS
-updates to be authorized again.
+For a confirmed Windows dependency, open the Store registration's **Renewal
+settings** in certificate details and choose its Store profile. With a qualified
+owning agent, enable **Update after renewal** for each intended IIS binding.
+Discovery grants no permission. Set consent again after replacing the Store
+management period. Use **Start managing again** for eligible stopped
+registrations. Follow the [AD CS handover steps](./agent/adcs.md) if the IIS
+registration already has its own renewal profile.
 
 ## Lifecycle is separate
 

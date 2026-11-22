@@ -438,6 +438,12 @@ async function attachAgentContactGroupIds(client, workspaceId, agents) {
 }
 
 function handleCertOpsError(res, err) {
+  if (err?.code === "CERTOPS_ACME_STORE_INVALID") {
+    return res.status(400).json({ error: err.message, code: err.code });
+  }
+  if (err?.code === "CERTOPS_ACME_STORE_ORDER_UNCERTAIN") {
+    return res.status(409).json({ error: err.message, code: err.code });
+  }
   if (err?.code === "CERTOPS_WINDOWS_CONSENT_REFUSED") return res.status(409).json({ error:err.message,code:err.code });
   if (err?.statusCode && /^CERTOPS_(MATERIAL|DISTRIBUTION|PUBLICATION)_/.test(err.code || "")) {
     return res.status(err.statusCode).json({ error: err.code, code: err.code });
@@ -2320,10 +2326,13 @@ router.post(
         : null;
 
       const outcome = await withCertOpsTransaction(async (client) => {
+        // Claims and credential changes lock the agent before any job row.
+        // Hold that lock through the lease check and retirement transaction.
         const existing = await getAgentById({
           client,
           workspaceId: req.workspace.id,
           agentId,
+          forUpdate: true,
         });
         if (!existing) return { notFound: true };
 
