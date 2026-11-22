@@ -273,7 +273,9 @@ const sessionCommon = {
   store: sessionStore,
   name: "sessionId",
   secret: process.env.SESSION_SECRET,
-  resave: true,
+  // Let the PostgreSQL store renew expiry without rewriting unchanged sessions.
+  // A full resave can restore a session destroyed by a concurrent logout.
+  resave: false,
   saveUninitialized: false,
   rolling: true,
   genid: () => crypto.randomBytes(32).toString("hex"),

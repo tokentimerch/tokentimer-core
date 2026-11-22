@@ -203,6 +203,68 @@ async function createMapping(page, provider) {
   await dialog.waitFor({ state: "hidden" });
 }
 
+async function verifySamlLogoutWithConcurrentRead({
+  context, api, pgPort, pgPassword, userId, logout,
+}) {
+  const { Client } = requireApi("pg");
+  const db = new Client({
+    host: "127.0.0.1",
+    port: Number(pgPort),
+    user: "postgres",
+    password: pgPassword,
+    database: "tt_sso_test",
+  });
+  const countSessions = async () => {
+    const { rows } = await db.query(
+      "SELECT count(*)::int AS count FROM session WHERE sess #>> '{passport,user}' = $1",
+      [String(userId)],
+    );
+    return rows[0].count;
+  };
+
+  await db.connect();
+  try {
+    const { rows: memberships } = await db.query(
+      "SELECT workspace_id FROM workspace_memberships WHERE user_id = $1 AND source_provider_slug = 'saml'",
+      [userId],
+    );
+    assert.equal(memberships.length, 1);
+    assert.equal(await countSessions(), 1);
+    const { rows: [{ pid }] } = await db.query("SELECT pg_backend_pid() AS pid");
+    await db.query("BEGIN");
+    let read;
+    try {
+      // Block a real authenticated read once it reaches PostgreSQL, after its
+      // session has been loaded. Logout itself does not read the workspaces table.
+      await db.query("LOCK TABLE workspaces IN ACCESS EXCLUSIVE MODE");
+      read = context.request.get(
+        api + "/api/v1/workspaces/" + memberships[0].workspace_id + "/alert-settings",
+      );
+      read.catch(() => {});
+      const deadline = Date.now() + 10000;
+      let waiting = false;
+      do {
+        const { rows } = await db.query(
+          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))) AS waiting",
+          [pid],
+        );
+        waiting = rows[0].waiting;
+        if (!waiting) await new Promise((resolve) => setTimeout(resolve, 50));
+      } while (!waiting && Date.now() < deadline);
+      assert.equal(waiting, true, "The authenticated read must be in flight before logout");
+
+      await logout();
+      assert.equal(await countSessions(), 0, "Logout must delete the authenticated session");
+    } finally {
+      await db.query("ROLLBACK");
+      if (read) assert.equal((await read).status(), 200);
+    }
+    assert.equal(await countSessions(), 0, "A concurrent read must not restore the logged-out session");
+  } finally {
+    await db.end();
+  }
+}
+
 test(
   "Core signs in and out with Keycloak OIDC and SAML while both providers are active",
   {
@@ -557,8 +619,23 @@ test(
         await page.getByRole("link", { name: "Sign in with " + displayName, exact: true }).click();
         await page.locator("#username").waitFor();
       } else {
-        await logout();
-        await page.waitForURL(app + "/login");
+        await verifySamlLogoutWithConcurrentRead({
+          context,
+          api,
+          pgPort,
+          pgPassword,
+          userId: session.user.id,
+          logout: async () => {
+            const [response] = await Promise.all([
+              page.waitForResponse((result) =>
+                new URL(result.url()).pathname === "/api/logout" &&
+                result.request().method() === "POST"),
+              logout(),
+            ]);
+            assert.equal(response.status(), 200);
+            await page.waitForURL(app + "/login");
+          },
+        });
         await page.getByRole("link", { name: "Sign in with " + displayName, exact: true }).waitFor();
       }
       assert.equal(
