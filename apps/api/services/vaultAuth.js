@@ -1,5 +1,6 @@
 "use strict";
 
+const { assertOutboundUrl, OUTBOUND_POLICY_DENIED } = require("@tokentimer/config/network");
 const { isHttpRedirectStatus } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
 
@@ -204,6 +205,7 @@ async function vaultHttpRequest({
     throw new Error(`Invalid Vault URL: ${e.message}`, { cause: e });
   }
 
+  assertOutboundUrl(url, { proxyMode: "fetch" });
   if (query && typeof query === "object") {
     for (const [k, v] of Object.entries(query)) {
       if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
@@ -333,7 +335,7 @@ async function vaultAppRoleLogin({
       extraHeaders: namespaceHeaders(namespace),
     });
   } catch (err) {
-    if (err.code === "VAULT_PROXY_RESPONSE") throw err;
+    if (err.code === OUTBOUND_POLICY_DENIED || err.code === "VAULT_PROXY_RESPONSE") throw err;
     const code = classifyAppRoleLoginFailure(err.status, err.body);
     if (code) throw new VaultAuthError(code, undefined, { cause: err });
     throw err;

@@ -6,6 +6,7 @@
  */
 const { logger } = require("./logger");
 const shared = require("@tokentimer/webhook-safety");
+const { isAllowedHost, OUTBOUND_POLICY_DENIED } = require("@tokentimer/config/network");
 
 const {
   isPrivateOrReservedIP,
@@ -86,6 +87,13 @@ function validateWebhookConfigurationEntry(entry) {
       ok: false,
       code: "WEBHOOK_INVALID_URL",
       error: "Webhook URL must not include credentials",
+    };
+  }
+  if (!isAllowedHost(parsed.hostname)) {
+    return {
+      ok: false,
+      code: OUTBOUND_POLICY_DENIED,
+      error: "Webhook destination is blocked by the outbound policy",
     };
   }
   const kind = String(entry.kind || "generic").toLowerCase();

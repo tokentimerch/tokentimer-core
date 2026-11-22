@@ -1,5 +1,6 @@
 "use strict";
 
+const { assertOutboundHost, getNetworkConfig, OUTBOUND_POLICY_DENIED } = require("@tokentimer/config/network");
 const crypto = require("crypto");
 const { runBinary } = require("./binaryRunner");
 const {
@@ -165,6 +166,7 @@ async function fetchHostnameCertificate(hostname, options = {}) {
   if (!normalizedHostname) {
     throw createDomainCheckerError("Invalid hostname", "INVALID_HOSTNAME");
   }
+  assertOutboundHost(normalizedHostname);
   const timeoutMs = Math.max(
     1000,
     Number(
@@ -231,6 +233,13 @@ async function lookupDomain(domain, options = {}) {
   const normalizedRoot = normalizeRootDomain(domain);
   if (!normalizedRoot) {
     throw createDomainCheckerError("Invalid domain", "INVALID_DOMAIN");
+  }
+  if (getNetworkConfig().outboundPolicyEnabled) {
+    throw createDomainCheckerError(
+      "Domain discovery is disabled while the outbound policy is enabled",
+      OUTBOUND_POLICY_DENIED,
+      { status: 403 },
+    );
   }
 
   cleanupLocks();

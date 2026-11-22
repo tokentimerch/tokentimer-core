@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-19 (Core 0.20.0, main 6ec5b110).
+Last reviewed: 2026-11-20 (Core 0.20.0, main 9deb2fc5).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -42,9 +42,9 @@ called stable while they are open.
   supported Vault/OpenBao and Azure Key Vault Linux rollout scope.
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
-  Wire offline mode and outbound allowlists into API and worker egress.
-  Independent of the already-shipped integration redirect and pagination
-  checks. Issuer CA/ACME/DNS egress in #246 must reuse this policy.
+  API and worker egress, including webhook delivery, honor the configured
+  policy. Release qualification remains open. The issuer work in #246
+  must reuse the shared policy.
 - **CLM issuer connectors and revocation jobs**
   ([#246](https://github.com/tokentimerch/tokentimer-core/issues/246)).
   Core ACME, step-ca, and webhook issuers. CA-backed revoke,

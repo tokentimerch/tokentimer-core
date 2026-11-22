@@ -1,3 +1,4 @@
+import { assertOutboundUrl } from "@tokentimer/config/network";
 import client from "prom-client";
 
 export const metricsRegister = new client.Registry();
@@ -183,6 +184,7 @@ export async function pushMetrics(job) {
   if (process.env.ENABLE_METRICS !== "true") return;
   const url = process.env.PUSHGATEWAY_URL;
   if (!url) return;
+  assertOutboundUrl(url, { proxyMode: "node" });
   const gateway = new client.Pushgateway(url, {}, metricsRegister);
   const groupings = job ? { worker: job } : {};
   await new Promise((resolve, reject) => {

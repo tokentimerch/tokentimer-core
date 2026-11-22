@@ -5,7 +5,14 @@
  * All configuration is environment-driven for self-host flexibility.
  */
 
-export { getNetworkConfig, isAllowedHost } from "./network.js";
+export {
+  assertOutboundHost,
+  assertOutboundUrl,
+  getNetworkConfig,
+  isAllowedHost,
+  isAllowedOutboundUrl,
+  OUTBOUND_POLICY_DENIED,
+} from "./network.js";
 export { getDatabaseConfig } from "./database.js";
 
 /**

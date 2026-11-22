@@ -1,3 +1,4 @@
+import { isAllowedOutboundUrl, OUTBOUND_POLICY_DENIED } from "@tokentimer/config/network";
 /**
  * Endpoint (SSL) Check Worker
  *
@@ -415,8 +416,14 @@ async function runEndpointChecks() {
 
       logger.info(`Checking endpoint: ${url}`);
 
+      let deferredByPolicy = false;
       try {
         const parsedUrl = new URL(url);
+        if (!isAllowedOutboundUrl(parsedUrl, { proxyMode: health_check_enabled ? "node" : "direct" })) {
+          deferredByPolicy = true;
+          logger.warn("Endpoint check skipped by outbound policy", { monitorId: id, code: OUTBOUND_POLICY_DENIED });
+          continue;
+        }
 
         // 1. SSL cert check (for HTTPS URLs)
         if (parsedUrl.protocol === "https:") {
@@ -589,22 +596,25 @@ async function runEndpointChecks() {
           },
         );
       } finally {
-        // The check completed (or failed terminally): advance the schedule
-        // and release the concurrency lease so the monitor becomes claimable
-        // again at its next interval. The release is owner-scoped
-        // (check_claim_id = our claimId) so a superseded worker cannot clear
-        // a lease that another worker meanwhile took over. If the process
-        // dies before reaching this point, the lease simply expires.
+        // A policy skip preserves the last actual check and defers the next
+        // claim by the monitor's interval. Every release is owner-scoped so
+        // a superseded worker cannot clear another worker's lease.
         try {
           await client.query(
             `UPDATE domain_monitors
-                SET last_health_check_at = NOW(),
-                    check_claimed_until = NULL,
+                SET last_health_check_at = CASE WHEN $3 THEN last_health_check_at ELSE NOW() END,
+                    check_claimed_until = CASE WHEN $3 THEN NOW() + CASE check_interval
+                      WHEN '1min' THEN INTERVAL '1 minute'
+                      WHEN '5min' THEN INTERVAL '5 minutes'
+                      WHEN '30min' THEN INTERVAL '30 minutes'
+                      WHEN 'hourly' THEN INTERVAL '1 hour'
+                      WHEN 'daily' THEN INTERVAL '24 hours'
+                    END END,
                     check_claim_id = NULL,
                     updated_at = NOW()
               WHERE id = $1
                 AND check_claim_id = $2`,
-            [id, claimId],
+            [id, claimId, deferredByPolicy],
           );
         } catch (releaseErr) {
           logger.warn(`Failed to release check claim for ${url}`, {

@@ -27,6 +27,7 @@
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
+    "@tokentimer/config": "workspace:*",
     "@tokentimer/alert-eligibility": "workspace:*",
     "@tokentimer/contracts": "workspace:*",
     "@tokentimer/log-scrub": "workspace:*",

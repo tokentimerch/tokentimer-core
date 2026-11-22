@@ -104,6 +104,8 @@ services:
     volumes:
       - ../../apps/api:/app/apps/api
       - ../../packages:/app/packages
+      - /app/packages/webhook-safety/node_modules
+      - /app/packages/config/node_modules
       - /app/node_modules
       - /app/apps/api/node_modules
       - /app/packages/contracts/node_modules
@@ -139,6 +141,8 @@ services:
     volumes:
       - ../../apps/worker:/app/apps/worker
       - ../../packages:/app/packages
+      - /app/packages/webhook-safety/node_modules
+      - /app/packages/config/node_modules
       - /app/node_modules
       - /app/apps/worker/node_modules
       - /app/packages/contracts/node_modules
@@ -176,6 +180,8 @@ services:
     volumes:
       - ../../apps/worker:/app/apps/worker
       - ../../packages:/app/packages
+      - /app/packages/webhook-safety/node_modules
+      - /app/packages/config/node_modules
       - /app/node_modules
       - /app/apps/worker/node_modules
       - /app/packages/contracts/node_modules
@@ -221,6 +227,8 @@ services:
     volumes:
       - ../../apps/worker:/app/apps/worker
       - ../../packages:/app/packages
+      - /app/packages/webhook-safety/node_modules
+      - /app/packages/config/node_modules
       - /app/node_modules
       - /app/apps/worker/node_modules
       - /app/packages/contracts/node_modules
