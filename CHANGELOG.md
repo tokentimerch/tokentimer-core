@@ -11,6 +11,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **ACME directory check.** Workspace managers can check API reachability and advertised capabilities before setting up issuance. See the [ACME configuration guide](docs/certops/agent/dns-and-acme.md#check-an-acme-directory).
+
 - **Shared outbound policy.** Set `OUTBOUND_ALLOWLIST` to restrict Core API and worker connections to approved hosts. Set `OFFLINE_MODE=true` to deny supported outbound connections when the list is empty. Both controls default to off. Domain discovery is unavailable while the policy is enabled. See [configuration](docs/CONFIGURATION.md).
 - **Single sign-on in Core.** Connect one active OIDC and one active SAML provider concurrently, and map identity provider groups to roles. The setup guide uses the same provider wizard and settings. Keep a local recovery administrator and back up the database and matching keyring before upgrading. [Authentication guide](docs/AUTHENTICATION.md#single-sign-on)
 - **Signed Windows agent pilot.** The amd64 archive bundles Node.js 24.22.3. The matching `tokentimer-agent-launcher.exe` carries an Authenticode signature from Azure Artifact Signing and verifies the archive and SBOM against the signed inventory. The exact pair passed fresh installation and enrollment on Windows Server 2019, 2022, and 2025. **Operator guidance:** use the generic archive with system Node.js for production. See the [Windows installation guide](docs/certops/agent/install-windows.md).
