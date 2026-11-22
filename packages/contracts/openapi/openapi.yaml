@@ -8832,6 +8832,69 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/issuers/{issuerId}/validate:
+    post:
+      tags: [CertOps]
+      summary: Validate an ACME issuer directory
+      operationId: validateCertOpsIssuerDirectory
+      description: >-
+        Requires a workspace manager or administrator session and an existing
+        ACME issuer in that workspace. Reads the supplied directory over a
+        direct HTTPS connection from the API. Does not persist the URL, use CA
+        credentials, or contact the advertised operation URLs. Subject to
+        outbound and private address policy.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: issuerId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [caEndpoint]
+              properties:
+                caEndpoint: { type: string, format: uri, maxLength: 512 }
+      responses:
+        "200":
+          description: The directory advertised HTTPS nonce, account and order operations
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [validation]
+                properties:
+                  validation:
+                    type: object
+                    additionalProperties: false
+                    required: [issuerId, kind, revocationAdvertised, externalAccountRequired]
+                    properties:
+                      issuerId: { type: string, format: uuid }
+                      kind: { type: string, enum: [acme] }
+                      revocationAdvertised: { type: boolean }
+                      externalAccountRequired: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429":
+          description: Request rate limit exceeded
+        "502":
+          description: ACME directory was unreachable or invalid
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "504":
+          description: ACME directory connection or response timed out
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/workspaces/{id}/certops/issuers/{issuerId}/preflight:
     post:
       tags: [CertOps]
