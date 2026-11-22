@@ -5,6 +5,7 @@ const https = require("node:https");
 const tls = require("node:tls");
 const dns = require("node:dns/promises");
 const { isIP } = require("node:net");
+const { assertOutboundHost } = require("@tokentimer/config/network");
 
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -670,10 +671,12 @@ function createPostWebhook(policy) {
     }
 
     const host = canonicalizeHost(url.hostname);
+    assertOutboundHost(host);
     const timeoutMs = Number(options.timeoutMs) || DEFAULT_TIMEOUT_MS;
     const enforce = shouldEnforcePrivateIpCheck();
     const proxyMode = options.proxyMode || "always";
     const proxyUrl = resolveOutboundProxy(url, proxyMode);
+    if (proxyUrl) assertOutboundHost(proxyUrl.hostname);
     const deadline = createDeadline(timeoutMs, options.signal);
     const port = url.port
       ? Number(url.port)

@@ -1,5 +1,6 @@
 "use strict";
 
+const { assertOutboundUrl, OUTBOUND_POLICY_DENIED } = require("@tokentimer/config/network");
 const axios = require("axios");
 const { X509Certificate } = require("node:crypto");
 const {
@@ -50,6 +51,7 @@ async function gcpRequest({ accessToken, method = "GET", path, body = null }) {
   };
 
   try {
+    assertOutboundUrl(url, { proxyMode: "axios" });
     const response = await axios({
       method,
       url: url.toString(),
@@ -103,6 +105,7 @@ async function listSecrets({ projectId, accessToken, maxItems = 500 }) {
         url.searchParams.set(key, String(value));
       });
 
+      assertOutboundUrl(url, { proxyMode: "axios" });
       const response = await axios({
         method: "GET",
         url: url.toString(),
@@ -147,6 +150,7 @@ async function getSecretVersions({ projectId, accessToken, secretId }) {
     const fullUrl = "https://secretmanager.googleapis.com/v1" + path;
     const url = new URL(fullUrl);
 
+    assertOutboundUrl(url, { proxyMode: "axios" });
     const response = await axios({
       method: "GET",
       url: url.toString(),
@@ -194,6 +198,7 @@ async function getSecretVersion({
     const fullUrl = "https://secretmanager.googleapis.com/v1" + path;
     const url = new URL(fullUrl);
 
+    assertOutboundUrl(url, { proxyMode: "axios" });
     const response = await axios({
       method: "GET",
       url: url.toString(),
@@ -243,6 +248,7 @@ async function listCertificateManagerCertificates({
         url.searchParams.set(key, String(value));
       });
 
+      assertOutboundUrl(url, { proxyMode: "axios" });
       const response = await axios({
         method: "GET",
         url: url.toString(),
@@ -320,6 +326,7 @@ async function listComputeSslCertificates({
         url.searchParams.set(key, String(value));
       });
 
+      assertOutboundUrl(url, { proxyMode: "axios" });
       const response = await axios({
         method: "GET",
         url: url.toString(),
@@ -569,6 +576,7 @@ async function scanGCP({
           type: "secrets",
           sourceKind: "gcp-secret-manager",
           error,
+          ...(e.code === OUTBOUND_POLICY_DENIED && { code: e.code }),
           status: e.status || e.response?.status,
           complete: false,
         });
@@ -656,6 +664,7 @@ async function scanGCP({
           sourceKind: "gcp-certificate-manager-cert",
           location,
           error,
+          ...(e.code === OUTBOUND_POLICY_DENIED && { code: e.code }),
           status: e.status || e.response?.status,
           complete: false,
           dimensions: { location },
@@ -764,6 +773,7 @@ async function scanGCP({
           type: "compute_ssl_certs",
           sourceKind: "gcp-compute-ssl-cert",
           error,
+          ...(e.code === OUTBOUND_POLICY_DENIED && { code: e.code }),
           status: e.status || e.response?.status,
           complete: false,
         });
@@ -776,11 +786,14 @@ async function scanGCP({
       googleError: e.message,
       projectId,
     });
+    if (e?.code === OUTBOUND_POLICY_DENIED) throw e;
     summary.push({ type: "scan", error, complete: false });
   }
 
   // If all scan types failed with authentication errors, throw instead of returning partial results
   const allFailed = summary.length > 0 && summary.every((s) => s.error);
+  const blocked = allFailed && summary.find((s) => s.code === OUTBOUND_POLICY_DENIED);
+  if (blocked) throw Object.assign(new Error(blocked.error), { code: blocked.code });
 
   // Check if we got authentication/permission errors
   // Note: When listSecrets throws, the error gets caught and the message is stored in summary

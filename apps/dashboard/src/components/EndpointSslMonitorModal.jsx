@@ -78,6 +78,25 @@ const ENDPOINT_MONITORS_PAGE_SIZE = 40;
 const DOMAIN_CHECKER_LOOKUP_TIMEOUT_MS = 300_000;
 const DOMAIN_CHECKER_IMPORT_CHUNK_SIZE = 25;
 const DOMAIN_CHECKER_IMPORT_CHUNK_TIMEOUT_MS = 300_000;
+const OUTBOUND_POLICY_RECOVERY =
+  'Ask your administrator to review the server’s outbound policy. Reopen this dialog after the policy changes.';
+
+function isManualCheckBlocked(monitor) {
+  return Boolean(
+    monitor.outbound_policy_blocked || monitor.outbound_manual_check_blocked
+  );
+}
+
+function OutboundPolicyBadge({ monitor }) {
+  if (!isManualCheckBlocked(monitor)) return null;
+  return (
+    <Badge id={`endpoint-outbound-policy-${monitor.id}`} colorScheme='orange'>
+      {monitor.outbound_policy_blocked
+        ? 'Blocked by outbound policy'
+        : 'Manual check blocked by outbound policy'}
+    </Badge>
+  );
+}
 
 function normalizeDomainCheckerStringArray(value) {
   if (Array.isArray(value)) {
@@ -252,6 +271,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
           `/api/v1/workspaces/${ctxWorkspaceId}/domains`
         );
         setDomains(res.data?.items || []);
+        setEndpointMonitorsPage(0);
         setDomainsLoading(false);
         return;
       } catch (e) {
@@ -324,7 +344,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
 
   useEffect(() => {
     setEndpointMonitorsPage(0);
-  }, [domains, domainListSort.key, domainListSort.direction]);
+  }, [domainListSort.key, domainListSort.direction]);
 
   const paginatedVisibleDomains = useMemo(() => {
     const start = endpointMonitorsPage * ENDPOINT_MONITORS_PAGE_SIZE;
@@ -457,6 +477,26 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
         });
       }
     } catch (e) {
+      if (
+        e?.response?.status === 403 &&
+        e.response.data?.code === 'OUTBOUND_POLICY_DENIED'
+      ) {
+        setDomains(current =>
+          current.map(domain =>
+            domain.id === domainId
+              ? {
+                  ...domain,
+                  outbound_manual_check_blocked: true,
+                  outbound_policy_blocked:
+                    domain.outbound_policy_blocked ||
+                    domain.health_check_enabled === true,
+                }
+              : domain
+          )
+        );
+        toast.error('Health check blocked by outbound policy');
+        return;
+      }
       toast.error(e?.response?.data?.error || 'Health check failed');
     } finally {
       setCheckingDomain(null);
@@ -679,6 +719,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
       const mergedSkipped = [];
       let monitorsCreated = 0;
       let monitorsExisting = 0;
+      let monitorsBlocked = 0;
       let chunkError = null;
       let hadNoResponseChunk = false;
 
@@ -708,6 +749,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
           );
           monitorsCreated += res.data?.monitors?.created || 0;
           monitorsExisting += res.data?.monitors?.existing || 0;
+          monitorsBlocked += res.data?.monitors?.blocked || 0;
         } catch (e) {
           if (!e?.response) {
             hadNoResponseChunk = true;
@@ -780,6 +822,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
           errorLike,
           imported,
           importedLowerBound: Boolean(options.importedLowerBound),
+          monitorsBlocked,
           logLines,
         });
         setDomainCheckerImportReportOpen(false);
@@ -787,7 +830,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
 
       if (chunkError && !hadNoResponseChunk) {
         await refreshAfterDomainCheckerImport();
-        if (mergedImported.length || mergedSkipped.length) {
+        if (mergedImported.length || mergedSkipped.length || monitorsBlocked) {
           peelDomainCheckerSelectionAfterImport(mergedImported, mergedSkipped);
           applyImportReport(mergedImported.length, mergedSkipped, {
             importedLowerBound: false,
@@ -807,14 +850,18 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
         const imported = importedList.length;
 
         let summary = `Imported ${imported} SSL token${imported === 1 ? '' : 's'}`;
-        if (monitorsCreated || monitorsExisting) {
-          const monitorParts = [];
-          if (monitorsCreated)
-            monitorParts.push(
-              `${monitorsCreated} new monitor${monitorsCreated === 1 ? '' : 's'}`
-            );
-          if (monitorsExisting)
-            monitorParts.push(`${monitorsExisting} already existed`);
+        const monitorParts = [];
+        if (monitorsCreated)
+          monitorParts.push(
+            `${monitorsCreated} new monitor${monitorsCreated === 1 ? '' : 's'}`
+          );
+        if (monitorsExisting)
+          monitorParts.push(`${monitorsExisting} already existed`);
+        if (monitorsBlocked)
+          monitorParts.push(
+            `${monitorsBlocked} monitor${monitorsBlocked === 1 ? '' : 's'} blocked by outbound policy`
+          );
+        if (monitorParts.length) {
           summary += ` (${monitorParts.join(', ')})`;
         }
         summary += '.';
@@ -907,6 +954,21 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                       , {domainCheckerImportReport.errorLike} skipped,{' '}
                       {domainCheckerImportReport.unreachable} unreachable.
                     </Text>
+                    {domainCheckerImportReport.monitorsBlocked > 0 && (
+                      <Text color={muted}>
+                        {domainCheckerImportReport.monitorsBlocked} endpoint
+                        monitor
+                        {domainCheckerImportReport.monitorsBlocked === 1
+                          ? ''
+                          : 's'}{' '}
+                        blocked by outbound policy
+                        {domainCheckerImportReport.importedLowerBound
+                          ? ' in completed batches'
+                          : ''}
+                        . After the outbound policy allows the hosts, add their
+                        monitors individually.
+                      </Text>
+                    )}
                   </Box>
                   <Button
                     size='xs'
@@ -973,6 +1035,14 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
               </Alert>
             ) : (
               <>
+                {domains.some(isManualCheckBlocked) && (
+                  <Alert status='warning' borderRadius='md' size='sm' mb={3}>
+                    <AlertIcon />
+                    <AlertDescription fontSize='sm'>
+                      {OUTBOUND_POLICY_RECOVERY}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {visibleDomains.length === 0 ? (
                   <Alert status='info' borderRadius='md' size='sm'>
                     <AlertIcon />
@@ -1030,10 +1100,16 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                                     size='xs'
                                     icon={<FiRefreshCw />}
                                     aria-label='Check now'
+                                    aria-describedby={
+                                      isManualCheckBlocked(d)
+                                        ? `endpoint-outbound-policy-${d.id}`
+                                        : undefined
+                                    }
                                     onClick={event =>
                                       handleCheckDomain(d.id, event)
                                     }
                                     isLoading={checkingDomain === d.id}
+                                    isDisabled={isManualCheckBlocked(d)}
                                   />
                                   <IconButton
                                     size='xs'
@@ -1047,17 +1123,19 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                               </HStack>
                               <HStack spacing={2} flexWrap='wrap' mb={2}>
                                 {domainSslBadge(d)}
-                                {d.last_health_status ? (
-                                  <Badge
-                                    colorScheme={domainStatusColor(
-                                      d.last_health_status
-                                    )}
-                                  >
-                                    {d.last_health_status}
-                                  </Badge>
-                                ) : (
-                                  <Badge colorScheme='gray'>Pending</Badge>
-                                )}
+                                <OutboundPolicyBadge monitor={d} />
+                                {!d.outbound_policy_blocked &&
+                                  (d.last_health_status ? (
+                                    <Badge
+                                      colorScheme={domainStatusColor(
+                                        d.last_health_status
+                                      )}
+                                    >
+                                      {d.last_health_status}
+                                    </Badge>
+                                  ) : (
+                                    <Badge colorScheme='gray'>Pending</Badge>
+                                  ))}
                                 <Badge variant='subtle'>
                                   {d.check_interval}
                                 </Badge>
@@ -1066,16 +1144,18 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                                 </Badge>
                               </HStack>
                               <HStack spacing={4} fontSize='xs' color={muted}>
-                                {d.last_health_response_ms != null && (
-                                  <Text>{d.last_health_response_ms}ms</Text>
-                                )}
-                                {d.last_health_check_at && (
-                                  <Text>
-                                    {new Date(
-                                      d.last_health_check_at
-                                    ).toLocaleString()}
-                                  </Text>
-                                )}
+                                {!d.outbound_policy_blocked &&
+                                  d.last_health_response_ms != null && (
+                                    <Text>{d.last_health_response_ms}ms</Text>
+                                  )}
+                                {!d.outbound_policy_blocked &&
+                                  d.last_health_check_at && (
+                                    <Text>
+                                      {new Date(
+                                        d.last_health_check_at
+                                      ).toLocaleString()}
+                                    </Text>
+                                  )}
                               </HStack>
                             </Box>
                           ))}
@@ -1184,36 +1264,44 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                                 </Td>
                                 <Td whiteSpace='nowrap'>{domainSslBadge(d)}</Td>
                                 <Td whiteSpace='nowrap'>
-                                  {d.last_health_status ? (
-                                    <Tooltip
-                                      hasArrow
-                                      placement='top'
-                                      label={
-                                        d.last_health_error ||
-                                        `HTTP ${d.last_health_status_code}`
-                                      }
-                                    >
-                                      <Box as='span' display='inline-block'>
-                                        <Badge
-                                          colorScheme={domainStatusColor(
-                                            d.last_health_status
-                                          )}
+                                  <VStack align='start' spacing={1}>
+                                    <OutboundPolicyBadge monitor={d} />
+                                    {!d.outbound_policy_blocked &&
+                                      (d.last_health_status ? (
+                                        <Tooltip
+                                          hasArrow
+                                          placement='top'
+                                          label={
+                                            d.last_health_error ||
+                                            `HTTP ${d.last_health_status_code}`
+                                          }
                                         >
-                                          {d.last_health_status}
+                                          <Box as='span' display='inline-block'>
+                                            <Badge
+                                              colorScheme={domainStatusColor(
+                                                d.last_health_status
+                                              )}
+                                            >
+                                              {d.last_health_status}
+                                            </Badge>
+                                          </Box>
+                                        </Tooltip>
+                                      ) : (
+                                        <Badge colorScheme='gray'>
+                                          Pending
                                         </Badge>
-                                      </Box>
-                                    </Tooltip>
-                                  ) : (
-                                    <Badge colorScheme='gray'>Pending</Badge>
-                                  )}
+                                      ))}
+                                  </VStack>
                                 </Td>
                                 <Td fontSize='xs' whiteSpace='nowrap'>
-                                  {d.last_health_response_ms != null
+                                  {!d.outbound_policy_blocked &&
+                                  d.last_health_response_ms != null
                                     ? `${d.last_health_response_ms}ms`
                                     : '-'}
                                 </Td>
                                 <Td fontSize='xs' whiteSpace='nowrap'>
-                                  {d.last_health_check_at
+                                  {!d.outbound_policy_blocked &&
+                                  d.last_health_check_at
                                     ? new Date(
                                         d.last_health_check_at
                                       ).toLocaleString()
@@ -1242,15 +1330,27 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                                 </Td>
                                 <Td textAlign='right'>
                                   <HStack spacing={1} justify='flex-end'>
-                                    <Tooltip label='Run health check now'>
+                                    <Tooltip
+                                      label={
+                                        isManualCheckBlocked(d)
+                                          ? undefined
+                                          : 'Run health check now'
+                                      }
+                                    >
                                       <IconButton
                                         size='xs'
                                         icon={<FiRefreshCw />}
                                         aria-label='Check now'
+                                        aria-describedby={
+                                          isManualCheckBlocked(d)
+                                            ? `endpoint-outbound-policy-${d.id}`
+                                            : undefined
+                                        }
                                         onClick={event =>
                                           handleCheckDomain(d.id, event)
                                         }
                                         isLoading={checkingDomain === d.id}
+                                        isDisabled={isManualCheckBlocked(d)}
                                       />
                                     </Tooltip>
                                     <Tooltip label='Delete endpoint monitor'>

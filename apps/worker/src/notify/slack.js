@@ -1,3 +1,4 @@
+import { assertOutboundUrl, getNetworkConfig } from "@tokentimer/config/network";
 import axios from "axios";
 
 const ALLOWED_HOSTS = ["hooks.slack.com"];
@@ -8,7 +9,9 @@ export async function sendSlackWebhook(webhookUrl, payload) {
     if (!ALLOWED_HOSTS.includes(url.hostname)) {
       throw new Error("Webhook host not allowed");
     }
+    assertOutboundUrl(webhookUrl, { proxyMode: "axios" });
     const res = await axios.post(webhookUrl, payload, {
+      ...(getNetworkConfig().outboundPolicyEnabled ? { maxRedirects: 0 } : {}),
       timeout: 5000,
       headers: { "Content-Type": "application/json" },
       validateStatus: (s) => s >= 200 && s < 300,

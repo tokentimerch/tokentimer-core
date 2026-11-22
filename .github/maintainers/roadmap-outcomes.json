@@ -33,7 +33,10 @@
       "issue": 233,
       "edition": "core",
       "horizon": "pre-v1",
-      "inRoadmap": true
+      "inRoadmap": true,
+      "implementationPrs": [
+        789
+      ]
     },
     {
       "id": "issuers",
