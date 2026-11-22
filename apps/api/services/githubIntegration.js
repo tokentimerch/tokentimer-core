@@ -1,5 +1,6 @@
 "use strict";
 
+const { assertOutboundUrl } = require("@tokentimer/config/network");
 const axios = require("axios");
 const {
   CREDENTIALED_AXIOS_REDIRECTS,
@@ -52,6 +53,7 @@ async function githubRequest({
   };
 
   try {
+    assertOutboundUrl(url, { proxyMode: "axios" });
     const response = await axios(config);
     return includeResponse ? response : response.data;
   } catch (error) {

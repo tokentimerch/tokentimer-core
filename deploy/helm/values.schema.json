@@ -31,6 +31,12 @@
         "disableAdminBootstrap": {
           "type": "boolean"
         },
+        "offlineMode": {
+          "type": "boolean"
+        },
+        "outboundAllowlist": {
+          "type": "string"
+        },
         "nodeEnv": {
           "type": "string",
           "enum": [

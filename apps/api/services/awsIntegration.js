@@ -1,5 +1,6 @@
 "use strict";
 
+const { assertOutboundHost, getNetworkConfig, OUTBOUND_POLICY_DENIED } = require("@tokentimer/config/network");
 const { formatDateYmd, advanceListCursor } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
 const { normalizeAwsSweepRegions } = require("./awsScanPersist");
@@ -76,6 +77,20 @@ const DETECT_REGION_WALL_MS = 12000;
 const DETECT_REGION_BATCH_SIZE = 5;
 const DETECT_IAM_MAX_USERS_FOR_KEYS = 10;
 const DETECT_IAM_WALL_MS = 20000;
+
+function createAwsClient(Client, options) {
+  const client = new Client(options);
+  if (getNetworkConfig().outboundPolicyEnabled) {
+    client.middlewareStack.add(
+      (next) => (args) => {
+        assertOutboundHost(args.request.hostname);
+        return next(args);
+      },
+      { step: "finalizeRequest", name: "outboundPolicy" },
+    );
+  }
+  return client;
+}
 
 function createDetectRequestHandler() {
   return {
@@ -192,7 +207,7 @@ async function scanAWS({
 async function getAccountId({ accessKeyId, secretAccessKey, sessionToken }) {
   try {
     const { STSClient, GetCallerIdentityCommand } = require("@aws-sdk/client-sts");
-    const client = new STSClient({
+    const client = createAwsClient(STSClient, {
       region: "us-east-1",
       credentials: { accessKeyId, secretAccessKey, sessionToken },
       requestHandler: createDetectRequestHandler(),
@@ -203,6 +218,7 @@ async function getAccountId({ accessKeyId, secretAccessKey, sessionToken }) {
     }
     return identity.Account;
   } catch (e) {
+    if (e.code === OUTBOUND_POLICY_DENIED) throw e;
     // The account id anchors every AWS token's provenance; without it there
     // is no safe instance/ownerKey to attribute this scan's tokens to, so a
     // scan that can't resolve it must fail outright rather than silently
@@ -227,7 +243,7 @@ async function listEnabledAWSRegions({
 }) {
   try {
     const { EC2Client, DescribeRegionsCommand } = require("@aws-sdk/client-ec2");
-    const client = new EC2Client({
+    const client = createAwsClient(EC2Client, {
       region: "us-east-1",
       credentials: { accessKeyId, secretAccessKey, sessionToken },
       requestHandler: createDetectRequestHandler(),
@@ -326,7 +342,7 @@ async function scanAWSSingleRegion({
   // For Secrets Manager
   if (include.secrets && SecretsManagerClient) {
     try {
-      const client = new SecretsManagerClient({
+      const client = createAwsClient(SecretsManagerClient, {
         region,
         credentials: { accessKeyId, secretAccessKey, sessionToken },
         requestHandler: {
@@ -442,7 +458,7 @@ async function scanAWSSingleRegion({
   // For ACM Certificates
   if (include.certificates && ACMClient) {
     try {
-      const client = new ACMClient({
+      const client = createAwsClient(ACMClient, {
         region,
         credentials: { accessKeyId, secretAccessKey, sessionToken },
         requestHandler: {
@@ -595,7 +611,7 @@ async function scanAWSSingleRegion({
   if (include.iam && IAMClient) {
     logger.info("Starting AWS IAM access keys scan", { region });
     try {
-      const client = new IAMClient({
+      const client = createAwsClient(IAMClient, {
         region,
         credentials: { accessKeyId, secretAccessKey, sessionToken },
         requestHandler: {
@@ -808,7 +824,7 @@ async function detectAWSRegions({
   // and doesn't require any specific permissions
   if (STSClient && GetCallerIdentityCommand) {
     try {
-      const stsClient = new STSClient({
+      const stsClient = createAwsClient(STSClient, {
         region: "us-east-1",
         credentials: { accessKeyId, secretAccessKey, sessionToken },
         requestHandler: createDetectRequestHandler(),
@@ -819,8 +835,9 @@ async function detectAWSRegions({
         account: identity.Account,
         arn: identity.Arn,
       });
-    } catch (_e) {
-      // Any error from GetCallerIdentity means invalid credentials
+    } catch (e) {
+      if (e?.code === OUTBOUND_POLICY_DENIED) throw e;
+      // Report rejected credentials from the STS verification probe.
       const authErr = new Error(
         "AWS authentication failed: Invalid credentials. The Access Key ID or Secret Access Key is incorrect or does not exist.\n\nPlease verify:\n• Access Key ID is correct\n• Secret Access Key is correct\n• Credentials are not expired\n• Using the right AWS account",
       );
@@ -831,7 +848,7 @@ async function detectAWSRegions({
   } else {
     // Fallback: Try ListSecrets in us-east-1 if STS SDK not available
     try {
-      const testClient = new SecretsManagerClient({
+      const testClient = createAwsClient(SecretsManagerClient, {
         region: "us-east-1",
         credentials: { accessKeyId, secretAccessKey, sessionToken },
         requestHandler: createDetectRequestHandler(),
@@ -839,6 +856,7 @@ async function detectAWSRegions({
       await testClient.send(new ListSecretsCommand({ MaxResults: 1 }));
       logger.info("AWS credentials validated (via Secrets Manager)");
     } catch (e) {
+      if (e?.code === OUTBOUND_POLICY_DENIED) throw e;
       // Only throw on clear authentication errors (invalid credentials)
       // Don't throw on permission errors (AccessDenied, etc.) as those are 403, not 401
       if (
@@ -871,7 +889,7 @@ async function detectAWSRegions({
     let certCount = 0;
 
     const checkSecrets = async () => {
-      const client = new SecretsManagerClient({
+      const client = createAwsClient(SecretsManagerClient, {
         region,
         credentials,
         requestHandler: createDetectRequestHandler(),
@@ -884,7 +902,7 @@ async function detectAWSRegions({
 
     const checkCertificates = async () => {
       if (!ACMClient) return 0;
-      const client = new ACMClient({
+      const client = createAwsClient(ACMClient, {
         region,
         credentials,
         requestHandler: createDetectRequestHandler(),
@@ -991,7 +1009,7 @@ async function detectAWSRegions({
       await withWallClockTimeout(
         (async () => {
           logger.info("Checking for IAM users and access keys (global)");
-          const client = new IAMClient({
+          const client = createAwsClient(IAMClient, {
             region: "us-east-1",
             credentials,
             requestHandler: createDetectRequestHandler(),

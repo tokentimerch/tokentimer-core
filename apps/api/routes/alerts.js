@@ -1,3 +1,4 @@
+const { OUTBOUND_POLICY_DENIED } = require("@tokentimer/config/network");
 const rateLimit = require("express-rate-limit");
 const { ipKeyGenerator } = require("express-rate-limit");
 const { pool } = require("../db/database");
@@ -1800,6 +1801,12 @@ router.post(
           code: "VALIDATION_ERROR",
         });
       }
+      if (process.env.NODE_ENV === "production" && target.protocol !== "https:") {
+        return res.status(400).json({
+          error: "In production, only HTTPS webhook URLs are allowed",
+          code: "WEBHOOK_INVALID_URL",
+        });
+      }
 
       const normalizeSeverity = (raw) => {
         const s = String(raw || "").toLowerCase();
@@ -2111,6 +2118,7 @@ router.post(
         return fail(`Webhook responded ${status}: ${rawText}`);
       } catch (e) {
         const skipCooldown =
+          e.code === OUTBOUND_POLICY_DENIED ||
           e.code === "WEBHOOK_PRIVATE_IP_BLOCKED" ||
           e.code === "WEBHOOK_DNS_UNRESOLVED" ||
           e.code === "WEBHOOK_INVALID_URL" ||
@@ -2121,10 +2129,10 @@ router.post(
             Date.now() + intEnv("TEST_WEBHOOK_COOLDOWN_MS", 5000),
           );
         }
-        if (e.code === "WEBHOOK_PRIVATE_IP_BLOCKED") {
+        if (e.code === OUTBOUND_POLICY_DENIED || e.code === "WEBHOOK_PRIVATE_IP_BLOCKED") {
           return res.status(400).json({
             error: e.message,
-            code: "WEBHOOK_PRIVATE_IP_BLOCKED",
+            code: e.code,
           });
         }
         if (e.code === "WEBHOOK_REDIRECT_REFUSED") {
