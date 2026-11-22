@@ -275,7 +275,7 @@ Retire the agent in the fleet panel after its jobs finish. `install-agent.sh --u
 
 ### Unattended Windows upgrades
 
-Stage the checksum-verified classic package separately. Run the installer elevated and noninteractively with the enrolled API URL and workspace ID. With the enrolled credential present, set `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_unused` for the installer process. Advance from a small batch after exit `0` and a fresh, compatible heartbeat from each original fleet row at the target version. After a nonzero exit or interruption, pause and record the service status and installed version. Preserve state and recovery directories, confirm which version is running, and [reconcile uncertain jobs](#9-troubleshooting) before retrying.
+Stage the checksum-verified classic package separately. Run the installer elevated and noninteractively with the enrolled API URL and workspace ID. With the enrolled credential present, set `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_unused` for the installer process. Advance from a small batch after exit `0` and a fresh, compatible heartbeat from each original fleet row at the target version. Pause the wave on a nonzero exit or interruption. A failed service health check can restore the previous package and still return exit `1`. Check the service and confirm a fresh heartbeat at the previous version on the original fleet row before counting the rollback as recovered. Preserve state and package recovery directories, and [reconcile uncertain jobs](#9-troubleshooting) before retrying.
 
 ### Linux removal behavior
 
