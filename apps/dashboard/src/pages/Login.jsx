@@ -5,7 +5,10 @@ import { getLogoPath } from '../utils/logoUtils.js';
 import { logger } from '../utils/logger.js';
 import {
   Box,
+  Badge,
   Button,
+  Divider,
+  HStack,
   Heading,
   Text,
   VStack,
@@ -90,6 +93,7 @@ export default function Login({ session }) {
     'gray.800'
   );
   const formBorder = useColorModeValue('gray.200', 'gray.600');
+  const textColor = useColorModeValue('gray.600', 'gray.400');
 
   useEffect(() => {
     let controller;
@@ -338,9 +342,7 @@ export default function Login({ session }) {
           <Heading as='h1' size='xl' mb={2}>
             Welcome Back
           </Heading>
-          <Text color={useColorModeValue('gray.600', 'gray.400')}>
-            Sign in to your TokenTimer account
-          </Text>
+          <Text color={textColor}>Sign in to your TokenTimer account</Text>
         </Box>
 
         {/* Verification Message */}
@@ -403,17 +405,45 @@ export default function Login({ session }) {
 
         {/* Login Options */}
         <VStack spacing={4}>
-          {signInProviders.map(provider => (
-            <Button
-              key={provider.slug}
-              as='a'
-              href={buildSsoLoginUrl(provider, nextPath, API_BASE_URL)}
-              colorScheme='blue'
-              w='full'
-            >
-              Sign in with {provider.displayName || provider.slug}
-            </Button>
-          ))}
+          {signInProviders.map(provider => {
+            const signInLabel = `Sign in with ${provider.displayName || provider.slug}`;
+            return (
+              <Box
+                key={provider.slug}
+                w='full'
+                bg={formBackground}
+                p={6}
+                borderRadius='md'
+                boxShadow='sm'
+                border='1px solid'
+                borderColor={formBorder}
+              >
+                <HStack mb={3} align='center' justify='space-between'>
+                  <Heading as='h2' size='md' overflowWrap='anywhere'>
+                    {signInLabel}
+                  </Heading>
+                  <Badge colorScheme='purple' flexShrink={0}>
+                    SSO
+                  </Badge>
+                </HStack>
+                <Text fontSize='sm' color={textColor} mb={4}>
+                  Continue with your organization identity provider.
+                </Text>
+                <Button
+                  as='a'
+                  href={buildSsoLoginUrl(provider, nextPath, API_BASE_URL)}
+                  aria-label={signInLabel}
+                  colorScheme='blue'
+                  variant='outline'
+                  w='full'
+                >
+                  Continue
+                </Button>
+              </Box>
+            );
+          })}
+
+          {signInProviders.length > 0 && <Divider />}
           {/* Email Login */}
           <Box
             w='full'
@@ -424,6 +454,17 @@ export default function Login({ session }) {
             border='1px solid'
             borderColor={formBorder}
           >
+            {signInProviders.length > 0 && (
+              <>
+                <Heading as='h2' size='md' mb={1}>
+                  Email and password
+                </Heading>
+                <Text fontSize='sm' color={textColor} mb={4}>
+                  Sign in with your local administrator or fallback account.
+                </Text>
+              </>
+            )}
+
             {formErrors.general && (
               <VStack spacing={3} mb={4}>
                 <Alert status='error' borderRadius='md'>
