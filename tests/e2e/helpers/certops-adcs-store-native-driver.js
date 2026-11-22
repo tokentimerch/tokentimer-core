@@ -249,6 +249,7 @@ function requireActiveObservationInterruption() {
   throw new Error("Native AD CS qualification is blocked: active observation-loss interruption is not implemented");
 }
 async function qualifyNativeStoreRecovery(context) {
+  requireActiveObservationInterruption();
   assert.equal(process.platform, "win32");
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
   assert.equal(context.serviceOwned, true);
@@ -257,7 +258,6 @@ async function qualifyNativeStoreRecovery(context) {
   for (const fn of [ps, until, jobFinished, prepareRun, createNativeOperationCapture, readNativeOperationCounts, createIndependentCaObservation, readIndependentCaObservation]) assert.equal(typeof fn, "function", "Independent native and CA observation hooks are required");
   const recordEvidence = createPublicEvidenceRecorder(context);
   await verifyCandidateHost(context);
-  requireActiveObservationInterruption();
   const root = path.resolve(__dirname, "../../..");
   const receipt = path.join(workDir, "store-accept-target.json");
   const query = (sql, args = []) => fixture.pool.query(sql, args);
@@ -410,4 +410,12 @@ async function qualifyNativeStoreRecovery(context) {
     // Keep the owned target receipt for evidence; a later run needs a fresh directory.
   }
 }
-module.exports = { qualifyNativeStoreRecovery, validateNativeCounts, validateInitialNativeCounts, validateCaptureStart, stopNativeCapture, validateCaObservationStart, validateCaObservationWindow, stopCaObservation, drainQualificationResources, verifyRecoveryCheckpoint, validateCaBaselineWindow, verifyPreIssueCheckpoint, createPublicEvidenceRecorder, verifyCandidateHost, requireActiveObservationInterruption };
+async function qualifyInstalledStoreRecovery(context) {
+  const postAccept = await qualifyNativeStoreRecovery(context);
+  const { qualifyPendingStoreRecovery } = require("./certops-adcs-store-pending-native");
+  const pending = await qualifyPendingStoreRecovery(context);
+  assert.notEqual(postAccept.dnsName, pending.dnsName, "Each recovery must have its own enrollment");
+  return { postAccept, pending };
+}
+
+module.exports = { qualifyInstalledStoreRecovery, qualifyNativeStoreRecovery, validateNativeCounts, validateInitialNativeCounts, validateCaptureStart, stopNativeCapture, validateCaObservationStart, validateCaObservationWindow, stopCaObservation, drainQualificationResources, verifyRecoveryCheckpoint, validateCaBaselineWindow, verifyPreIssueCheckpoint, createPublicEvidenceRecorder, verifyCandidateHost, requireActiveObservationInterruption };

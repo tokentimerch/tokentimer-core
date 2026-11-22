@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { PassThrough } = require("node:stream");
 const { startNativeStoreObserver, verifyNativeFault } = require("./certops-adcs-store-native-observer");
-const { qualifyNativeStoreRecovery, validateNativeCounts, validateInitialNativeCounts, validateCaptureStart, stopNativeCapture, validateCaObservationStart, validateCaObservationWindow, stopCaObservation, drainQualificationResources, verifyRecoveryCheckpoint, validateCaBaselineWindow, verifyPreIssueCheckpoint, createPublicEvidenceRecorder, verifyCandidateHost, requireActiveObservationInterruption } = require("./certops-adcs-store-native-driver");
+const { qualifyInstalledStoreRecovery, qualifyNativeStoreRecovery, validateNativeCounts, validateInitialNativeCounts, validateCaptureStart, stopNativeCapture, validateCaObservationStart, validateCaObservationWindow, stopCaObservation, drainQualificationResources, verifyRecoveryCheckpoint, validateCaBaselineWindow, verifyPreIssueCheckpoint, createPublicEvidenceRecorder, verifyCandidateHost, requireActiveObservationInterruption } = require("./certops-adcs-store-native-driver");
 
 function makeEvidenceHooks() {
   const values = new Map();
@@ -38,18 +38,6 @@ test("native proof fails before journal inspection when key possession or draina
     nativeProcessDrained: false, keyPossessionVerified: true }, { configDir: "unused" }));
   assert.throws(() => verifyNativeFault({ nativeIdentity: "LocalSystem", observedPostAccept: true,
     nativeProcessDrained: true, keyPossessionVerified: false }, { configDir: "unused" }));
-});
-
-test("native driver refuses to run without an independent operation counter", async () => {
-  if (process.platform !== "win32") return;
-  const previous = process.env.CERTOPS_ADCS_DISPOSABLE_LAB;
-  try {
-    process.env.CERTOPS_ADCS_DISPOSABLE_LAB = "1";
-    await assert.rejects(qualifyNativeStoreRecovery({ serviceOwned: true, ps() {}, until() {}, jobFinished() {} }), /Independent native and CA observation hooks/);
-  } finally {
-    if (previous === undefined) delete process.env.CERTOPS_ADCS_DISPOSABLE_LAB;
-    else process.env.CERTOPS_ADCS_DISPOSABLE_LAB = previous;
-  }
 });
 
 test("native operation counts require continuous complete capture", () => {
@@ -196,27 +184,15 @@ test("candidate inspection rejects absent or mismatched archive and installed se
   await assert.rejects(verifyCandidateHost({ ...candidate, async inspectCandidateHost() { return { ...host, processTokenSid: "S-1-5-19" }; } }));
 });
 
-test("qualification blocks factories and issue jobs without active loss interruption", async () => {
-  assert.throws(requireActiveObservationInterruption, /active observation-loss interruption is not implemented/);
-  if (process.platform !== "win32") return;
-  const previous = process.env.CERTOPS_ADCS_DISPOSABLE_LAB;
-  let operations = 0, posts = 0, writes = 0;
-  try {
-    process.env.CERTOPS_ADCS_DISPOSABLE_LAB = "1";
-    await assert.rejects(qualifyNativeStoreRecovery({
-      ...makeEvidenceHooks(), ...makeCandidateHooks(), serviceOwned: true,
-      async writeEvidence() { writes++; }, workDir: require("node:os").tmpdir(),
-      configDir: "unused", api: "/unused", fixture: { pool: { query() { operations++; } }, request() { posts++; } },
-      ps() {}, until() {}, jobFinished() {}, async prepareRun() { operations++; },
-      async createNativeOperationCapture() { operations++; }, async createIndependentCaObservation() { operations++; },
-      async readNativeOperationCounts() {}, async readIndependentCaObservation() {},
-    }), /active observation-loss interruption is not implemented/);
-    assert.equal(operations, 0); assert.equal(posts, 0); assert.equal(writes, 0);
-  } finally {
-    if (previous === undefined) delete process.env.CERTOPS_ADCS_DISPOSABLE_LAB;
-    else process.env.CERTOPS_ADCS_DISPOSABLE_LAB = previous;
+test("both native recovery entries fail before inspecting the host or starting either scenario", async () => {
+  const context = new Proxy({}, { get() { assert.fail("The closed native gate accessed the lab context"); } });
+  const reason = /active observation-loss interruption is not implemented/;
+  assert.throws(requireActiveObservationInterruption, reason);
+  for (const qualify of [qualifyNativeStoreRecovery, qualifyInstalledStoreRecovery]) {
+    await assert.rejects(qualify(context), reason);
   }
 });
+
 test("CA drainage detects a submission during native capture drainage", async () => {
   const captureId = "a".repeat(32), observationId = "b".repeat(32), key = "c".repeat(64), fingerprint = "d".repeat(64);
   const counts = { captureId, coverageComplete: true, submissions: 1, keygens: 1, accepts: 1 };

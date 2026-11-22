@@ -1120,7 +1120,13 @@ jobs:
         run: pnpm run test:certops:qualification
       - name: Test Windows store qualification safeguards
         if: runner.os == 'Windows'
-        run: node --test tests/e2e/helpers/certops-acme-ca-watch.test.js tests/e2e/helpers/certops-acme-store-native-qualification.test.js
+        run: >-
+          node --test
+          tests/e2e/helpers/certops-acme-ca-watch.test.js
+          tests/e2e/helpers/certops-acme-store-native-qualification.test.js
+          tests/e2e/helpers/certops-adcs-store-native-driver.test.js
+          tests/e2e/helpers/certops-adcs-store-recovery-proof.test.js
+          tests/e2e/helpers/certops-adcs-store-pending-native.test.js
       - name: Run complete release collector inventory
         if: runner.os == 'Linux'
         run: pnpm run test:certops:release-collector
