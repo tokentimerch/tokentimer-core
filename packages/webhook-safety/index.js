@@ -421,13 +421,21 @@ function isTeamsWorkflowHost(hostname) {
   return TEAMS_WORKFLOW_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
 }
 
-const { createPostWebhook, WebhookRequestError } = require("./request");
+const { createPinnedRequest, WebhookRequestError } = require("./request");
 
-const postWebhook = createPostWebhook({
+const postWebhook = createPinnedRequest({
   isPrivateOrReservedIP,
   shouldEnforcePrivateIpCheck,
   canonicalizeHost,
 });
+
+function createPinnedGet(shouldEnforcePrivateIpCheck) {
+  return createPinnedRequest({
+    isPrivateOrReservedIP,
+    shouldEnforcePrivateIpCheck,
+    canonicalizeHost,
+  }, "GET");
+}
 
 module.exports = {
   isPrivateOrReservedIP,
@@ -440,5 +448,6 @@ module.exports = {
   webhookHostAllowed,
   isTeamsWorkflowHost,
   postWebhook,
+  createPinnedGet,
   WebhookRequestError,
 };

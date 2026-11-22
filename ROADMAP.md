@@ -50,6 +50,8 @@ called stable while they are open.
   Core ACME, step-ca, and webhook issuers. CA-backed revoke,
   replace-compromised, decommission, and verify-revocation. Encrypted
   issuer credentials fail closed if the key is missing.
+  The first increment validates ACME directories through the issuer API.
+  CA-backed revocation, step-ca and webhook connectors remain open.
 - **Operational diagnostics**
   ([#232](https://github.com/tokentimerch/tokentimer-core/issues/232)).
   Correlation identifiers across API and workers; production error
