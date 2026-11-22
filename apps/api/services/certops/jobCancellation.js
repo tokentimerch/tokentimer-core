@@ -9,7 +9,6 @@ const {
   isTerminalJobStatus,
   isTrustAnchorOperation,
   serviceError,
-  updateCertificateJobStatus,
 } = require("./jobs");
 const { onTrustJobTerminalTransition } = require("./trustAnchors");
 
@@ -83,24 +82,27 @@ async function cancelCertificateJob({ client, workspaceId, jobId, actorUserId, c
   const message = needsOperatorReconciliation
     ? "Operator cancelled control-plane execution after work may have started. Verify the host before retrying."
     : "Operator cancelled this job.";
-  const outcome = await updateCertificateJobStatus({
-    client, workspaceId, jobId, status,
-    ...(needsOperatorReconciliation ? { errorCode: "effects_unknown", errorMessage: message } : {}),
-  });
-  if (!outcome.statusTransitionApplied) {
+  // Persist the terminal transition and lease fencing in the same update.
+  // Updating this row twice can recheck its agent foreign key while a lease
+  // renewal is holding the agent row lock and waiting for the job row.
+  const outcome = await client.query(
+    `UPDATE certificate_jobs
+        SET status = $3,
+            updated_at = NOW(),
+            canceled_at = CASE WHEN $3 = 'cancelled' THEN COALESCE(canceled_at, NOW()) ELSE canceled_at END,
+            completed_at = COALESCE(completed_at, NOW()),
+            lease_expires_at = CASE WHEN lease_expires_at IS NULL THEN NULL ELSE NOW() END,
+            needs_operator_reconciliation = needs_operator_reconciliation OR $4::boolean,
+            reconciliation_reason = COALESCE($5, reconciliation_reason),
+            error_code = CASE WHEN $4 THEN 'effects_unknown' ELSE error_code END,
+            error_message = CASE WHEN $4 THEN $6 ELSE error_message END
+      WHERE workspace_id = $1 AND id = $2 AND status = $7`,
+    [workspaceId, jobId, status, needsOperatorReconciliation,
+      needsOperatorReconciliation ? UNKNOWN_EFFECT_REASON : null, message, job.status],
+  );
+  if (outcome.rowCount !== 1) {
     throw serviceError("Certificate job has already finished", CERTOPS_JOB_CANCELLATION_UNAVAILABLE);
   }
-
-  await client.query(
-    `UPDATE certificate_jobs
-        SET completed_at = COALESCE(completed_at, NOW()),
-            lease_expires_at = CASE WHEN lease_expires_at IS NULL THEN NULL ELSE NOW() END,
-            needs_operator_reconciliation = needs_operator_reconciliation OR $3::boolean,
-            reconciliation_reason = COALESCE($4, reconciliation_reason)
-      WHERE workspace_id = $1 AND id = $2`,
-    [workspaceId, jobId, needsOperatorReconciliation,
-      needsOperatorReconciliation ? UNKNOWN_EFFECT_REASON : null],
-  );
   await closeClaimStreamSafely(client, { workspaceId, jobId, claimId: job.claimId });
   if (!needsOperatorReconciliation) {
     await onTrustJobTerminalTransition({ client, job: { ...job, workspaceId, status } });
