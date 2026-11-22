@@ -39,6 +39,7 @@ const {
   listHttpSysBindings,
   listIisSites,
   findSitesForBinding,
+  canonicalIisAddress,
   parseNodeSubjectAltName,
 } = require("../windows-discovery");
 
@@ -439,6 +440,14 @@ async function collectWindowsDiscoveryObservations({
 
     const parsed = splitIpPortLiteral(binding.ipPort);
     if (!parsed) continue;
+    // Existing HTTP.sys inventory identities use the native literal as
+    // reported, so do not silently create a new location on upgrade.
+    const originalAddress = parsed.address;
+    if (binding.keyedBy === "ipport") {
+      const address = canonicalIisAddress(parsed.address);
+      if (!address || address === "*") continue;
+      parsed.address = address;
+    }
 
     const subjectAltNames = resolveSubjectAltNames(cert, rawCertificateBase64, onWarning);
     const base = {
@@ -468,18 +477,21 @@ async function collectWindowsDiscoveryObservations({
         observations.push({
           ...base,
           locationKind: "iis_binding",
-          locationSlot: `${siteName}:${parsed.port}${sniHost ? `#${sniHost}` : `@${parsed.address}`}`,
+          // Keep the original identity of the common IPv4 wildcard binding so
+          // existing management registrations survive an agent upgrade.
+          locationSlot: `${siteName}:${parsed.port}${sniHost ? `#${sniHost}` : parsed.address === "0.0.0.0" ? "" : `@${originalAddress}`}`,
           siteName,
           port: parsed.port,
           sniHost,
+          ...(!sniHost ? { boundAddress: originalAddress } : {}),
         });
       }
     } else {
       observations.push({
         ...base,
         locationKind: "http_sys",
-        locationSlot: `${parsed.address}:${parsed.port}`,
-        boundAddress: parsed.address,
+        locationSlot: `${originalAddress}:${parsed.port}`,
+        boundAddress: originalAddress,
         port: parsed.port,
       });
     }

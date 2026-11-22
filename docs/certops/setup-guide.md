@@ -19,9 +19,9 @@ Core and Enterprise share the host workflow. Cloud 0.18 uses the wizard with hos
 
 1. Prepare the existing service and local policy. Install/register an agent or choose **My agent is already set up**. Merge into existing config and preserve its enrolled identity, credentials and custody state.
 2. Run the signed no-op smoke check with execution enabled and local dry-run protection on. It checks dispatch/reporting, not later issuance permissions or external effects.
-3. Complete the issuer-specific prerequisites. AD CS needs a real read-only CA/template check, independent CA-key confirmation, pinning and a fresh post-pin check on the same agent.
+3. Complete the issuer-specific prerequisites. AD CS needs a real read-only CA/template check, independent CA-key confirmation, pinning and a fresh post-pin check on the same agent. A qualified agent can [issue to the Windows store without IIS](agent/adcs.md#operator-sequence).
 4. Deliberately allow real mutating execution only when ready for issuance/enrollment/deployment. Restart only the agent, then continue the same saved guide.
-5. Follow the operation's evidence and verify the [certificate actually served](verify-live-service.md). A completed form or job is not proof that a listener uses the replacement.
+5. Follow the operation's evidence. If a service uses the certificate, verify the [certificate actually served](verify-live-service.md); a completed form or job is not proof that a listener uses it.
 
 Continue with [Linux](agent/install-linux.md), [Windows/IIS](agent/install-windows.md), [Microsoft AD CS](agent/adcs.md#operator-sequence) or [shared certificate distribution](vault-first-distribution.md). The guide runs the AD CS post-pin check inline. The distribution guide walks through signed tests, consumer assignment and exact-version rollout. Choose **Distribute certificate files only** for installation evidence or **Distribute and reload a service** to verify live TLS. Configure each host locally. Manage trust anchors under **Agents → Trust anchors**.
 

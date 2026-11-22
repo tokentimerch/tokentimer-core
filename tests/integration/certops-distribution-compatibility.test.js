@@ -44,6 +44,8 @@ describe("Independent PR migration and preview compatibility",function(){
       assert.equal((await client.query("SELECT expiration FROM auto_sync_creation_stats LIMIT 0")).rowCount, 0);
       assert.equal(after.filter(row=>row.name==="certops_retirement_dossiers").length,1);
       assert.equal(after.filter(row=>row.name==="certops_material_reconciliation").length,1);
+      for(const name of ["certops_observed_revocation","agent_credential_rotations","agent_credential_rotation_ack"])
+        assert.equal(after.filter(row=>row.name===name).length,1,"Migration "+name+" is present once");
       const canonicalTail=["pagerduty_resolution_reason","pagerduty_operator_actions","remove_pagerduty_rest_lookup","certops_consumer_staging","certops_review_authority_epochs","certops_manual_rollout_authority"];
       const previewTails={
         "lifecycle-81-85":["weekly_digest_recipient_claim_token","pagerduty_incident_lifecycle","pagerduty_resolution_reason","pagerduty_operator_actions","remove_pagerduty_rest_lookup","certops_manual_rollout_authority"],

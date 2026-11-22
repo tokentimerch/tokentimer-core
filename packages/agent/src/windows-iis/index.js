@@ -71,7 +71,7 @@ const crypto = require("node:crypto");
 const {
   assertNoPrivateKeyMaterial,
 } = require("../../vendor/log-scrub/secret-material.js");
-const { verifyDeployedCertificate, computeCertificateFingerprint } = require("../verify/index.js");
+const { verifyDeployedCertificate, computeCertificateFingerprint, parseDnsSans } = require("../verify/index.js");
 const { computeSha1ThumbprintFromPem } = require("../windows-cert-store/index.js");
 const { listHttpSysBindings } = require("../windows-discovery/index.js");
 
@@ -153,7 +153,7 @@ const STORE_NAME_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
 const SNI_HOST_PATTERN =
   /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 
-/** Wildcard address forms map
+/** Wildcard address forms. Each maps
  * to its own defined loopback probe address, never a DNS-resolved name. */
 const WILDCARD_BINDING_ADDRESSES = Object.freeze({
   "*": "127.0.0.1",
@@ -222,8 +222,8 @@ function boundAndRedactExcerpt(output) {
  * the two do not silently diverge on what a binding may look like.
  *
  * @param {object} binding
- * @param {string} binding.address IP literal, or one of the three wildcard
- *   forms in WILDCARD_BINDING_ADDRESSES ("*", "0.0.0.0", "[::]").
+ * @param {string} binding.address IP literal, or one of the wildcard
+ *   forms in WILDCARD_BINDING_ADDRESSES ("*", "0.0.0.0", "::", "[::]").
  * @param {number} binding.port 1-65535.
  * @param {string} [binding.sniHost] optional SNI hostname.
  * @param {string} binding.store Windows certificate store name.
@@ -273,13 +273,14 @@ function assertValidBinding(binding) {
 /**
  * Resolves the real TCP address+SNI decision 13's verification handshake
  * must use for a given binding: the binding's own address when it is a
- * concrete IP, or the defined loopback probe when it is one of the three
+ * concrete IP, or the defined loopback probe when it is one of the
  * wildcard forms. Never returns a DNS name.
  * @param {{ address: string, sniHost?: string }} binding
  * @returns {{ host: string, servername: string|undefined }}
  */
 function resolveVerificationTarget(binding) {
-  const loopback = WILDCARD_BINDING_ADDRESSES[binding.address];
+  const family = wildcardAddressFamily(binding.address);
+  const loopback = family === 4 ? '127.0.0.1' : family === 6 ? '::1' : undefined;
   const host = loopback !== undefined ? loopback : stripIpv6Brackets(binding.address);
   return { host, servername: binding.sniHost || undefined };
 }
@@ -288,6 +289,15 @@ function resolveVerificationTarget(binding) {
 function stripIpv6Brackets(address) {
   const match = /^\[(.+)\]$/.exec(address);
   return match ? match[1] : address;
+}
+
+function wildcardAddressFamily(address) {
+  if (typeof address !== 'string') return 0;
+  if (address === '*' || address === '0.0.0.0') return 4;
+  const literal = stripIpv6Brackets(address);
+  if (require('node:net').isIP(literal) !== 6) return 0;
+  try { return new URL(`http://[${literal}]/`).hostname === '[::]' ? 6 : 0; }
+  catch { return 0; }
 }
 
 /**
@@ -332,7 +342,8 @@ function formatBindingSelector(binding) {
 function formatIpPort(binding) {
   // netsh rejects "*" in an ipport selector ("The parameter is incorrect");
   // the IIS wildcard is 0.0.0.0 to http.sys.
-  const address = binding.address === "*" ? "0.0.0.0" : binding.address === "::" ? "[::]" : binding.address;
+  let address = binding.address === "*" ? "0.0.0.0" : binding.address;
+  if (require("node:net").isIP(address) === 6) address = `[${address}]`;
   return `${address}:${binding.port}`;
 }
 
@@ -1112,25 +1123,84 @@ async function checkSniPrecedenceConflict({
   return undefined;
 }
 
-async function checkWildcardPrecedence({ binding, newThumbprint, execFileImpl, powershellPath, timeoutMs, signal }) {
+// DNS SANs are the authenticated certificate scope, not an inventory of every
+// hostname an IIS wildcard site might serve. Names outside this scope are not qualified.
+function isScopedDnsName(name) {
+  const dns = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
+  return dns.test(name) && require("node:url").domainToASCII(name) === name;
+}
+
+function wildcardCertificateNames(certificatePem) {
+  try {
+    const names = parseDnsSans(new crypto.X509Certificate(certificatePem).subjectAltName);
+    if (!names.length || names.length > 32 || names.some(name => !isScopedDnsName(name.startsWith("*.") ? name.slice(2) : name))) return null;
+    return [...new Set(names)];
+  } catch (_) { return null; }
+}
+
+function wildcardProbeTimeout(configuredMs, deadline, now = Date.now()) {
+  return Math.max(0, Math.min(configuredMs, deadline - now));
+}
+
+function dnsSanMatches(name, san) {
+  if (!san.startsWith('*.')) return name === san;
+  const suffix = san.slice(2);
+  return name.endsWith('.' + suffix) && name.slice(0, -(suffix.length + 1)).length > 0 &&
+    !name.slice(0, -(suffix.length + 1)).includes('.');
+}
+
+async function checkWildcardPrecedence({ binding, newThumbprint, dnsNames, execFileImpl, powershellPath, timeoutMs, signal }) {
   const inventory = await listHttpSysBindings({ execFileImpl, powershellPath, timeoutMs, signal, strict: true });
   if (!inventory.ok) return {
     ok: false, code: inventory.reason === "aborted" ? "ABORTED" : "QUERY_FAILED",
     detail: "Cannot verify HTTP.sys bindings for this wildcard.",
   };
-  const family = ["::", "[::]"].includes(binding.address) ? 6 : 4;
+  const family = wildcardAddressFamily(binding.address);
+  const sniNames = [];
+  for (const entry of inventory.bindings.filter(item => item.keyedBy === "hostnameport")) {
+    const parsed = splitIpPortLiteral(canonicalSelectorValue(entry.ipPort));
+    if (!parsed) return { ok: false, code: "QUERY_FAILED", detail: "Cannot interpret an HTTP.sys hostname binding." };
+    if (parsed.port !== binding.port) continue;
+    const name = parsed.address.toLowerCase().replace(/\.$/, "");
+    if (!isScopedDnsName(name))
+      return { ok: false, code: "QUERY_FAILED", detail: "Cannot interpret an HTTP.sys hostname binding on this port." };
+    if (dnsNames.some(san => dnsSanMatches(name, san))) {
+      if (entry.thumbprint !== newThumbprint) return { ok: false, code: "WILDCARD_PRECEDENCE_CONFLICT", detail: "An HTTP.sys SNI binding for a certificate DNS name serves a different certificate and overrides the wildcard." };
+      sniNames.push(name);
+      if (sniNames.length + dnsNames.length > 32) return { ok: false, code: "WILDCARD_DNS_SCOPE_UNAVAILABLE", detail: "Too many DNS names require TLS verification for this wildcard." };
+    }
+  }
   const conflict = inventory.bindings.find((entry) => {
     if (entry.keyedBy !== "ipport") return false;
     const parsed = splitIpPortLiteral(canonicalSelectorValue(entry.ipPort));
     if (!parsed || parsed.port !== binding.port) return false;
     const address = parsed.address.replace(/^\[|\]$/g, "");
-    if (require("node:net").isIP(address) !== family || address === "0.0.0.0" || address === "::") return false;
+    const addressFamily = require("node:net").isIP(address);
+    // Treat mapped IPv4 selectors conservatively: their reachability may
+    // depend on the Windows dual-stack configuration.
+    const mappedIPv4 = family === 4 && addressFamily === 6 &&
+      new URL(`http://[${address}]/`).hostname.startsWith("[::ffff:");
+    if ((addressFamily !== family && !mappedIPv4) || wildcardAddressFamily(address)) return false;
     return entry.thumbprint !== newThumbprint;
   });
   return conflict ? {
     ok: false, code: "WILDCARD_PRECEDENCE_CONFLICT",
     detail: "A specific HTTP.sys binding on the same port serves a different certificate and overrides the wildcard. Review the bindings before retrying.",
-  } : { ok: true };
+  } : { ok: true, sniNames };
+}
+
+// This guard is only used for registrations moved from a legacy wildcard.
+// It is not a lock against a concurrent administrator changing Windows.
+async function checkReassociatedBinding({ binding, thumbprint, fingerprintSha256, permittedFingerprints, execFileImpl, signal, read }) {
+  const { readStableAbsenceSnapshot, provesWildcardAbsent } = require("../discovery/iis-absence-proof");
+  try {
+    const snapshot = await readStableAbsenceSnapshot({ execFileImpl, signal, ...(read ? { read } : {}) });
+    const certificate = snapshot.certificates.find(c => c.thumbprint.toLowerCase() === String(thumbprint || "").toLowerCase());
+    const fingerprint = fingerprintSha256 || certificate?.fingerprintSha256;
+    if (permittedFingerprints && !permittedFingerprints.includes(fingerprint)) return false;
+    return provesWildcardAbsent({ locationKind:"iis_binding", siteName:binding.site, port:binding.port,
+      boundAddress:binding.address, thumbprint, fingerprintSha256:fingerprint }, snapshot.iis, snapshot.http, snapshot.certificates);
+  } catch (_) { return false; }
 }
 
 /**
@@ -1213,6 +1283,10 @@ function splitIpPortLiteral(ipPort) {
  *   already be present (imported) in binding.store — this function binds
  *   and verifies, it does not import (see ../windows-cert-store for CNG
  *   enrollment / a future PFX-import fallback for that step).
+ * @param {string} [input.expectedExistingThumbprint] when supplied, refuse
+ *   an absent binding or one using a different certificate. An already-bound
+ *   replacement is verified for idempotent retry. This precondition is not an
+ *   atomic comparison against changes by external processes.
  * @param {Function} [input.execFileImpl] injection point for tests.
  * @param {string} [input.netshPath]
  * @param {string} [input.powershellPath] runs the http.sys binding query.
@@ -1265,6 +1339,9 @@ function splitIpPortLiteral(ipPort) {
 async function deployIisBinding({
   binding,
   certificatePem,
+  reassociationGuard,
+  reassociationRead,
+  expectedExistingThumbprint,
   execFileImpl = childProcess.execFile,
   netshPath = "netsh.exe",
   powershellPath = "powershell.exe",
@@ -1281,6 +1358,9 @@ async function deployIisBinding({
 
   const newThumbprint = computeSha1ThumbprintFromPem(certificatePem);
   const expectedFingerprintSha256 = computeCertificateFingerprint(certificatePem);
+  const expectedExisting = expectedExistingThumbprint === undefined
+    ? undefined
+    : normalizeThumbprint(expectedExistingThumbprint);
 
   const currentBindingResult = await queryCurrentBinding({
     binding,
@@ -1299,13 +1379,43 @@ async function deployIisBinding({
     });
   }
   const outgoingThumbprint = currentBindingResult.thumbprint;
+  const reassociationGuardValid = reassociationGuard && typeof reassociationGuard === "object" &&
+    Object.keys(reassociationGuard).length === 5 && /^[a-f0-9]{64}$/.test(reassociationGuard.fingerprintSha256 || "") &&
+    typeof reassociationGuard.site === "string" && reassociationGuard.site.toLowerCase() === String(binding.site || "").toLowerCase() &&
+    typeof reassociationGuard.address === "string" && reassociationGuard.address.toLowerCase() === String(binding.address || "").toLowerCase() &&
+    reassociationGuard.port === binding.port && reassociationGuard.store === "My" && String(binding.store || "").toLowerCase() === "my" && !binding.sniHost;
+  if (reassociationGuard !== undefined && (!reassociationGuardValid || !(await checkReassociatedBinding({ binding, thumbprint:outgoingThumbprint, execFileImpl, signal, read:reassociationRead,
+    permittedFingerprints:[reassociationGuard.fingerprintSha256,expectedFingerprintSha256] })))) {
+    return guardReturnValue({ ok:false, code:"REASSOCIATION_CONFLICT", outgoingThumbprint, rolledBack:false,
+      detail:"Cannot confirm that the reassociated IIS binding is present without a wildcard. The issued certificate may already be in the Windows store; inspect before retrying." });
+  }
   // A concrete HTTP.sys binding wins over a wildcard for that IP. Probing
   // only loopback can therefore report success while remote clients still
   // receive a different certificate. Check before changing anything.
-  const isWildcard = !binding.sniHost && Object.prototype.hasOwnProperty.call(WILDCARD_BINDING_ADDRESSES, binding.address);
+  const isWildcard = !binding.sniHost && wildcardAddressFamily(binding.address) !== 0;
+  const dnsNames = isWildcard ? wildcardCertificateNames(certificatePem) : null;
+  if (isWildcard && !dnsNames) return guardReturnValue({ ok: false, code: "WILDCARD_DNS_SCOPE_UNAVAILABLE", outgoingThumbprint, rolledBack: false,
+    detail: "Cannot determine valid DNS subject alternative names for the wildcard certificate; inspect the certificate before retrying. The IIS binding was not changed; the certificate may already be in the Windows store." });
+  let sniNames = [];
   if (isWildcard) {
-    const check = await checkWildcardPrecedence({ binding, newThumbprint, execFileImpl, powershellPath, timeoutMs, signal });
-    if (!check.ok) return guardReturnValue({ ...check, detail: `${check.detail} No changes were made.`, outgoingThumbprint, rolledBack: false });
+    const check = await checkWildcardPrecedence({ binding, newThumbprint, dnsNames, execFileImpl, powershellPath, timeoutMs, signal });
+    if (!check.ok) return guardReturnValue({ ...check, detail: `${check.detail} The IIS binding was not changed; the certificate may already be in the Windows store.`, outgoingThumbprint, rolledBack: false });
+    sniNames = check.sniNames;
+  }
+  // Opt-in precondition for dependent deployments: never recreate an absent
+  // binding or intentionally replace a certificate changed by an operator.
+  // The caller still needs coordination against concurrent external changes;
+  // the underlying netsh delete/add operation is not an atomic compare-and-set.
+  if (expectedExisting !== undefined && outgoingThumbprint !== expectedExisting && outgoingThumbprint !== newThumbprint) {
+    return guardReturnValue({
+      ok: false,
+      code: outgoingThumbprint === null ? "EXPECTED_BINDING_MISSING" : "EXPECTED_BINDING_CHANGED",
+      detail: outgoingThumbprint === null
+        ? "The expected IIS binding is absent; it was not recreated."
+        : "The IIS binding no longer uses the expected certificate; it was left unchanged.",
+      outgoingThumbprint,
+      rolledBack: false,
+    });
   }
   // No parameters when nothing is bound yet: nothing to carry over.
   const outgoingParameters = currentBindingResult.parameters || {};
@@ -1347,6 +1457,27 @@ async function deployIisBinding({
         outgoingThumbprint,
         rolledBack: false,
       });
+    }
+
+    // Capability probing above can take time. When a predecessor was supplied,
+    // re-read immediately before mutation and fail closed if it changed. This
+    // narrows, but cannot eliminate, the race with external IIS administrators:
+    // netsh exposes no atomic compare-and-set for delete followed by add.
+    if (expectedExisting !== undefined) {
+      const beforeMutation = await queryCurrentBinding({
+        binding, execFileImpl, powershellPath, timeoutMs, signal,
+      });
+      if (!beforeMutation.ok || beforeMutation.thumbprint !== expectedExisting) {
+        return guardReturnValue({
+          ok: false,
+          code: beforeMutation.ok ? "EXPECTED_BINDING_CHANGED" : "QUERY_FAILED",
+          detail: beforeMutation.ok
+            ? "The IIS binding changed during preparation; it was left unchanged."
+            : "The IIS binding could not be rechecked; it was left unchanged.",
+          outgoingThumbprint,
+          rolledBack: false,
+        });
+      }
     }
 
     const bindResult = await bindCertificate({
@@ -1399,18 +1530,37 @@ async function deployIisBinding({
   }
 
   const { host, servername } = resolveVerificationTarget(binding);
-  const verifyResult = await verifyDeployedCertificate({
+  const verifyDeadline = Date.now() + 30000;
+  let verifyResult = await verifyDeployedCertificate({
     host,
     port: binding.port,
     servername,
     expectedFingerprintSha256,
-    timeoutMs: verifyTimeoutMs,
+    timeoutMs: isWildcard ? wildcardProbeTimeout(verifyTimeoutMs, verifyDeadline) : verifyTimeoutMs,
     ...(connectImpl !== undefined ? { connectImpl } : {}),
   });
 
+  if (verifyResult.verified && isWildcard) {
+    // Probe every concrete SAN and every matching SNI selector. A synthetic
+    // single label tests wildcard SANs without sending '*' in TLS SNI.
+    const probes = [...new Set([...dnsNames.map(name => name.startsWith('*.') ? `tokentimer-probe.${name.slice(2)}` : name), ...sniNames])];
+    for (const name of probes) {
+      if (signal?.aborted) { verifyResult = { verified: false, detail: "Wildcard TLS verification was cancelled." }; break; }
+      const remaining = wildcardProbeTimeout(verifyTimeoutMs, verifyDeadline);
+      if (remaining <= 0) { verifyResult = { verified: false, detail: "Wildcard TLS verification exceeded its total time limit." }; break; }
+      verifyResult = await verifyDeployedCertificate({ host, port: binding.port, servername: name,
+        expectedFingerprintSha256, timeoutMs: remaining, ...(connectImpl !== undefined ? { connectImpl } : {}) });
+      if (!verifyResult.verified) break;
+    }
+  }
+  if (isWildcard && signal?.aborted) verifyResult = { verified: false, detail: "Wildcard TLS verification was cancelled." };
   if (verifyResult.verified) {
+    if (reassociationGuard !== undefined && !(await checkReassociatedBinding({ binding, thumbprint:newThumbprint, fingerprintSha256:expectedFingerprintSha256, execFileImpl, signal, read:reassociationRead }))) {
+      return guardReturnValue({ ok:false, code:"REASSOCIATION_CONFLICT_AFTER_MUTATION", outgoingThumbprint, rolledBack:false,
+        detail:"IIS changed during deployment or could not be verified. The binding and certificate may already have changed; reconcile them before retrying." });
+    }
     if (isWildcard) {
-      const check = await checkWildcardPrecedence({ binding, newThumbprint, execFileImpl, powershellPath, timeoutMs, signal });
+      const check = await checkWildcardPrecedence({ binding, newThumbprint, dnsNames, execFileImpl, powershellPath, timeoutMs, signal });
       if (!check.ok) return guardReturnValue({
         ...check,
         detail: `${check.detail} The wildcard may already have changed; inspect it before retrying.`,
@@ -1493,7 +1643,13 @@ module.exports = {
   formatPreservedParamArgs,
   findUnsupportedNetshParams,
   checkSniPrecedenceConflict,
+  dnsSanMatches,
+  isScopedDnsName,
+  wildcardProbeTimeout,
+  wildcardAddressFamily,
+  wildcardCertificateNames,
   checkWildcardPrecedence,
+  checkReassociatedBinding,
   queryCurrentBinding,
   bindCertificate,
   deployIisBinding,

@@ -1,3 +1,4 @@
+import { assertOutboundHost, isAllowedHost, OUTBOUND_POLICY_DENIED } from "@tokentimer/config/network";
 import nodemailer from "nodemailer";
 import fs from "fs";
 import path from "path";
@@ -314,6 +315,8 @@ ${getEmailFooterText()}
 // are managed from the integration import panel.
 export function buildOperationalIncidentEmail({
   category,
+  type,
+  workspaceId: authoritativeWorkspaceId,
   title,
   message,
   metadata,
@@ -324,6 +327,22 @@ export function buildOperationalIncidentEmail({
   );
   const meta = metadata || {};
   const isAutoSync = category === "auto_sync";
+  // Only the explicit server-owned AD CS incident route may select this CTA.
+  // Never follow metadata.href or interpolate metadata into a URL path/origin.
+  const uuid =
+    /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
+  const isAdcs =
+    category === "certops" &&
+    type === "adcs_preflight_blocked" &&
+    uuid.test(String(authoritativeWorkspaceId)) &&
+    uuid.test(String(meta.issuerId));
+  const adcsQuery = isAdcs
+    ? new URLSearchParams({
+        workspace: authoritativeWorkspaceId,
+        action: "check-adcs-issuer",
+        issuerId: meta.issuerId,
+      }).toString()
+    : null;
   const contextValue = (value) => {
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
@@ -340,8 +359,14 @@ export function buildOperationalIncidentEmail({
     : "";
   const buttonUrl = isAutoSync
     ? `${frontendUrl}/dashboard?${autoSyncQuery}${exactConfigQuery}`
-    : `${frontendUrl}/control-center`;
-  const buttonText = isAutoSync ? "Manage Auto-Sync" : "Open Control Center";
+    : isAdcs
+      ? `${frontendUrl}/certops/renewals?${adcsQuery}`
+      : `${frontendUrl}/control-center`;
+  const buttonText = isAutoSync
+    ? "Manage Auto-Sync"
+    : isAdcs
+      ? "Review AD CS Readiness"
+      : "Open Control Center";
 
   const contextLines = [];
   if (isAutoSync) {
@@ -391,7 +416,7 @@ export function buildOperationalIncidentEmail({
     "",
     message || "",
     ...contextLines,
-    ...(isAutoSync ? ["", `${buttonText}: ${buttonUrl}`] : []),
+    ...(isAutoSync || isAdcs ? ["", `${buttonText}: ${buttonUrl}`] : []),
   ].join("\n");
 
   const { html, text } = generateEmailTemplate({
@@ -536,6 +561,7 @@ function getTransporterForIndex(index) {
   if (!host) return null;
   // Anonymous relay: both absent is valid; only one being set is invalid.
   if (!hasBalancedSmtpAuth(user, pass)) return null;
+  if (!isAllowedHost(host)) return null;
   if (transporters[index]) return transporters[index];
   const tx = nodemailer.createTransport({
     host,
@@ -594,6 +620,7 @@ async function getDbTransporter() {
     return _dbTransporter;
   const config = await getDbSmtpConfig();
   if (!config) return null;
+  assertOutboundHost(config.host);
   const port = config.port || undefined;
   const smtpSecurity = resolveSmtpSecurity(
     port,
@@ -694,8 +721,9 @@ export async function sendEmailNotification({
       }
     }
 
+    const envBlocked = Boolean(process.env.SMTP_HOST && !isAllowedHost(process.env.SMTP_HOST));
     let last = null;
-    for (let i = 0; i < total; i++) {
+    for (let i = 0; !envBlocked && i < total; i++) {
       await maybeBeforeSmtpAttempt(onBeforeAttempt, {
         attempt: "smtp-account",
         accountIndex: i,
@@ -708,6 +736,12 @@ export async function sendEmailNotification({
       if (!from) continue;
       try {
         await tx.verify();
+        // Connection verification can block while recipient authorization or
+        // consent changes. Recheck immediately before submitting the message.
+        await maybeBeforeSmtpAttempt(onBeforeAttempt, {
+          attempt: "smtp-send",
+          accountIndex: i,
+        });
         const info = await tx.sendMail({
           from,
           to,
@@ -838,6 +872,9 @@ export async function sendEmailNotification({
             : getDbFrom(dbConfig);
           try {
             await dbTx.verify();
+            await maybeBeforeSmtpAttempt(onBeforeAttempt, {
+              attempt: "db-smtp-send",
+            });
             const info = await dbTx.sendMail({
               from,
               to,
@@ -906,10 +943,16 @@ export async function sendEmailNotification({
         }
       } catch (dbErr) {
         if (dbErr?.name === "DeliveryOwnershipLostError") throw dbErr;
+        if (dbErr?.code === OUTBOUND_POLICY_DENIED && !last) {
+          return { success: false, code: OUTBOUND_POLICY_DENIED, error: "SMTP destination is blocked by the outbound policy" };
+        }
         logger.warn("DB SMTP fallback failed:", dbErr.message);
       }
     }
 
+    if (!last && envBlocked) {
+      return { success: false, code: OUTBOUND_POLICY_DENIED, error: "SMTP destination is blocked by the outbound policy" };
+    }
     return last || { success: false, error: "SMTP not configured" };
   } catch (e) {
     // Ownership heartbeats must propagate so the delivery worker aborts the

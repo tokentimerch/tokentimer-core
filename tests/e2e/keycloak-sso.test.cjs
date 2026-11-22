@@ -417,8 +417,8 @@ test(
     const waiting = await localContext();
     const waitingPage = await waiting.newPage();
     await waitingPage.goto(app + "/login");
-    await waitingPage.getByText("Sign in with Keycloak OIDC", { exact: true }).waitFor();
-    assert.equal(await waitingPage.getByText("Sign in with Keycloak SAML", { exact: true }).count(), 0);
+    await waitingPage.getByRole("link", { name: "Sign in with Keycloak OIDC", exact: true }).waitFor();
+    assert.equal(await waitingPage.getByRole("link", { name: "Sign in with Keycloak SAML", exact: true }).count(), 0);
 
     await adminPage.goto(app + "/sso-providers/new");
     await adminPage.getByRole("combobox", { name: "Protocol", exact: true }).selectOption("saml");
@@ -447,8 +447,8 @@ test(
       [["oidc", 1, true], ["saml", 1, true]]);
 
     await waitingPage.evaluate(() => window.dispatchEvent(new Event("pageshow")));
-    await waitingPage.getByText("Sign in with Keycloak SAML", { exact: true }).waitFor();
-    await waitingPage.getByText("Sign in with Keycloak OIDC", { exact: true }).waitFor();
+    await waitingPage.getByRole("link", { name: "Sign in with Keycloak SAML", exact: true }).waitFor();
+    await waitingPage.getByRole("link", { name: "Sign in with Keycloak OIDC", exact: true }).waitFor();
     await waiting.close();
     t.diagnostic("Keycloak SAML was enabled from the standalone wizard and appeared beside OIDC on an existing login page");
 
@@ -482,10 +482,10 @@ test(
         assert.match(await metadata.text(), /AssertionConsumerService/);
       }
       await page.goto(app + "/login?next=%2Fworkspaces");
-      await page.getByText("Sign in with Keycloak OIDC", { exact: true }).waitFor();
-      await page.getByText("Sign in with Keycloak SAML", { exact: true }).waitFor();
+      await page.getByRole("link", { name: "Sign in with Keycloak OIDC", exact: true }).waitFor();
+      await page.getByRole("link", { name: "Sign in with Keycloak SAML", exact: true }).waitFor();
       await page
-        .getByText("Sign in with " + displayName, { exact: true })
+        .getByRole("link", { name: "Sign in with " + displayName, exact: true })
         .click();
       try {
         await page
@@ -554,12 +554,12 @@ test(
           logout(),
         ]);
         await page.waitForURL(app + "/login");
-        await page.getByText("Sign in with " + displayName, { exact: true }).click();
+        await page.getByRole("link", { name: "Sign in with " + displayName, exact: true }).click();
         await page.locator("#username").waitFor();
       } else {
         await logout();
         await page.waitForURL(app + "/login");
-        await page.getByText("Sign in with " + displayName, { exact: true }).waitFor();
+        await page.getByRole("link", { name: "Sign in with " + displayName, exact: true }).waitFor();
       }
       assert.equal(
         (await (await context.request.get(api + "/api/session")).json())

@@ -82,6 +82,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@tokentimer/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@aws-sdk/client-acm':
         specifier: 3.1045.0
         version: 3.1045.0
@@ -367,6 +370,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@tokentimer/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@tokentimer/alert-eligibility':
         specifier: workspace:*
         version: link:../../packages/alert-eligibility
@@ -431,7 +437,11 @@ importers:
 
   packages/alert-eligibility: {}
 
-  packages/config: {}
+  packages/config:
+    dependencies:
+      proxy-from-env:
+        specifier: 2.1.0
+        version: 2.1.0
 
   packages/contracts:
     dependencies:
@@ -478,7 +488,11 @@ importers:
 
   packages/recipient-verification: {}
 
-  packages/webhook-safety: {}
+  packages/webhook-safety:
+    dependencies:
+      '@tokentimer/config':
+        specifier: workspace:*
+        version: link:../config
 
 packages:
 

@@ -572,7 +572,9 @@ export default function SsoProviderWizard({
                         <FormControl>
                           <Checkbox
                             isChecked={requestOktaGroups}
-                            onChange={e => setRequestOktaGroups(e.target.checked)}
+                            onChange={e =>
+                              setRequestOktaGroups(e.target.checked)
+                            }
                           >
                             Request groups for role mapping
                           </Checkbox>

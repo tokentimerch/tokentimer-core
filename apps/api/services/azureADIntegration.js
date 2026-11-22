@@ -1,5 +1,6 @@
 "use strict";
 
+const { assertOutboundUrl } = require("@tokentimer/config/network");
 const axios = require("axios");
 const {
   tryParseDate,
@@ -111,6 +112,7 @@ async function graphRequest({
     };
 
     try {
+      assertOutboundUrl(url, { proxyMode: "axios" });
       const response = await axios({
         method,
         url: url.toString(),
@@ -286,6 +288,7 @@ async function scanAzureAD({
 }) {
   validateManagedIdentityMode(managedIdentityMode);
   if (!token) throw new Error("token is required");
+  assertOutboundUrl(GRAPH_BASE_URL, { proxyMode: "axios" });
 
   // Clean and validate token
   const cleanToken = String(token)

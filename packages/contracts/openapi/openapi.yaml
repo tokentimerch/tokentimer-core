@@ -4464,6 +4464,8 @@ paths:
                     type: array
                     items:
                       type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/integrations/aws/scan:
     post:
       tags: [Integrations]
@@ -5199,7 +5201,9 @@ paths:
       summary: Send test webhook
       operationId: sendTestWebhook
       description: >-
-        Sends a test webhook payload to validate destination settings. For
+        Sends a test webhook payload to validate destination settings.
+        Production requires HTTPS for both testing and delivery. An HTTP URL
+        is rejected with status 400 and code WEBHOOK_INVALID_URL. For
         non-generic kinds (slack, teams, discord, pagerduty) the destination
         host must match the built-in provider allowlist (Slack, Discord,
         Teams, PagerDuty, and Power Automate/Logic Apps hosts) or a host added
@@ -6506,6 +6510,11 @@ paths:
                                             the CA certificate was pinned,
                                             which renewal needs. Null until a
                                             certificate is pinned.
+                                        preflightExpiresAt:
+                                          type: string
+                                          format: date-time
+                                          nullable: true
+                                          description: Expiry time of the most recent CA check, or null when no check is recorded.
                                       additionalProperties: true
                                   profiles:
                                     type: integer
@@ -6790,6 +6799,13 @@ paths:
                     items:
                       type: object
                       additionalProperties: true
+                      properties:
+                        outbound_policy_blocked:
+                          type: boolean
+                          description: The current outbound policy blocks scheduled checks for this endpoint.
+                        outbound_manual_check_blocked:
+                          type: boolean
+                          description: The current outbound policy blocks the manual HTTP check for this endpoint.
         "500":
           $ref: "#/components/responses/InternalError"
     post:
@@ -6835,6 +6851,8 @@ paths:
                 additionalProperties: true
         "400":
           $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/domains/{domainId}:
@@ -6917,6 +6935,8 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "500":
@@ -7139,6 +7159,7 @@ paths:
         Duplicate imports are skipped when a matching token already exists.
         Optionally creates endpoint monitors (`domain_monitors`) for each discovered hostname when
         `monitorOptions.enabled` is true. Existing monitors for the same workspace and URL are left untouched.
+        The outbound policy can block new monitors while the certificate imports still succeed.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -7256,6 +7277,9 @@ paths:
                       existing:
                         type: integer
                         description: Hostnames that already had a monitor in this workspace.
+                      blocked:
+                        type: integer
+                        description: New monitors skipped because the outbound policy blocks their scheduled checks.
         "400":
           $ref: "#/components/responses/BadRequest"
         "500":
@@ -7542,6 +7566,89 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/workspaces/{id}/certops/certificate-identities/{identityId}/windows-renewal:
+    get:
+      tags: [CertOps]
+      operationId: getCertOpsWindowsRenewal
+      summary: List Windows renewal ownership and IIS consumers for a certificate identity
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: identityId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Windows renewal ownership and consumer state }
+        "400": { description: Invalid identity }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/workspaces/{id}/certops/management-periods/{periodId}/iis-consumers/{targetId}:
+    put:
+      tags: [CertOps]
+      operationId: updateCertOpsIisConsumer
+      summary: Enable or disable automatic updates for an IIS consumer
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - { in: path, name: periodId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: targetId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200": { description: Updated IIS consumer }
+        "400": { description: Invalid update }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Consumer update refused }
+  /api/v1/workspaces/{id}/certops/sources/{managedCertificateId}/reassociate-windows-store/candidates:
+    get:
+      tags: [CertOps]
+      operationId: listCertOpsWindowsStoreReassociationCandidates
+      summary: List eligible IIS targets for a Windows store renewal profile
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - { in: path, name: managedCertificateId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Candidate IIS targets }
+        "400": { description: Reassociation refused }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/workspaces/{id}/certops/sources/{managedCertificateId}/reassociate-windows-store:
+    post:
+      tags: [CertOps]
+      operationId: reassociateCertOpsWindowsStore
+      summary: Move a Windows store renewal profile to a verified IIS target
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - { in: path, name: managedCertificateId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [currentId, legacyPeriodId, currentPeriodId, agentId, expectedFingerprintSha256, expectedDnsName]
+              properties:
+                currentId: { type: string, format: uuid }
+                legacyPeriodId: { type: string, format: uuid }
+                currentPeriodId: { type: string, format: uuid }
+                agentId: { type: string, format: uuid }
+                expectedFingerprintSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                expectedDnsName: { type: string, minLength: 1 }
+      responses:
+        "201": { description: Reassociation completed }
+        "400": { description: Invalid request }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Reassociation refused }
   /api/v1/workspaces/{id}/certops/certificate-identities/{identityId}:
     get:
       tags: [CertOps]
@@ -7558,7 +7665,8 @@ paths:
         source and sourceRef; these candidates do not create history or resume
         automation. An explicit re-add with selected renewal settings starts a
         new period. Retired identities cannot be re-added. Viewer responses redact
-        deployment and source references, including restartableSources.sourceRef.
+        deployment and source references and targetHostname, including
+        restartableSources.sourceRef.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -8518,6 +8626,12 @@ paths:
                       properties:
                         site: { type: string }
                         port: { type: integer, minimum: 1, maximum: 65535 }
+                        address:
+                          description: Optional IP-keyed IIS listener. A specific IP requires a qualified agent and cannot be combined with SNI.
+                          oneOf:
+                            - { type: string, enum: ["*"] }
+                            - { type: string, format: ipv4 }
+                            - { type: string, format: ipv6 }
                         sniHost: { type: string }
       responses:
         "201":
@@ -9628,6 +9742,130 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/recover-installation-proof:
+    post:
+      tags: [CertOps]
+      operationId: recoverCertOpsAdcsInstallationProof
+      summary: Inspect an uncertain AD CS installation
+      description: >-
+        Requires a human session and certops.issuer.manage. The original job must
+        have an unknown outcome. The expected certificate identity from the original
+        agent and claim must have been observed committed before its recorded deadline. This action only queues
+        an inspection of the Windows certificate store; it never contacts the CA,
+        creates a key, or installs a certificate. A qualified original agent is
+        required to queue inspection. Repeating the request after a failed inspection
+        queues a new inspection. Workspace pause blocks this action. CSRF is required.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+        - in: path
+          name: enrollmentId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [orphanedJobId, reason]
+              properties:
+                orphanedJobId: { type: string, format: uuid }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "201":
+          description: A new inspection job was queued. created describes the intent, not the job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsAdcsProofRecovery" }
+        "200":
+          description: No admissible expected identity, an intent awaiting an eligible agent, or an existing active or completed inspection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsAdcsProofRecovery" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/acme-store-enrollments/by-job/{jobId}:
+    get:
+      tags: [CertOps]
+      operationId: getCertOpsAcmeStoreEnrollmentByJob
+      summary: Inspect ACME store recovery availability
+      description: Requires a human session and certops.issuer.manage. Returns only an enrollment whose original or current job matches the requested job in this workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: jobId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Enrollment and current recovery eligibility.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [enrollmentId, state, outcomeUncertain, recoveryAvailable]
+                properties:
+                  enrollmentId: { type: string, format: uuid }
+                  state: { type: string, enum: [keygen_intent, prepared, submitting, issued, installing, installed, uncertain] }
+                  outcomeUncertain: { type: boolean }
+                  recoveryAvailable: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { description: Rate limit exceeded }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/acme-store-enrollments/{enrollmentId}/recover:
+    post:
+      tags: [CertOps]
+      operationId: recoverCertOpsAcmeStoreEnrollment
+      summary: Continue an uncertain ACME store enrollment
+      description: >-
+        Requires a human session, certops.issuer.manage, an explicit acknowledgement
+        and the exact uncertain job. The continuation stays on the original active
+        agent and recovers the existing order; it cannot create a replacement order
+        when the outcome is unknown. Workspace pause blocks this action. CSRF is required.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+        - in: path
+          name: enrollmentId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [orphanedJobId, acknowledgeUnknownEffect, reason]
+              properties:
+                orphanedJobId: { type: string, format: uuid }
+                acknowledgeUnknownEffect: { type: boolean, enum: [true] }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "201":
+          description: A new audited continuation was created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsRecoveryJob" }
+        "200":
+          description: The existing continuation was returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsRecoveryJob" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Rate limit exceeded }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/recover:
     post:
       tags: [CertOps]
@@ -9723,7 +9961,7 @@ paths:
           name: operation
           schema:
             type: string
-            enum: [issue, renew, deploy, deploy-from-store, cleanup-from-store, reconcile-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+            enum: [issue, renew, deploy, deploy-from-store, cleanup-from-store, reconcile-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight, adcs-installation-proof]
         - in: query
           name: source
           schema:
@@ -11739,6 +11977,128 @@ paths:
           description: Security audit sink unavailable while rejecting private material
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/certops/agent/credential-rotation/identity:
+    post:
+      tags: [CertOps Agent]
+      summary: Read the authenticated agent identity
+      operationId: readCertOpsAgentRotationIdentity
+      description: >-
+        Read-only identity associated with the bearer, available only when
+        credential rotation is enabled. It does not attest local state or
+        establish trust in the server or TLS configuration.
+      security:
+        - agentCredentialAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        "200":
+          description: Authenticated agent identity
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, agentId, workspaceId]
+                properties:
+                  id: { type: string, format: uuid }
+                  agentId: { type: string, pattern: '^[A-Za-z0-9_.:-]{1,128}$' }
+                  workspaceId: { type: string, format: uuid }
+        "400": { description: Invalid request }
+        "401": { description: Agent authentication failed }
+        "404": { description: Rotation disabled }
+        "410": { description: Agent retired }
+        "429": { description: Machine-token rate limit exceeded }
+        "503": { description: Agent identity unavailable }
+  /api/v1/certops/agent/credential-rotation/prepare:
+    post:
+      tags: [CertOps Agent]
+      summary: Prepare a new agent credential
+      operationId: prepareCertOpsAgentCredentialRotation
+      description: >-
+        Disabled unless CERTOPS_AGENT_ROTATION_ALL_API_FENCED is true after all
+        API instances enforce credential fencing. The cooperating agent must
+        securely persist its candidate before this request. This does not
+        isolate an older privileged process on the same host.
+      security:
+        - agentCredentialAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId, candidatePrefix, candidateHash]
+              properties:
+                operationId: { type: string, pattern: '^[a-f0-9]{32}$' }
+                candidatePrefix: { type: string, pattern: '^ttagent_[a-f0-9]{16}$' }
+                candidateHash: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        "200": { description: Candidate prepared or matching operation already committed }
+        "400": { description: Invalid request }
+        "401": { description: Agent authentication failed }
+        "404": { description: Rotation disabled }
+        "409": { description: Conflicting operation }
+        "410": { description: Agent retired }
+        "429": { description: Machine-token rate limit exceeded }
+  /api/v1/certops/agent/credential-rotation/confirm:
+    post:
+      tags: [CertOps Agent]
+      summary: Confirm possession of a candidate agent credential
+      operationId: confirmCertOpsAgentCredentialRotation
+      description: >-
+        Authenticates the candidate bearer before atomic promotion and replay
+        invalidation. A retry with the same operation ID and the promoted bearer
+        succeeds after a lost response. Disabled unless the fleet is fenced.
+      security:
+        - agentRotationCandidateAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId]
+              properties:
+                operationId: { type: string, pattern: '^[a-f0-9]{32}$' }
+      responses:
+        "200": { description: Candidate committed or already committed }
+        "400": { description: Invalid request }
+        "401": { description: Candidate authentication failed }
+        "404": { description: Rotation disabled }
+        "429": { description: Machine-token rate limit exceeded }
+  /api/v1/certops/agent/credential-rotation/acknowledge:
+    post:
+      tags: [CertOps Agent]
+      summary: Acknowledge a committed agent credential rotation
+      operationId: acknowledgeCertOpsAgentCredentialRotation
+      description: >-
+        Disabled unless the separate ACK gate is enabled. The client must
+        durably store the new credential before acknowledgement; the server
+        cannot verify disk durability. The current agent bearer is required.
+      security:
+        - agentCredentialAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId]
+              properties:
+                operationId: { type: string, pattern: '^[a-f0-9]{32}$' }
+      responses:
+        "200": { description: Acknowledged or previously acknowledged }
+        "400": { description: Invalid request }
+        "401": { description: Agent authentication failed or operation does not match }
+        "404": { description: Acknowledgement disabled }
+        "410": { description: Agent retired }
+        "429": { description: Machine-token rate limit exceeded }
   /api/v1/certops/agent/heartbeat:
     post:
       tags: [CertOps Agent]
@@ -12094,13 +12454,16 @@ paths:
       description: >-
         Result/evidence ingestion authenticated with the per-agent
         credential (bearer). Request body is the agent-protocol envelope with
-        messageType result or evidence, dispatched on the envelope
+        messageType result, evidence, or iis-absence-proof, dispatched on the envelope
         messageType (packages/contracts/certops/agent-protocol.schema.json,
         additionalProperties false). Result ingestion re-proves claim
         ownership (agent + claimId, where attemptId doubles as the claimId),
         consumes the single-use dispatch nonce (replay ledger), and
         transitions the job terminally in one transaction. Evidence messages
-        append job-scoped public evidence without any job transition. The
+        append job-scoped public evidence without any job transition. IIS absence
+        proofs require a fresh, active Windows agent qualified for explicit-IP IIS,
+        a strictly increasing sequence, and observations at most two minutes old.
+        The
         workspace kill switch never blocks results. A retired agent receives
         410. Payloads containing private key material are rejected with 422.
         Hidden with 404 while certops.enabled is disabled.
@@ -12114,7 +12477,7 @@ paths:
               $ref: "#/components/schemas/CertOpsAgentResultRequest"
       responses:
         "200":
-          description: Result acknowledged (jobId/status/errorCode/completedAt) or evidence appended (ok/evidenceCount)
+          description: Result acknowledged (jobId/status/errorCode/completedAt), evidence appended (ok/evidenceCount), or IIS proofs processed (ok/proofCount/duplicateCount)
           content:
             application/json:
               schema:
@@ -13173,6 +13536,10 @@ components:
       type: http
       scheme: bearer
       description: Single-use, hashed, expiring bootstrap enrollment token used only by POST /api/v1/certops/agent/register. Exchanged for a per-agent credential at registration.
+    agentRotationCandidateAuth:
+      type: http
+      scheme: bearer
+      description: Candidate agent credential used only to confirm a prepared credential rotation.
     agentCredentialAuth:
       type: http
       scheme: bearer
@@ -15486,6 +15853,15 @@ components:
                 detail: { type: string, nullable: true, maxLength: 256 }
                 revision: { type: integer, minimum: 1, maximum: 9007199254740991 }
                 revokedIssuerFingerprintSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        securityStatus:
+          type: object
+          additionalProperties: false
+          description: Security state derived from revocation evidence, independent of management lifecycle and certificate expiry.
+          required: [state, source, freshness]
+          properties:
+            state: { type: string, enum: [unknown, revoked, issuer_revoked, last_known_revoked, last_known_issuer_revoked, chain_untrusted, revocation_good] }
+            source: { type: string, nullable: true, enum: [lifecycle, observation] }
+            freshness: { type: string, enum: [asserted, unchecked, fresh, stale, unavailable, unknown] }
         schemaVersion:
           type: integer
           enum: [1]
@@ -15618,7 +15994,23 @@ components:
         renewalPathReason:
           type: string
           nullable: true
-          enum: [all_paths_available, partial_location_outage, agent_offline, all_executors_offline, no_execution_target, topology_unknown, auto_renew_disabled, not_agent_deployable, no_profile, certificate_retired, assigned_agent_retired, assigned_agent_ineligible, adcs_enroll_capability_unavailable, waiting_for_fresh_preflight, null]
+          enum:
+            - all_paths_available
+            - partial_location_outage
+            - agent_offline
+            - all_executors_offline
+            - no_execution_target
+            - topology_unknown
+            - auto_renew_disabled
+            - not_agent_deployable
+            - no_profile
+            - certificate_retired
+            - windows_store_reassociation
+            - assigned_agent_retired
+            - assigned_agent_ineligible
+            - adcs_enroll_capability_unavailable
+            - waiting_for_fresh_preflight
+            - null
           description: Machine-readable reason code for `renewalPathState`.
         renewalPathSummary:
           type: string
@@ -16155,6 +16547,42 @@ components:
             - type: number
             - type: integer
             - type: boolean
+    CertOpsRecoveryJob:
+      type: object
+      additionalProperties: false
+      required: [jobId, created]
+      properties:
+        jobId: { type: string, format: uuid }
+        created: { type: boolean }
+    CertOpsAdcsProofRecovery:
+      type: object
+      additionalProperties: false
+      required: [state, created]
+      properties:
+        state:
+          type: string
+          enum: [expected_identity_unavailable, transport_unavailable, queued, completed]
+        created:
+          type: boolean
+          description: Whether the recovery intent was created in this request.
+        intentId: { type: string, format: uuid }
+        job:
+          type: object
+          additionalProperties: true
+          required: [id, workspaceId, operation, status, source, assignedAgentId, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            workspaceId: { type: string, format: uuid }
+            operation: { type: string, enum: [adcs-installation-proof] }
+            status: { type: string }
+            source: { type: string, enum: [api] }
+            assignedAgentId: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+      description: >-
+        expected_identity_unavailable has no intentId or job; transport_unavailable
+        has an intentId and no job. queued has an active job and completed has
+        a terminal job. Both include intentId.
     CertOpsJob:
       type: object
       additionalProperties: false
@@ -16191,6 +16619,7 @@ components:
             - revoke-trust
             - continue-enrollment
             - adcs-preflight
+            - adcs-installation-proof
         status:
           type: string
           enum:
@@ -16643,7 +17072,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reconcile-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
+          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reconcile-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight, adcs-installation-proof]
         status:
           type: string
           enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled, dry_run_complete, orphaned_unknown_effect, awaiting_issuer]
@@ -19262,7 +19691,7 @@ components:
           description: Agent protocol semver the agent speaks (version negotiation).
         messageType:
           type: string
-          enum: [register, heartbeat, claim, result, evidence, log]
+          enum: [register, heartbeat, claim, result, evidence, log, iis-absence-proof]
         agentId:
           type: string
           minLength: 1
@@ -19280,6 +19709,10 @@ components:
           type: integer
           nullable: true
           description: Agent-reported offset vs control-plane time, used for clock-drift detection.
+        sequence:
+          type: integer
+          minimum: 1
+          description: Increasing agent sequence; required for IIS absence proofs.
         body:
           type: object
           nullable: true
@@ -19441,7 +19874,7 @@ components:
                   maxItems: 16
                   items:
                     type: string
-                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store, cleanup-from-store, reconcile-from-store]
+                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, adcs-installation-proof, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store, cleanup-from-store, reconcile-from-store]
     CertOpsAgentClaimResponse:
       type: object
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.
@@ -19707,6 +20140,54 @@ components:
             type: object
         storageEnabled:
           type: boolean
+    CertOpsAgentIisAbsenceProofBody:
+      type: object
+      additionalProperties: false
+      required: [proofs]
+      properties:
+        proofs:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            type: object
+            additionalProperties: false
+            required: [evidenceId, targetHost, site, port, address, fingerprintSha256, thumbprint, observedAt]
+            properties:
+              evidenceId:
+                type: string
+                minLength: 1
+                maxLength: 128
+                pattern: "^[A-Za-z0-9_.:-]+$"
+              targetHost:
+                type: string
+                minLength: 1
+                maxLength: 255
+                pattern: "^[A-Za-z0-9_.-]+$"
+              site:
+                type: string
+                minLength: 1
+                maxLength: 128
+                pattern: "^[A-Za-z0-9 _.:-]+$"
+              port:
+                type: integer
+                minimum: 1
+                maximum: 65535
+              address:
+                type: string
+                minLength: 2
+                maxLength: 45
+                description: Concrete IP address, excluding wildcard and IPv4-mapped addresses.
+              fingerprintSha256:
+                type: string
+                pattern: "^[a-f0-9]{64}$"
+              thumbprint:
+                type: string
+                pattern: "^[a-f0-9]{40}$"
+              observedAt:
+                type: string
+                format: date-time
+                description: Observation time, at most two minutes old and not in the future.
     CertOpsAgentResultRequest:
       allOf:
         - $ref: "#/components/schemas/CertOpsAgentProtocolEnvelope"
@@ -19715,11 +20196,11 @@ components:
           properties:
             messageType:
               type: string
-              enum: [result, evidence]
-              description: The server dispatches on the envelope messageType; this route accepts both result and evidence messages.
+              enum: [result, evidence, iis-absence-proof]
+              description: The server dispatches on the envelope messageType.
             body:
               type: object
-              description: agent-protocol resultBody (jobId, attemptId, status required; claimId/nonce ride alongside for ownership re-proof and single-use nonce consumption) or evidenceBody (evidenceItems required; jobId required by this route because evidence persistence is job-scoped).
+              description: Result, job evidence, or IIS absence proof body as selected by messageType.
               properties:
                 jobId:
                   type: string
@@ -19804,9 +20285,19 @@ components:
                               type: string
                             value:
                               nullable: true
+          oneOf:
+            - properties:
+                messageType:
+                  enum: [result, evidence]
+            - required: [sequence]
+              properties:
+                messageType:
+                  enum: [iis-absence-proof]
+                body:
+                  $ref: "#/components/schemas/CertOpsAgentIisAbsenceProofBody"
     CertOpsAgentResultResponse:
       type: object
-      description: Acknowledgment. Result messages return ok/jobId/status/errorCode/completedAt after the terminal transition; evidence messages return ok/evidenceCount.
+      description: Acknowledgment for result, evidence, or IIS absence proof messages.
       required: [ok]
       properties:
         ok:
@@ -19829,6 +20320,14 @@ components:
         evidenceCount:
           type: integer
           description: Number of evidence items appended (evidence messages only).
+        proofCount:
+          type: integer
+          minimum: 0
+          description: Number of new IIS proofs stored.
+        duplicateCount:
+          type: integer
+          minimum: 0
+          description: Number of IIS proof identifiers already stored.
     DistributionLifecycle_alias:
       type: string
       pattern: ^[A-Za-z0-9_-]{1,64}$

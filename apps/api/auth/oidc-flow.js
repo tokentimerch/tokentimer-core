@@ -5,6 +5,8 @@
 
 "use strict";
 
+const { assertOutboundUrl } = require("@tokentimer/config/network");
+
 const DEFAULT_OPENID_CLIENT = () => require("openid-client");
 const {
   resolveIdpHttpTimeoutMs: resolveGlobalIdpHttpTimeoutMs,
@@ -23,7 +25,10 @@ function resolveIdpHttpTimeoutMs(env = process.env) {
  * and validated via validateOutboundUrl at save/test time; use default DNS here.
  */
 function createOpenIdHttpOptionsProvider(timeoutMs) {
-  return () => ({ timeout: timeoutMs });
+  return (url) => {
+    assertOutboundUrl(url, { proxyMode: "node" });
+    return { timeout: timeoutMs };
+  };
 }
 
 function createIssuerFromStrategyConfig(strategyConfig, openidClient) {

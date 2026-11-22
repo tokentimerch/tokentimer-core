@@ -6,6 +6,11 @@ const dns = require("dns").promises;
 const net = require("net");
 const tls = require("tls");
 const { URL } = require("url");
+const {
+  assertOutboundUrl,
+  getNetworkConfig,
+  OUTBOUND_POLICY_DENIED,
+} = require("@tokentimer/config/network");
 
 const DEFAULT_TOTAL_TIMEOUT_MS = 20_000;
 const MAX_REDIRECTS = 3;
@@ -200,6 +205,9 @@ function safeFetchError(code, message) {
  * @returns {string|null}
  */
 function outboundBlockHint(reason) {
+  if (reason === OUTBOUND_POLICY_DENIED) {
+    return "Add the IdP host to OUTBOUND_ALLOWLIST on the API before retrying.";
+  }
   if (reason !== "blocked_ip") return null;
   return (
     "The IdP resolved to a private address, which the SSO outbound guard blocks by default. " +
@@ -216,6 +224,7 @@ async function validateOutboundUrl(urlStr, env = process.env) {
   }
   try {
     validateUrlScheme(parsed, env);
+    assertOutboundUrl(parsed);
     const allow = buildAllowPolicy(env);
     await resolveAndValidateHost(parsed, allow);
     return { ok: true, parsed };
@@ -269,6 +278,10 @@ function performRequest(parsedUrl, resolvedIp, opts) {
       reqOptions.checkServerIdentity = (_host, cert) =>
         tls.checkServerIdentity(hostname, cert);
     }
+    if (getNetworkConfig().outboundPolicyEnabled) {
+      // Dial the validated address without routing it through a global proxy.
+      reqOptions.agent = false;
+    }
 
     const transport = isHttps ? https : http;
     const req = transport.request(reqOptions, (res) => {
@@ -312,6 +325,7 @@ async function safeFetch(urlString, opts = {}) {
     try {
       parsed = new URL(currentUrl);
       validateUrlScheme(parsed, env);
+      assertOutboundUrl(parsed);
     } catch (err) {
       return { ok: false, reason: err.code || "invalid_url" };
     }

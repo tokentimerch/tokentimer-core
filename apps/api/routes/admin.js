@@ -1,3 +1,4 @@
+const { assertOutboundUrl, isAllowedOutboundUrl, OUTBOUND_POLICY_DENIED } = require("@tokentimer/config/network");
 const { normalizeMetricSettings, deploymentMetricLabelOptions, readSystemMetricPolicy, systemMetricSettingsError, assertMetricSettingsEditable, HIGH_CARDINALITY_LABELS, EXPLICIT_SELECTION_LABELS } = require("../services/autoSyncMetricLabels");
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
@@ -1044,6 +1045,8 @@ router.get(
       }
       for (const row of opRows.rows) {
         const meta = row.metadata || {};
+        const isAdcsPreflight = row.category === "certops" && row.type === "adcs_preflight_blocked" &&
+          /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(String(meta.issuerId));
         const href =
           row.category === "auto_sync"
             ? autoSyncNotificationHref(
@@ -1051,7 +1054,9 @@ router.get(
                 meta.auto_sync_config_id,
                 req.workspace.id,
               )
-            : "/control-center";
+            : isAdcsPreflight
+              ? `/certops/renewals?${new URLSearchParams({workspace:req.workspace.id,action:"check-adcs-issuer",issuerId:meta.issuerId})}`
+              : "/control-center";
         items.push({
           id: row.id,
           kind:
@@ -1213,7 +1218,17 @@ router.get(
          FROM domain_monitors WHERE workspace_id = $1 ORDER BY created_at DESC`,
         [req.workspace.id],
       );
-      res.json({ items: result.rows });
+      const items = result.rows.map((row) => {
+        const manualCheckBlocked = !isAllowedOutboundUrl(row.url, { proxyMode: "node" });
+        return {
+          ...row,
+          outbound_manual_check_blocked: manualCheckBlocked,
+          outbound_policy_blocked: row.health_check_enabled
+            ? manualCheckBlocked
+            : !isAllowedOutboundUrl(row.url),
+        };
+      });
+      res.json({ items });
     } catch (e) {
       logger.error("Endpoint monitors list error", { error: e.message });
       res.status(500).json({ error: "Failed to list endpoint monitors" });
@@ -1469,6 +1484,7 @@ router.post(
       const skipped = [];
       let monitorsCreated = 0;
       let monitorsExisting = 0;
+      const blockedMonitorUrls = new Set();
       let skippedDuplicate = 0;
       let skippedInvalid = 0;
 
@@ -1670,6 +1686,7 @@ router.post(
         if (createMonitors) {
           for (const certDomain of certDomains) {
             const monitorUrl = `https://${certDomain}`;
+            if (blockedMonitorUrls.has(monitorUrl)) continue;
             const existingMonitor = await pool.query(
               `SELECT id, token_id FROM domain_monitors
                WHERE workspace_id = $1 AND url = $2
@@ -1696,6 +1713,10 @@ router.post(
                   notAfter: expiration,
                 },
               });
+              continue;
+            }
+            if (!isAllowedOutboundUrl(monitorUrl, { proxyMode: monitorHealthCheckEnabled ? "node" : "direct" })) {
+              blockedMonitorUrls.add(monitorUrl);
               continue;
             }
             let monitorSslValidTo = null;
@@ -1768,6 +1789,7 @@ router.post(
         skipped_invalid: skippedInvalid,
         monitors_created: monitorsCreated,
         monitors_existing: monitorsExisting,
+        monitors_blocked: blockedMonitorUrls.size,
         create_monitors: createMonitors,
       });
 
@@ -1794,6 +1816,7 @@ router.post(
           create_monitors: createMonitors,
           monitors_created: monitorsCreated,
           monitors_existing: monitorsExisting,
+          monitors_blocked: blockedMonitorUrls.size,
         };
         if (createMonitors) {
           auditMetadata.monitor_check_interval = monitorCheckInterval;
@@ -1827,7 +1850,11 @@ router.post(
           duplicate: skippedDuplicate,
           invalid: skippedInvalid,
         },
-        monitors: { created: monitorsCreated, existing: monitorsExisting },
+        monitors: {
+          created: monitorsCreated,
+          existing: monitorsExisting,
+          ...(blockedMonitorUrls.size ? { blocked: blockedMonitorUrls.size } : {}),
+        },
       });
     } catch (e) {
       logger.error("Domain checker import failed", {
@@ -1880,6 +1907,12 @@ router.post(
         }
       } catch (_) {
         return res.status(400).json({ error: "Invalid URL format" });
+      }
+      try {
+        assertOutboundUrl(parsedUrl, { proxyMode: health_check_enabled !== false ? "node" : "direct" });
+      } catch (error) {
+        if (error.code !== OUTBOUND_POLICY_DENIED) throw error;
+        return res.status(403).json({ error: error.message, code: error.code });
       }
       const normalizedUrl = parsedUrl.toString().replace(/\/+$/, "");
 
@@ -1970,6 +2003,12 @@ router.post(
            SET validated = $1, validated_at = $2, ssl_issuer = $3, ssl_subject = $4,
                ssl_valid_from = $5, ssl_valid_to = $6, ssl_serial = $7, ssl_fingerprint = $8,
                health_check_enabled = $9, check_interval = $10, alert_after_failures = $11,
+               check_claimed_until = CASE
+                 WHEN check_claim_id IS NULL AND
+                   ROW(health_check_enabled, check_interval) IS DISTINCT FROM ROW($9::boolean, $10::text)
+                   THEN NULL
+                 ELSE check_claimed_until
+               END,
                updated_at = NOW()
            WHERE id = $12
            RETURNING *`,
@@ -2160,6 +2199,13 @@ router.put(
         `UPDATE domain_monitors
          SET health_check_enabled = COALESCE($1, health_check_enabled),
              check_interval = COALESCE($2, check_interval),
+             check_claimed_until = CASE
+               WHEN check_claim_id IS NULL AND
+                 ROW(health_check_enabled, check_interval) IS DISTINCT FROM
+                   ROW(COALESCE($1, health_check_enabled), COALESCE($2, check_interval))
+                 THEN NULL
+               ELSE check_claimed_until
+             END,
              updated_at = NOW()
          WHERE id = $3 AND workspace_id = $4
          RETURNING *`,
@@ -2285,6 +2331,7 @@ router.post(
 
       try {
         const parsedUrl = new URL(domain.url);
+        assertOutboundUrl(parsedUrl, { proxyMode: "node" });
         const client = parsedUrl.protocol === "https:" ? https : http;
         const result = await new Promise((resolve, reject) => {
           const req = client.get(
@@ -2308,6 +2355,9 @@ router.post(
           errorMsg = `HTTP ${statusCode}`;
         }
       } catch (checkErr) {
+        if (checkErr.code === OUTBOUND_POLICY_DENIED) {
+          return res.status(403).json({ error: checkErr.message, code: checkErr.code });
+        }
         status = "error";
         errorMsg = checkErr.message;
       }

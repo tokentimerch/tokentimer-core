@@ -161,9 +161,9 @@ function resetPlatformCaches() {
  *
  * SYSTEM is required (the service runs as LocalSystem). The agent's own
  * identity is required for a non-service, operator-run agent. Administrators
- * is accepted but never granted by the agent: a member of Administrators can
- * take ownership of any file on the machine, so excluding it from the DACL
- * buys no confidentiality while breaking routine operator maintenance.
+ * is accepted and granted explicitly only where operator configuration needs
+ * it. A member can take ownership, so excluding it from the allowlist buys no
+ * confidentiality and breaks routine operator maintenance.
  *
  * @param {string} ownSid
  * @returns {Set<string>}
@@ -188,16 +188,16 @@ function allowedPrincipals(ownSid) {
  * every write) start out restricted instead of inheriting the parent's ACL.
  *
  * @param {string} targetPath
- * @param {{ kind?: "file"|"directory", spawn?: Function, fsImpl?: typeof fs, tmpDir?: string }} [options]
+ * @param {{ kind?: "file"|"directory", includeAdministrators?: boolean, spawn?: Function, fsImpl?: typeof fs, tmpDir?: string }} [options]
  * @returns {{ mechanism: "windows-acl", principals: string[], removed: string[], inheritance: "removed" }}
  */
 function applyWindowsAcl(
   targetPath,
-  { kind = "file", spawn = spawnSync, fsImpl = fs, tmpDir } = {},
+  { kind = "file", includeAdministrators = false, spawn = spawnSync, fsImpl = fs, tmpDir } = {},
 ) {
   const ownSid = currentUserSid({ spawn });
   const rights = kind === "directory" ? "(OI)(CI)(F)" : "(F)";
-  const granted = [SYSTEM_SID, ownSid].filter(
+  const granted = [SYSTEM_SID, ownSid, ...(includeAdministrators ? [ADMINISTRATORS_SID] : [])].filter(
     (sid, index, all) => all.indexOf(sid) === index,
   );
   const grantResult = runTool(
@@ -206,7 +206,7 @@ function applyWindowsAcl(
       targetPath,
       "/inheritance:r",
       "/grant:r",
-      ...granted.map((sid) => `*${sid}:${rights}`),
+      ...granted.map((sid) => `*${sid}:${includeAdministrators && sid === ADMINISTRATORS_SID && kind === "directory" ? "(RX)" : rights}`),
     ],
     spawn,
   );
@@ -380,8 +380,11 @@ function readWindowsOwnerSid(targetPath, { spawn = spawnSync } = {}) {
   for (const key of Object.keys(env)) {
     if (key.toLowerCase() === "psmodulepath") delete env[key];
   }
+  // Do not rely on the service PATH, which may omit WindowsPowerShell or
+  // resolve a different executable ahead of the Windows component.
+  const powershell = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const result = spawn(
-    "powershell",
+    powershell,
     ["-NoProfile", "-NonInteractive", "-Command", script],
     {
       encoding: "utf8",
@@ -506,7 +509,7 @@ function assertWindowsAcl(
  * chmod, a failure here propagates.
  *
  * @param {string} targetPath
- * @param {{ kind?: "file"|"directory", mode?: number, platform?: string, spawn?: Function, fsImpl?: typeof fs }} [options]
+ * @param {{ kind?: "file"|"directory", mode?: number, includeAdministrators?: boolean, platform?: string, spawn?: Function, fsImpl?: typeof fs }} [options]
  * @returns {{ mechanism: "posix-mode"|"windows-acl", principals?: string[], mode?: number }}
  */
 function applyRestrictivePermissions(
@@ -518,10 +521,11 @@ function applyRestrictivePermissions(
     spawn = spawnSync,
     fsImpl = fs,
     tmpDir,
+    includeAdministrators = false,
   } = {},
 ) {
   if (isWindows(platform)) {
-    return applyWindowsAcl(targetPath, { kind, spawn, fsImpl, tmpDir });
+    return applyWindowsAcl(targetPath, { kind, spawn, fsImpl, tmpDir, includeAdministrators });
   }
   const posixMode =
     typeof mode === "number" ? mode : kind === "directory" ? DIRECTORY_MODE : FILE_MODE;
@@ -593,11 +597,9 @@ function assertRestrictivePermissions(
   return { mechanism: "posix-mode" };
 }
 
-/** Must exactly match install-agent.ps1's $ServiceName; a mismatch here
- * would mean the scrub below silently touches nothing while the real
- * spent token sits untouched in the registry. */
+/** Default service name for installations made before generation isolation. */
 const SERVICE_NAME = "TokenTimerAgent";
-const SERVICE_ENVIRONMENT_REGISTRY_KEY = `HKLM\\SYSTEM\\CurrentControlSet\\Services\\${SERVICE_NAME}`;
+const GENERATION_SERVICE_NAME = /^TokenTimerAgent-[a-f0-9]{64}$/;
 
 /**
  * Rewrites the Windows service's registry `Environment` value (written by
@@ -628,17 +630,24 @@ const SERVICE_ENVIRONMENT_REGISTRY_KEY = `HKLM\\SYSTEM\\CurrentControlSet\\Servi
  * failure mode here is reported back to the caller for logging, never
  * thrown.
  *
- * @param {{ configDir: string, spawn?: Function, platform?: string }} options
+ * @param {{ configDir: string, serviceName?: string, spawn?: Function, platform?: string }} options
  * @returns {{ attempted: boolean, cleared: boolean, reason?: string }}
  */
 function clearWindowsServiceBootstrapToken({
   configDir,
+  serviceName = SERVICE_NAME,
   spawn = spawnSync,
   platform = process.platform,
 } = {}) {
   if (!isWindows(platform)) {
     return { attempted: false, cleared: false, reason: "not running on Windows" };
   }
+
+  if (serviceName !== SERVICE_NAME && (typeof serviceName !== "string" ||
+      serviceName.length !== SERVICE_NAME.length + 65 || !GENERATION_SERVICE_NAME.test(serviceName))) {
+    return { attempted: false, cleared: false, reason: "invalid Windows service name" };
+  }
+  const serviceRegistryKey = `HKLM\\SYSTEM\\CurrentControlSet\\Services\\${serviceName}`;
 
   const normalizeOwnedPath = (value) => {
     if (typeof value !== "string" || /[\0\r\n]/.test(value) ||
@@ -656,7 +665,7 @@ function clearWindowsServiceBootstrapToken({
 
   // Two explicit separators make ambiguous native rendering fail closed:
   // neither literal "\\0" nor an embedded separator may corrupt an entry.
-  const queryArgs = (separator) => ["query", SERVICE_ENVIRONMENT_REGISTRY_KEY, "/v", "Environment", "/se", separator];
+  const queryArgs = (separator) => ["query", serviceRegistryKey, "/v", "Environment", "/se", separator];
   const parseEnvironment = (result, separator) => {
     if (!result || result.error || result.status !== 0) return null;
     const matches = String(result.stdout || "").split(/\r?\n/).map((line) => /^[ \t]*Environment[ \t]+REG_MULTI_SZ[ \t]+(.*)$/i.exec(line)).filter(Boolean);
@@ -699,7 +708,7 @@ function clearWindowsServiceBootstrapToken({
 
   const addResult = runRegExe([
     "add",
-    SERVICE_ENVIRONMENT_REGISTRY_KEY,
+    serviceRegistryKey,
     "/v",
     "Environment",
     "/t",

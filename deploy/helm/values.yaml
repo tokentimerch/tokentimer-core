@@ -520,6 +520,11 @@ config:
   # outside of trusted, fully self-hosted environments.
   webhookAllowAllHosts: false
 
+  # Outbound destinations covered by the shared policy. A nonempty list also
+  # restricts these connections when offline mode is disabled.
+  offlineMode: false
+  outboundAllowlist: ""
+
   # Corporate proxy support for outbound HTTP(S) requests (fetch/undici
   # and axios). See docs/CONFIGURATION.md.
   useEnvProxy: false

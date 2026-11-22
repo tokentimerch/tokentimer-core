@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-21 (Core 0.20.0).
+Last reviewed: 2026-11-22 (Core 0.20.0).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -42,9 +42,9 @@ called stable while they are open.
   supported Vault/OpenBao and Azure Key Vault Linux rollout scope.
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
-  Wire offline mode and outbound allowlists into API and worker egress.
-  Independent of the already-shipped integration redirect and pagination
-  checks. Issuer CA/ACME/DNS egress in #246 must reuse this policy.
+  API and worker egress, including webhook delivery, honor the configured
+  policy. Release qualification remains open. The issuer work in #246
+  must reuse the shared policy.
 - **CLM issuer connectors and revocation jobs**
   ([#246](https://github.com/tokentimerch/tokentimer-core/issues/246)).
   Core ACME, step-ca, and webhook issuers. CA-backed revoke,
@@ -124,6 +124,10 @@ does not promise a version or add a v1.0.0 gate.
   operations build on shipped Windows/IIS and AD CS support.
   Distribution provides consumer discovery and lifecycle groundwork. Other
   service connectors and unsupported activation methods remain separate work.
+- **Windows agent with a bundled runtime**
+  ([#542](https://github.com/tokentimerch/tokentimer-core/issues/542)):
+  qualify fresh amd64 installation first, using the exact publisher-signed
+  package. Existing-agent upgrades, rollback and ARM64 remain follow-up work.
 - **Workspace readiness and actionable recovery**
   ([#505](https://github.com/tokentimerch/tokentimer-core/issues/505)):
   persistent readiness, safe diagnostics, verified recipes and contributor

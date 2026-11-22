@@ -106,6 +106,17 @@ describe("resolveIdpHttpTimeoutMs", () => {
     assert.strictEqual(opts.lookup, undefined);
     assert.strictEqual(opts.servername, undefined);
   });
+
+  it("applies the shared outbound policy to each OIDC request", () => {
+    process.env.OUTBOUND_ALLOWLIST = "allowed-idp.example";
+    process.env.NO_PROXY = "allowed-idp.example";
+    process.env.no_proxy = process.env.NO_PROXY;
+    const options = createOpenIdHttpOptionsProvider(20_000);
+    assert.throws(() => options(new URL("https://blocked-idp.example/token")),
+      { code: "OUTBOUND_POLICY_DENIED" });
+    assert.deepStrictEqual(options(new URL("https://allowed-idp.example/token")),
+      { timeout: 20_000 });
+  });
 });
 
 describe("OIDC flow (openid-client)", () => {

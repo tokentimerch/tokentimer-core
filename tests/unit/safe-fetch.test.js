@@ -14,6 +14,7 @@ const {
   isLocalhostHost,
   pickPreferredAddress,
   safeFetch,
+  validateOutboundUrl,
   outboundBlockHint,
   resolveSafeFetchTimeoutMs,
 } = require("../../apps/api/sso/safe-fetch");
@@ -23,6 +24,15 @@ describe("safe-fetch", () => {
 
   afterEach(() => {
     process.env = { ...envBackup };
+  });
+
+  it("applies the shared outbound policy before resolving an IdP host", async () => {
+    process.env.OUTBOUND_ALLOWLIST = "allowed-idp.example";
+    const url = "https://blocked-idp.example/.well-known/openid-configuration";
+    const denied = { ok: false, reason: "OUTBOUND_POLICY_DENIED" };
+    assert.deepStrictEqual(await validateOutboundUrl(url), denied);
+    assert.deepStrictEqual(await safeFetch(url), denied);
+    assert.match(outboundBlockHint(denied.reason), /OUTBOUND_ALLOWLIST/);
   });
 
   it("outboundBlockHint names the private IPv4 allowlist for blocked_ip only", () => {

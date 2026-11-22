@@ -66,6 +66,7 @@ const CERTIFICATE_ACTIONS = Object.freeze([
   "revoke",
   "noop",
   "continue-enrollment",
+  "adcs-installation-proof",
   "deploy-from-store",
   "cleanup-from-store",
   "reconcile-from-store",

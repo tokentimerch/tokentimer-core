@@ -9,11 +9,13 @@ $installer=Join-Path $PSScriptRoot '..\packages\agent\scripts\install-agent.ps1'
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $installer).Path,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'Candidate installer source parse failed'}
-foreach($name in @('Copy-PackageTree','Activate-StagedPackage')){
+foreach($name in @('Test-PackageCopyExclusion','Copy-PackageTree','Activate-StagedPackage')){
  $definitions=@($ast.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true))
  if($definitions.Count -ne 1){throw 'Expected unique actual installer function'}
  Invoke-Expression $definitions[0].Extent.Text
 }
+# Match the standalone installer session without running installer top-level code.
+$script:AuthorizedLauncherTransaction = $null
 Add-Type @'
 using System;using System.Runtime.InteropServices;using Microsoft.Win32.SafeHandles;
 public static class CertopsPathIdentity {

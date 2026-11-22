@@ -36,18 +36,36 @@ are reservations, not no-op migrations. They do not install another feature.
 | 104 | operator_inventory | MCP inventory metadata import (#406) |
 | 105 | operator_oauth_retention | MCP token retention (#406) |
 | 106 | operator_issuance | MCP certificate issuance (#406) |
+| 107 | certops_issuance_job_identity | Main; unchanged |
+| 108 | certops_issuance_identity_transfer | Main; unchanged |
 | 109 | certops_period_creator_delete | Main; unchanged |
 | 110 | recipient_member_verification | Reuse exact verified workspace-member email proof |
-| 114 | distribution_pagerduty_recovery | Main; unchanged |
-| 115–121 | Store issuance and IIS schemas | Reserved by independent open PRs; no SQL installed here |
+| 111 | auto_sync_owner_username | Auto-sync owner username |
+| 112 | certops_retirement_dossiers | Distribution lifecycle on main |
+| 113 | certops_material_reconciliation | Distribution lifecycle on main |
+| 114 | distribution_pagerduty_recovery | PagerDuty distribution recovery on main |
+| 115 | store_issuance_explicit_renewal_consent | Windows Store issuance consent |
+| 116 | certops_acme_store_enrollment_identity | Windows Store ACME enrollment identity |
+| 117 | certops_adcs_expected_identity_receipts | Windows Store AD CS identity receipts |
+| 118 | certops_windows_iis_consent | Windows IIS reassociation consent |
+| 119 | certops_material_adcs_operation_union | Preserve material and AD CS job operations |
+| 120 | certops_iis_absence_proofs | Reconcile proven IIS observations |
+| 121 | certops_enrollment_jobs_index | Index enrollment jobs |
 | 122 | certops_observed_revocation | Observed certificate revocation (#541) |
-| 123–126 | Agent rotation, AD CS preflight and receipt deadline | Reserved by independent PRs |
+| 123 | agent_credential_rotations | Credential rotation preparation and receipt |
+| 124 | agent_credential_rotation_ack | Credential rotation acknowledgement |
+| 125 | certops_adcs_preflight_lookup_index | Index issuer and agent preflight history (#714) |
+| 126 | certops_adcs_receipt_deadline | Immutable AD CS receipt admission deadline |
 | 127 | auto_sync_creation_expiration | Auto-sync creation metric expiration (#780) |
 | 128 | shared_sso_schema | Shared OIDC and SAML sign-in (#779) |
+
+A ledger based on the released numbering that records `agent_credential_rotations` or `agent_credential_rotation_ack` at version 109 or 110 is ambiguous and is rejected before migration SQL. Preserve the database and arrange a separately reviewed recovery; do not edit or relabel its ledger.
 
 Use the normal runner with these canonical identities. Independent feature tails
 may leave unapplied reservations absent; never install no-op SQL to fill them.
 Recognized applied previews retain their names, numbers, SQL and timestamps.
+For example, a retirement preview with revocation already applied at 115
+keeps that row and appends missing rotation migrations after it.
 Only missing definitions are assigned; duplicate feature definitions must be
 removed when composing branches. Unknown, conflicting or unrecognized histories
 fail before DDL and require reviewed recovery. Database compatibility does not
@@ -55,6 +73,10 @@ qualify the corresponding runtime feature or production artifact.
 
 A recognized #780 preview keeps its previously applied expiration row, including
 version 115 on a standard preview database. New installs use version 127.
+
+Canonical installs use version 125 for the AD CS preflight index. A recognized retirement preview keeps its applied index at 122 and appends any missing recovery and credential migrations.
+
+The integrated Windows Store and IIS preview previously used 115 for observed revocation and 116–122 for Store and IIS. The runner preserves those recorded pairs and appends only missing definitions.
 
 ## Applied history and supported previews
 

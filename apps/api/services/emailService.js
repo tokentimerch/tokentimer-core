@@ -1,3 +1,4 @@
+const { assertOutboundHost, isAllowedHost, isAllowedOutboundUrl, OUTBOUND_POLICY_DENIED } = require("@tokentimer/config/network");
 const nodemailer = require("nodemailer");
 const client = require("prom-client");
 const crypto = require("crypto");
@@ -124,9 +125,10 @@ const getLogoBuffer = () => {
   const logoUrl = `${baseUrl}/Branding/logo.png`;
 
   try {
+    const url = new URL(logoUrl);
+    if (!isAllowedOutboundUrl(url, { proxyMode: "node" })) return null;
     return new Promise((resolve) => {
       logger.info(`Attempting to fetch logo from: ${logoUrl}`);
-      const url = new URL(logoUrl);
       const client = url.protocol === "https:" ? https : http;
 
       const request = client.get(url, (res) => {
@@ -360,7 +362,11 @@ function classifySmtpErrorAndRecord(kind, error) {
   const supportEmail = getSupportEmail();
   let userError = `Failed to send email. If the problem persists, contact ${supportEmail}.`;
 
-  if (isRateLimit) {
+  if (codeStr === OUTBOUND_POLICY_DENIED) {
+    outcome = "policy_blocked";
+    code = OUTBOUND_POLICY_DENIED;
+    userError = "SMTP destination is blocked by the outbound policy";
+  } else if (isRateLimit) {
     outcome = "rate_limited";
     code = "SMTP_RATE_LIMIT";
     userError = `Email rate limit reached. Please try again later or contact ${supportEmail} if this persists.`;
@@ -405,6 +411,13 @@ function parseList(value) {
 const SMTP_USERS = parseList(process.env.SMTP_USER);
 const SMTP_PASS = parseList(process.env.SMTP_PASS);
 
+function noSmtpResult() {
+  if (process.env.SMTP_HOST && !isAllowedHost(process.env.SMTP_HOST)) {
+    return { success: false, code: OUTBOUND_POLICY_DENIED, error: "SMTP destination is blocked by the outbound policy" };
+  }
+  return { success: false, error: "SMTP not configured" };
+}
+
 const transportersCache = [];
 function getTransporterForIndex(index) {
   if (!process.env.SMTP_HOST) return null;
@@ -414,6 +427,7 @@ function getTransporterForIndex(index) {
   // Anonymous relay: both absent is valid (no-auth). Only one being set
   // is an invalid/incomplete configuration.
   if (!systemSettings.hasBalancedSmtpAuth(user, pass)) return null;
+  if (!isAllowedHost(process.env.SMTP_HOST)) return null;
   if (transportersCache[index]) return transportersCache[index];
   const smtpSecurity = resolveSmtpSecurity(
     process.env.SMTP_PORT,
@@ -512,6 +526,7 @@ async function getResolvedTransporter() {
   if (!host) return transporter; // fallback
   // Anonymous relay: both absent is valid; only one being set is invalid.
   if (!systemSettings.hasBalancedSmtpAuth(user, pass)) return transporter; // fallback
+  assertOutboundHost(host);
   const key = `${host}:${port}:${user}:${secureSetting || ""}:${requireTlsSetting || ""}`;
   if (_resolvedTransporter && _resolvedTransporterKey === key)
     return _resolvedTransporter;
@@ -545,6 +560,7 @@ const multipleAccountsDetected =
 if (isSMTPConfigured()) {
   if (!multipleAccountsDetected) {
     try {
+      assertOutboundHost(emailConfig.host);
       transporter = nodemailer.createTransport(emailConfig);
       logger.info("SMTP transporter created successfully");
     } catch (error) {
@@ -843,7 +859,7 @@ If you didn't create this account, you can safely ignore this email.
   });
   if (dbResult?.success) return dbResult;
   if (dbResult) lastError = dbResult;
-  return lastError || { success: false, error: "SMTP not configured" };
+  return lastError || noSmtpResult();
 };
 
 /**
@@ -976,7 +992,7 @@ If you didn't request a password reset, you can safely ignore this email.
   });
   if (dbResult?.success) return dbResult;
   if (dbResult) lastError = dbResult;
-  return lastError || { success: false, error: "SMTP not configured" };
+  return lastError || noSmtpResult();
 };
 
 /**
@@ -1136,7 +1152,7 @@ const sendEmail = async (options) => {
       lastError = { success: false, ...classified };
     }
   }
-  return lastError || { success: false, error: "SMTP not configured" };
+  return lastError || noSmtpResult();
 };
 
 /**
@@ -1313,7 +1329,7 @@ If you have any questions, just reply to this email or reach out to our support 
   });
   if (dbResult?.success) return dbResult;
   if (dbResult) lastError = dbResult;
-  return lastError || { success: false, error: "SMTP not configured" };
+  return lastError || noSmtpResult();
 };
 
 module.exports = {
