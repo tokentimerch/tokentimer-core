@@ -1,5 +1,6 @@
 "use strict";
 
+const { assertOutboundUrl } = require("@tokentimer/config/network");
 const axios = require("axios");
 const {
   tryParseDate,
@@ -44,6 +45,7 @@ async function gitlabRequest({
   };
 
   try {
+    assertOutboundUrl(url, { proxyMode: "axios" });
     const response = await axios(config);
     return includeResponse ? response : response.data;
   } catch (error) {

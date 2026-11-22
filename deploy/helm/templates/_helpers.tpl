@@ -281,6 +281,8 @@ CSRF_TOKEN_RATE_LIMIT_WINDOW_MS: {{ .Values.config.csrfTokenRateLimitWindowMs | 
 {{- if .Values.config.csrfTokenRateLimitMax }}
 CSRF_TOKEN_RATE_LIMIT_MAX: {{ .Values.config.csrfTokenRateLimitMax | int64 | quote }}
 {{- end }}
+OFFLINE_MODE: {{ .Values.config.offlineMode | toString | quote }}
+OUTBOUND_ALLOWLIST: {{ .Values.config.outboundAllowlist | quote }}
 {{- if .Values.config.webhookAllowPrivateIps }}
 WEBHOOK_ALLOW_PRIVATE_IPS: "true"
 {{- end }}
