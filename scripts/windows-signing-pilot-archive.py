@@ -76,8 +76,8 @@ def extract(members, stage):
 
 def repack(members, stage, signed_targets, output):
     target_names = {"package/" + name for name in signed_targets}
-    if len(signed_targets) != 11 or len(target_names) != 11:
-        raise ValueError("Pilot requires the checksum-pinned 11 signing targets")
+    if len(signed_targets) != 14 or len(target_names) != 14:
+        raise ValueError("Pilot requires fourteen distinct signing targets")
     if not target_names <= {name for name, _, data in members if data is not None}:
         raise ValueError("Signing target absent from the unsigned archive")
 
