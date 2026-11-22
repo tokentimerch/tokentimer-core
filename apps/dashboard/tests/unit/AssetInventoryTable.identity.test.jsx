@@ -83,19 +83,25 @@ describe('ambiguous certificate inventory actions', () => {
     expect(screen.queryAllByText('Healthy')).toHaveLength(0);
   });
 
-  it.each(['revoked', 'decommissioned'])(
-    'uses persisted %s lifecycle when CertOps enrichment is unavailable',
-    status => {
+  it.each([
+    ['revoked', 'Revoked', 'Within validity'],
+    ['decommissioned', 'Decommissioned', 'Within validity'],
+    ['renewing', 'Renewing', 'Healthy'],
+  ])(
+    'shows expiry and the lifecycle of a single linked certificate in %s state',
+    (status, lifecycleLabel, expiryLabel) => {
       show({
         ...token,
         __certificateLinkAmbiguous: false,
         cert_lifecycle_status: status,
+        __managedCert: {
+          id: 'managed-1',
+          lifecycleStatus: status,
+          observedRevocation: { status: 'revoked' },
+        },
       });
-      expect(screen.queryAllByText('Healthy')).toHaveLength(0);
-      expect(
-        screen.getAllByText(status === 'revoked' ? 'Revoked' : 'Decommissioned')
-          .length
-      ).toBeGreaterThan(0);
+      expect(screen.getAllByText(expiryLabel)).toHaveLength(2);
+      expect(screen.getAllByText(lifecycleLabel)).toHaveLength(2);
     }
   );
 });

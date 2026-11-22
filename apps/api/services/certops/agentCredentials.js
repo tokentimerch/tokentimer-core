@@ -650,6 +650,8 @@ function generateAgentCredential() {
   };
 }
 
+const { bindAuthenticatedAgent } = require("./agentCredentialFence");
+
 async function validateAgentCredential(options) {
   const parsed = parseRawAgentCredential(options.rawCredential);
   if (!parsed) {
@@ -684,7 +686,7 @@ async function validateAgentCredential(options) {
   // Frozen-retired rule: a retired agent still authenticates so the route
   // layer can answer 410 on heartbeat instead of a generic 401. The caller
   // must check agent.status === 'retired'.
-  return { valid: true, agent: agentMetadataFromRow(row) };
+  return { valid: true, agent: bindAuthenticatedAgent(agentMetadataFromRow(row), candidateHash) };
 }
 
 module.exports = {
@@ -708,6 +710,7 @@ module.exports = {
   generateAgentCredential,
   getBootstrapTokenById,
   listBootstrapTokens,
+  parseRawAgentCredential,
   revokeBootstrapToken,
   validateAgentCredential,
   validateBootstrapToken,

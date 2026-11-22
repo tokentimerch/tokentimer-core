@@ -156,6 +156,11 @@ test("privileged workflow jobs use the verified source and keep the release pref
     assert.equal(step.env.EXPECTED_RELEASE_COMMIT, verifiedCommit, name);
   }
   assert.equal(release["create-release"].if, "needs.verify-provenance.outputs.prerelease == 'false'");
+  const createRelease = release["create-release"].steps.find(step => step.run?.includes("gh release create"));
+  const upload = createRelease.run.slice(createRelease.run.indexOf("gh release create"));
+  assert.match(upload, /--verify-tag/);
+  assert.equal(upload.trim().split("\n").at(-1).trim(), '"$LINUX_ARCHIVE" "${LINUX_ARCHIVE}.sha256"');
+  assert.doesNotMatch(upload, /agent-dist\/\*.(?:tgz|sha256)/);
   const manual = workflow("publish");
   assert.equal(manual["validate-tags"].permissions.contents, "read");
   assert.equal(manual["validate-tags"].permissions.packages, undefined);

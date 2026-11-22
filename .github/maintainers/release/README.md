@@ -10,8 +10,9 @@
 3. Push `vX.Y.Z` at the same commit. The workflow verifies branch ancestry
    and exact-SHA push CI before building artifacts. It builds, scans and
    signs the images, verifies the Helm and agent packages, publishes the
-   chart, then creates the GitHub Release with the agent archive and
-   checksum. Replace the placeholder notes and rerun **Notify Discord on
+   chart, then creates the GitHub Release with the Linux agent archive and
+   checksum. Windows bundled-runtime archives require separate signed
+   qualification before publication. Replace the placeholder notes and rerun **Notify Discord on
    release** with that tag after editing.
 
 ## Verify a published release

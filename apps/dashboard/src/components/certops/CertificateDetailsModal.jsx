@@ -1122,6 +1122,11 @@ export default function CertificateDetailsModal({
           footerProps={footerProps}
           tokens={modalTokens}
           isViewer={isViewer}
+          message={
+            identityPanel && isViewer
+              ? 'Certificate metadata is read-only.'
+              : undefined
+          }
           isEditing={isEditing}
           saveError={saveError}
           saving={saving}

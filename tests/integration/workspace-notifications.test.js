@@ -317,6 +317,23 @@ describe("Persisted operational notifications (bell)", function () {
     expect(res.body.unreadCount).to.be.at.least(1);
   });
 
+  it("routes AD CS bell incidents to the scoped issuer without following metadata URLs", async () => {
+    const issuerId=randomUUID();
+    for(const [type,issuer,expectedAdcs] of [["adcs_preflight_blocked",issuerId,true],["other_certops_incident",issuerId,false],["adcs_preflight_blocked","https://untrusted.invalid",false]]) {
+      const inserted=await client.query(`INSERT INTO operational_notifications(workspace_id,category,type,severity,dedupe_key,title,message,metadata)
+        VALUES($1,'certops',$2,'critical',$3,'Test AD CS incident','Restore readiness',$4::jsonb) RETURNING id`,
+      [workspaceId,type,randomUUID(),JSON.stringify({issuerId:issuer,workspace_id:randomUUID(),href:"https://untrusted.invalid/redirect"})]);
+      const id=inserted.rows[0].id;
+      try {
+        const response=await fetchNotifications(adminCookie).expect(200);
+        const item=response.body.items.find(row=>row.id===id);expect(item).to.exist;
+        if(expectedAdcs){const target=new URL(item.href,"https://dashboard.example.test");expect(target.pathname).to.equal("/certops/renewals");expect(target.searchParams.get("workspace")).to.equal(workspaceId);expect(target.searchParams.get("issuerId")).to.equal(issuerId);expect(target.searchParams.get("action")).to.equal("check-adcs-issuer");}
+        else expect(item.href).to.equal("/control-center");
+        expect(item.href).not.to.include("untrusted.invalid");
+      }finally{await client.query("DELETE FROM operational_notifications WHERE id=$1",[id]);}
+    }
+  });
+
   it("routes auto_sync notifications to the import panel href", async () => {
     const insertRes = await client.query(
       `INSERT INTO operational_notifications

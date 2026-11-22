@@ -447,18 +447,12 @@ if [ "$DRY_RUN" -eq 0 ] && [ "$IS_DARWIN" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
 fi
 
 # -------------------------------------------------------- node version gate
-# engines.node is a single ">=x.y.z" range in this package; a plain sed
-# parse avoids needing node before the node check itself.
 REQUIRED_RANGE=$(sed -n 's/.*"node"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PACKAGE_DIR/package.json")
 command -v node >/dev/null 2>&1 || fail "node is not installed or not on PATH; the agent requires Node '$REQUIRED_RANGE'"
-REQUIRED_MAJOR=$(printf '%s' "$REQUIRED_RANGE" | sed -n 's/[^0-9]*\([0-9][0-9]*\).*/\1/p')
-NODE_MAJOR=$(node -v | sed -n 's/^v\([0-9][0-9]*\).*/\1/p')
-[ -n "$REQUIRED_MAJOR" ] || fail "could not parse required Node version from $PACKAGE_DIR/package.json (engines.node='$REQUIRED_RANGE')"
-[ -n "$NODE_MAJOR" ] || fail "could not parse installed Node version from 'node -v'"
-if [ "$NODE_MAJOR" -lt "$REQUIRED_MAJOR" ]; then
-  fail "Node $(node -v) is too old; the agent requires engines.node '$REQUIRED_RANGE'"
-fi
-log "Node $(node -v) satisfies engines.node '$REQUIRED_RANGE'."
+NODE_VERSION=$(node -v) || fail "could not determine installed Node version"
+[ -f "$SCRIPT_DIR/check-node-engine.js" ] || fail "Node version validator is missing from the agent package"
+node "$SCRIPT_DIR/check-node-engine.js" "$REQUIRED_RANGE" "$NODE_VERSION" || fail "Node $NODE_VERSION does not satisfy the agent's engines.node '$REQUIRED_RANGE'"
+log "Node $NODE_VERSION satisfies engines.node '$REQUIRED_RANGE'."
 
 # Reject ineffective reload grants before changing users, files or services.
 # The legacy local authority cannot constrain a grant by systemd unit/verb.

@@ -48,8 +48,10 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import AdcsIssuerWizard from '../../components/certops/AdcsIssuerWizard.jsx';
 import JobActivity from '../../components/onboarding/JobActivity.jsx';
+import { useSummaryPolling } from '../../components/onboarding/useSummaryPolling.js';
 import { getJob } from '../../components/certops/certopsJobsApi.js';
 import { failedPreflightMessage } from '../../components/certops/adcsPreflightJob.js';
+import AdcsPreflightReadiness from '../../components/certops/AdcsPreflightReadiness.jsx';
 import { isJobFinal } from '../../components/onboarding/jobTimeline.js';
 import { showError, showSuccess } from '../../utils/toast.js';
 
@@ -446,6 +448,9 @@ function IssuerWork({
   checkWaiting,
 }) {
   const pinned = pinnedPair(issuer);
+  const preflightAgents = agents.filter(
+    agent => !agent.platform || agent.platform === 'win32'
+  );
   const [checkVersion, setCheckVersion] = useState(null);
   const [checkBaseline, setCheckBaseline] = useState(null);
   const checking =
@@ -500,19 +505,19 @@ function IssuerWork({
                 size='sm'
                 aria-label={`Agent for ${issuer.name}`}
                 required
-                isDisabled={paused}
+                isDisabled={paused || !preflightAgents.length}
               >
                 <option value=''>Select an agent</option>
-                {agents.map(agent => (
+                {preflightAgents.map(agent => (
                   <option key={agent.id} value={agent.id}>
                     {agent.name || agent.agentId}
                   </option>
                 ))}
               </Select>
               <Text mt={1} fontSize='xs' color={muted}>
-                Pick a Windows agent that can reach this CA and already allows
-                this template. The choice is only for this read. It is not
-                saved, and it does not decide who renews later.
+                {preflightAgents.length
+                  ? 'Pick a Windows agent that can reach this CA and already allows this template. This choice applies only to this check.'
+                  : 'No Windows agent is available for this check.'}
               </Text>
             </FormControl>
             <DashboardActionButton
@@ -521,7 +526,7 @@ function IssuerWork({
               {...actionProps(
                 busyKey,
                 `preflight:${issuer.id}`,
-                paused || checkWaiting
+                paused || checkWaiting || !preflightAgents.length
               )}
               aria-label={`Run check for ${issuer.name}`}
             >
@@ -681,6 +686,7 @@ function IssuerRow({
           </Text>
         )}
       </Box>
+      <AdcsPreflightReadiness issuer={issuer} />
       <Collapse in={isOpen} animateOpacity unmountOnExit>
         <Box
           mt={1}
@@ -897,6 +903,7 @@ export default function CertOpsAdcs({
   const [enrollments, setEnrollments] = useState([]);
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadedWorkspaceId, setLoadedWorkspaceId] = useState(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [issuerPrefill, setIssuerPrefill] = useState(null);
   const [busyKey, setBusyKey] = useState(null);
@@ -944,11 +951,13 @@ export default function CertOpsAdcs({
       );
       setAgents(agentPage.items || []);
       setIssuerTotal(Number(issuerPage.pagination?.total || 0));
+      setLoadedWorkspaceId(workspaceId);
       setEnrollmentTotal(Number(enrollmentPage.pagination?.total || 0));
       setLoadError('');
     },
     [workspaceId, roleStatus, canManage]
   );
+  useSummaryPolling(reload, roleStatus === 'ready' && canManage);
 
   useEffect(() => {
     if (roleStatus !== 'ready' || !canManage) {
@@ -1041,13 +1050,27 @@ export default function CertOpsAdcs({
   // A deep link names one issuer to open, for a re-check. Once the list is
   // loaded the issuer is expanded and the request is handed back.
   useEffect(() => {
-    if (!focusIssuerId || loading || roleStatus === 'loading') return;
+    if (
+      !focusIssuerId ||
+      loading ||
+      roleStatus === 'loading' ||
+      loadedWorkspaceId !== workspaceId
+    )
+      return;
     if (issuers.some(item => item.id === focusIssuerId)) {
       issuerListReady.current = true;
       setOpenIssuerId(focusIssuerId);
     }
     onFocusHandled?.();
-  }, [focusIssuerId, loading, roleStatus, issuers, onFocusHandled]);
+  }, [
+    focusIssuerId,
+    loading,
+    roleStatus,
+    issuers,
+    onFocusHandled,
+    loadedWorkspaceId,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     issuerListReady.current = false;

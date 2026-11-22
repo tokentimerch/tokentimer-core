@@ -45,6 +45,7 @@ const TARGET_TYPES = Object.freeze([
   "load-balancer",
   "external",
   "windows-iis",
+  "windows-cert-store",
 ]);
 const TARGET_TYPE_SET = new Set(TARGET_TYPES);
 
@@ -186,6 +187,10 @@ function validateWindowsBinding(value, fieldName) {
   if (!binding || typeof binding !== "object" || Array.isArray(binding)) {
     throw profileError(`renewalProfile.${fieldName}.binding is invalid`);
   }
+  if (binding.address != null && (typeof binding.address !== "string" ||
+      (binding.address !== "*" && (binding.address.includes("%") || require("node:net").isIP(binding.address) === 0)))) {
+    throw profileError(`renewalProfile.${fieldName}.binding.address must be an IP literal or wildcard`);
+  }
   const site = requireString(
     binding.site,
     `${fieldName}.binding.site`,
@@ -208,6 +213,9 @@ function validateWindowsBinding(value, fieldName) {
           255,
           WINDOWS_SNI_HOST_PATTERN,
         );
+  if (sniHost && binding.address != null && binding.address !== "*" && binding.address !== "0.0.0.0") {
+    throw profileError(`renewalProfile.${fieldName}.binding.address cannot be combined with SNI`);
+  }
 
   const thumbprintSha1 =
     value.thumbprintSha1 === undefined || value.thumbprintSha1 === null
@@ -221,7 +229,7 @@ function validateWindowsBinding(value, fieldName) {
 
   return {
     store,
-    binding: { site, port: binding.port, sniHost },
+    binding: { site, port: binding.port, sniHost, ...(binding.address != null ? { address: binding.address } : {}) },
     thumbprintSha1,
   };
 }
@@ -238,6 +246,13 @@ function validateTarget(value, fieldName) {
     `${fieldName}.reference`,
     512,
   );
+
+  if (value.type === "windows-cert-store") {
+    if (value.store !== "My" || Object.keys(value).some(key => !["type", "reference", "store"].includes(key))) {
+      throw profileError(`renewalProfile.${fieldName} must identify only the My machine store`);
+    }
+    return { type: value.type, reference, store: "My" };
+  }
 
   if (value.type === "windows-iis") {
     // No certPath/keyPath/chainPath/reloadService/owner/group/backupDir:
@@ -422,8 +437,8 @@ function validateRenewalProfile(raw) {
 
   // A Windows IIS profile always maps to OS-store-managed CNG enrollment.
   // Keep explicit stored intent visible: never silently turn reuse into rotation.
-  if (raw.target?.type === "windows-iis" && rotation.rotateOnRenew === false) {
-    throw profileError("WINDOWS_ACME_KEY_REUSE_UNSUPPORTED: windows-iis renewal requires keyRotationPolicy.rotateOnRenew=true");
+  if (["windows-iis", "windows-cert-store"].includes(raw.target?.type) && rotation.rotateOnRenew === false) {
+    throw profileError("WINDOWS_ACME_KEY_REUSE_UNSUPPORTED: Windows store renewal requires keyRotationPolicy.rotateOnRenew=true");
   }
 
   const preferredChain = optionalStringOrNull(
@@ -473,7 +488,7 @@ function validateRenewalProfile(raw) {
 
   if (
     !Array.isArray(raw.deploymentTargets) ||
-    raw.deploymentTargets.length < (raw.publicationDestination ? 0 : 1) ||
+    raw.deploymentTargets.length < (raw.publicationDestination || raw.target?.type === "windows-cert-store" ? 0 : 1) ||
     raw.deploymentTargets.length > 32
   ) {
     throw profileError(
@@ -486,6 +501,10 @@ function validateRenewalProfile(raw) {
   );
 
   const target = validateTarget(raw.target || deploymentTargets[0], "target");
+  if (target.type === "windows-cert-store" && (deploymentTargets.length !== 0 || raw.publicationDestination ||
+      raw.verification?.requireMatch !== false || raw.verification?.host != null || raw.verification?.port != null)) {
+    throw profileError("Machine-store renewal must not configure service deployment or verification");
+  }
   if (raw.publicationDestination) {
     require("./materialDistribution").validateDistributionContract("publication", {
       ...raw.publicationDestination, materialVersionId: "00000000-0000-5000-8000-000000000000",
@@ -706,7 +725,11 @@ function executionFieldsFromRenewalProfile(profile) {
     if (profile.ca.eabRef) fields.eabRef = profile.ca.eabRef;
     return fields;
   }
-  if (profile.target.type === "windows-iis") {
+  if (profile.target.type === "windows-cert-store") {
+    fields.keyMode = "os-store-managed";
+    fields.target.store = "My";
+    delete fields.deploymentTargets;
+  } else if (profile.target.type === "windows-iis") {
     // Mirrors issuance.js's WINDOWS_IIS_ISSUANCE_KEY_MODE: the agent's
     // executeJob dispatch (packages/agent/src/index.js) reads job.keyMode
     // directly off the top-level payload to route to the CNG-native
@@ -813,6 +836,9 @@ function windowsIisTargetAuditFields(target) {
  */
 function buildRenewalJobPayload({ certificate, reason = "expiry-threshold" }) {
   const renewalProfile = resolveRenewalProfileSnapshot(certificate);
+  if (renewalProfile.target.type === "windows-cert-store" && !certificate.deployed_agent_id) {
+    throw profileError("Machine-store renewal requires the original owning agent", CERTOPS_RENEWAL_PROFILE_INCOMPLETE);
+  }
   const executionFields = executionFieldsFromRenewalProfile(renewalProfile);
   if (renewalProfile.publicationDestination) {
     const crypto = require("node:crypto");

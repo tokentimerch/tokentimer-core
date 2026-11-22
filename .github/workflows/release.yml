@@ -675,12 +675,17 @@ jobs:
         run: |
           set -euo pipefail
           TAG_NAME="${GITHUB_REF#refs/tags/}"
-          test -n "$(ls agent-dist/*.tgz 2>/dev/null)"
-          test -n "$(ls agent-dist/*.sha256 2>/dev/null)"
+          AGENT_VERSION="${TAG_NAME#v}"
+          LINUX_ARCHIVE="agent-dist/tokentimer-agent-${AGENT_VERSION}.tgz"
+          test -f "$LINUX_ARCHIVE"
+          test -f "${LINUX_ARCHIVE}.sha256"
+          if compgen -G 'agent-dist/*-windows-*.tgz' >/dev/null; then
+            echo '::warning::Windows bundled-runtime archives are withheld pending signed, digest-bound pre-publication qualification.'
+          fi
           node scripts/check-release-provenance.cjs --verify-tag
           gh release create "$TAG_NAME" \
             --repo "${{ github.repository }}" \
             --verify-tag \
             --title "${TAG_NAME}" \
-            --notes "Automated placeholder release for ${TAG_NAME}. See CHANGELOG.md for what changed; finalized release notes are added shortly after this is published." \
-            agent-dist/*.tgz agent-dist/*.sha256
+            --notes "Automated placeholder release for ${TAG_NAME}. Windows bundled-runtime archives are withheld pending qualification. See CHANGELOG.md; finalized release notes are added shortly after publication." \
+            "$LINUX_ARCHIVE" "${LINUX_ARCHIVE}.sha256"

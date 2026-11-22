@@ -94,6 +94,14 @@ function certOpsMachineWriteRouteFamily(requestPath, options = {}) {
     // slash, case-insensitive via normalization above), same guarantees as
     // the executor family.
     if (
+      normalizedPath === `${prefix}/agent/credential-rotation/prepare` ||
+      normalizedPath === `${prefix}/agent/credential-rotation/prepare/` ||
+      normalizedPath === `${prefix}/agent/credential-rotation/identity` ||
+      normalizedPath === `${prefix}/agent/credential-rotation/identity/` ||
+      normalizedPath === `${prefix}/agent/credential-rotation/acknowledge` ||
+      normalizedPath === `${prefix}/agent/credential-rotation/acknowledge/` ||
+      normalizedPath === `${prefix}/agent/credential-rotation/confirm` ||
+      normalizedPath === `${prefix}/agent/credential-rotation/confirm/` ||
       normalizedPath === `${prefix}/agent/register` ||
       normalizedPath === `${prefix}/agent/register/` ||
       normalizedPath === `${prefix}/agent/heartbeat` ||
@@ -101,6 +109,7 @@ function certOpsMachineWriteRouteFamily(requestPath, options = {}) {
       normalizedPath === `${prefix}/agent/jobs/claim` ||
       normalizedPath === `${prefix}/agent/jobs/claim/` ||
       new RegExp(`^${prefix}/agent/jobs/[^/]+/lease/?$`).test(normalizedPath) ||
+      new RegExp(`^${prefix}/agent/jobs/[^/]+/iis-consent/?$`).test(normalizedPath) ||
       new RegExp(`^${prefix}/agent/jobs/[^/]+/logs/?$`).test(normalizedPath) ||
       normalizedPath === `${prefix}/agent/jobs/results` ||
       normalizedPath === `${prefix}/agent/jobs/results/`

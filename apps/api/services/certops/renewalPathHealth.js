@@ -8,9 +8,9 @@
  *
  * Job requirements are derived through renewalProfile.js/jobs.js semantics,
  * then evaluated with the same pure predicate used by real dispatch. Filesystem
- * discoveries pin through their legacy discovery-agent identity; Windows IIS
- * discoveries pin through deployed_agent_id because the store and binding are
- * host-local. Other paths remain open to every genuinely eligible agent.
+ * discoveries pin through their legacy discovery-agent identity. Windows Store
+ * renewals and IIS discoveries pin through deployed_agent_id because the store
+ * and binding are host-local. Other paths remain open to eligible agents.
  * Unknown or malformed persisted eligibility facts fail closed to Unknown,
  * never Healthy.
  *
@@ -90,6 +90,7 @@ const RENEWAL_PATH_REASONS = Object.freeze({
   NOT_AGENT_DEPLOYABLE: "not_agent_deployable",
   NO_PROFILE: "no_profile",
   CERTIFICATE_RETIRED: "certificate_retired",
+  WINDOWS_STORE_REASSOCIATION: "windows_store_reassociation",
 });
 
 // Certificate lifecycle statuses for which "will this renew automatically"
@@ -270,7 +271,7 @@ function resolveRequiredExecutors({
     (certificateRow.source === "agent_windows" || forceDeployedAgentPin)
   ) {
     const candidateId = String(certificateRow.deployed_agent_id);
-    if (agentIndex.byRowId.has(candidateId)) assignedAgentId = candidateId;
+    if (forceDeployedAgentPin || agentIndex.byRowId.has(candidateId)) assignedAgentId = candidateId;
     if (agentIndex.retiredRowIds?.has(candidateId)) {
       return {
         pinned: true,
@@ -382,6 +383,12 @@ function partialCapabilitySummary(declaredOperations) {
 }
 
 function ineligiblePinSummary(reason, declaredOperations) {
+  if (reason === "windows_store_only_unavailable") {
+    return "The owning agent needs a qualified Windows build with fresh support for Windows Store renewal.";
+  }
+  if (reason === "iis_explicit_ip_capability_unavailable") {
+    return "The assigned agent needs a qualified Windows build with a fresh declaration for explicit-IP IIS bindings.";
+  }
   if (reason === "compatibility_blocked") {
     return TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON.compatibility_blocked;
   }
@@ -460,7 +467,7 @@ function classifyExecutors({
     return {
       renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
       renewalPathReason: RENEWAL_PATH_REASONS.WAITING_FOR_FRESH_PREFLIGHT,
-      renewalPathSummary: `The AD CS renewal for this certificate is waiting for a fresh CA check. No agent that renews it has run adcs-preflight against its CA in the last ${ADCS_PREFLIGHT_WINDOW_HOURS} hours, so the renewal starts once an agent passes the check.`,
+      renewalPathSummary: `The AD CS renewal needs a fresh CA check. No eligible agent has a matching safe result from the last ${ADCS_PREFLIGHT_WINDOW_HOURS} hours. TokenTimer requests a new check when renewal is due and waits for a safe result.`,
     };
   }
   if (onlineCount === total) {
@@ -562,6 +569,7 @@ function adcsRenewalRequirements(renewalProfile, certificateRow) {
     }),
     subjectIsProvisioning: certificateRow.status === "provisioning",
     issuerKind: "adcs",
+    payload: { target: profile.target },
   };
 }
 
@@ -591,6 +599,17 @@ function resolveRenewalPathForRow({
   adcsPreflightIndex = null,
 }) {
   const offlineAfterMs = resolveAgentOfflineAfterMs(env);
+
+  if (certificateRow.windows_store_reassociation || certificateRow.reconciliation_reason === "windows_store_identity_conflict") {
+    return {
+      renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
+      renewalPathReason: RENEWAL_PATH_REASONS.WINDOWS_STORE_REASSOCIATION,
+      renewalPathSummary: certificateRow.reconciliation_reason === "windows_store_identity_conflict"
+        ? "Automatic renewal is paused because the renewed certificate is already represented by another Windows store record. Verify both entries and associate the renewal profile with the correct certificate."
+        : "Automatic renewal is paused because this older Windows store record may identify more than one certificate. Verify the certificate and associate its renewal profile with the correct current entry.",
+      dependencies: [],
+    };
+  }
 
   if (
     RENEWAL_PATH_NOT_APPLICABLE_CERT_STATUSES.has(
@@ -644,6 +663,21 @@ function resolveRenewalPathForRow({
 
   const profileMetadata = parseMetadata(certificateRow.profile_public_metadata);
   const renewalProfile = profileMetadata.renewalProfile;
+  const target = renewalProfile?.target;
+  const storeOnly = target?.type === "windows-cert-store";
+  const bindingAddress = target?.type === "windows-iis" ? target.binding?.address : null;
+  const explicitIisAddress = bindingAddress != null && !["*", "0.0.0.0"].includes(bindingAddress);
+  const requiresOwningAgent = storeOnly || explicitIisAddress;
+  if (requiresOwningAgent && !certificateRow.deployed_agent_id) {
+    return {
+      renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
+      renewalPathReason: RENEWAL_PATH_REASONS.TOPOLOGY_UNKNOWN,
+      renewalPathSummary: storeOnly
+        ? "A Windows Store certificate needs an owning agent before it can renew."
+        : "An explicit-IP IIS binding needs an owning agent before it can renew.",
+      dependencies: [],
+    };
+  }
   let jobRequirements;
   try {
     // The issuer decides the rules, as it does for the scheduler. An ACME-shaped
@@ -680,6 +714,7 @@ function resolveRenewalPathForRow({
     now,
     env,
     jobRequirements,
+    forceDeployedAgentPin: requiresOwningAgent,
   });
   if (
     eligibilityIndeterminate &&
@@ -735,6 +770,10 @@ const CERTIFICATE_ROW_SELECT = `
          mc.source,
          mc.common_name,
          mc.profile_id,
+         mc.reconciliation_reason,
+         (mc.source = 'agent_windows' AND
+           POSITION('/windows_store/' IN COALESCE(mc.source_ref, '')) > 0)
+           AS windows_store_reassociation,
          mc.deployed_agent_id,
          mc.public_metadata->'controllerObservation'->>'agentId' AS discovery_agent_id,
          mc.public_metadata AS certificate_public_metadata,

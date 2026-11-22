@@ -4981,6 +4981,11 @@ const migrations = [
     name: "certops_retirement_dossiers",
     sql: fs.readFileSync(require("path").join(__dirname, "109-certops-retirement-dossiers.sql"), "utf8"),
   },
+  {
+    version: 118,
+    name: "certops_windows_iis_consent",
+    sql: fs.readFileSync(require("path").join(__dirname, "116-certops-windows-iis-consent.sql"), "utf8"),
+  },
 ];
 
 
@@ -5015,13 +5020,15 @@ migrations.push({
   sql: fs.readFileSync(require("path").join(__dirname, "122-certops-observed-revocation.sql"), "utf8"),
 });
 
+migrations.push({ version: 123, name: "agent_credential_rotations", sql: fs.readFileSync(require("path").join(__dirname, "123-agent-credential-rotations.sql"), "utf8") });
+migrations.push({ version: 124, name: "agent_credential_rotation_ack", sql: fs.readFileSync(require("path").join(__dirname, "124-agent-rotation-ack.sql"), "utf8") });
 migrations.push({
   version: 127,
   name: "auto_sync_creation_expiration",
   sql: fs.readFileSync(require("path").join(__dirname, "127-auto-sync-creation-expiration.sql"), "utf8"),
 });
 
-const { composeMigrations } = require("./compose-migrations");
+const { composeMigrations, assertUnambiguousRotationHistory } = require("./compose-migrations");
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored
 // the CertOps numbering. Those installations already have v45 in the ledger,
@@ -5346,6 +5353,111 @@ migrations.push({
   `,
 });
 
+migrations.push({
+  version: 115,
+  name: "store_issuance_explicit_renewal_consent",
+  sql: `
+    CREATE OR REPLACE FUNCTION certops_sync_open_management_automation()
+    RETURNS trigger AS $certops$
+    BEGIN
+      UPDATE certops_management_periods
+         SET renewal_profile_id = NEW.profile_id,
+             automation_enabled = CASE
+               WHEN NEW.source = 'agent_issuance'
+                AND NEW.public_metadata #>> '{issuance,target,type}' = 'windows-cert-store'
+               THEN automation_enabled AND NEW.profile_id IS NOT NULL
+               ELSE NEW.profile_id IS NOT NULL END
+       WHERE workspace_id = NEW.workspace_id
+         AND managed_certificate_id = NEW.id AND ended_at IS NULL;
+      RETURN NEW;
+    END;
+    $certops$ LANGUAGE plpgsql;
+  `,
+});
+
+migrations.push({
+  version: 116,
+  name: "certops_acme_store_enrollment_identity",
+  sql: `
+    CREATE TABLE IF NOT EXISTS certops_acme_store_enrollments (
+      id UUID PRIMARY KEY,
+      workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      certificate_id UUID NOT NULL,
+      agent_id UUID NOT NULL,
+      original_job_id UUID NOT NULL,
+      current_job_id UUID NOT NULL,
+      container_name TEXT NOT NULL CHECK (container_name ~ '^tokentimer-enr-[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$'),
+      request_bytes BYTEA NOT NULL,
+      request_sha256 TEXT NOT NULL CHECK (request_sha256 ~ '^[a-f0-9]{64}$'),
+      state TEXT NOT NULL CHECK (state IN ('keygen_intent','prepared','submitting','issued','installing','installed','uncertain')),
+      csr_sha256 TEXT CHECK (csr_sha256 IS NULL OR csr_sha256 ~ '^[a-f0-9]{64}$'),
+      csr_spki_sha256 TEXT CHECK (csr_spki_sha256 IS NULL OR csr_spki_sha256 ~ '^[a-f0-9]{64}$'),
+      fingerprint_sha256 TEXT CHECK (fingerprint_sha256 IS NULL OR fingerprint_sha256 ~ '^[a-f0-9]{64}$'),
+      order_reference_sha256 TEXT CHECK (order_reference_sha256 IS NULL OR order_reference_sha256 ~ '^[a-f0-9]{64}$'),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, id), UNIQUE (workspace_id, original_job_id),
+      FOREIGN KEY (workspace_id, certificate_id) REFERENCES managed_certificates(workspace_id, id),
+      FOREIGN KEY (workspace_id, agent_id) REFERENCES certops_agents(workspace_id, id),
+      FOREIGN KEY (workspace_id, original_job_id) REFERENCES certificate_jobs(workspace_id, id),
+      FOREIGN KEY (workspace_id, current_job_id) REFERENCES certificate_jobs(workspace_id, id)
+    );
+    CREATE TABLE IF NOT EXISTS certops_acme_store_receipts (
+      workspace_id UUID NOT NULL,
+      enrollment_id UUID NOT NULL,
+      receipt_id UUID NOT NULL,
+      evidence_sha256 TEXT NOT NULL CHECK (evidence_sha256 ~ '^[a-f0-9]{64}$'),
+      resulting_state TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (workspace_id, enrollment_id, receipt_id),
+      FOREIGN KEY (workspace_id, enrollment_id) REFERENCES certops_acme_store_enrollments(workspace_id, id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_acme_store_open_certificate
+      ON certops_acme_store_enrollments(workspace_id, certificate_id)
+      WHERE state <> 'installed';
+  `,
+});
+
+migrations.push({
+  version: 117,
+  name: "certops_adcs_expected_identity_receipts",
+  sql: fs.readFileSync(require("path").join(__dirname, "115-certops-adcs-expected-identity.sql"), "utf8"),
+});
+
+migrations.push({
+  version: 119,
+  name: "certops_material_adcs_operation_union",
+  sql: fs.readFileSync(require("path").join(__dirname, "119-certops-material-adcs-operation-union.sql"), "utf8"),
+});
+
+migrations.push({
+  version: 120,
+  name: "certops_iis_absence_proofs",
+  sql: fs.readFileSync(require("path").join(__dirname, "120-certops-iis-absence-proofs.sql"), "utf8"),
+});
+
+migrations.push({
+  version: 121,
+  name: "certops_enrollment_jobs_index",
+  sql: `CREATE INDEX IF NOT EXISTS idx_certificate_jobs_enrollment
+    ON certificate_jobs(workspace_id, enrollment_id) WHERE enrollment_id IS NOT NULL`,
+});
+
+// Bound each issuer/agent lookup to its ordered preflight history.
+migrations.push({
+  version: 125,
+  name: "certops_adcs_preflight_lookup_index",
+  sql: `CREATE INDEX IF NOT EXISTS idx_certificate_jobs_adcs_preflight_lookup
+    ON certificate_jobs(workspace_id,subject_id,assigned_agent_id,
+      preflight_seq DESC NULLS LAST,created_at DESC,id DESC)
+    WHERE operation='adcs-preflight'`,
+});
+
+migrations.push({
+  version: 126,
+  name: "certops_adcs_receipt_deadline",
+  sql: fs.readFileSync(require("path").join(__dirname, "126-certops-adcs-receipt-deadline.sql"), "utf8"),
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);
@@ -5353,6 +5465,7 @@ const canonicalMigrations = migrations.slice();
 require("./migration-reservations.cjs").validateMigrationReservations(canonicalMigrations);
 
 function resolveMigrationPlan(recorded) {
+  assertUnambiguousRotationHistory(recorded, canonicalMigrations);
   // The Enterprise adapter and upgrade tests may supply an already composed
   // executor list. Preserve that trusted composition and validate its ledger.
   const composed = migrations.length !== canonicalMigrations.length ||
@@ -5376,13 +5489,38 @@ async function applyMigrationSql(client, migration) {
       `CREATE TEMP VIEW audit_events AS SELECT * FROM ${relation} WHERE workspace_id IS NOT NULL`,
     );
   }
-  await client.query(migration.sql);
+  // The old Store preview's AD CS definition predates released material
+  // cleanup and reconciliation. Keep its historical SQL file intact, but
+  // preserve both already valid operations when applying the missing schema.
+  if (migration.name === "certops_adcs_expected_identity_receipts") {
+    await client.query(migration.sql.replace(
+      "'deploy-from-store','reload','revoke'",
+      "'deploy-from-store','cleanup-from-store','reconcile-from-store','reload','revoke'",
+    ));
+  } else {
+    await client.query(migration.sql);
+  }
   if (migration.version === 62) await client.query("DROP VIEW pg_temp.audit_events");
 }
 
 async function applyPostCommitSql(client, migration) {
   if (!migration.postCommitSql) return;
   await client.query(migration.postCommitSql);
+}
+
+// A missing retention entry behind later migrations is ambiguous. Only the
+// original bounded grant constraint matches the expected pre-migration schema.
+// This check does not establish the origin or integrity of the ledger.
+async function assertPendingOauthRetentionSchema(client, lock = false) {
+  if (lock) await client.query("LOCK TABLE operator_oauth_grants IN ACCESS EXCLUSIVE MODE");
+  const { rows } = await client.query(`SELECT pg_get_constraintdef(c.oid) AS definition, c.convalidated AS validated
+    FROM pg_constraint c
+    WHERE c.conrelid = to_regclass(format('%I.%I', current_schema(), 'operator_oauth_grants'))
+      AND c.conname = 'operator_oauth_grants_generation_count_check' AND c.contype = 'c'`);
+  if (rows.length !== 1 || !rows[0].validated ||
+      rows[0].definition !== 'CHECK (((generation_count >= 0) AND (generation_count <= 10000)))') {
+    throw new Error('Unsupported Core migration history: missing operator OAuth retention entry has unexpected schema');
+  }
 }
 
 async function runMigrations() {
@@ -5419,6 +5557,21 @@ async function runMigrations() {
     validateMigrationHistory(result.rows);
     const plannedMigrations = resolveMigrationPlan(result.rows);
     const executedVersions = result.rows.map((row) => row.version);
+    const retentionGap = plannedMigrations.find((migration) =>
+      migration.name === 'operator_oauth_retention' && !executedVersions.includes(migration.version) &&
+      executedVersions.some((version) => version > migration.version));
+    if (retentionGap) {
+      const oauth = plannedMigrations.find((migration) => migration.name === 'operator_oauth');
+      if (oauth && !executedVersions.includes(oauth.version)) {
+        const dependent = plannedMigrations.find((migration) => migration.name === 'operator_connection_lifetimes');
+        const existing = await client.query(`SELECT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+          WHERE n.nspname=current_schema() AND c.relname IN ('operator_oauth_clients','operator_oauth_authorizations','operator_oauth_grants','operator_oauth_tokens')) AS present`);
+        if (existing.rows[0].present || (dependent && executedVersions.includes(dependent.version)))
+          throw new Error('Unsupported Core migration history: missing operator OAuth entry has existing schema or dependent migration');
+      } else {
+        await assertPendingOauthRetentionSchema(client);
+      }
+    }
     logger.info(`Found ${executedVersions.length} executed migrations`, {
       versions: executedVersions,
     });
@@ -5490,6 +5643,7 @@ async function runMigrations() {
         );
         await client.query("BEGIN");
         try {
+          if (migration === retentionGap) await assertPendingOauthRetentionSchema(client, true);
           await applyMigrationSql(client, migration);
           await client.query(
             "INSERT INTO migrations (version, name) VALUES ($1, $2)",

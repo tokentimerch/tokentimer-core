@@ -150,8 +150,10 @@ export default function AdcsPostPinCheck({
     >
       <VStack align='stretch' spacing={2}>
         <Text fontSize='sm'>
-          Renewal needs a CA check taken after the CA certificate was pinned.
-          Run it here on{' '}
+          CA approval persists. Renewal needs a safe check from the last 24
+          hours, taken after the CA certificate was pinned. A due automatic
+          renewal requests this check on its eligible agent. To verify readiness
+          now, run it here on{' '}
           {agent?.name || agent?.hostname || 'the selected Windows agent'}. This
           checks the CA and template; it does not issue a certificate.
         </Text>

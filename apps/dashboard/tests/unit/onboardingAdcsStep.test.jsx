@@ -73,17 +73,17 @@ describe('adcsStatus', () => {
 });
 
 describe('AdcsStep', () => {
-  it('always says enrollment is not verified and has no trailing to-do list', () => {
+  it('presents the store and IIS choices without claiming service activation', () => {
     show(ctxWith({ adcs: { issuers: [], profiles: 0 }, agents: [] }));
-    expect(screen.getByText(/cannot verify enrollment/i)).toBeTruthy();
+    expect(screen.getByText(/installation does not activate a service/i)).toBeTruthy();
     expect(screen.queryByText(/Still to do on your side/i)).toBeNull();
     expect(screen.getAllByText('To do')).toHaveLength(3);
   });
 
-  it('says what the guide cannot do without a testing disclaimer', () => {
+  it('explains the IIS attachment and store issuance paths', () => {
     show(ctxWith({ adcs: { issuers: [], profiles: 0 }, agents: [] }));
-    expect(document.body.textContent).toMatch(/start the first enrollment/i);
-    expect(document.body.textContent).not.toMatch(/not been verified/i);
+    expect(document.body.textContent).toMatch(/attach a renewal profile to the existing site certificate/i);
+    expect(document.body.textContent).toMatch(/request a certificate for the Windows store/i);
   });
   it('shows the exact CA and template the issuer must match', () => {
     show(ctxWith({ adcs: { issuers: [], profiles: 0 } }));
@@ -97,7 +97,7 @@ describe('AdcsStep', () => {
     expect(screen.queryAllByText('To do')).toHaveLength(0);
     expect(screen.getAllByText('Done')).toHaveLength(3);
     // Even with everything present it must not claim enrollment works.
-    expect(screen.getByText(/cannot verify enrollment/i)).toBeTruthy();
+    expect(screen.getByText(/installation does not activate a service/i)).toBeTruthy();
   });
 
   it('keeps the agent row open when the agent lacks the capability', () => {

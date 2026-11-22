@@ -1,0 +1,5 @@
+paths:
+  .github/workflows/discord-release-backfill.yml:
+    ignore:
+      # This historical backfill remains deliberately disabled.
+      - '^constant expression "false" in condition\. remove the if: section$'
