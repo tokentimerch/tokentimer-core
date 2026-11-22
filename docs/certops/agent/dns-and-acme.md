@@ -8,6 +8,20 @@ The bundled executor also has no native TLS-ALPN-01 solver. Native DNS-01,
 external HTTP-01 and controller HTTP-01 qualification use separate execution
 reports; success in one does not qualify another challenge method.
 
+### Check an ACME directory
+
+1. With CertOps enabled, sign in as a workspace manager or administrator. If you need an issuer,
+   POST `{"kind":"acme","name":"Internal CA"}` to
+   `/api/v1/workspaces/{id}/certops/issuers` and copy `issuer.id`.
+2. POST `caEndpoint` as a JSON string field to
+   `/api/v1/workspaces/{id}/certops/issuers/{issuerId}/validate`. Use the final
+   HTTPS directory URL. The API connects directly and reports revocation
+   support and external account binding requirements. For a private CA, see
+   [outbound and private-address settings](../../CONFIGURATION.md#integration-base-urls).
+
+The check stores no URL or credentials. Issuance uses the agent's own network,
+CA trust, and DNS or account setup.
+
 <a id="dns-01-providers"></a>
 
 ### DNS-01 providers
