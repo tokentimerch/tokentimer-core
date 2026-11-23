@@ -25,10 +25,11 @@ test("clean Windows host lanes build the current metadata helper before any host
   const windows = yaml.load(fs.readFileSync(path.join(workflows, "certops-qualification.yml"), "utf8")).jobs.windows;
   const releaseGo = yaml.load(fs.readFileSync(path.join(workflows, "windows-agent-signing-pilot.yml"), "utf8")).env.PILOT_GO_VERSION;
   const { steps } = windows;
-  const setup = steps.findIndex(step => step.uses === "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e");
+  const setup = steps.findIndex(step => typeof step.uses === "string" && step.uses.startsWith("actions/setup-go@"));
   const build = steps.findIndex(step => step.run === "node packages/agent/scripts/build-windows-chain-helper.js");
   const host = steps.findIndex(step => typeof step.run === "string" && step.run.split(/\r?\n/).some(line => line.trim() === "node --test packages/agent/scripts/host/windows-host.test.js"));
-  assert.ok(setup >= 0 && setup < build && build < host);
+  assert.ok(setup >= 0 && setup < build && build < host, "Go setup must precede the metadata helper build and host tests");
+  assert.match(steps[setup].uses, /^actions\/setup-go@[a-f0-9]{40}$/, "Go setup must use a commit SHA pin");
   assert.match(releaseGo, /^\d+\.\d+\.\d+$/);
   assert.equal(steps[setup].with["go-version"], releaseGo);
   assert.equal(windows.env.GOTOOLCHAIN, "local");
