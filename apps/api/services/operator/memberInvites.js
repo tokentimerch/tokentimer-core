@@ -9,7 +9,11 @@ const { escapeHtml, sanitizeSingleLine } = require("../../utils/sanitize");
 const { authorize } = require("./inventoryImports");
 const { assertInventoryImportAllowed } = require("./inventoryPolicy");
 const { normalizeInvite } = require("./memberInviteValidation");
-const { registrationUrl } = require("./memberInvitePolicy");
+const {
+  registrationUrl,
+  lookupInviteEmailAccounts,
+  canAddExistingUserByEmail,
+} = require("./memberInvitePolicy");
 const { untrustedText } = require("./projections");
 const { invalid } = require("./tokenInventory");
 
@@ -37,9 +41,10 @@ async function inspectInvite(client, operator, email) {
   }
   const actor = (await client.query("SELECT email FROM users WHERE id=$1", [operator.userId])).rows[0];
   if (!actor || String(actor.email || "").trim().toLowerCase() === email) throw fail("OPERATOR_INTENT_STALE", "This email cannot be invited");
-  const targets = (await client.query("SELECT id FROM users WHERE LOWER(email)=$1 ORDER BY id LIMIT 2", [email])).rows;
+  const targets = await lookupInviteEmailAccounts(client, email);
   if (targets.length > 1) throw fail("OPERATOR_INTENT_STALE", "This email cannot be invited");
-  const targetId = targets[0]?.id || null;
+  const [target] = targets;
+  const targetId = target?.id || null;
   if (targetId && String(targetId) === String(ws.created_by)) throw fail("OPERATOR_INTENT_STALE", "This email cannot be invited");
   if (targetId && (await client.query("SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2", [operator.workspaceId, targetId])).rowCount) throw fail("OPERATOR_INTENT_STALE", "This user already belongs to the workspace");
   if ((await client.query("SELECT 1 FROM workspace_invitations WHERE workspace_id=$1 AND LOWER(email)=$2 AND accepted_at IS NULL", [operator.workspaceId, email])).rowCount) throw fail("OPERATOR_INTENT_STALE", "This email already has a pending invitation");
@@ -53,7 +58,8 @@ async function inspectInvite(client, operator, email) {
       EXISTS(SELECT 1 FROM workspaces w JOIN workspace_invitations wi ON wi.workspace_id=w.id WHERE w.created_by=$1 AND LOWER(wi.email)=$2 AND wi.accepted_at IS NULL) AS already_pending`, [ws.created_by, email])).rows[0];
     if (counts.members + counts.pending + (counts.already_member || counts.already_pending ? 0 : 1) > limit) throw fail("PLAN_MEMBER_LIMIT", "The workspace plan does not allow another member");
   }
-  return { workspaceName: ws.name, workspaceOwnerId: ws.created_by, plan, targetId, mode: targetId ? "add_existing_user" : "invite_new_user" };
+  const directAccess = canAddExistingUserByEmail(target, email);
+  return { workspaceName: ws.name, workspaceOwnerId: ws.created_by, plan, targetId, mode: directAccess ? "add_existing_user" : "invite_new_user" };
 }
 function planDigest(operator, decision) { return digest(["invite_member", operator.workspaceId, operator.connectionId, decision]); }
 async function previewInvite({ client, operator, invite }) {
@@ -79,7 +85,7 @@ async function createInvite({ client, operator, planId, planHash, requestId }) {
   const owner = (await client.query("SELECT created_by FROM workspaces WHERE id=$1", [operator.workspaceId])).rows[0]?.created_by;
   if (owner == null) throw fail("NOT_FOUND", "Workspace unavailable");
   const hintedTarget = Number.isSafeInteger(Number(hint?.decisions?.[0]?.targetId)) && Number(hint.decisions[0].targetId) > 0 ? Number(hint.decisions[0].targetId) : owner;
-  const lockedUsers = await client.query("SELECT id FROM users WHERE id IN ($1,$2,$3) ORDER BY id FOR KEY SHARE", [owner, operator.userId, hintedTarget]);
+  const lockedUsers = await client.query("SELECT id FROM users WHERE id IN ($1,$2,$3) ORDER BY id FOR SHARE", [owner, operator.userId, hintedTarget]);
   await authorizeInvite(client, operator);
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [JSON.stringify(["operator-inventory-request", operator.connectionId, requestId])]);
   const previous = (await client.query("SELECT plan_id,plan_hash,result FROM operator_inventory_requests WHERE connection_id=$1 AND request_id=$2", [operator.connectionId, requestId])).rows[0];
@@ -98,7 +104,7 @@ async function createInvite({ client, operator, planId, planHash, requestId }) {
   const current = await inspectInvite(client, operator, email);
   if (digest(current) !== digest({ workspaceName: decision.workspaceName, workspaceOwnerId: decision.workspaceOwnerId, plan: decision.plan, targetId: decision.targetId, mode: decision.mode })) throw fail("OPERATOR_INTENT_STALE", "Invitation details changed; preview again");
   if (current.targetId && !lockedUsers.rows.some((row) => String(row.id) === String(current.targetId))) throw fail("OPERATOR_INTENT_STALE", "Invitation details changed; preview again");
-  if (current.targetId) {
+  if (current.mode === "add_existing_user") {
     const inserted = await client.query("INSERT INTO workspace_memberships(user_id,workspace_id,role,invited_by) VALUES($1,$2,'viewer',$3) ON CONFLICT DO NOTHING RETURNING user_id", [current.targetId, operator.workspaceId, operator.userId]);
     if (!inserted.rowCount) throw fail("OPERATOR_INTENT_STALE", "This user already belongs to the workspace");
   } else {
@@ -136,17 +142,22 @@ async function deliverInvite({ operator, requestId, db = pool, send = emailServi
     if (decision.mode === "invite_new_user") {
       const invitation = (await db.query("SELECT token FROM workspace_invitations WHERE workspace_id=$1 AND LOWER(email)=$2 AND id=$3 AND role='viewer' AND invited_by=$4 AND accepted_at IS NULL", [operator.workspaceId, email, decision.invitationId, operator.userId])).rows[0];
       if (!invitation?.token) return "unknown";
-      actionUrl = registrationUrl(base, email, invitation.token);
+      actionUrl = decision.targetId ? base + "/login" : registrationUrl(base, email, invitation.token);
     } else {
       const membership = await db.query("SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2 AND role='viewer' AND invited_by=$3", [operator.workspaceId, decision.targetId, operator.userId]);
       if (!membership.rowCount) return "unknown";
     }
     const workspace = sanitizeSingleLine(decision.workspaceName, 120);
-    const title = decision.mode === "invite_new_user" ? "Workspace invitation" : "Workspace access";
+    const isPendingInvite = decision.mode === "invite_new_user";
+    const title = isPendingInvite ? "Workspace invitation" : "Workspace access";
+    const message = isPendingInvite ? "You have been invited as a viewer to" : "You have been granted viewer access to";
+    const buttonText = isPendingInvite
+      ? (decision.targetId ? "Sign in" : "Create your account")
+      : "Open TokenTimer";
     const rendered = await template({ title, greeting: "Hello,",
-      content: `<p>You have been granted viewer access to <strong>${escapeHtml(workspace)}</strong>.</p>`,
-      buttonText: decision.mode === "invite_new_user" ? "Create your account" : "Open TokenTimer",
-      buttonUrl: actionUrl, plainTextContent: `You have been granted viewer access to ${workspace}.\n\n${actionUrl}` });
+      content: `<p>${message} <strong>${escapeHtml(workspace)}</strong>.</p>`,
+      buttonText,
+      buttonUrl: actionUrl, plainTextContent: `${message} ${workspace}.\n\n${actionUrl}` });
     const delivery = await send({ to: email, subject: `TokenTimer workspace: ${workspace}`, html: rendered.html, text: rendered.text, useEmbeddedLogo: rendered.useEmbeddedLogo });
     const status = delivery?.success === true ? "sent" : "failed";
     await db.query("UPDATE operator_inventory_requests SET result=jsonb_set(result,'{emailStatus}',to_jsonb($4::text)) WHERE connection_id=$1 AND workspace_id=$2 AND request_id=$3", [operator.connectionId, operator.workspaceId, requestId, status]);

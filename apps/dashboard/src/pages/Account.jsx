@@ -272,8 +272,9 @@ function Account({
 
   const profileIconBg = useColorModeValue('blue.50', 'whiteAlpha.100');
   const profileIconColor = useColorModeValue('blue.600', 'blue.200');
-  const isGoogleAuth =
-    String(session?.authMethod || '').toLowerCase() === 'google';
+  const authMethod = String(session?.authMethod || '').toLowerCase();
+  const isGoogleAuth = authMethod === 'google';
+  const isSsoAccount = ['sso', 'oidc', 'saml'].includes(authMethod);
   const sessionInitials = String(session?.displayName || session?.email || 'U')
     .split(/\s+/)
     .filter(Boolean)
@@ -491,6 +492,14 @@ function Account({
                 {loginMethodDisplay.label}
               </AccountDetailRow>
               <AccountDetailRow
+                label='Installation role'
+                muted={bodySecondary}
+                text={text}
+                showDivider
+              >
+                {session.isAdmin ? 'System administrator' : 'Standard user'}
+              </AccountDetailRow>
+              <AccountDetailRow
                 label='Account created'
                 muted={bodySecondary}
                 text={text}
@@ -508,12 +517,13 @@ function Account({
                 title='Security'
                 description='Password and two-factor authentication for this account.'
               />
-              {isGoogleAuth ? (
+              {isGoogleAuth || isSsoAccount ? (
                 <Alert status='info' borderRadius='md'>
                   <AlertIcon />
                   <AlertDescription>
-                    This account uses Google sign-in. Password and 2FA settings
-                    are managed in your Google account.
+                    {isGoogleAuth
+                      ? 'This account uses Google sign-in. Password and 2FA settings are managed in your Google account.'
+                      : 'Your identity provider manages password and two-factor authentication for this account.'}
                   </AlertDescription>
                 </Alert>
               ) : (

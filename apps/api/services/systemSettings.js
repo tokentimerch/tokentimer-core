@@ -355,7 +355,7 @@ function parseEnvBoolean(value) {
  * Secret keys are stored under the `${key}_encrypted` suffix inside the
  * JSON and decrypted on read.
  */
-async function getJsonSetting(pool, column, key) {
+async function getJsonSetting(pool, column, key, rowSnapshot) {
   if (!isJsonColumn(column)) {
     return { value: null, source: null, locked: false };
   }
@@ -373,7 +373,7 @@ async function getJsonSetting(pool, column, key) {
     }
   }
 
-  const row = await getDbRow(pool);
+  const row = rowSnapshot === undefined ? await getDbRow(pool) : rowSnapshot;
   if (row && row[column] && typeof row[column] === "object") {
     const obj = row[column];
     const isSecret = (JSON_SECRET_FIELDS[column] || []).includes(key);
@@ -437,6 +437,17 @@ async function getJsonColumn(pool, column) {
  * Resolve raw effective value for a JSON-column key (no metadata).
  * Used by services that just need the configured value.
  */
+// Versioned consumers must resolve every key against the same fresh row.
+async function getFreshJsonSettingValues(pool, column) {
+  const { rows } = await pool.query("SELECT * FROM system_settings WHERE id = 1");
+  if (!rows.length) throw new Error("System settings row is missing");
+  const values = {};
+  for (const key of Object.keys(JSON_ENV_MAP[column] || {})) {
+    values[key] = (await getJsonSetting(pool, column, key, rows[0])).value;
+  }
+  return values;
+}
+
 async function getJsonSettingValue(pool, column, key) {
   const result = await getJsonSetting(pool, column, key);
   return result.value;
@@ -467,7 +478,7 @@ async function saveJsonColumn(pool, column, payload, userId, options = {}) {
   const envMap = JSON_ENV_MAP[column] || {};
   const secrets = JSON_SECRET_FIELDS[column] || [];
 
-  const row = await getDbRow(pool);
+  const row = options.rowSnapshot ?? await getDbRow(pool);
   const current =
     row && row[column] && typeof row[column] === "object"
       ? { ...row[column] }
@@ -595,6 +606,7 @@ module.exports = {
   saveSettings,
   getJsonSetting,
   getJsonSettingValue,
+  getFreshJsonSettingValues,
   getJsonColumn,
   saveJsonColumn,
   isWhatsAppAvailable,

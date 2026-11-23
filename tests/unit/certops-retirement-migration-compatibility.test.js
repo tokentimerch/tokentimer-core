@@ -118,7 +118,7 @@ test("retirement preview retains a recorded Store receipt deadline and appends I
   for (const tail of [[...base, recovery, observed, ...store],
     [...base, recovery, ...store.slice(0, 3), observed, store[3]], [...base, ...store, recovery, observed]]) {
     const recorded = [...preview, ...at(tail)];
-    const expected = [...recorded, ...at([...iis, "agent_credential_rotations", "agent_credential_rotation_ack", "certops_adcs_preflight_lookup_index", "auto_sync_creation_expiration"], 110 + tail.length)];
+    const expected = [...recorded, ...at([...iis, "agent_credential_rotations", "agent_credential_rotation_ack", "certops_adcs_preflight_lookup_index", "auto_sync_creation_expiration", "shared_sso_schema"], 110 + tail.length)];
     validateMigrationHistory(recorded);
     assert.deepEqual(identities(composeMigrations(migrations, recorded)), expected);
     validateMigrationHistory(expected);
@@ -132,6 +132,7 @@ test("retirement preview retains a recorded Store receipt deadline and appends I
 test("an applied expiration preview keeps its migration identity while adding observed revocation", () => {
   const originalExpiration = { version: 115, name: "auto_sync_creation_expiration" };
   const observedRevocation = { version: 116, name: "certops_observed_revocation" };
+  const sso = { version: 117, name: "shared_sso_schema" };
   const priorTails = [ledger.filter((row) => row.version <= 114), [...preview, ...appended.slice(0, 5)]];
   for (const prior of priorTails) {
     for (const applied of [[originalExpiration], [originalExpiration, observedRevocation]]) {
@@ -154,7 +155,7 @@ test("released main retains identities before appending retirement", () => {
 });
 test("retirement preview with the preflight index retains its ledger when secure-agent tails arrive", () => {
   const earlierRegistry = migrations
-    .filter(({ name }) => !["distribution_pagerduty_recovery", "agent_credential_rotations", "agent_credential_rotation_ack", "certops_adcs_receipt_deadline", "auto_sync_creation_expiration"].includes(name))
+    .filter(({ name }) => !["distribution_pagerduty_recovery", "agent_credential_rotations", "agent_credential_rotation_ack", "certops_adcs_receipt_deadline", "auto_sync_creation_expiration", "shared_sso_schema"].includes(name))
     .map((row) => row.version >= 115 && row.version <= 122 ? { ...row, version: row.version - 1 } : row);
   const before = composeMigrations(earlierRegistry, preview);
   assert.equal(before.find((row) => row.name === "certops_adcs_preflight_lookup_index").version, 122);
@@ -168,6 +169,7 @@ test("retirement preview with the preflight index retains its ledger when secure
     { version: 125, name: "agent_credential_rotation_ack" },
     { version: 126, name: "certops_adcs_receipt_deadline" },
     { version: 127, name: "auto_sync_creation_expiration" },
+    { version: 128, name: "shared_sso_schema" },
   ]);
   assert.deepEqual(composeMigrations(registry, after), after);
   const forged = after.map((row) => ({ ...row }));
@@ -178,4 +180,88 @@ test("retirement preview rejects forged or non-prefix appended identity", () => 
   for (const rows of [[...preview, {version:110,name:"recipient_member_verification"}], [...preview, {version:111,name:"recipient_member_verification"}]]) {
     assert.throws(() => validateMigrationHistory(rows), /Unsupported Core retirement preview migration history/);
   }
+});
+
+test("the applied SSO preview retains 115 on released and retirement-preview histories", () => {
+  const ssoPreview = { version: 115, name: "shared_sso_schema" };
+  const revocation = { version: 116, name: "certops_observed_revocation" };
+  const releasedBase = ledger.filter((row) => row.version <= 114);
+  const retirementBase = [...preview, ...appended.slice(0, 5)];
+  for (const base of [releasedBase, retirementBase]) {
+    const history = [...base, ssoPreview];
+    const expected = [
+      ...history, revocation, { version: 117, name: "auto_sync_creation_expiration" },
+      ...independentAppends(118),
+    ];
+    for (let end = history.length; end <= expected.length; end++) {
+      const rows = expected.slice(0, end);
+      validateMigrationHistory(rows);
+      const plan = composeMigrations(migrations, rows);
+      assert.deepEqual(plan.map(({ version, name }) => ({ version, name })), expected);
+      for (const entry of plan) assert.equal(entry.sql, migrations.find((item) => item.name === entry.name).sql);
+    }
+  }
+});
+
+function independentAppends(firstVersion) {
+  return ledger.filter(({ version }) => version >= 115 && version <= 126 && version !== 122)
+    .map(({ name }, index) => ({ version: firstVersion + index, name }));
+}
+
+test("only the reviewed SSO preview prefix can claim the old SSO slot", () => {
+  const releasedBase = ledger.filter((row) => row.version <= 114);
+  for (const tail of [
+    [{ version: 116, name: "shared_sso_schema" }],
+    [{ version: 127, name: "shared_sso_schema" }],
+    [{ version: 128, name: "shared_sso_schema" }],
+    [{ version: 115, name: "shared_sso_schema" }, { version: 116, name: "auto_sync_creation_expiration" }],
+    [{ version: 115, name: "shared_sso_schema" }, { version: 117, name: "certops_observed_revocation" }],
+  ]) {
+    assert.throws(() => validateMigrationHistory([...releasedBase, ...tail]), /Unsupported Core/);
+  }
+  assert.throws(() => validateMigrationHistory([
+    ...releasedBase.filter((row) => row.version !== 113),
+    { version: 115, name: "shared_sso_schema" },
+  ]), /Unsupported Core/);
+});
+
+test("canonical Store migrations keep 115 and never satisfy SSO", () => {
+  const store = { version: 115, name: "store_issuance_explicit_renewal_consent" };
+  const { validateMigrationReservations } = require("../../apps/api/migrations/migration-reservations.cjs");
+  validateMigrationReservations(migrations);
+  const reallocatedSso = migrations.filter((entry) => entry.name !== store.name).map((entry) =>
+    entry.name === "shared_sso_schema" ? { ...entry, version: 115 } : entry);
+  assert.throws(() => validateMigrationReservations(reallocatedSso), /Conflicting canonical/);
+  const base = [...ledger.filter((row) => row.version <= 114), store];
+  const plan = composeMigrations(migrations, base);
+  assert.deepEqual(plan.map(({ version, name }) => ({ version, name })), ledger);
+  assert.deepEqual(composeMigrations(migrations, plan), plan);
+});
+
+test("the later SSO preview preserves sparse 127 and shifted retirement 116", () => {
+  const expiration = "auto_sync_creation_expiration";
+  const standard = [...ledger.filter((row) => row.version <= 114 || row.version === 122),
+    { version: 127, name: "shared_sso_schema" }];
+  const retirement = [...preview, ...appended.slice(0, 5), { version: 115, name: "certops_observed_revocation" },
+    { version: 116, name: "shared_sso_schema" }];
+  for (const [history, version] of [[standard, 128], [retirement, 117]]) {
+    const upgraded = [...history, { version, name: expiration }, ...independentAppends(version + 1)];
+    for (let end = history.length; end <= upgraded.length; end++) {
+      const rows = upgraded.slice(0, end);
+      validateMigrationHistory(rows);
+      const plan = composeMigrations(migrations, rows);
+      assert.deepEqual(plan.map(({ version, name }) => ({ version, name })), upgraded);
+      for (const entry of plan) assert.equal(entry.sql, migrations.find((item) => item.name === entry.name).sql);
+    }
+  }
+  assert.throws(() => validateMigrationHistory([
+    ...standard.filter((row) => row.version !== 113),
+  ]), /Unsupported Core/);
+});
+
+test("an applied SSO row requires a registered SSO migration", () => {
+  const registry = migrations.filter(({ name }) => name !== "shared_sso_schema");
+  const base = ledger.filter(({ version }) => version <= 114);
+  assert.throws(() => composeMigrations(registry, [...base, { version: 115, name: "shared_sso_schema" }]),
+    /Unsupported Core migration history: unknown extension shared_sso_schema/);
 });

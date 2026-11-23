@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import Login from '../../src/pages/Login.jsx';
+import { loginNextPath } from '../../src/lib/sso-ui-shared.js';
 import {
   LAST_WORKSPACE_LEGACY_KEY,
   writeLastWorkspaceId,
@@ -31,6 +32,7 @@ vi.mock('../../src/components/WelcomeModal', () => ({
 }));
 
 vi.mock('../../src/utils/apiClient', () => ({
+  API_BASE_URL: '',
   default: {
     post: postMock,
   },
@@ -39,12 +41,12 @@ vi.mock('../../src/utils/apiClient', () => ({
   },
 }));
 
-function renderLogin({ search = '' } = {}) {
+function renderLogin({ search = '', session } = {}) {
   window.history.replaceState({}, '', `/login${search}`);
   return render(
     <ChakraProvider>
       <MemoryRouter initialEntries={[`/login${search}`]}>
-        <Login />
+        <Login session={session} />
       </MemoryRouter>
     </ChakraProvider>
   );
@@ -129,4 +131,96 @@ describe('Login keeps the last workspace for restore', () => {
     expect(localStorage.getItem(LAST_WORKSPACE_LEGACY_KEY)).toBe('ws-ops');
     expect(window.location.href).toBe('/dashboard?first_login=true');
   });
+});
+
+describe('SSO login', () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          providers: {
+            oidc: [
+              { slug: 'oidc-office', displayName: 'Office', signInReady: true },
+            ],
+            saml: [
+              {
+                slug: 'saml-office',
+                displayName: 'Partner',
+                signInReady: true,
+              },
+            ],
+          },
+        }),
+      })
+    );
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('shows both ready protocols and refreshes readiness on focus', async () => {
+    const next = '/system-settings?section=access#roles';
+    renderLogin({ search: `?next=${encodeURIComponent(next)}` });
+
+    for (const [type, slug, name] of [
+      ['oidc', 'oidc-office', 'Office'],
+      ['saml', 'saml-office', 'Partner'],
+    ]) {
+      const link = await screen.findByRole('link', {
+        name: `Sign in with ${name}`,
+      });
+      expect(link.href).toContain(
+        `/auth/${type}/${slug}?next=${encodeURIComponent(next)}`
+      );
+    }
+
+    const first = fetch.mock.calls[0][1];
+    expect(first.cache).toBe('no-store');
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ providers: { oidc: [] } }),
+    });
+    fireEvent.focus(window);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('link', { name: 'Sign in with Office' })
+      ).toBeNull()
+    );
+    expect(first.signal.aborted).toBe(true);
+  });
+
+  it.each([undefined, { isAdmin: false }, { isAdmin: true }])(
+    'limits callback diagnostics to administrator sessions (%j)',
+    async session => {
+      renderLogin({
+        search:
+          '?error=oidc_failed&reason=issuer_mismatch&provider=private-name',
+        session,
+      });
+
+      await screen.findByRole('link', { name: 'Sign in with Office' });
+      expect(screen.getByText(/Single sign-on failed/)).toBeInTheDocument();
+      expect(screen.queryByText(/private-name/)).toBeNull();
+      const details = screen.queryByRole('button', { name: 'Details' });
+      if (session?.isAdmin) {
+        fireEvent.click(details);
+        expect(
+          screen.getByText(/ID token issuer does not match/)
+        ).toBeVisible();
+      } else {
+        expect(details).toBeNull();
+      }
+    }
+  );
+
+  it.each([
+    'https://external.test',
+    '//external.test',
+    '/\\external.test',
+    '/a/..//external.test',
+    '/mcp/authorize?request=invalid',
+  ])('rejects an unsafe next target %s', next =>
+    expect(loginNextPath(new URLSearchParams({ next }))).toBeNull()
+  );
 });

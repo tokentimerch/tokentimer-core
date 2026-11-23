@@ -50,6 +50,7 @@ const reservations = Object.freeze({
   125: "certops_adcs_preflight_lookup_index",
   126: "certops_adcs_receipt_deadline",
   127: "auto_sync_creation_expiration",
+  128: "shared_sso_schema",
 });
 
 function validateMigrationReservations(migrations) {
