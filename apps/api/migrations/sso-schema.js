@@ -403,6 +403,15 @@ ${MIGRATION_V2_SQL.slice(v2SeedStart)}
 END
 $sso_seed$;
 ${MIGRATION_V3_SQL}
+
+-- Databases with existing providers previously inherited strict sync off.
+-- Save that policy once during adoption so the new default applies to fresh setups.
+UPDATE system_settings
+   SET sso_global_settings = sso_global_settings || '{"strict_membership_sync":false}'::jsonb
+ WHERE id = 1
+   AND NULLIF(btrim(sso_global_settings->>'strict_membership_sync'), '') IS NULL
+   AND EXISTS (SELECT 1 FROM sso_providers);
+
 ${VALIDATE_SHARED_SSO_SCHEMA_SQL}
 `;
 
