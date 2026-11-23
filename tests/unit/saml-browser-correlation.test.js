@@ -15,6 +15,7 @@ test("SAML POST recovers a request through a host-only cross-site cookie and rec
   const records = new Map();
   const relayStates = [];
   let failSessionSave = false;
+  let strictDenial;
   const passport = {
     authenticate(_name, callback) {
       return async (req, res) => {
@@ -24,6 +25,12 @@ test("SAML POST recovers a request through a host-only cross-site cookie and rec
           return res.sendStatus(200);
         }
         assert.equal(await req.samlBrowserCache.consumeAsync("request"), "pending");
+        if (strictDenial) {
+          if (strictDenial.loginAuditRecorded) audit.push({
+            action: "LOGIN_FAILED", metadata: { provider_slug: slug, reason: "no_group_mapping_matched" },
+          });
+          return callback(strictDenial);
+        }
         return failSessionSave ? callback(null, { id: 1 }) : callback(new Error("sample upstream detail"));
       };
     },
@@ -105,4 +112,20 @@ test("SAML POST recovers a request through a host-only cross-site cookie and rec
   assert.deepEqual(audit.at(-1).metadata, {
     method: "saml", provider_slug: slug, reason: "session_login_error",
   });
+
+  // Preserve a single specific denial even if the profile audit write fails.
+  for (const loginAuditRecorded of [true, false]) {
+    const since = audit.length;
+    strictDenial = Object.assign(new Error("Strict membership denied"), {
+      code: "no_group_mapping_matched", loginAuditRecorded,
+    });
+    await fetch(origin + "/auth/saml/" + slug, { headers: { cookie: browserCookie } });
+    const denied = await fetch(origin + callbackPath, {
+      method: "POST", redirect: "manual", headers: { cookie: browserCookie },
+      body: new URLSearchParams(),
+    });
+    assert.equal(denied.status, 302);
+    assert.equal(new URL(denied.headers.get("location")).search, "?error=saml_failed");
+    assert.deepEqual(audit.slice(since).map(entry => entry.metadata.reason), ["no_group_mapping_matched"]);
+  }
 });

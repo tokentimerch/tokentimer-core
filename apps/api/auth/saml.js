@@ -84,11 +84,13 @@ async function handleSamlProfile(req, profile, done) {
   const pool = runtime?.pool || routePool;
 
   const safeAudit = async (params) => {
-    if (!writeAudit) return;
+    if (!writeAudit) return false;
     try {
       await writeAudit(params);
+      return true;
     } catch (err) {
       logger?.warn?.("SAML audit write failed", { error: err?.message });
+      return false;
     }
   };
 
@@ -296,7 +298,7 @@ async function handleSamlProfile(req, profile, done) {
       requiresExistingMembership &&
       !(await hasAnyWorkspaceMembership(pool, resolved.user.id))
     ) {
-      await safeAudit({
+      const loginAuditRecorded = await safeAudit({
         actorUserId: null,
         subjectUserId: resolved.user.id,
         action: "LOGIN_FAILED",
@@ -312,8 +314,11 @@ async function handleSamlProfile(req, profile, done) {
         },
       });
       return done(
-        new Error(
-          "No IdP group mapping matched this login and strict membership sync is enabled for this provider. Ask an admin to add a group mapping or grant workspace access.",
+        Object.assign(
+          new Error(
+            "No IdP group mapping matched this login and strict membership sync is enabled for this provider. Ask an admin to add a group mapping or grant workspace access.",
+          ),
+          { code: "no_group_mapping_matched", loginAuditRecorded },
         ),
       );
     }
@@ -662,29 +667,33 @@ function samlRoutes(passport, express) {
       const landingPath = relay || "/dashboard";
       passport.authenticate("saml", async (err, user) => {
         if (err || !user) {
-          const reason =
+          const strictDenial = err?.code === "no_group_mapping_matched";
+          let reason =
             err?.message === "provider_disabled" ||
             err?.message === "unknown_or_disabled_saml_provider"
               ? "provider_disabled"
               : err
                 ? "callback_error"
                 : "no_user";
-          await safeAudit({
-            actorUserId: null,
-            subjectUserId: null,
-            action: "LOGIN_FAILED",
-            targetType: "auth",
-            targetId: null,
-            channel: "web",
-            workspaceId: null,
-            metadata: {
-              method: "saml",
-              provider_slug: slug,
-              protocol: "saml",
-              reason,
-              path: req.path,
-            },
-          });
+          if (strictDenial) reason = "no_group_mapping_matched";
+          if (!strictDenial || err.loginAuditRecorded !== true) {
+            await safeAudit({
+              actorUserId: null,
+              subjectUserId: null,
+              action: "LOGIN_FAILED",
+              targetType: "auth",
+              targetId: null,
+              channel: "web",
+              workspaceId: null,
+              metadata: {
+                method: "saml",
+                provider_slug: slug,
+                protocol: "saml",
+                reason,
+                path: req.path,
+              },
+            });
+          }
           const errorCode =
             reason === "provider_disabled" ? "provider_disabled" : "saml_failed";
           return res.redirect(`${APP_URL}/login?error=${errorCode}`);
