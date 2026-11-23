@@ -175,6 +175,24 @@ test("privileged workflow jobs use the verified source and keep the release pref
   }
   const chart = release["build-helm-chart"];
   const agent = release["pack-agent"];
+  const packStep = agent.steps.find(step => step.name === "Pack agent release tarball");
+  assert.equal(packStep.if, "steps.accepted-agent.outcome == 'skipped'");
+  assert.equal(packStep.env?.EXPECTED_RELEASE_COMMIT, verifiedCommit);
+  const commands = packStep.run.replace(/\\\n[ \t]*/g, "").split("\n");
+  const sourceCheck = commands.indexOf('test "$(git rev-parse HEAD)" = "$EXPECTED_RELEASE_COMMIT"');
+  const cleanCheck = commands.indexOf("git diff --quiet HEAD -- packages/agent");
+  const packCommand = commands.indexOf("node packages/agent/scripts/pack-release.js --out-dir agent-dist");
+  const restore = commands.findIndex(command => command.startsWith("git restore "));
+  assert.equal(commands.filter(command => command.startsWith("git restore ")).length, 1);
+  assert.ok(sourceCheck >= 0 && sourceCheck < cleanCheck && cleanCheck < packCommand && packCommand < restore,
+    "The exact clean source must be checked before packaging and generated outputs restored afterward");
+  assert.deepEqual(commands[restore].split(/\s+/), [
+    "git", "restore", '--source="$EXPECTED_RELEASE_COMMIT"', "--worktree", "--",
+    "packages/agent/bin/tokentimer-observed-revocation-linux-amd64",
+    "packages/agent/bin/tokentimer-observed-revocation-linux-arm64",
+  ]);
+  assert.ok(agent.steps.indexOf(packStep) < agent.steps.findIndex(
+    step => step.name === "Verify shipped native toolchain and provenance"));
   const expression = value => "${{ " + value + " }}";
   for (const [job, uploader, name] of [
     [chart, "upload-chart", "helm-chart"],
