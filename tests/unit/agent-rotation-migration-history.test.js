@@ -75,14 +75,14 @@ test("reviewed rotation preview remains exact and rejects gaps or swapped rows",
   const original = migrations.filter(x => x.version <= 85 || [92, 93].includes(x.version));
   const names = ["operator_connections", "operator_enrollment_grants", "operator_action_requests"];
   const prior = [...original, ...names.map((name, i) => ({ ...migrations.find(x => x.name === name), version: 94 + i }))];
-  const legacy = migrations.filter(beforeStore).filter(x => x.version !== 127 && !["certops_retirement_dossiers", "certops_material_reconciliation", "distribution_pagerduty_recovery", "certops_observed_revocation"].includes(x.name));
+  const legacy = migrations.filter(beforeStore).filter(x => x.version < 127 && !["certops_retirement_dossiers", "certops_material_reconciliation", "distribution_pagerduty_recovery", "certops_observed_revocation"].includes(x.name));
   const history = composeMigrations(legacy, prior).map(({ version, name }) => ({ version, name }));
   assert.equal(history.find(x => x.name === "agent_credential_rotations").version, 110);
   assert.equal(history.find(x => x.name === "agent_credential_rotation_ack").version, 111);
   const plan = composeMigrations(migrations, history);
   assert.deepEqual(plan.slice(0, history.length).map(({ version, name }) => ({ version, name })), history);
   assert.deepEqual(composeMigrations(migrations, plan), plan);
-  const withRetirement = composeMigrations(migrations.filter(beforeStore).filter(({ version }) => version !== 127), history);
+  const withRetirement = composeMigrations(migrations.filter(beforeStore).filter(({ version }) => version < 127), history);
   assert.equal(withRetirement.find(x => x.name === "certops_retirement_dossiers").version, 120);
   assert.equal(withRetirement.find(x => x.name === "certops_material_reconciliation").version, 121);
   assert.deepEqual(composeMigrations(migrations, withRetirement).slice(0, withRetirement.length), withRetirement);

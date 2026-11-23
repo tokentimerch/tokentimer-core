@@ -350,6 +350,19 @@ posture.
 Kubernetes auth is out of scope unless operators confirm AppRole is
 insufficient.
 
+## Single sign-on
+
+To manage provider secrets in the dashboard, give every API replica the same `SSO_SECRETS_KEYRING_FILE` or `SSO_SECRETS_KEYRING`. The JSON shape is `{"primary":"k1","keys":{"k1":"<base64 key>"}}`. Generate 32 random bytes per key. Store the keyring separately from the database and restrict access to the API identity.
+
+- **Compose.** For dashboard setup, put `SSO_SECRETS_KEYRING` in the deployment's `.env` and recreate the API. For file-based bootstrap, copy `sso-providers.example.json` beside the Compose file as `sso-providers.json`. Remove the inline keyring, put the keyring in `secrets/sso-keyring.json`, and set the referenced provider secrets and SAML certificate in `secrets/sso.env`. Add the SSO override to the install command. [Compose override](../deploy/compose/docker-compose.sso.yml)
+- **Helm.** For dashboard setup, put `SSO_SECRETS_KEYRING` in a namespace Secret and reference it via `api.envFrom`. For bootstrap, mount the manifest ConfigMap and add the referenced secrets to the same Secret. Supply the example values alongside your deployment values. [Helm values](../deploy/helm/examples/values-sso.yaml)
+- **Bootstrap limit.** Set `enabled: true` on at most one manifest entry. Core rejects a manifest with multiple enabled providers at startup. To recover an adopted database with multiple enabled providers through GitOps, name one of the currently enabled providers as the only enabled entry and make sure a local administrator can sign in.
+- **Network.** The API blocks private IdP addresses by default. Set `SSO_ALLOWED_IDP_CIDRS` to the intended IPv4 CIDRs in the Compose `.env` or Helm `api.env`. If the shared outbound policy is enabled, also add each IdP host to `OUTBOUND_ALLOWLIST`. Discovery and metadata requests then connect directly to the validated endpoint. Recreate the API containers or roll out the pods after changing the settings.
+- **First administrator.** Keep the local bootstrap enabled for recovery. To skip it on a fresh SSO-only installation, bootstrap one working provider with `config.bootstrap_admin_groups` set to groups emitted for the intended administrator. Sign in and verify access to System Settings before inviting users.
+- **Rotation and rollback.** Distribute the new key to all replicas while retaining the old key. Switch the primary, restart the API and run `node apps/api/scripts/rotate-sso-secrets.js` inside the API container. Keep old keys with backups that need them. Before adopting an existing database, back up PostgreSQL, the manifest, external secret references and matching keyring together. To roll back, stop writers and restore that set with the previous images.
+
+See [authentication and provider setup](AUTHENTICATION.md#single-sign-on).
+
 ## Integration base URLs
 
 Use `OUTBOUND_ALLOWLIST` (Helm `config.outboundAllowlist`) to restrict app-initiated integration, webhook, email, WhatsApp, endpoint and metrics connections. List exact hosts, wildcard domains or literal IP ranges. Set `OFFLINE_MODE=true` (Helm `config.offlineMode`) to deny these connections when the list is empty. Domain discovery is disabled with a policy because Subfinder selects its own external sources. Existing webhook and integration private-address restrictions still apply. Include any forward-proxy host used by those requests. Use the exact destination hostname in `NO_PROXY` when your proxy is outside the allowlist. Existing monitors show when policy blocks checks. After allowing a host, use a manual check to verify recovery. Production webhook tests and delivery require HTTPS. Deployment-internal database and worker-to-API connections run independently of this policy.

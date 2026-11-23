@@ -8,6 +8,8 @@ const ALERT = "certops_job_alert_context";
 const DISTRIBUTION = "certops_material_distribution";
 const REVIEW = "certops_distribution_review";
 const TRANSFER = "certops_distribution_transfer";
+const SSO = "shared_sso_schema";
+const EXPIRATION = "auto_sync_creation_expiration";
 const OBSERVED_REVOCATION = "certops_observed_revocation";
 const ADCS_RECEIPT_DEADLINE = "certops_adcs_receipt_deadline";
 const ADCS_PREFLIGHT_INDEX = "certops_adcs_preflight_lookup_index";
@@ -108,6 +110,50 @@ function assertUnambiguousRotationHistory(recorded = [], registry = []) {
   }
 }
 
+function composeSsoPreview(migrations, recorded, tail, extensions, byName) {
+  const sso = byName.get(SSO);
+  const applied = tail.find((row) => row.name === SSO);
+  if (!sso || !applied || applied.version >= sso.version || sso.version !== 128) return null;
+
+  const base = migrations.filter((entry) => entry.version <= 114);
+  const observed = byName.get(OBSERVED_REVOCATION);
+  const expiration = byName.get(EXPIRATION);
+  const beforeSso = recorded.filter((row) => row.version < applied.version);
+  if (beforeSso.some((row) => byName.get(row.name)?.version > 114 &&
+    row.name !== OBSERVED_REVOCATION)) return null;
+
+  const registries = [[...base, { ...sso, version: 115 }]];
+  if (observed) registries.push([...base, observed, { ...sso, version: 127 }]);
+  const appliedPrefix = tail.filter((row) => row.version <= applied.version);
+  const sameIdentity = (entry, row) => entry?.version === row.version && entry.name === row.name;
+  for (const registry of registries) {
+    let prefix;
+    try {
+      prefix = composeMigrations(registry, beforeSso).filter((entry) => entry.version <= applied.version);
+    } catch (error) {
+      if (!/^Unsupported Core/.test(error.message)) throw error;
+      continue;
+    }
+    const prefixTail = prefix.filter((entry) => entry.version >= 70);
+    if (prefixTail.length !== appliedPrefix.length ||
+        !appliedPrefix.every((row, index) => sameIdentity(prefixTail[index], row))) continue;
+
+    // Finish the original SSO preview upgrade before appending the current
+    // independent migrations. Preserve the exact order on retries.
+    const present = new Set(prefix.map((entry) => entry.name));
+    const pending = [observed, expiration, ...extensions.filter(
+      (entry) => entry !== observed && entry !== expiration,
+    )].filter((entry) => entry && !present.has(entry.name));
+    const suffix = pending.map((entry, index) => ({ ...entry, version: applied.version + 1 + index }));
+    if (tail.filter((row) => row.version > applied.version)
+      .every((row, index) => sameIdentity(suffix[index], row))) {
+      return [...prefix, ...suffix];
+    }
+    throw new Error("Unsupported Core SSO preview migration history");
+  }
+  return null;
+}
+
 function composeMigrations(migrations, recorded = []) {
   assertUnambiguousRotationHistory(recorded, migrations);
   for (const [offset, name] of canonical.entries()) {
@@ -157,6 +203,8 @@ function composeMigrations(migrations, recorded = []) {
     .slice()
     .sort((a, b) => a.version - b.version);
   const byName = new Map(extensions.map((entry) => [entry.name, entry]));
+  const ssoPreview = composeSsoPreview(migrations, recorded, tail, extensions, byName);
+  if (ssoPreview) return ssoPreview;
   // A reviewed #714 preview may have applied its index before PagerDuty
   // recovery and the reserved #614 tails. Keep that exact append order.
   const afterPreflightIndex = (names) => {
@@ -167,7 +215,7 @@ function composeMigrations(migrations, recorded = []) {
   };
   // The expiration preview applied its schema immediately after PagerDuty recovery.
   // Recognize that ordering when the ledger already contains the preview identity.
-  const expiration = byName.get("auto_sync_creation_expiration");
+  const expiration = byName.get(EXPIRATION);
   const recordedExpiration = rows.find((row) => row.name === expiration?.name);
   const legacyExpiration = recordedExpiration?.version === 115 &&
     rows.some((row) => row.version === 114 && row.name === "distribution_pagerduty_recovery") &&
@@ -177,6 +225,7 @@ function composeMigrations(migrations, recorded = []) {
     expiration,
     ...extensions.filter((entry) => entry.version > 114 && entry !== expiration),
   ] : extensions;
+  const appliedSso = rows.find((row) => row.name === SSO);
   // Validate the already-applied preview with the previous registry before
   // appending main's newer migrations under unoccupied identities.
   const hasRetirementPreview = byName.get("certops_retirement_dossiers")?.version !== 109 &&
@@ -297,8 +346,9 @@ function composeMigrations(migrations, recorded = []) {
         const laterRetirement = new Set(["certops_retirement_dossiers", "certops_material_reconciliation",
           "distribution_pagerduty_recovery", "certops_observed_revocation"]);
         const beforeRetirement = [...independent.filter((name) => !laterRetirement.has(name)), ...independent.filter((name) => laterRetirement.has(name))];
-        const beforeStore = beforeRetirement.filter((name) => !storeAndIisFeatures.has(name));
-        const afterStore = beforeRetirement.filter((name) => storeAndIisFeatures.has(name));
+        const deferredAtPreview = (name) => storeAndIisFeatures.has(name) || name === SSO;
+        const beforeStore = beforeRetirement.filter((name) => !deferredAtPreview(name));
+        const afterStore = beforeRetirement.filter(deferredAtPreview);
         const historicalOrders = [independent, beforeRetirement].flatMap((ordered) =>
           Array.from({ length: ordered.length + 1 }, (_entry, cut) =>
             [...ordered.slice(0, cut), ...companions, ...ordered.slice(cut)]),
@@ -598,6 +648,9 @@ function composeMigrations(migrations, recorded = []) {
     certops_consumer_staging: ["certops_distribution_lifecycle"],
     certops_review_authority_epochs: ["certops_distribution_lifecycle"],
   };
+  if (appliedSso && appliedSso.version === byName.get(SSO)?.version && expiration &&
+      (!recordedExpiration || recordedExpiration.version >= appliedSso.version))
+    throw new Error("Unsupported Core migration history: missing expiration before canonical SSO");
   const seen = new Set();
   for (const row of rows) {
     if ((dependencies[row.name] || []).some((name) => !seen.has(name)))

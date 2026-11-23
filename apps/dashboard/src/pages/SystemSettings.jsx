@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useLocation } from 'react-router';
+import { Link as RouterLink, useLocation, useSearchParams } from 'react-router';
 import {
   Box,
   Text,
@@ -20,8 +20,20 @@ import {
   IconButton,
   Tooltip,
   Switch,
+  Button,
+  Collapse,
+  FormHelperText,
+  Heading,
 } from '@chakra-ui/react';
-import { FiEye, FiEyeOff, FiMail, FiRepeat } from 'react-icons/fi';
+import {
+  FiChevronDown,
+  FiChevronUp,
+  FiEye,
+  FiEyeOff,
+  FiKey,
+  FiMail,
+  FiRepeat,
+} from 'react-icons/fi';
 import { FaWhatsapp } from 'react-icons/fa';
 import TestWhatsappButton from '../components/TestWhatsappButton.jsx';
 import AutoSyncSystemMetricSettings from '../components/AutoSyncSystemMetricSettings.jsx';
@@ -42,14 +54,85 @@ import SEO from '../components/SEO.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { logger } from '../utils/logger.js';
 import { isValidEmail } from '../utils/emailAddress.js';
+import {
+  SsoGroupMappingModal,
+  SsoGroupMappingsSection,
+  useSsoGroupMappings,
+} from '../components/SsoGroupMappings.jsx';
 
+const DEFAULT_SSO_FORM = {
+  allow_auto_link_local_accounts: false,
+  strict_membership_sync: false,
+  config_sync_interval_ms: 45000,
+  idp_http_timeout_ms: 20000,
+  allow_private_idp_urls: false,
+  allowed_idp_cidrs: '',
+};
+
+function ssoSettingVal(section, key, fallback = '') {
+  const raw = section?.[key]?.value;
+  if (raw === true || raw === false) return raw;
+  if (raw === null || raw === undefined || raw === '') return fallback;
+  return raw;
+}
+
+function ssoSettingLocked(section, key) {
+  return !!section?.[key]?.locked;
+}
+
+function ssoFormFromSection(section, prev = DEFAULT_SSO_FORM) {
+  return {
+    allow_auto_link_local_accounts: ssoSettingVal(
+      section,
+      'allow_auto_link_local_accounts',
+      prev.allow_auto_link_local_accounts
+    ),
+    strict_membership_sync: ssoSettingVal(
+      section,
+      'strict_membership_sync',
+      prev.strict_membership_sync
+    ),
+    config_sync_interval_ms: Number(
+      ssoSettingVal(
+        section,
+        'config_sync_interval_ms',
+        prev.config_sync_interval_ms
+      )
+    ),
+    idp_http_timeout_ms: Number(
+      ssoSettingVal(section, 'idp_http_timeout_ms', prev.idp_http_timeout_ms)
+    ),
+    allow_private_idp_urls: ssoSettingVal(
+      section,
+      'allow_private_idp_urls',
+      prev.allow_private_idp_urls
+    ),
+    allowed_idp_cidrs: ssoSettingVal(
+      section,
+      'allowed_idp_cidrs',
+      prev.allowed_idp_cidrs
+    ),
+  };
+}
+
+function ssoSectionPersisted(section) {
+  if (!section || typeof section !== 'object') return false;
+  return Object.keys(DEFAULT_SSO_FORM).some(key => {
+    const entry = section[key];
+    return entry && entry.value !== undefined && entry.value !== null;
+  });
+}
 /**
  * Admin-only System Settings page.
- * Allows configuring SMTP and Twilio WhatsApp settings from the UI.
+ * Allows configuring SSO, SMTP, and Twilio WhatsApp settings from the UI.
  * Fields set via environment variables are greyed out with a warning badge.
  */
 export default function SystemSettings({ session, onLogout, onAccountClick }) {
   const [loading, setLoading] = useState(true);
+  const [savingSso, setSavingSso] = useState(false);
+  const [sso, setSso] = useState({});
+  const [ssoForm, setSsoForm] = useState({ ...DEFAULT_SSO_FORM });
+  const [showSsoAdvanced, setShowSsoAdvanced] = useState(false);
   const [savingSmtp, setSavingSmtp] = useState(false);
   const [savingWhatsapp, setSavingWhatsapp] = useState(false);
   const [smtp, setSmtp] = useState({});
@@ -69,6 +152,10 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
   const [autoSyncMultiConfigEnabled, setAutoSyncMultiConfigEnabled] =
     useState(null);
   const location = useLocation();
+  const mappingsState = useSsoGroupMappings();
+  const { mappingsLoading, mappingProviders, mappings } = mappingsState;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [wizardMappingHint, setWizardMappingHint] = useState(null);
 
   const { muted, dashboard } = useDashboardTheme();
   const lockedInputBg = dashboard.bg.panelHover;
@@ -112,6 +199,44 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
     });
   }, [location.hash, autoSyncMultiConfigEnabled]);
 
+  useEffect(() => {
+    if (searchParams.get('section') !== 'sso-group-mappings') return;
+    if (openIntegration !== 'sso') {
+      setOpenIntegration('sso');
+      return;
+    }
+    if (loading || mappingsLoading) return;
+
+    const providerSlug = searchParams.get('provider')?.trim() || '';
+    if (providerSlug) {
+      const label =
+        mappingProviders.find(p => p.slug === providerSlug)?.displayName ||
+        providerSlug;
+      setWizardMappingHint(
+        `${label} is enabled. Add at least one group mapping below so SSO users receive workspace roles automatically.`
+      );
+    }
+
+    const frame = requestAnimationFrame(() => {
+      document.getElementById('sso-group-mappings')?.scrollIntoView?.({
+        behavior: 'smooth',
+        block: 'start',
+      });
+      const next = new URLSearchParams(searchParams);
+      next.delete('section');
+      next.delete('provider');
+      setSearchParams(next, { replace: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [
+    loading,
+    openIntegration,
+    mappingsLoading,
+    mappingProviders,
+    searchParams,
+    setSearchParams,
+  ]);
+
   async function loadSettings() {
     try {
       setLoading(true);
@@ -119,6 +244,8 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
       const data = res.data || {};
       setSmtp(data.smtp || {});
       setWhatsapp(data.whatsapp || {});
+      setSso(data.sso || {});
+      setSsoForm(ssoFormFromSection(data.sso));
       // Initialize form values from current settings (use empty string for nulls)
       setSmtpForm({
         host: data.smtp?.host?.value || '',
@@ -151,6 +278,38 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
       showWarning('Failed to load system settings');
     } finally {
       setLoading(false);
+    }
+  }
+
+  function buildSsoPayload() {
+    const payload = {};
+    for (const key of Object.keys(DEFAULT_SSO_FORM)) {
+      if (ssoSettingLocked(sso, key)) continue;
+      payload[key] = ssoForm[key];
+    }
+    return payload;
+  }
+
+  async function handleSaveSso() {
+    const submitted = buildSsoPayload();
+    try {
+      setSavingSso(true);
+      const res = await apiClient.put('/api/admin/system-settings', {
+        sso: submitted,
+      });
+      const saved = res.data?.sso;
+      if (!ssoSectionPersisted(saved)) {
+        showWarning('SSO policy could not be persisted.');
+        return;
+      }
+      setSso(saved);
+      setSsoForm(prev => ssoFormFromSection(saved, prev));
+      showSuccess('SSO policy settings saved');
+    } catch (e) {
+      logger.error('Failed to save SSO settings', e);
+      showWarning(e?.response?.data?.error || 'Failed to save SSO settings');
+    } finally {
+      setSavingSso(false);
     }
   }
 
@@ -408,6 +567,290 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
         contentProps={{ overflowX: 'hidden', w: 'full', maxW: '100%' }}
       >
         <VStack align='stretch' spacing={SETTINGS_SECTION_GAP} w='full'>
+          <SettingsIntegrationCard
+            title='Single Sign-On (SSO)'
+            description='Connect identity providers, enable sign-in, and map IdP groups to TokenTimer roles.'
+            icon={<Icon as={FiKey} boxSize={6} color='blue.500' />}
+            configured={mappingProviders.length > 0}
+            isOpen={openIntegration === 'sso'}
+            onToggle={() =>
+              setOpenIntegration(prev => (prev === 'sso' ? null : 'sso'))
+            }
+          >
+            <SettingsFormWidth maxW='100%'>
+              <HStack spacing={2} mb={4} flexWrap='wrap'>
+                <Badge
+                  colorScheme={mappingProviders.length > 0 ? 'green' : 'gray'}
+                >
+                  {mappingsLoading
+                    ? '…'
+                    : `${mappingProviders.length} provider${mappingProviders.length === 1 ? '' : 's'}`}
+                </Badge>
+                <Badge colorScheme={mappings.length > 0 ? 'green' : 'gray'}>
+                  {mappingsLoading
+                    ? '…'
+                    : `${mappings.length} mapping${mappings.length === 1 ? '' : 's'}`}
+                </Badge>
+              </HStack>
+
+              <Box>
+                <Heading
+                  size='sm'
+                  mb={1}
+                  color='inherit'
+                  fontFamily='Archivo, system-ui, sans-serif'
+                  fontWeight='bold'
+                  lineHeight='short'
+                >
+                  Identity providers
+                </Heading>
+                <Text fontSize='sm' color={muted} mb={3} maxW='xl'>
+                  Register Azure AD, Okta, Keycloak, or any OIDC / SAML
+                  provider. Set callback URLs, store secrets, and enable
+                  sign-in.
+                </Text>
+                <DashboardActionButton
+                  as={RouterLink}
+                  to='/sso-providers'
+                  colorScheme='blue'
+                  leftIcon={<FiKey />}
+                  w={{ base: '100%', md: 'auto' }}
+                >
+                  Manage SSO providers
+                </DashboardActionButton>
+              </Box>
+
+              <Box mt={6}>
+                <Heading
+                  size='sm'
+                  mb={1}
+                  color='inherit'
+                  fontFamily='Archivo, system-ui, sans-serif'
+                  fontWeight='bold'
+                  lineHeight='short'
+                >
+                  Installation-wide SSO policy
+                </Heading>
+                <Text fontSize='sm' color={muted} mb={4} maxW='xl'>
+                  Defaults for all providers. Per-provider overrides are
+                  available under Manage SSO providers. Values set via
+                  environment variables are read-only here.
+                </Text>
+                <VStack align='stretch' spacing={4}>
+                  <FormControl
+                    display='flex'
+                    alignItems='center'
+                    justifyContent='space-between'
+                    isDisabled={ssoSettingLocked(
+                      sso,
+                      'allow_auto_link_local_accounts'
+                    )}
+                  >
+                    <Box flex={1} pr={4}>
+                      <FormLabel mb={0}>Allow auto-link by email</FormLabel>
+                      <FormHelperText mt={0} fontSize='xs'>
+                        Link SSO identities to existing accounts when the IdP
+                        asserts the same email (local or SSO). Orphaned SSO
+                        users relink after provider delete without this.
+                      </FormHelperText>
+                    </Box>
+                    <Switch
+                      isChecked={!!ssoForm.allow_auto_link_local_accounts}
+                      onChange={e =>
+                        setSsoForm(f => ({
+                          ...f,
+                          allow_auto_link_local_accounts: e.target.checked,
+                        }))
+                      }
+                    />
+                  </FormControl>
+                  {ssoSettingLocked(sso, 'allow_auto_link_local_accounts') ? (
+                    <Badge
+                      colorScheme='orange'
+                      variant='subtle'
+                      alignSelf='flex-start'
+                    >
+                      Set via SSO_ALLOW_AUTO_LINK_LOCAL_ACCOUNTS
+                    </Badge>
+                  ) : null}
+                  <FormControl
+                    display='flex'
+                    alignItems='center'
+                    justifyContent='space-between'
+                    isDisabled={ssoSettingLocked(sso, 'strict_membership_sync')}
+                  >
+                    <Box flex={1} pr={4}>
+                      <FormLabel mb={0}>Strict membership sync</FormLabel>
+                      <FormHelperText mt={0} fontSize='xs'>
+                        Revoke SSO-sourced workspace roles that no longer match
+                        group mappings on login.
+                      </FormHelperText>
+                    </Box>
+                    <Switch
+                      isChecked={!!ssoForm.strict_membership_sync}
+                      onChange={e =>
+                        setSsoForm(f => ({
+                          ...f,
+                          strict_membership_sync: e.target.checked,
+                        }))
+                      }
+                    />
+                  </FormControl>
+                  {ssoSettingLocked(sso, 'strict_membership_sync') ? (
+                    <Badge
+                      colorScheme='orange'
+                      variant='subtle'
+                      alignSelf='flex-start'
+                    >
+                      Set via SSO_STRICT_MEMBERSHIP_SYNC
+                    </Badge>
+                  ) : null}
+                  <Button
+                    variant='ghost'
+                    size='sm'
+                    alignSelf='flex-start'
+                    rightIcon={
+                      showSsoAdvanced ? <FiChevronUp /> : <FiChevronDown />
+                    }
+                    onClick={() => setShowSsoAdvanced(v => !v)}
+                  >
+                    {showSsoAdvanced
+                      ? 'Hide advanced settings'
+                      : 'Advanced settings'}
+                  </Button>
+                  <Collapse in={showSsoAdvanced}>
+                    <VStack align='stretch' spacing={4} pt={1}>
+                      <FormControl
+                        isDisabled={ssoSettingLocked(
+                          sso,
+                          'config_sync_interval_ms'
+                        )}
+                      >
+                        <FormLabel fontSize='sm'>
+                          Config sync interval (ms)
+                        </FormLabel>
+                        <Input
+                          size='sm'
+                          type='number'
+                          min={5000}
+                          value={ssoForm.config_sync_interval_ms}
+                          onChange={e =>
+                            setSsoForm(f => ({
+                              ...f,
+                              config_sync_interval_ms:
+                                Number(e.target.value) || 45000,
+                            }))
+                          }
+                        />
+                        <FormHelperText fontSize='xs'>
+                          How often API pods poll sso_config_version. Takes
+                          effect after API pod restart (env or database).
+                        </FormHelperText>
+                      </FormControl>
+                      <FormControl
+                        isDisabled={ssoSettingLocked(
+                          sso,
+                          'idp_http_timeout_ms'
+                        )}
+                      >
+                        <FormLabel fontSize='sm'>
+                          IdP HTTP timeout (ms)
+                        </FormLabel>
+                        <Input
+                          size='sm'
+                          type='number'
+                          min={5000}
+                          max={120000}
+                          value={ssoForm.idp_http_timeout_ms}
+                          onChange={e =>
+                            setSsoForm(f => ({
+                              ...f,
+                              idp_http_timeout_ms:
+                                Number(e.target.value) || 20000,
+                            }))
+                          }
+                        />
+                      </FormControl>
+                      <FormControl
+                        display='flex'
+                        alignItems='center'
+                        justifyContent='space-between'
+                        isDisabled={ssoSettingLocked(
+                          sso,
+                          'allow_private_idp_urls'
+                        )}
+                      >
+                        <Box flex={1} pr={4}>
+                          <FormLabel mb={0}>Allow private IdP URLs</FormLabel>
+                          <FormHelperText mt={0} fontSize='xs'>
+                            Permit RFC1918 / localhost IdP endpoints (lab only).
+                          </FormHelperText>
+                        </Box>
+                        <Switch
+                          isChecked={!!ssoForm.allow_private_idp_urls}
+                          onChange={e =>
+                            setSsoForm(f => ({
+                              ...f,
+                              allow_private_idp_urls: e.target.checked,
+                            }))
+                          }
+                        />
+                      </FormControl>
+                      <FormControl
+                        isDisabled={ssoSettingLocked(sso, 'allowed_idp_cidrs')}
+                      >
+                        <FormLabel fontSize='sm'>Allowed IdP CIDRs</FormLabel>
+                        <Input
+                          size='sm'
+                          placeholder='10.0.0.0/8, 192.168.1.0/24'
+                          value={ssoForm.allowed_idp_cidrs}
+                          onChange={e =>
+                            setSsoForm(f => ({
+                              ...f,
+                              allowed_idp_cidrs: e.target.value,
+                            }))
+                          }
+                        />
+                        <FormHelperText fontSize='xs'>
+                          Comma-separated IPv4 CIDRs allowed when private IdP
+                          URLs are blocked. Leave empty to deny private ranges
+                          unless &quot;Allow private IdP URLs&quot; is on.
+                        </FormHelperText>
+                        {ssoSettingLocked(sso, 'allowed_idp_cidrs') ? (
+                          <Badge colorScheme='orange' variant='subtle' mt={1}>
+                            Set via SSO_ALLOWED_IDP_CIDRS
+                          </Badge>
+                        ) : null}
+                      </FormControl>
+                      <Text fontSize='xs' color={muted}>
+                        Ops-only (no UI): SSO_SECRETS_KEYRING*,
+                        SSO_PROVIDERS_BOOTSTRAP_FILE, SSO_&lt;slug&gt;_*
+                        secrets, SSO_RATE_LIMIT_*, SAML_CACHE_TTL_SEC.
+                      </Text>
+                    </VStack>
+                  </Collapse>
+                  <HStack justify='flex-end'>
+                    <DashboardActionButton
+                      colorScheme='blue'
+                      isLoading={savingSso}
+                      onClick={handleSaveSso}
+                      w={{ base: '100%', md: 'auto' }}
+                    >
+                      Save SSO policy
+                    </DashboardActionButton>
+                  </HStack>
+                </VStack>
+              </Box>
+
+              <Divider my={6} />
+
+              <SsoGroupMappingsSection
+                state={mappingsState}
+                hint={wizardMappingHint}
+              />
+            </SettingsFormWidth>
+          </SettingsIntegrationCard>
+
           <Box id='auto-sync'>
             <SettingsIntegrationCard
               title='Auto-sync'
@@ -800,6 +1243,7 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
           </SettingsIntegrationCard>
         </VStack>
       </DashboardPageLayout>
+      <SsoGroupMappingModal state={mappingsState} />
     </>
   );
 }

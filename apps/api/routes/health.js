@@ -29,15 +29,23 @@ router.get("/health", async (req, res) => {
   }
 });
 
-// Auth features availability endpoint (for frontend conditional UI)
-// Core only supports local email/password
-router.get("/api/auth/features", (_req, res) => {
-    res.json({
-      saml: false,
-      oidc: false,
-      manualInvitesDisabled: process.env.DISABLE_MANUAL_INVITES === "true",
-      contactGroupPluralWrites: isContactGroupPluralWritesEnabled(),
-    });
+const { getSsoAuthFeatures } = require("../sso/core-sso.js");
+
+router.get("/api/auth/features", async (_req, res) => {
+  let ssoFeatures = { providers: { oidc: [], saml: [] }, sso: { ssoConfigVersion: null } };
+  try {
+    ssoFeatures = await getSsoAuthFeatures(pool);
+  } catch (err) {
+    logger.warn("Auth features: SSO config read failed", { error: err.message });
+  }
+  res.set("Cache-Control", "no-store");
+  res.json({
+    ...ssoFeatures,
+    oidc: ssoFeatures.providers.oidc.some((provider) => provider.signInReady),
+    saml: ssoFeatures.providers.saml.some((provider) => provider.signInReady),
+    manualInvitesDisabled: process.env.DISABLE_MANUAL_INVITES === "true",
+    contactGroupPluralWrites: isContactGroupPluralWritesEnabled(),
+  });
 });
 
 // CSRF rejection counter

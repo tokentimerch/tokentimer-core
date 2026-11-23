@@ -42,6 +42,7 @@ test("an applied retirement preview upgrades and replays without rewriting its l
       { version: 125, name: "certops_adcs_preflight_lookup_index" },
       { version: 126, name: "certops_adcs_receipt_deadline" },
       { version: 127, name: "auto_sync_creation_expiration" },
+      { version: 128, name: "shared_sso_schema" },
     ]);
     await runMigrations();
     assert.deepEqual((await pool.query("SELECT * FROM migrations ORDER BY version")).rows, upgraded);

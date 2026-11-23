@@ -117,14 +117,12 @@ pVdkCX5AyMD6SSZ4+20GCWDyQlf4BTsB/I/zWhtFx3tWrwuxte9xyBo=
 function startLocalHttpsServer({
   listenHost = "127.0.0.1",
   advertisedHost = listenHost,
+  handler = (_req, res) => res.end("ok"),
 } = {}) {
   return new Promise((resolve, reject) => {
     const server = https.createServer(
       { key: TEST_HTTPS_KEY, cert: TEST_HTTPS_CERT },
-      (_req, res) => {
-        res.statusCode = 200;
-        res.end("ok");
-      },
+      handler,
     );
     server.once("error", reject);
     server.listen(0, listenHost, () => {
