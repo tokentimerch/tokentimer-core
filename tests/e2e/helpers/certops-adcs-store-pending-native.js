@@ -290,6 +290,7 @@ async function qualifyPendingStoreRecovery(context) {
     assert.equal(serialIdentity(issuedWindow.serialNumber), serialIdentity(native.serialNumber));
 
     const finalCounts = verifyPendingOperationCounts(pendingCounts, restartedCounts, await readCounts());
+    verifyNamedStoreIdentity(finalCounts, { containerName, requestId, requireSuccessfulAccept: true });
     verifyPendingRecovery({
       originalRequestId: requestId, afterRestartRequestId: restarted.journal.requestId,
       retrievedRequestId: installed.request_id, caPending, caIssued,

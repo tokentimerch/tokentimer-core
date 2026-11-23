@@ -11,6 +11,7 @@ const SOURCE = Object.freeze({
   "ca-submission": "ca",
   "named-key-create": "key",
   "certreq-accept-start": "process",
+  "certreq-accept-exit": "process",
 });
 
 // An authorized collector must establish the provenance of these records and
@@ -34,7 +35,7 @@ function validateNamedStoreEvidence(counts, previous) {
 
   const totals = { ca: 0, key: 0, process: 0 };
   const lastRecord = { ca: 0n, key: 0n, process: 0n };
-  const accepts = new Set();
+  const accepts = new Map();
   for (const [index, event] of events.entries()) {
     assert.equal(event?.sequence, index + 1, "Named Store observation has a gap or duplicate");
     assert.ok(Object.hasOwn(SOURCE, event.kind), "Unexpected named Store event kind");
@@ -44,7 +45,7 @@ function validateNamedStoreEvidence(counts, previous) {
     const recordId = BigInt(event.recordId);
     assert.ok(recordId > lastRecord[stream], "Named Store observation replayed or reordered a source record");
     lastRecord[stream] = recordId;
-    totals[stream]++;
+    if (event.kind !== "certreq-accept-exit") totals[stream]++;
     if (stream === "ca") {
       assert.equal(typeof event.requestId, "string");
       assert.match(event.requestId, /^[1-9][0-9]{0,9}$/);
@@ -55,8 +56,14 @@ function validateNamedStoreEvidence(counts, previous) {
       assert.ok(Number.isSafeInteger(event.pid) && event.pid > 0);
       assert.match(event.createdFileTime, /^[a-f0-9]{16}$/);
       const process = event.pid + ":" + event.createdFileTime;
-      assert.ok(!accepts.has(process), "Repeated certreq process identity");
-      accepts.add(process);
+      if (event.kind === "certreq-accept-start") {
+        assert.ok(!accepts.has(process), "Repeated certreq process identity");
+        accepts.set(process, false);
+      } else {
+        assert.equal(accepts.get(process), false, "certreq exit must match an active process in the capture");
+        assert.ok(Number.isSafeInteger(event.exitCode) && event.exitCode >= 0 && event.exitCode <= 0xffffffff);
+        accepts.set(process, true);
+      }
     }
   }
   assert.equal(counts.submissions, totals.ca, "CA submission count differs from observed records");
@@ -66,9 +73,14 @@ function validateNamedStoreEvidence(counts, previous) {
     calibrationSha256: source.calibrationSha256, sourceLoss: { ...source.sourceLoss }, events };
 }
 
-function verifyNamedStoreIdentity(counts, { containerName, requestId }) {
+function verifyNamedStoreIdentity(counts, { containerName, requestId, requireSuccessfulAccept = false }) {
   if (counts?.scope !== NAMED_STORE_SCOPE) return;
-  for (const event of counts.namedEvidence.events) {
+  const { events } = counts.namedEvidence;
+  if (requireSuccessfulAccept) {
+    assert.equal(events.filter((event) => event.kind === "certreq-accept-exit" && event.exitCode === 0).length, 1,
+      "Named Store evidence requires one independently observed certreq success");
+  }
+  for (const event of events) {
     if (event.kind === "named-key-create" && containerName) {
       assert.equal(event.containerName, containerName, "Named Store evidence contains another key container");
     }

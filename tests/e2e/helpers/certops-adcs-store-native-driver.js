@@ -422,7 +422,7 @@ async function qualifyNativeStoreRecovery(context) {
         initial = readEnrollmentJournal(configDir, enrollmentId); assert.equal(initial.kind, "valid");
         beforeCounts = validateInitialNativeCounts(
           await readNativeOperationCounts({ enrollmentId, jobId, containerName: fault.containerName }), lastCounts);
-        verifyNamedStoreIdentity(beforeCounts, { containerName: fault.containerName });
+        verifyNamedStoreIdentity(beforeCounts, { containerName: fault.containerName, requireSuccessfulAccept: true });
         lastCounts = beforeCounts;
         stage = "post-accept";
         await recordEvidence("post-accept", { candidateSha256: context.candidateArchiveSha256, dnsName, enrollmentId,

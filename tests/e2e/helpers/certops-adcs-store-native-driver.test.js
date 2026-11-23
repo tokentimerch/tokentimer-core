@@ -112,10 +112,18 @@ test("named Store observation counts independently observed persistent-key and i
     { sequence: 1, kind: "named-key-create", recordId: "17", containerName },
     { sequence: 2, kind: "ca-submission", recordId: "8", requestId: "21" },
     { sequence: 3, kind: "certreq-accept-start", recordId: "12", pid: 1490, createdFileTime: "0000000000000001" },
+    { sequence: 4, kind: "certreq-accept-exit", recordId: "13", pid: 1490, createdFileTime: "0000000000000001", exitCode: 0 },
   ];
   const issued = { ...base, submissions: 1, keygens: 1, accepts: 1, namedEvidence: { ...evidence, events } };
   const checked = validateInitialNativeCounts(issued, previous);
-  verifyNamedStoreIdentity(checked, { containerName, requestId: "21" });
+  verifyNamedStoreIdentity(checked, { containerName, requestId: "21", requireSuccessfulAccept: true });
+  const running = validateNativeCounts({ ...issued, namedEvidence: { ...issued.namedEvidence, events: events.slice(0, 3) } });
+  assert.throws(() => verifyNamedStoreIdentity(running, { requireSuccessfulAccept: true }), /certreq success/);
+  assert.throws(() => validateNativeCounts({ ...issued, namedEvidence: { ...issued.namedEvidence,
+    events: [...events.slice(0, 3), { ...events[3], pid: 1491 }] } }), /certreq exit must match/);
+  const failed = validateNativeCounts({ ...issued, namedEvidence: { ...issued.namedEvidence,
+    events: [...events.slice(0, 3), { ...events[3], exitCode: 1 }] } });
+  assert.throws(() => verifyNamedStoreIdentity(failed, { requireSuccessfulAccept: true }), /certreq success/);
   assert.throws(() => verifyNamedStoreIdentity(checked, { containerName: "different" }), /another key container/);
   assert.throws(() => verifyNamedStoreIdentity(checked, { requestId: "22" }), /another CA RequestId/);
   const report = captureEvidenceDetails(checked);
@@ -128,7 +136,7 @@ test("named Store observation counts independently observed persistent-key and i
   assert.throws(() => validateNativeCounts({ ...issued, namedEvidence: { ...issued.namedEvidence,
     sourceLoss: { ca: 0, key: 0, process: 1 } } }), /reported loss/);
   assert.throws(() => validateNativeCounts({ ...issued, namedEvidence: { ...issued.namedEvidence,
-    events: [events[0], { ...events[1], requestId: "22" }, events[2]] } }, checked), /rewrote a previous checkpoint/);
+    events: [events[0], { ...events[1], requestId: "22" }, ...events.slice(2)] } }, checked), /rewrote a previous checkpoint/);
   assert.throws(() => validateNativeCounts(nativeCounts(0, 0, 0), previous), /scope changed/);
 });
 
