@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -11,6 +17,8 @@ const {
   useCertOpsAgentsMock,
   getCertificateMock,
   listTrustAnchorsMock,
+  cancelJobMock,
+  showWarningMock,
 } = vi.hoisted(() => ({
   useCertOpsJobTimelineMock: vi.fn(),
   useCertOpsAgentsMock: vi.fn(() => ({
@@ -23,6 +31,8 @@ const {
   })),
   getCertificateMock: vi.fn(),
   listTrustAnchorsMock: vi.fn(),
+  cancelJobMock: vi.fn(),
+  showWarningMock: vi.fn(),
 }));
 
 vi.mock('../../src/components/certops/useCertOpsJobs.js', () => ({
@@ -35,6 +45,19 @@ vi.mock('../../src/components/certops/useCertOpsAgents.js', () => ({
 
 vi.mock('../../src/components/certops/AgentShellConsole.jsx', () => ({
   default: () => null,
+}));
+
+vi.mock(
+  '../../src/components/certops/certopsJobsApi.js',
+  async importOriginal => ({
+    ...(await importOriginal()),
+    cancelJob: cancelJobMock,
+  })
+);
+
+vi.mock('../../src/utils/toast.js', async importOriginal => ({
+  ...(await importOriginal()),
+  showWarning: showWarningMock,
 }));
 
 vi.mock('../../src/components/certops/certopsApi.js', async () => {
@@ -96,10 +119,13 @@ function baseJob(overrides = {}) {
 
 describe('EvidenceTimeline', () => {
   beforeEach(() => {
+    window.localStorage.removeItem('tt_certops_timeline_order');
     useCertOpsJobTimelineMock.mockReset();
     useCertOpsAgentsMock.mockReset();
     getCertificateMock.mockReset();
     listTrustAnchorsMock.mockReset();
+    cancelJobMock.mockReset();
+    showWarningMock.mockReset();
     getCertificateMock.mockResolvedValue({
       certificate: { commonName: 'app.example.com' },
     });
@@ -224,6 +250,186 @@ describe('EvidenceTimeline', () => {
     expect(
       screen.getByText('No timeline events recorded yet.')
     ).toBeInTheDocument();
+  });
+
+  it('persists order across jobs and keeps retry labels tied to chronological starts', () => {
+    const job = baseJob();
+    const logEntries = [
+      {
+        id: 'b',
+        eventType: 'job.started',
+        createdAt: '2026-01-02T00:00:00Z',
+        message: 'Second start',
+      },
+      {
+        id: 'a',
+        eventType: 'job.started',
+        createdAt: '2026-01-02T00:00:00Z',
+        message: 'First start',
+      },
+      { id: 'unknown', eventType: 'job.created', message: 'Undated event' },
+    ];
+    const evidence = [
+      {
+        id: 'evidence',
+        evidenceType: 'deployment.updated',
+        observedAt: '2026-01-03T00:00:00Z',
+        subjectId: 'Deployment evidence',
+      },
+    ];
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job,
+      logEntries,
+      evidence,
+      loading: false,
+      error: '',
+    });
+    const visibleOrder = () =>
+      screen
+        .getAllByText(
+          /^(?:Undated event|First start|Second start|Deployment evidence|Newly received event)$/
+        )
+        .map(node => node.textContent);
+    const { unmount } = renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+    const selector = screen.getByRole('combobox', { name: 'Timeline order' });
+    expect(selector).toHaveValue('oldest-first');
+    expect(visibleOrder()).toEqual([
+      'Undated event',
+      'First start',
+      'Second start',
+      'Deployment evidence',
+    ]);
+    const initialAttempt = screen.getByText('Attempt 2').closest('div');
+    expect(initialAttempt.parentElement).toHaveTextContent('Second start');
+
+    fireEvent.change(selector, { target: { value: 'newest-first' } });
+    expect(visibleOrder()).toEqual([
+      'Deployment evidence',
+      'Second start',
+      'First start',
+      'Undated event',
+    ]);
+    expect(
+      screen.getByText('Attempt 2').closest('div').parentElement
+    ).toHaveTextContent('Second start');
+    unmount();
+
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: { ...job, id: 'job-2' },
+      logEntries: [
+        ...logEntries,
+        {
+          id: 'new',
+          eventType: 'job.progress',
+          createdAt: '2026-01-04T00:00:00Z',
+          message: 'Newly received event',
+        },
+      ],
+      evidence,
+      loading: false,
+      error: '',
+    });
+    renderWithProviders(<EvidenceTimeline jobId='job-2' refreshToken={1} />);
+    const secondSelector = screen.getByRole('combobox', {
+      name: 'Timeline order',
+    });
+    expect(secondSelector).toHaveValue('newest-first');
+    expect(visibleOrder()[0]).toBe('Newly received event');
+    fireEvent.change(secondSelector, { target: { value: 'oldest-first' } });
+    expect(visibleOrder().at(-1)).toBe('Newly received event');
+    expect(window.localStorage.getItem('tt_certops_timeline_order')).toBeNull();
+  });
+
+  it('warns about uncertain host effects before and after cancelling a running job', async () => {
+    const refresh = vi.fn();
+    const onJobChanged = vi.fn();
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({ status: 'running', canCancel: true }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+      refresh,
+    });
+    cancelJobMock.mockResolvedValue({
+      jobId: 'job-1',
+      status: 'orphaned_unknown_effect',
+      needsOperatorReconciliation: true,
+    });
+
+    renderWithProviders(
+      <EvidenceTimeline jobId='job-1' onJobChanged={onJobChanged} />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel job' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent(
+      /job that changes the host may finish or leave changes/i
+    );
+    expect(cancelJobMock).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel job' }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(cancelJobMock).toHaveBeenCalledWith('ws-1', 'job-1');
+    expect(showWarningMock).toHaveBeenCalledWith(
+      'Host verification required',
+      expect.stringMatching(/verify the host before retrying/i)
+    );
+    expect(onJobChanged).toHaveBeenCalledOnce();
+  });
+
+  it('does not offer cancellation on a completed job', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+    expect(
+      screen.queryByRole('button', { name: 'Cancel job' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('withholds controls while the hook still holds a previous job snapshot', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({ status: 'pending', canCancel: true }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+    renderWithProviders(<EvidenceTimeline jobId='job-2' />);
+    expect(
+      screen.queryByRole('button', { name: 'Cancel job' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a retained late report from the cancelled job outcome', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({ status: 'cancelled', canCancel: false }),
+      logEntries: [
+        {
+          id: 'cancelled',
+          eventType: 'job.cancelled',
+          createdAt: '2026-01-01T00:00:00Z',
+        },
+        {
+          id: 'late',
+          eventType: 'job.completed',
+          status: 'succeeded',
+          createdAt: '2026-01-02T00:00:00Z',
+          metadata: { jobStatusTransitionIgnoredReason: 'terminal_regression' },
+        },
+      ],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+    expect(screen.getByText('Job cancelled')).toBeInTheDocument();
+    expect(screen.getByText('Late report').parentElement).toHaveTextContent(
+      'Job completed'
+    );
   });
 
   it('renders an unknown future evidence/event type as a safe fallback without a raw JSON dump or secret leak', () => {

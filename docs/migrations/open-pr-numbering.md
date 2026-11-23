@@ -57,6 +57,7 @@ are reservations, not no-op migrations. They do not install another feature.
 | 125 | certops_adcs_preflight_lookup_index | Index issuer and agent preflight history (#714) |
 | 126 | certops_adcs_receipt_deadline | Immutable AD CS receipt admission deadline |
 | 127 | auto_sync_creation_expiration | Auto-sync creation metric expiration (#780) |
+| 128 | shared_sso_schema | Shared OIDC and SAML sign-in (#779) |
 
 A ledger based on the released numbering that records `agent_credential_rotations` or `agent_credential_rotation_ack` at version 109 or 110 is ambiguous and is rejected before migration SQL. Preserve the database and arrange a separately reviewed recovery; do not edit or relabel its ledger.
 
@@ -91,6 +92,12 @@ The same unmodified provider SQL is used for known #460 preview histories:
   (including #460 `66f94086`): append metric labels at 82 and system metrics at 83.
 - Installed assurance at 78, stats at 79, run metrics at 80, metric labels at 81,
   providers at 82 (#460 `6d685f95`): append system metrics at 83.
+
+Run the normal migration command. Fresh installs use 122 for observed revocation,
+127 for expiration metrics and 128 for SSO. A recognized #779 preview keeps its
+already-applied SSO row, including 115 on the first standard preview and 127 on the
+later standard preview. The runner appends missing schemas; unrecognized histories
+stop before migration SQL runs.
 
 Partial recognized prefixes and the older distribution/enrollment preview
 histories remain supported. Never update recorded names, execution timestamps,

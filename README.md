@@ -203,6 +203,8 @@ Use `cert-manager` or connect an external executor with a machine token for supp
 | [![Docker Compose](docs/assets/readme/docker-icon.svg)](QUICKSTART.md#option-1-docker-compose-fastest) | [![Kubernetes / Helm](docs/assets/readme/kubernetes-icon.svg)](QUICKSTART.md#option-3-kubernetes-helm) | [![Local Development](docs/assets/readme/local-dev-icon.svg)](QUICKSTART.md#option-2-local-development) |
 |:--:|:--:|:--:|
 
+Self-hosted Core supports one active SSO provider per installation, either OIDC or SAML. Keycloak is the reference integration. [Set up single sign-on](docs/AUTHENTICATION.md#single-sign-on).
+
 <br>
 
 # Documentation

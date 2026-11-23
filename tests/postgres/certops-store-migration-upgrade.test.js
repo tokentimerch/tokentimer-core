@@ -78,6 +78,7 @@ test("upgrades a real main database with PagerDuty recovery at migration 114 and
       [125, "certops_adcs_preflight_lookup_index"],
       [126, "certops_adcs_receipt_deadline"],
       [127, "auto_sync_creation_expiration"],
+      [128, "shared_sso_schema"],
     ]);
     const preserved = await client.query("SELECT version,name,executed_at FROM migrations WHERE version <= 114 ORDER BY version");
     assert.deepEqual(preserved.rows, before.rows);

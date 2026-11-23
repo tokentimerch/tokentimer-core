@@ -606,6 +606,14 @@ jobs:
           RV_TEST_DB_USER: ${{ env.DB_USER }}
           RV_TEST_DB_PASSWORD: ${{ env.DB_PASSWORD }}
         run: node --test --test-force-exit tests/postgres/operator-oauth-retention-history.test.js
+      - name: Verify SAML request isolation and concurrent provider selection on PostgreSQL
+        run: node --test tests/postgres/saml-cache-provider.test.js tests/postgres/sso-provider-selection.test.js
+      - name: Verify OIDC and SAML dashboard sign-in against Keycloak
+        env:
+          TT_KEYCLOAK_E2E: "1"
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          node --test tests/e2e/keycloak-sso.test.cjs
       - name: Verify alert date serialization across host timezones
         run: node --test tests/postgres/alert-queue-timezones.test.js
       - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability
@@ -1015,6 +1023,36 @@ jobs:
 
       - name: Validate production compose + images overlay
         run: DB_PASSWORD=ci-synthetic-only SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.images.yml config -q
+
+      - name: Validate SSO compose setup and bootstrap
+        env:
+          DB_PASSWORD: ci-synthetic-only
+          SESSION_SECRET: dummy
+        run: |
+          set -euo pipefail
+          scratch="$RUNNER_TEMP/tokentimer-sso-compose"
+          mkdir -p "$scratch/secrets"
+          cp deploy/compose/docker-compose{,.images,.sso}.yml "$scratch/"
+          cp deploy/compose/sso-providers.example.json "$scratch/sso-providers.json"
+          touch "$scratch/secrets/sso.env"
+          printf '%s\n' '{}' > "$scratch/secrets/sso-keyring.json"
+          cd "$scratch"
+          SSO_SECRETS_KEYRING=ci-inline docker compose -f docker-compose.yml config --format json > dashboard.json
+          SSO_SECRETS_KEYRING= docker compose -f docker-compose.yml -f docker-compose.images.yml -f docker-compose.sso.yml config --format json > bootstrap.json
+          node <<'NODE'
+          const assert = require("node:assert/strict");
+          const dashboard = require("./dashboard.json").services.api;
+          const bootstrap = require("./bootstrap.json").services.api;
+          assert.equal(dashboard.environment.SSO_SECRETS_KEYRING, "ci-inline");
+          assert.equal(bootstrap.environment.SSO_SECRETS_KEYRING, "");
+          for (const key of ["SSO_PROVIDERS_BOOTSTRAP_FILE", "SSO_SECRETS_KEYRING_FILE"]) {
+            assert.ok(bootstrap.volumes.some(volume =>
+              volume.target === bootstrap.environment[key] && volume.read_only === true));
+          }
+          const providers = require("./sso-providers.json").providers;
+          assert.deepEqual(providers.map(provider => provider.type).sort(), ["oidc", "saml"]);
+          assert.deepEqual(providers.filter(provider => provider.enabled).map(provider => provider.type), ["oidc"]);
+          NODE
 
       - name: Validate dev compose
         run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.dev.yml config -q

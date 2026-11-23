@@ -70,8 +70,8 @@ async function bootstrapAdmin(pool) {
     const canonicalEmail = canonicalizeEmail(adminEmail);
 
     const userResult = await pool.query(
-      `INSERT INTO users (email, email_original, password_hash, display_name, auth_method, email_verified, is_admin)
-       VALUES ($1, $2, $3, $4, 'local', TRUE, TRUE)
+      `INSERT INTO users (email, email_original, password_hash, display_name, auth_method, email_verified, is_admin, is_admin_manual)
+       VALUES ($1, $2, $3, $4, 'local', TRUE, TRUE, TRUE)
        RETURNING id, email, display_name`,
       [canonicalEmail, adminEmail, passwordHash, adminName],
     );

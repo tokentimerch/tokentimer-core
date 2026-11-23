@@ -28,6 +28,7 @@ test("retirement preview upgrades through PagerDuty recovery and survives restar
       "agent_credential_rotations",
       "agent_credential_rotation_ack",
       "auto_sync_creation_expiration",
+      "shared_sso_schema",
     ]);
     await runMigrations();
     assert.deepEqual((await pool.query("SELECT version,name FROM migrations ORDER BY version")).rows,upgraded);

@@ -273,7 +273,9 @@ const sessionCommon = {
   store: sessionStore,
   name: "sessionId",
   secret: process.env.SESSION_SECRET,
-  resave: true,
+  // Let the PostgreSQL store renew expiry without rewriting unchanged sessions.
+  // A full resave can restore a session destroyed by a concurrent logout.
+  resave: false,
   saveUninitialized: false,
   rolling: true,
   genid: () => crypto.randomBytes(32).toString("hex"),
@@ -444,7 +446,7 @@ app.get("/api/session", (req, res) => {
     }
 
     const displayEmail = req.user.email_original || req.user.email;
-    const authMethod = req.user.auth_method || "local";
+    const authMethod = req.session?.sso?.providerSlug ? "sso" : req.user.auth_method || "local";
     const loginMethod =
       authMethod === "local"
         ? "email"
@@ -461,6 +463,8 @@ app.get("/api/session", (req, res) => {
         plan: "oss",
         authMethod,
         loginMethod,
+        ssoProviderSlug: req.session?.sso?.providerSlug || null,
+        ssoProtocol: req.session?.sso?.protocol || null,
         emailVerified: !!req.user.email_verified,
         needsVerification: !req.user.email_verified,
         twoFactorEnabled: !!req.user.two_factor_enabled,
@@ -732,6 +736,10 @@ app.use("/api", enforceEmailVerification);
 app.use(require("./routes/workspaces"));
 // --- AUTH (extracted to routes/auth.js) ---
 app.use(require("./routes/auth"));
+const { mountSsoRoutes, startSso } = require("./sso/core-sso.js");
+mountSsoRoutes(app, { passport, express, pool });
+app.use(require("./routes/sso-providers"));
+app.use(require("./routes/sso-mappings"));
 // --- TOKENS (extracted to routes/tokens.js) ---
 app.use(require("./routes/tokens"));
 // --- HEALTH (extracted to routes/health.js) ---
@@ -744,6 +752,10 @@ app.use(require("./routes/controlCenter"));
 app.use(require("./routes/alerts"));
 app.use(require("./routes/incidentActions"));
 // --- ONBOARDING (extracted to routes/onboarding.js) ---
+require("./sso/onboarding-edition").registerSsoOnboarding({
+  capabilities: require("./services/onboarding/capabilities"),
+  summary: require("./services/onboarding/summary"),
+});
 app.use(require("./routes/onboarding"));
 // --- ACCOUNT (extracted to routes/account.js) ---
 app.use(require("./routes/account"));
@@ -954,6 +966,7 @@ function validateStartupConfig() {
 
 validateStartupConfig();
 
+let startupPhase = "database connection";
 async function main() {
   const { waitForDatabase } = require("./db/database");
   const dbReady = await waitForDatabase();
@@ -963,9 +976,11 @@ async function main() {
   }
 
   const { runMigrations } = require("./migrations/migrate");
+  startupPhase = "database migrations";
   await runMigrations();
 
   if (process.env.DISABLE_ADMIN_BOOTSTRAP !== "true") {
+    startupPhase = "local administrator bootstrap";
     const { bootstrapAdmin } = require("./auth/bootstrap");
     try {
       await bootstrapAdmin(pool);
@@ -977,6 +992,10 @@ async function main() {
     }
   }
 
+  startupPhase = "SSO initialization (provider manifest, keyring and database)";
+  await startSso({ passport, pool });
+  startupPhase = "HTTP listener";
+
   app.listen(PORT, HOST, () => {
     logger.info(`Backend server running on http://${HOST}:${PORT}`);
     logger.info(`Health check: http://${HOST}:${PORT}/`);
@@ -987,7 +1006,7 @@ async function main() {
   });
 }
 
-main().catch((err) => {
-  logger.error("Startup failed", { error: err.message });
+main().catch(() => {
+  logger.error("Startup failed", { phase: startupPhase });
   process.exit(1);
 });
