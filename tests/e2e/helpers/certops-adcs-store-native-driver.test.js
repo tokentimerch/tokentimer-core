@@ -6,6 +6,7 @@ const { PassThrough } = require("node:stream");
 const { CANDIDATE_SHA256, nativeCounts } = require("./certops-adcs-store-native-cng.fixture");
 const { startNativeStoreObserver, verifyNativeFault } = require("./certops-adcs-store-native-observer");
 const { qualifyInstalledStoreRecovery, qualifyNativeStoreRecovery, validateNativeCounts, validateInitialNativeCounts, validateCaptureStart, stopNativeCapture, validateCaObservationStart, validateCaObservationWindow, stopCaObservation, drainQualificationResources, verifyRecoveryCheckpoint, validateCaBaselineWindow, verifyPreIssueCheckpoint, createPublicEvidenceRecorder, verifyCandidateHost, requireActiveObservationInterruption } = require("./certops-adcs-store-native-driver");
+const { validateObservedServiceStart } = require("./certops-adcs-store-native-driver");
 
 function makeEvidenceHooks() {
   const values = new Map();
@@ -60,6 +61,43 @@ test("public key counts require a digest and a capture identity", async () => {
   await assert.rejects(makeRecord()("baseline", { ...fields, captureId }), /capture ID and digest/);
   await assert.rejects(makeRecord()("baseline", { ...fields, cngEvidenceSha256 }), /capture ID and digest/);
 });
+
+test("pending restart and final drainage receipts stay bound to the same durable capture", async () => {
+  const hooks = makeEvidenceHooks();
+  const record = createPublicEvidenceRecorder(hooks);
+  const evidence = { candidateSha256: CANDIDATE_SHA256, requestId: "8",
+    captureId: "a".repeat(32), observationId: "b".repeat(32),
+    keygens: 1, cngEvidenceSha256: "c".repeat(64) };
+  for (const phase of ["pending-before-restart", "pending-after-restart"]) {
+    const saved = await record(phase, evidence);
+    assert.deepEqual(JSON.parse(await hooks.readEvidence(saved)), { schema: 1, phase, ...evidence });
+  }
+  await assert.rejects(record("observations-drained", { ...evidence, serviceDrainageSha256: "invalid" }));
+});
+
+test("a service restart requires a fresh armed observation run in the same live capture", () => {
+  const target = {
+    candidateArchiveSha256: CANDIDATE_SHA256, captureId: "a".repeat(32), previousObservationRunId: "b".repeat(32),
+    serviceProcess: { pid: 21, sid: "S-1-5-18", created: "2026-11-23T10:30:00.000Z" },
+  };
+  const proof = {
+    candidateArchiveSha256: CANDIDATE_SHA256, captureId: target.captureId,
+    independentReader: true, captureContinued: true, runArmedBeforeStart: true,
+    observationRunId: "c".repeat(32), process: { pid: 22, sid: "S-1-5-18", created: "2026-11-23T10:31:00.000Z" },
+    evidenceSha256: "d".repeat(64),
+  };
+  assert.deepEqual(validateObservedServiceStart(proof, target), {
+    process: proof.process, observationRunId: proof.observationRunId, serviceStartSha256: proof.evidenceSha256,
+  });
+  for (const change of [
+    { observationRunId: target.previousObservationRunId }, { observationRunId: undefined },
+    { captureContinued: false }, { runArmedBeforeStart: false }, { independentReader: false },
+    { captureId: "e".repeat(32) }, { process: target.serviceProcess }, { evidenceSha256: undefined },
+  ]) {
+    assert.throws(() => validateObservedServiceStart({ ...proof, ...change }, target), JSON.stringify(change));
+  }
+});
+
 test("native observer starts only the scoped lab script and refuses unproven drainage", async () => {
   const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.kill = () => {};
   const observer = startNativeStoreObserver({ workDir: "owned", configDir: "config", root: "root", nodeExecutable: "node.exe",

@@ -16,6 +16,66 @@ const { startNativeStoreObserver } = require("./certops-adcs-store-native-observ
 const { inspectStoreOnlyCertificate } = require("../../../packages/agent/src/windows-cert-store/store-only");
 const { validateNativeCngEvidence, nativeCngEvidenceSha256 } = require("./certops-adcs-store-native-cng");
 
+const OBSERVATION_RUN_ID = /^[a-f0-9]{32}$/;
+const STORE_SERVICE_PROCESS = "$s=Get-CimInstance Win32_Service -Filter \"Name='TokenTimerAgent'\" -ErrorAction Stop; " +
+  "if ($s.State -ne 'Running' -or !$s.ProcessId) { return '{}' }; " +
+  "$p=Get-CimInstance Win32_Process -Filter ('ProcessId=' + $s.ProcessId) -ErrorAction Stop; " +
+  "$owner=Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid -ErrorAction Stop; " +
+  "@{pid=[int]$s.ProcessId;sid=$owner.Sid;created=$p.CreationDate.ToUniversalTime().ToString('o')} | ConvertTo-Json -Compress";
+
+async function readStoreServiceProcess(ps) {
+  return JSON.parse(await ps(STORE_SERVICE_PROCESS));
+}
+
+function requireStoreServiceProcess(process) {
+  assert.ok(Number.isSafeInteger(process?.pid) && process.pid > 0, "Owned service process is required");
+  assert.equal(process.sid, "S-1-5-18");
+  assert.ok(Number.isFinite(Date.parse(process.created)), "Owned service process creation time is required");
+  return process;
+}
+
+async function verifyOwnedServiceDrainage({ stopAndVerifyOwnedService, candidateArchiveSha256, captureId, serviceProcess }) {
+  const proof = await stopAndVerifyOwnedService({
+    candidateArchiveSha256, captureId, pid: serviceProcess.pid, created: serviceProcess.created,
+  });
+  assert.equal(proof?.candidateArchiveSha256, candidateArchiveSha256);
+  assert.equal(proof.captureId, captureId);
+  assert.equal(proof.pid, serviceProcess.pid);
+  assert.equal(proof.created, serviceProcess.created);
+  assert.equal(proof.independentReader, true);
+  assert.equal(proof.serviceStopped, true);
+  assert.deepEqual(proof.activeDescendants, [], "Owned service descendants have not drained");
+  assert.match(proof.evidenceSha256, /^[a-f0-9]{64}$/);
+  return proof.evidenceSha256;
+}
+
+function validateObservedServiceStart(proof, { candidateArchiveSha256, captureId, previousObservationRunId, serviceProcess }) {
+  assert.equal(proof?.candidateArchiveSha256, candidateArchiveSha256);
+  assert.equal(proof.captureId, captureId, "Restart changed the independent capture");
+  assert.equal(proof.independentReader, true);
+  assert.equal(proof.captureContinued, true);
+  assert.equal(proof.runArmedBeforeStart, true);
+  assert.match(previousObservationRunId, OBSERVATION_RUN_ID);
+  assert.match(proof.observationRunId, OBSERVATION_RUN_ID);
+  assert.notEqual(proof.observationRunId, previousObservationRunId, "An observation run cannot be reused");
+  const process = requireStoreServiceProcess(proof.process);
+  assert.ok(Date.parse(process.created) > Date.parse(serviceProcess.created), "Expected a freshly started owned service");
+  assert.match(proof.evidenceSha256, /^[a-f0-9]{64}$/);
+  return { process, observationRunId: proof.observationRunId, serviceStartSha256: proof.evidenceSha256 };
+}
+
+async function startObservedStoreService(context, captureId, previousObservationRunId, serviceProcess) {
+  // The trusted adapter arms a new observation run for the same installed
+  // package before SCM starts it. The independent capture remains live.
+  const target = { candidateArchiveSha256: context.candidateArchiveSha256, captureId,
+    previousObservationRunId, serviceProcess };
+  const restarted = validateObservedServiceStart(await context.startAndVerifyObservedService(target), target);
+  const installed = await verifyCandidateHost(context);
+  assert.equal(installed.observationRunId, restarted.observationRunId, "Installed service uses a different observation run");
+  assert.deepEqual(await readStoreServiceProcess(context.ps), restarted.process, "Restart evidence identifies another service process");
+  return restarted;
+}
+
 // The fixture must implement independent write/flush, readback and storage
 // inspection. This protocol is not evidence that a real fixture is durable.
 function createPublicEvidenceRecorder({ candidateArchiveSha256, writeEvidence, readEvidence, inspectEvidenceDurability }) {
@@ -24,8 +84,10 @@ function createPublicEvidenceRecorder({ candidateArchiveSha256, writeEvidence, r
   assert.notEqual(writeEvidence, readEvidence, "Evidence readback must use a separate hook");
   assert.notEqual(inspectEvidenceDurability, writeEvidence);
   assert.notEqual(inspectEvidenceDurability, readEvidence);
-  const phases = new Set(["baseline", "post-accept", "ca-at-fault", "before-recovery-post", "before-service-start", "ca-after-recovery", "inventory", "observations-drained", "failure"]);
-  const allowed = new Set(["candidateSha256", "dnsName", "captureId", "observationId", "caPublicKeySha256", "baselineRequestId", "enrollmentId", "jobId", "fingerprintSha256", "csrSpkiSha256", "cngEvidenceSha256", "requestId", "serialNumber", "submissions", "keygens", "accepts", "stage", "code", "promotions"]);
+  const phases = new Set(["baseline", "post-accept", "ca-at-fault", "before-recovery-post", "before-service-start",
+    "service-restarted", "ca-after-recovery", "pending-before-restart", "pending-after-restart",
+    "inventory", "observations-drained", "failure"]);
+  const allowed = new Set(["candidateSha256", "dnsName", "captureId", "observationId", "observationRunId", "caPublicKeySha256", "baselineRequestId", "enrollmentId", "jobId", "fingerprintSha256", "csrSpkiSha256", "cngEvidenceSha256", "serviceDrainageSha256", "serviceStartSha256", "requestId", "serialNumber", "submissions", "keygens", "accepts", "stage", "code", "promotions"]);
   const seen = new Set();
   const identities = new Map();
   let storeId = null, failed = false, busy = false;
@@ -37,15 +99,16 @@ function createPublicEvidenceRecorder({ candidateArchiveSha256, writeEvidence, r
     assert.ok(phases.has(phase));
     assert.ok(fields && typeof fields === "object" && !Array.isArray(fields));
     const numeric = new Set(["baselineRequestId", "submissions", "keygens", "accepts", "promotions"]);
-    const hashes = new Set(["candidateSha256", "caPublicKeySha256", "fingerprintSha256", "csrSpkiSha256", "cngEvidenceSha256"]);
-    const ids = new Set(["captureId", "observationId"]);
+    const hashes = new Set(["candidateSha256", "caPublicKeySha256", "fingerprintSha256", "csrSpkiSha256",
+      "cngEvidenceSha256", "serviceDrainageSha256", "serviceStartSha256"]);
+    const ids = new Set(["captureId", "observationId", "observationRunId"]);
     const uuids = new Set(["enrollmentId", "jobId"]);
     const entry = { ...fields };
     for (const [key, value] of Object.entries(entry)) {
       assert.ok(allowed.has(key), "Evidence field is not public or recognized");
       if (numeric.has(key)) assert.ok(Number.isSafeInteger(value) && value >= 0);
       else if (hashes.has(key)) assert.match(value, /^[a-f0-9]{64}$/);
-      else if (ids.has(key)) assert.match(value, /^[a-f0-9]{32}$/);
+      else if (ids.has(key)) assert.match(value, OBSERVATION_RUN_ID);
       else if (uuids.has(key)) assert.match(value, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
       else if (key === "dnsName") assert.match(value, /^certops-adcs-[a-f0-9]{16,32}-store\.example\.test$/);
       else if (key === "requestId") assert.match(value, /^[1-9][0-9]{0,9}$/);
@@ -271,10 +334,17 @@ async function qualifyNativeStoreRecovery(context) {
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
   assert.equal(context.serviceOwned, true);
   const { fixture, api, agentRowId, issuerId, configDir, workDir, ps, until, jobFinished,
-    prepareRun, createNativeOperationCapture, readNativeOperationCounts, createIndependentCaObservation, readIndependentCaObservation, expectedCaKeySha256 } = context;
-  for (const fn of [ps, until, jobFinished, prepareRun, createNativeOperationCapture, readNativeOperationCounts, createIndependentCaObservation, readIndependentCaObservation]) assert.equal(typeof fn, "function", "Independent native and CA observation hooks are required");
+    prepareRun, createNativeOperationCapture, readNativeOperationCounts, createIndependentCaObservation,
+    readIndependentCaObservation, expectedCaKeySha256, stopAndVerifyOwnedService, startAndVerifyObservedService } = context;
+  for (const fn of [ps, until, jobFinished, prepareRun, createNativeOperationCapture, readNativeOperationCounts,
+    createIndependentCaObservation, readIndependentCaObservation, stopAndVerifyOwnedService, startAndVerifyObservedService]) {
+    assert.equal(typeof fn, "function", "Independent native and CA observation hooks are required");
+  }
   const recordEvidence = createPublicEvidenceRecorder(context);
-  await verifyCandidateHost(context);
+  const installedService = await verifyCandidateHost(context);
+  let { observationRunId } = installedService;
+  assert.match(observationRunId, OBSERVATION_RUN_ID);
+  let serviceProcess = requireStoreServiceProcess(await readStoreServiceProcess(ps));
   const root = path.resolve(__dirname, "../../..");
   const receipt = path.join(workDir, "store-accept-target.json");
   const query = (sql, args = []) => fixture.pool.query(sql, args);
@@ -301,7 +371,7 @@ async function qualifyNativeStoreRecovery(context) {
         lastCounts = await verifyPreIssueCheckpoint(capture, caObservation, baseline);
         stage = "baseline";
         await recordEvidence("baseline", { candidateSha256: context.candidateArchiveSha256, dnsName,
-          captureId: capture.captureId, observationId: caObservation.observationId,
+          captureId: capture.captureId, observationId: caObservation.observationId, observationRunId,
           caPublicKeySha256: caObservation.caPublicKeySha256, baselineRequestId: caObservation.baselineRequestId,
           submissions: 0, keygens: 0, accepts: 0, cngEvidenceSha256: nativeCngEvidenceSha256(lastCounts) });
         observer = startNativeStoreObserver({ workDir, configDir, root });
@@ -359,24 +429,34 @@ async function qualifyNativeStoreRecovery(context) {
           const rows = (await query("SELECT status,needs_operator_reconciliation FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId, jobId])).rows;
           return rows[0]?.status === "orphaned_unknown_effect" && rows[0]?.needs_operator_reconciliation === true;
         }, budget.recoveryWaitBudgetMs);
-        const checkpoint = async phase => {
+        const checkpoint = async (phase, serviceDrainage = {}) => {
           const checked = await verifyRecoveryCheckpoint({ readNativeOperationCounts, readIndependentCaObservation,
             enrollmentId, jobId, containerName: fault.containerName, dnsName, fingerprintSha256: fault.fingerprintSha256,
             beforeCounts: lastCounts, observation: caObservation, lastWindow });
           lastCounts = checked.counts;
           stage = phase;
           await recordEvidence(phase, { candidateSha256: context.candidateArchiveSha256, dnsName, enrollmentId, jobId,
-            captureId: capture.captureId, observationId: caObservation.observationId,
+            captureId: capture.captureId, observationId: caObservation.observationId, observationRunId,
             fingerprintSha256: fault.fingerprintSha256, requestId: String(checked.window.requestId),
             submissions: checked.counts.submissions, keygens: checked.counts.keygens, accepts: checked.counts.accepts,
-            cngEvidenceSha256: nativeCngEvidenceSha256(checked.counts) });
+            cngEvidenceSha256: nativeCngEvidenceSha256(checked.counts), ...serviceDrainage });
         };
         await checkpoint("before-recovery-post");
         const recovery = await fixture.request(`${api}/enrollments/${enrollmentId}/recover`, "POST", { orphanedJobId: jobId,
           acknowledgeUnknownEffect: true, reason: "Native store certificate and key independently inspected after service interruption" });
         assert.equal(recovery.status, 201); recoveryJobId = recovery.body.jobId;
-        await checkpoint("before-service-start");
-        ps("Start-Service TokenTimerAgent -ErrorAction Stop");
+        const serviceDrainageSha256 = await verifyOwnedServiceDrainage({
+          stopAndVerifyOwnedService, candidateArchiveSha256: context.candidateArchiveSha256,
+          captureId: capture.captureId, serviceProcess,
+        });
+        await checkpoint("before-service-start", { serviceDrainageSha256 });
+        const restarted = await startObservedStoreService(context, capture.captureId, observationRunId, serviceProcess);
+        serviceProcess = restarted.process;
+        observationRunId = restarted.observationRunId;
+        await recordEvidence("service-restarted", {
+          candidateSha256: context.candidateArchiveSha256, dnsName, captureId: capture.captureId,
+          observationId: caObservation.observationId, observationRunId, serviceStartSha256: restarted.serviceStartSha256,
+        });
         await jobFinished(recoveryJobId);
         const final = readEnrollmentJournal(configDir, enrollmentId); assert.equal(final.kind, "valid"); assert.equal(final.journal.state, "installed");
         for (const name of ["containerName", "snapshotSha256", "csrSha256", "csrSpkiSha256", "leafSha256"]) assert.equal(final.journal[name], initial.journal[name]);
@@ -411,8 +491,14 @@ async function qualifyNativeStoreRecovery(context) {
     }
     throw primaryError;
   } finally {
-    let drained;
+    let drained, serviceDrainageSha256;
     try {
+      if (capture || caObservation) {
+        serviceDrainageSha256 = await verifyOwnedServiceDrainage({
+          stopAndVerifyOwnedService, candidateArchiveSha256: context.candidateArchiveSha256,
+          captureId: capture?.captureId ?? null, serviceProcess,
+        });
+      }
       drained = await drainQualificationResources({ observer, caObservation, capture, lastWindow, lastCounts, primaryError });
     } catch (drainError) {
       try {
@@ -424,20 +510,28 @@ async function qualifyNativeStoreRecovery(context) {
     }
     if (!primaryError) {
       await recordEvidence("observations-drained", { candidateSha256: context.candidateArchiveSha256,
-        captureId: capture.captureId, observationId: caObservation.observationId,
+        captureId: capture.captureId, observationId: caObservation.observationId, observationRunId,
         submissions: drained.finalCounts.submissions, keygens: drained.finalCounts.keygens, accepts: drained.finalCounts.accepts,
-        cngEvidenceSha256: nativeCngEvidenceSha256(drained.finalCounts),
+        cngEvidenceSha256: nativeCngEvidenceSha256(drained.finalCounts), serviceDrainageSha256,
         requestId: String(drained.finalWindow.requestId), fingerprintSha256: drained.finalWindow.fingerprintSha256 });
     }
     // Keep the owned target receipt for evidence; a later run needs a fresh directory.
   }
 }
 async function qualifyInstalledStoreRecovery(context) {
+  requireActiveObservationInterruption();
+  assert.equal(typeof context.createPendingRecoveryContext, "function", "A fresh owned pending-run context is required");
   const postAccept = await qualifyNativeStoreRecovery(context);
   const { qualifyPendingStoreRecovery } = require("./certops-adcs-store-pending-native");
-  const pending = await qualifyPendingStoreRecovery(context);
+  // Post-accept qualification leaves its owned service stopped. The pending
+  // scenario needs its own armed observation and freshly started service.
+  const pendingContext = await context.createPendingRecoveryContext();
+  assert.notEqual(pendingContext, context, "Pending recovery must use a fresh lab context");
+  assert.equal(pendingContext.candidateArchiveSha256, context.candidateArchiveSha256);
+  assert.equal(pendingContext.expectedRuntimeSha256, context.expectedRuntimeSha256);
+  const pending = await qualifyPendingStoreRecovery(pendingContext);
   assert.notEqual(postAccept.dnsName, pending.dnsName, "Each recovery must have its own enrollment");
   return { postAccept, pending };
 }
 
-module.exports = { qualifyInstalledStoreRecovery, qualifyNativeStoreRecovery, validateNativeCounts, validateInitialNativeCounts, validateCaptureStart, stopNativeCapture, validateCaObservationStart, validateCaObservationWindow, stopCaObservation, drainQualificationResources, verifyRecoveryCheckpoint, validateCaBaselineWindow, verifyPreIssueCheckpoint, createPublicEvidenceRecorder, verifyCandidateHost, requireActiveObservationInterruption };
+module.exports = { qualifyInstalledStoreRecovery, qualifyNativeStoreRecovery, validateNativeCounts, validateInitialNativeCounts, validateCaptureStart, stopNativeCapture, validateCaObservationStart, validateCaObservationWindow, stopCaObservation, drainQualificationResources, verifyRecoveryCheckpoint, validateCaBaselineWindow, verifyPreIssueCheckpoint, createPublicEvidenceRecorder, verifyCandidateHost, requireActiveObservationInterruption, readStoreServiceProcess, requireStoreServiceProcess, verifyOwnedServiceDrainage, validateObservedServiceStart, startObservedStoreService, OBSERVATION_RUN_ID };
