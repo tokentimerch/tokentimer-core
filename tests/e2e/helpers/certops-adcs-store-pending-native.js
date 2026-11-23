@@ -146,7 +146,7 @@ async function qualifyPendingStoreRecovery(context) {
       candidateSha256: context.candidateArchiveSha256, dnsName, captureId: capture.captureId,
       observationId: caObservation.observationId, observationRunId, caPublicKeySha256: caObservation.caPublicKeySha256,
       baselineRequestId: caObservation.baselineRequestId, submissions: 0, keygens: 0, accepts: 0,
-      ...captureEvidenceDetails(ready),
+      ...captureEvidenceDetails(ready, context.expectedLauncherSha256),
     });
 
     const target = { type: "windows-cert-store", reference: dnsName, store: "My" };
@@ -209,7 +209,7 @@ async function qualifyPendingStoreRecovery(context) {
       observationId: caObservation.observationId, observationRunId, caPublicKeySha256: caObservation.caPublicKeySha256,
       baselineRequestId: caObservation.baselineRequestId, enrollmentId, jobId, requestId,
       csrSpkiSha256: original.journal.csrSpkiSha256, submissions: counts.submissions, keygens: counts.keygens,
-      accepts: counts.accepts, ...captureEvidenceDetails(counts), ...drainage,
+      accepts: counts.accepts, ...captureEvidenceDetails(counts, context.expectedLauncherSha256), ...drainage,
     });
     const caPending = await observeRequest();
     assert.equal(caPending.disposition, 9);
@@ -340,7 +340,7 @@ async function qualifyPendingStoreRecovery(context) {
   }
   const { counts: drainedCounts, window: drainedWindow, serviceDrainageSha256 } = drained;
   assert.equal(serialIdentity(drainedWindow.serialNumber), serialIdentity(receipt.serialNumber));
-  const observationDetails = captureEvidenceDetails(drainedCounts);
+  const observationDetails = captureEvidenceDetails(drainedCounts, context.expectedLauncherSha256);
   const evidence = await recordEvidence("observations-drained", {
     candidateSha256: receipt.candidateArchiveSha256, dnsName, captureId: receipt.captureId,
     observationId: receipt.observationId, initialObservationRunId: receipt.initialObservationRunId,

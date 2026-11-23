@@ -40,6 +40,24 @@ test("the evidence recorder rejects a different candidate before writing that ph
   assert.throws(() => createPublicEvidenceRecorder({ ...hooks, candidateArchiveSha256: undefined }), /candidate/i);
 });
 
+test("named Store public receipts preserve approved launcher and independent phase identities", async () => {
+  const { NAMED_STORE_SCOPE } = require("./certops-adcs-store-named-observation");
+  const hooks = makeEvidenceHooks();
+  const launcherSha256 = "b".repeat(64);
+  const options = { ...hooks, expectedLauncherSha256: launcherSha256 };
+  const fields = { candidateSha256: CANDIDATE_SHA256, launcherSha256, captureId: "a".repeat(32),
+    observationScope: NAMED_STORE_SCOPE, ephemeralCng: "not-qualified", namedStoreEvidenceSha256: "c".repeat(64),
+    phaseEvidenceReceiptId: "d".repeat(32), phaseEvidenceSha256: "e".repeat(64) };
+  const saved = await createPublicEvidenceRecorder(options)("post-accept", fields);
+  const row = JSON.parse(await hooks.readEvidence(saved));
+  assert.equal(row.launcherSha256, launcherSha256);
+  assert.equal(row.phaseEvidenceReceiptId, fields.phaseEvidenceReceiptId);
+  assert.equal(row.phaseEvidenceSha256, fields.phaseEvidenceSha256);
+  await assert.rejects(createPublicEvidenceRecorder(options)("post-accept", { ...fields, launcherSha256: "0".repeat(64) }), /another launcher/);
+  const { phaseEvidenceReceiptId, ...missingId } = fields;
+  await assert.rejects(createPublicEvidenceRecorder(options)("post-accept", missingId), /receipt ID and digest/);
+});
+
 test("the evidence recorder rejects a different capture of the same candidate", async () => {
   const hooks = makeEvidenceHooks();
   const record = createPublicEvidenceRecorder(hooks);
@@ -126,7 +144,8 @@ test("named Store observation counts independently observed persistent-key and i
   assert.throws(() => verifyNamedStoreIdentity(failed, { requireSuccessfulAccept: true }), /certreq success/);
   assert.throws(() => verifyNamedStoreIdentity(checked, { containerName: "different" }), /another key container/);
   assert.throws(() => verifyNamedStoreIdentity(checked, { requestId: "22" }), /another CA RequestId/);
-  const report = captureEvidenceDetails(checked);
+  const report = captureEvidenceDetails(checked, "b".repeat(64));
+  assert.equal(report.launcherSha256, "b".repeat(64));
   assert.equal(report.observationScope, NAMED_STORE_SCOPE);
   assert.equal(report.ephemeralCng, "not-qualified");
   assert.match(report.namedStoreEvidenceSha256, /^[a-f0-9]{64}$/);
@@ -144,7 +163,7 @@ test("named Store interruption requires a bound external loss observer and an un
   const { NAMED_STORE_SCOPE } = require("./certops-adcs-store-named-observation");
   const { armStoreAcceptObserver, verifyNamedPostAcceptWindow } = require("./certops-adcs-store-native-driver");
   const context = { observationScope: NAMED_STORE_SCOPE, candidateArchiveSha256: CANDIDATE_SHA256,
-    expectedLauncherSha256: "b".repeat(64) };
+    expectedLauncherSha256: "b".repeat(64), async readNamedStorePhaseEvidence() {} };
   const binding = { captureId: "c".repeat(32), observationRunId: "d".repeat(32),
     serviceProcess: { pid: 21, sid: "S-1-5-18", created: "2026-11-23T10:30:00.000Z" } };
   await assert.rejects(armStoreAcceptObserver(context, binding), /Independent Store loss observer is required/);
@@ -155,7 +174,7 @@ test("named Store interruption requires a bound external loss observer and an un
     return observer;
   } }, binding), observer);
 
-  const fault = { ...binding, phaseEvidenceSha256: "e".repeat(64), jobId: "job-1", containerName: "owned" };
+  const fault = { ...binding, phaseEvidenceSha256: "e".repeat(64), phaseEvidenceReceiptId: "f".repeat(32), jobId: "job-1", containerName: "owned" };
   const receipt = { jobId: fault.jobId, containerName: fault.containerName, status: "generated",
     acceptedThumbprint: null, acceptedStore: null, acceptedAt: null };
   assert.equal(verifyNamedPostAcceptWindow(fault, binding, receipt), fault.phaseEvidenceSha256);
@@ -163,6 +182,52 @@ test("named Store interruption requires a bound external loss observer and an un
   assert.throws(() => verifyNamedPostAcceptWindow(fault, binding, { ...receipt, status: "enrolled_by_agent" }), /already committed/);
   assert.throws(() => verifyNamedPostAcceptWindow(fault, binding, { ...receipt, acceptedStore: "My" }), /already committed/);
   assert.throws(() => verifyNamedPostAcceptWindow(fault, binding, { ...receipt, jobId: "another-job" }));
+});
+
+test("named Store phase readback binds the exact certreq lifetime, input and enrolled target", () => {
+  const { createHash } = require("node:crypto");
+  const { MAX_PHASE_EVIDENCE_BYTES, verifyNamedStorePhaseEvidence } = require("./certops-adcs-store-phase-evidence");
+  const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  const launcherSha256 = "b".repeat(64);
+  const serviceDrainageSha256 = "c".repeat(64);
+  const certificateSha256 = "d".repeat(64);
+  const configDir = "C:\\Owned Store\\state";
+  const argv = ["certreq.exe", "-q", "-machine", "-accept",
+    configDir + "\\windows-cert-store-work\\accept-fdea58b1.cer"];
+  const observation = { captureId: "e".repeat(32), observationRunId: "f".repeat(32),
+    serviceProcess: { pid: 20, sid: "S-1-5-18", created: "2026-11-23T10:30:00.000Z" } };
+  const enrollmentId = "a0000000-0000-0000-0000-000000000001";
+  const target = { jobId: "b0000000-0000-0000-0000-000000000002", enrollmentId,
+    containerName: "tokentimer-enr-" + enrollmentId, snapshotSha256: "6".repeat(64),
+    domain: "certops-adcs-0000000000000001-store.example.test" };
+  const start = { kind: "certreq-accept-start", pid: 300, createdFileTime: "00000000000000aa",
+    parentPid: 22, parentCreatedFileTime: "0000000000000099", parentProcessSequence: "33",
+    recordId: "129", auditRecordId: "17", argvSha256: hash(JSON.stringify(argv)), certificateSha256 };
+  const exit = { kind: "certreq-accept-exit", pid: 300, createdFileTime: "00000000000000aa", recordId: "130", exitCode: 0 };
+  const common = { target, observation, fault: { fingerprintSha256: certificateSha256 },
+    candidateArchiveSha256: CANDIDATE_SHA256, launcherSha256, serviceDrainageSha256, configDir };
+  const counts = (events) => ({ accepts: 1, namedEvidence: { events } });
+  const phase = { schema: 1, candidateArchiveSha256: CANDIDATE_SHA256, launcherSha256,
+    ...observation, serviceDrainageSha256, target: { ...target, certificateSha256 }, certreq: {
+      pid: start.pid, createdFileTime: start.createdFileTime, parentPid: start.parentPid,
+      parentCreatedFileTime: start.parentCreatedFileTime, parentProcessSequence: start.parentProcessSequence,
+      auditRecordId: start.auditRecordId, startRecordId: start.recordId, exitRecordId: exit.recordId, argv,
+    } };
+  function verify(value, events = [start, exit], expectedSha256) {
+    const raw = Buffer.isBuffer(value) ? value : Buffer.from(JSON.stringify(value));
+    return verifyNamedStorePhaseEvidence({ ...common, raw, expectedSha256: expectedSha256 ?? hash(raw), counts: counts(events) });
+  }
+  assert.equal(verify(phase), hash(JSON.stringify(phase)));
+  assert.throws(() => verify(phase, [start, exit], "0".repeat(64)), /digest mismatch/);
+  assert.throws(() => verify(Buffer.alloc(MAX_PHASE_EVIDENCE_BYTES + 1)), /bounded UTF-8/);
+  assert.throws(() => verify(Buffer.from(JSON.stringify(phase).replace('"schema":1', '"schema":2,"schema":1'))), /does not match/);
+  const anotherChild = [{ ...start, pid: 301 }, { ...exit, pid: 301 }];
+  assert.throws(() => verify(phase, anotherChild), /does not match/);
+  assert.throws(() => verify(phase, [start, { ...exit, createdFileTime: "00000000000000ab" }]), /another process lifetime/);
+  assert.throws(() => verify({ ...phase, target: { ...phase.target, enrollmentId: "foreign" } }), /does not match/);
+  assert.throws(() => verify({ ...phase, launcherSha256: "0".repeat(64) }), /does not match/);
+  assert.throws(() => verify(phase, [{ ...start, certificateSha256: "0".repeat(64) }, exit]), /differs from the enrolled certificate/);
+  assert.throws(() => verify(phase, [{ ...start, argvSha256: "0".repeat(64) }, exit]), /argv differs/);
 });
 
 test("a service restart requires a fresh armed observation run in the same live capture", () => {
