@@ -286,21 +286,19 @@ export default function SsoProviders({ session, onLogout, onAccountClick }) {
       ) : loadError ? (
         <DashboardErrorAlert>{loadError}</DashboardErrorAlert>
       ) : providers.length === 0 ? (
-        <DashboardPanel borderStyle='dashed'>
-          <VStack align='stretch' spacing={4} maxW='640px' mx='auto' py={4}>
-            <StatusPanel status='info' title='No SSO providers yet'>
-              Add Azure AD, Keycloak, Okta, or a generic OIDC / SAML IdP with
-              the setup wizard.
-            </StatusPanel>
-            <Box textAlign='center'>
+        <DashboardPanel>
+          <DashboardState
+            title='No SSO providers yet'
+            description='Add an OIDC or SAML identity provider with the setup wizard.'
+            action={
               <PrimaryButton
                 leftIcon={<FiPlus />}
                 onClick={() => navigate('/sso-providers/new')}
               >
                 Add your first provider
               </PrimaryButton>
-            </Box>
-          </VStack>
+            }
+          />
         </DashboardPanel>
       ) : (
         <SimpleGrid columns={{ base: 1, xl: 2 }} spacing={4}>
