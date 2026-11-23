@@ -20,11 +20,11 @@ foreach ($name in @('Get-ExistingServiceEnvironment','Get-WindowsServiceCaOption
 }
 `;
 
-function run(script) {
+function run(script, environment = {}) {
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `${helpers}\n${script}`], {
-    encoding: "utf8", windowsHide: true, env: { ...process.env, TT_CA_TEST_SOURCE: installer },
+    encoding: "utf8", windowsHide: true, env: { ...process.env, ...environment, TT_CA_TEST_SOURCE: installer },
   });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(result.status, 0, result.error?.message || result.stderr || result.stdout);
   return result.stdout.trim();
 }
 
@@ -149,6 +149,39 @@ describe("Windows service CA arguments", { skip: process.platform !== "win32" },
     assert.equal(info.PreparedServerUrl, "https://cp.example.test");
     assert.equal(info.NodePath, "C:\\node.exe");
     assert.deepEqual(info.CaOptions, ["--use-system-ca"]);
+  });
+
+  test("service command parsing requires complete Windows paths and unambiguous boundaries", () => {
+    const drive = '"C:\\Agent Suite\\host.exe" --prepared-server-url "https://api.example" "D:\\Node Home\\node.exe" --use-system-ca "C:\\Agent Suite\\agent.js"';
+    const unc = '"\\\\server\\share\\host.exe" "\\\\server\\share\\node.exe" "\\\\server\\share\\agent.js"';
+    const invalid = [
+      '"host.exe" "C:\\node.exe" "C:\\agent.js"',
+      '"C:host.exe" "C:\\node.exe" "C:\\agent.js"',
+      '"C:\\host.exe" "C:node.exe" "C:\\agent.js"',
+      '"C:\\host.exe" "\\node.exe" "C:\\agent.js"',
+      '"C:\\host.exe" "C:\\node.exe" "agent.js"',
+      '"C:\\host.exe" "C:\\node.exe" "C:agent.js"',
+      '"\\\\server\\host.exe" "C:\\node.exe" "C:\\agent.js"',
+      '"\\\\.\\pipe\\host.exe" "C:\\node.exe" "C:\\agent.js"',
+      '"C:\\host.cmd" "C:\\node.exe" "C:\\agent.js"',
+      '"C:\\host.exe" "C:\\node.exe" "C:\\agent.cmd"',
+      '"C:\\host.exe""C:\\node.exe" "C:\\agent.js"',
+      '"C:\\host.exe" "C:\\node.exe" --trace-warnings "C:\\agent.js"',
+      '"C:\\host.exe"\n "C:\\node.exe" "C:\\agent.js"',
+      '"C:\\Agent\tSuite\\host.exe" "C:\\node.exe" "C:\\agent.js"',
+      '"C:\\host.exe" "C:\\node.exe" "C:\\agent.js"\x7f',
+    ];
+    assert.equal(run(`$cases=ConvertFrom-Json -InputObject $env:TT_CA_COMMAND_CASES
+    $parsed=Get-ServiceCommandNodeInfo -ServiceCommand $cases.drive
+    if ($parsed.PreparedServerUrl -cne 'https://api.example' -or $parsed.NodePath -cne 'D:\\Node Home\\node.exe' -or
+        ($parsed.CaOptions -join ' ') -cne '--use-system-ca') { throw 'valid quoted prepared command changed' }
+    if ((Get-ServiceCommandNodeInfo -ServiceCommand $cases.unc).NodePath -cne '\\\\server\\share\\node.exe') { throw 'complete UNC rejected' }
+    foreach ($command in $cases.invalid) {
+      $refused=$false
+      try { [void](Get-ServiceCommandNodeInfo -ServiceCommand $command) } catch { $refused=$true }
+      if (-not $refused) { throw "unsupported service command was accepted: $command" }
+    }
+    Write-Output 'safe'`, { TT_CA_COMMAND_CASES: JSON.stringify({ drive, unc, invalid }) }), "safe");
   });
 
   test("service environment reader handles real absent registry key and value", () => {
