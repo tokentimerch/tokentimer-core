@@ -88,7 +88,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CERTOPS_AZURE_KEYVAULT_LAB_ENABLED: ${{ vars.CERTOPS_AZURE_KEYVAULT_LAB_ENABLED }}
         run: node infra/certops-azure-keyvault/lab.js github-preflight
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
         if: inputs.final_package
         with:
           go-version: '1.26.10'
@@ -185,7 +185,7 @@ jobs:
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: "11.28.8"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         if: ${{ !inputs.final_package }}
         with:
           go-version: "1.27.3"
