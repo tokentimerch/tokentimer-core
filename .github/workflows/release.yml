@@ -487,7 +487,7 @@ jobs:
         run: helm push .helm-pkg/tokentimer-${{ steps.get_version.outputs.VERSION }}.tgz oci://${{ env.HELM_OCI_REPO }}
 
       - name: Install oras
-        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
+        uses: oras-project/setup-oras@ac735097e22fe643015b0d19645f7c9a69942128 # v2.0.4
 
       - name: Log in to OCI registry (oras)
         run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ${{ env.HELM_OCI_REGISTRY }} -u ${{ github.actor }} --password-stdin
