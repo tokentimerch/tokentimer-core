@@ -10,7 +10,7 @@ function nativeCounts({ captureId = "a".repeat(32), submissions = 1, keygens = 1
   let callId = 0;
   function observeKey(api, nameKind, pid) {
     const handleCorrelation = "1".repeat(64);
-    for (const operation of ["create", "finalize"]) {
+    for (const operation of ["create", "finalize", "free"]) {
       callId++;
       const common = {
         tid: 42, callId, operation: `${api}-${operation}`,

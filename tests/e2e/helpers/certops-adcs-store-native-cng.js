@@ -6,8 +6,9 @@ const { createHash } = require("node:crypto");
 const SHA256 = /^[a-f0-9]{64}$/;
 
 // A normalized slice of the capture's raw CNG call events. The producer must
-// independently establish its provenance and loss status. The baseline marker
-// separates controlled ephemeral probes from enrollment operations.
+// independently establish its provenance and loss status. Free events cover
+// key handles only. The baseline marker separates the controlled ephemeral
+// probes (including release of their keys) from enrollment operations.
 function validateNativeCngEvidence(counts, previousEvidence) {
   const source = counts.cngEvidence;
   assert.ok(Array.isArray(source?.events), "Raw CNG evidence is required for complete coverage");
@@ -23,7 +24,7 @@ function validateNativeCngEvidence(counts, previousEvidence) {
 
   const seen = new Set();
   const pending = new Map();
-  const unfinalized = new Set();
+  const handles = new Map();
   const coveredApis = new Set();
   let baseline = false;
   let keygens = 0;
@@ -32,7 +33,7 @@ function validateNativeCngEvidence(counts, previousEvidence) {
     if (event.kind === "baseline") {
       assert.equal(baseline, false, "Duplicate CNG baseline");
       assert.equal(pending.size, 0, "CNG baseline contains unfinished calls");
-      assert.equal(unfinalized.size, 0, "CNG baseline contains unfinished ephemeral probes");
+      assert.equal(handles.size, 0, "CNG baseline contains open ephemeral probe handles");
       assert.ok(coveredApis.has("ncrypt") && coveredApis.has("bcrypt"),
         "Raw CNG evidence must show successful ephemeral NCrypt and BCrypt probes");
       baseline = true;
@@ -66,27 +67,32 @@ function validateNativeCngEvidence(counts, previousEvidence) {
       "CNG return does not match an observed call entry");
     pending.delete(callId);
     assert.match(payload.status, /^[a-f0-9]{8}$/, "CNG return lacks a native status");
-    if (operation === "free") continue;
     if (payload.status !== "00000000") {
-      assert.equal(baseline, false, "An enrollment CNG generation call failed");
+      if (operation !== "free") assert.equal(baseline, false, "An enrollment CNG generation call failed");
       continue;
     }
 
-    assert.match(payload.handleCorrelation, SHA256, "CNG generation return lacks a key handle correlation");
+    assert.match(payload.handleCorrelation, SHA256, "CNG return lacks a key handle correlation");
     const handle = `${pid}:${createdFileTime}:${api}:${payload.handleCorrelation}`;
     if (operation === "create") {
       if (!baseline) assert.equal(entry.nameKind, "ephemeral", "CNG coverage probe must use an ephemeral key");
-      assert.ok(!unfinalized.has(handle), "CNG handle was reused before finalization");
-      unfinalized.add(handle);
-    } else {
-      assert.ok(unfinalized.delete(handle), "CNG finalized an unobserved key");
+      assert.ok(!handles.has(handle), "CNG handle was reused before release");
+      handles.set(handle, false);
+    } else if (operation === "finalize") {
+      assert.ok(handles.has(handle), "CNG finalized an unobserved or released key");
+      assert.equal(handles.get(handle), false, "CNG key was already finalized");
+      handles.set(handle, true);
       if (!baseline) coveredApis.add(api);
+    } else {
+      assert.ok(handles.has(handle), "CNG released an unobserved key");
+      assert.equal(handles.get(handle), true, "CNG released a key before finalization");
+      handles.delete(handle);
     }
   }
 
   assert.ok(baseline, "Raw CNG evidence lacks a calibrated baseline");
   assert.equal(pending.size, 0, "Raw CNG evidence has unfinished calls");
-  assert.equal(unfinalized.size, 0, "Raw CNG evidence has unfinalized keys");
+  assert.ok([...handles.values()].every(Boolean), "Raw CNG evidence has unfinalized keys");
   assert.equal(counts.keygens, keygens, "Claimed key generations do not match raw CNG create calls");
   return evidence;
 }

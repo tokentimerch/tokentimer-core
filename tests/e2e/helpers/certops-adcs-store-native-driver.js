@@ -27,6 +27,7 @@ function createPublicEvidenceRecorder({ candidateArchiveSha256, writeEvidence, r
   const phases = new Set(["baseline", "post-accept", "ca-at-fault", "before-recovery-post", "before-service-start", "ca-after-recovery", "inventory", "observations-drained", "failure"]);
   const allowed = new Set(["candidateSha256", "dnsName", "captureId", "observationId", "caPublicKeySha256", "baselineRequestId", "enrollmentId", "jobId", "fingerprintSha256", "csrSpkiSha256", "cngEvidenceSha256", "requestId", "serialNumber", "submissions", "keygens", "accepts", "stage", "code", "promotions"]);
   const seen = new Set();
+  const identities = new Map();
   let storeId = null, failed = false, busy = false;
   return async function recordEvidence(phase, fields) {
     assert.equal(failed, false, "Evidence recorder was permanently invalidated");
@@ -54,6 +55,14 @@ function createPublicEvidenceRecorder({ candidateArchiveSha256, writeEvidence, r
       else throw new Error("Unvalidated public evidence field");
     }
     assert.equal(entry.candidateSha256, candidateArchiveSha256, "Evidence phase candidate archive digest does not match the run");
+    if (Object.hasOwn(entry, "keygens")) {
+      assert.ok(entry.captureId && entry.cngEvidenceSha256, "Evidence key count requires its CNG capture ID and digest");
+    }
+    for (const key of ["captureId", "observationId"]) {
+      if (!Object.hasOwn(entry, key)) continue;
+      if (identities.has(key)) assert.equal(entry[key], identities.get(key), `Evidence ${key} changed during the run`);
+      else identities.set(key, entry[key]);
+    }
     const json = JSON.stringify({ schema: 1, phase, ...entry });
     const sha256 = createHash("sha256").update(json, "utf8").digest("hex");
     const written = await writeEvidence({ json, sha256 });

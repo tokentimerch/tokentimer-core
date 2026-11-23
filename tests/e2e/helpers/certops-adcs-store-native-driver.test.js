@@ -38,6 +38,28 @@ test("the evidence recorder rejects a different candidate before writing that ph
   await assert.rejects(createPublicEvidenceRecorder(hooks)("baseline", { candidateSha256: otherCandidate }), /candidate/i);
   assert.throws(() => createPublicEvidenceRecorder({ ...hooks, candidateArchiveSha256: undefined }), /candidate/i);
 });
+
+test("the evidence recorder rejects a different capture of the same candidate", async () => {
+  const hooks = makeEvidenceHooks();
+  const record = createPublicEvidenceRecorder(hooks);
+  const candidateSha256 = hooks.candidateArchiveSha256;
+  await record("baseline", { candidateSha256, captureId: "a".repeat(32) });
+  await assert.rejects(record("post-accept", { candidateSha256, captureId: "b".repeat(32) }), /captureId/);
+  const recordCa = createPublicEvidenceRecorder(makeEvidenceHooks());
+  await recordCa("baseline", { candidateSha256, observationId: "a".repeat(32) });
+  await assert.rejects(recordCa("ca-at-fault", { candidateSha256, observationId: "b".repeat(32) }), /observationId/);
+});
+
+test("public key counts require a digest and a capture identity", async () => {
+  const candidateSha256 = CANDIDATE_SHA256;
+  const captureId = "a".repeat(32);
+  const cngEvidenceSha256 = "1".repeat(64);
+  const makeRecord = () => createPublicEvidenceRecorder(makeEvidenceHooks());
+  const fields = { candidateSha256, keygens: 0 };
+  await makeRecord()("baseline", { ...fields, captureId, cngEvidenceSha256 });
+  await assert.rejects(makeRecord()("baseline", { ...fields, captureId }), /capture ID and digest/);
+  await assert.rejects(makeRecord()("baseline", { ...fields, cngEvidenceSha256 }), /capture ID and digest/);
+});
 test("native observer starts only the scoped lab script and refuses unproven drainage", async () => {
   const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.kill = () => {};
   const observer = startNativeStoreObserver({ workDir: "owned", configDir: "config", root: "root", nodeExecutable: "node.exe",
@@ -83,16 +105,18 @@ test("ephemeral CNG coverage requires matching raw create and finalize events fo
   assert.throws(() => validateNativeCounts(wrongCapture), /another capture/);
 
   const ncryptOnly = structuredClone(baseline);
-  ncryptOnly.cngEvidence.events.splice(4, 4);
-  ncryptOnly.cngEvidence.events[4].sequence = 5;
+  ncryptOnly.cngEvidence.events = ncryptOnly.cngEvidence.events
+    .filter(event => !event.evidence?.payload.operation.startsWith("bcrypt-"))
+    .map((event, index) => ({ ...event, sequence: index + 1 }));
   assert.throws(() => validateNativeCounts(ncryptOnly), /ephemeral NCrypt and BCrypt/);
 
   const named = structuredClone(baseline);
   named.cngEvidence.events[0].evidence.payload.nameKind = "non-null";
   assert.throws(() => validateNativeCounts(named), /must use an ephemeral key/);
   const wrongHandle = structuredClone(baseline);
-  wrongHandle.cngEvidence.events[7].evidence.payload.handleCorrelation = "2".repeat(64);
-  assert.throws(() => validateNativeCounts(wrongHandle), /unobserved key/);
+  wrongHandle.cngEvidence.events.find(event => event.kind === "cng-api-return" &&
+    event.evidence.payload.operation === "bcrypt-finalize").evidence.payload.handleCorrelation = "2".repeat(64);
+  assert.throws(() => validateNativeCounts(wrongHandle), /unobserved or released key/);
   const unrelatedReturn = structuredClone(baseline);
   unrelatedReturn.cngEvidence.events[1].evidence.pid++;
   assert.throws(() => validateNativeCounts(unrelatedReturn), /does not match/);
@@ -111,7 +135,8 @@ test("CNG checkpoints reject missing calls, altered history and a mismatched key
   missing.cngEvidence.events.splice(1, 1);
   assert.throws(() => validateNativeCounts(missing), /gap or duplicate/);
   const failed = structuredClone(supplied);
-  failed.cngEvidence.events.at(-1).evidence.payload.status = "80090009";
+  failed.cngEvidence.events.findLast(event => event.kind === "cng-api-return" &&
+    event.evidence.payload.operation === "ncrypt-finalize").evidence.payload.status = "80090009";
   assert.throws(() => validateNativeCounts(failed), /generation call failed/);
 
   supplied.cngEvidence.events[0].evidence.payload.invocationFingerprint = "2".repeat(64);
@@ -121,6 +146,20 @@ test("CNG checkpoints reject missing calls, altered history and a mismatched key
   const newCandidate = nativeCounts();
   newCandidate.cngEvidence.candidateSha256 = "1".repeat(64);
   assert.throws(() => validateNativeCounts(newCandidate, before), /candidate changed/);
+});
+
+test("CNG cannot finalize an ephemeral key after the handle was freed", () => {
+  const counts = nativeCounts({ submissions: 0, keygens: 0, accepts: 0 });
+  const events = counts.cngEvidence.events;
+  const { pid, createdFileTime } = events[0].evidence;
+  const payload = {
+    tid: 42, callId: 900, operation: "ncrypt-free",
+    invocationFingerprint: "3".repeat(64), handleCorrelation: "1".repeat(64),
+  };
+  events.splice(2, 0, { kind: "cng-api-entry", evidence: { pid, createdFileTime, payload } },
+    { kind: "cng-api-return", evidence: { pid, createdFileTime, payload: { ...payload, status: "00000000" } } });
+  events.forEach((event, index) => { event.sequence = index + 1; });
+  assert.throws(() => validateNativeCounts(counts), /released a key before finalization/);
 });
 
 test("native capture must count the one initial key, request and acceptance", () => {
