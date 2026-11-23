@@ -143,6 +143,20 @@ func (j *ProcessJob) Terminate() error {
 	return windows.TerminateJobObject(j.handle, 1)
 }
 
+// ContainsProcess checks whether an already-open process belongs to this job.
+// The job's owner must serialize this check with Close.
+func (j *ProcessJob) ContainsProcess(process windows.Handle) (bool, error) {
+	if j == nil || j.handle == 0 {
+		return false, fmt.Errorf("process job is closed")
+	}
+	var member uint32
+	ok, _, err := isProcessInJob.Call(uintptr(process), uintptr(j.handle), uintptr(unsafe.Pointer(&member)))
+	if ok == 0 {
+		return false, err
+	}
+	return member != 0, nil
+}
+
 // PrepareStop fences new child starts and retains the current job members.
 // The job's owning caller must serialize this with Terminate, Stop and Close.
 func (j *ProcessJob) PrepareStop() error {
@@ -178,12 +192,11 @@ func (j *ProcessJob) retainProcesses() error {
 			return fmt.Errorf("retain contained process %d: %w", pid, err)
 		}
 		j.processes = append(j.processes, process)
-		var member uint32
-		ok, _, err := isProcessInJob.Call(uintptr(process), uintptr(j.handle), uintptr(unsafe.Pointer(&member)))
-		if ok == 0 {
+		member, err := j.ContainsProcess(process)
+		if err != nil {
 			return fmt.Errorf("verify contained process %d: %w", pid, err)
 		}
-		if member == 0 {
+		if !member {
 			return fmt.Errorf("process %d no longer belongs to the job", pid)
 		}
 	}

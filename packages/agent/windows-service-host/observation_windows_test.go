@@ -111,7 +111,8 @@ func TestObservedServiceLossDrainsWorkerAndGrandchild(t *testing.T) {
 			const script = "const {spawn} = require('node:child_process'); " +
 				"const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio: 'ignore', windowsHide: true}); " +
 				"process.on('SIGBREAK', () => {}); " +
-				"child.once('spawn', () => require('node:fs').writeFileSync(process.argv[1], process.pid + ',' + child.pid)); " +
+				"child.once('spawn', () => { const fs = require('node:fs'); const target = process.argv[1]; " +
+				"fs.writeFileSync(target + '.tmp', process.pid + ',' + child.pid + '\\n'); fs.renameSync(target + '.tmp', target); }); " +
 				"setInterval(() => {}, 1000);"
 			pids := filepath.Join(t.TempDir(), "pids")
 			var logs bytes.Buffer
@@ -126,16 +127,16 @@ func TestObservedServiceLossDrainsWorkerAndGrandchild(t *testing.T) {
 			}}
 			req, status, exit := runObservedServiceForTest(t, host, observer)
 			waitForState(t, status, svc.Running, 10*time.Second)
-			handles := waitObservedProcesses(t, pids)
+			processes := waitObservedProcesses(t, host, pids)
 			if scmStop {
 				req <- svc.ChangeRequest{Cmd: svc.Stop}
 				waitForState(t, status, svc.StopPending, 3*time.Second)
 			}
 			unavailable.Store(true)
 			waitObservedStop(t, exit)
-			for _, handle := range handles {
-				if state, err := windows.WaitForSingleObject(handle, 0); err != nil || state != windows.WAIT_OBJECT_0 {
-					t.Fatalf("original process still active: wait result=%d err=%v", state, err)
+			for _, process := range processes {
+				if state, err := windows.WaitForSingleObject(process.handle, 0); err != nil || state != windows.WAIT_OBJECT_0 {
+					t.Fatalf("original process pid=%d created=%d still active: wait result=%d err=%v", process.pid, process.created, state, err)
 				}
 			}
 			if !observer.closed || !strings.Contains(logs.String(), "observed job empty and retained processes exited") {
@@ -154,31 +155,80 @@ func TestObservedServiceLossDrainsWorkerAndGrandchild(t *testing.T) {
 	}
 }
 
-func waitObservedProcesses(t *testing.T, pids string) []windows.Handle {
+type observedFixtureProcess struct {
+	handle  windows.Handle
+	pid     uint32
+	created int64
+}
+
+func parseObservedFixturePIDs(record string) ([2]uint32, bool) {
+	var ids [2]uint32
+	frame, complete := strings.CutSuffix(record, "\n")
+	worker, child, separated := strings.Cut(frame, ",")
+	if !complete || !separated {
+		return ids, false
+	}
+	for i, part := range [2]string{worker, child} {
+		pid, err := strconv.ParseUint(part, 10, 32)
+		if err != nil || pid == 0 {
+			return ids, false
+		}
+		ids[i] = uint32(pid)
+	}
+	return ids, ids[0] != ids[1]
+}
+
+func TestObservedProcessReceiptRejectsIncompleteIdentity(t *testing.T) {
+	for _, record := range []string{"1204,19", "1204,1920", "1204,1204\n", "1204,1920,1960\n"} {
+		if _, ok := parseObservedFixturePIDs(record); ok {
+			t.Fatalf("accepted incomplete or ambiguous fixture identity %q", record)
+		}
+	}
+	if ids, ok := parseObservedFixturePIDs("1204,1920\n"); !ok || ids != ([2]uint32{1204, 1920}) {
+		t.Fatal("valid fixture identity refused")
+	}
+}
+
+func waitObservedProcesses(t *testing.T, host *agentHost, pids string) []observedFixtureProcess {
 	t.Helper()
 	deadline := time.Now().Add(6 * time.Second)
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(pids)
-		parts := strings.Split(string(data), ",")
-		if err == nil && len(parts) == 2 {
-			var handles []windows.Handle
-			for _, part := range parts {
-				pid, err := strconv.ParseUint(part, 10, 32)
-				if err != nil || pid == 0 {
-					t.Fatalf("invalid fixture pid: %q", part)
-				}
-				handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
+		ids, complete := parseObservedFixturePIDs(string(data))
+		if err == nil && complete {
+			if ids[0] != host.pid() {
+				t.Fatal("fixture worker differs from the owned service child")
+			}
+			var processes []observedFixtureProcess
+			for _, pid := range ids {
+				handle, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
 				if err != nil {
-					t.Fatalf("retain original fixture process: %v", err)
+					t.Fatalf("retain original fixture process %d: %v", pid, err)
 				}
 				t.Cleanup(func() { _ = windows.CloseHandle(handle) })
-				handles = append(handles, handle)
+				var created, exit, kernel, user windows.Filetime
+				if err := windows.GetProcessTimes(handle, &created, &exit, &kernel, &user); err != nil || created.Nanoseconds() <= 0 {
+					t.Fatalf("read fixture process %d creation time: %v", pid, err)
+				}
+				host.mu.Lock()
+				member, memberErr := host.job.ContainsProcess(handle)
+				host.mu.Unlock()
+				if memberErr != nil || !member {
+					t.Fatalf("process %d is outside the owned job: %v", pid, memberErr)
+				}
+				if state, err := windows.WaitForSingleObject(handle, 0); err != nil || state != uint32(windows.WAIT_TIMEOUT) {
+					t.Fatalf("fixture process %d exited before inducing loss: wait result=%d err=%v", pid, state, err)
+				}
+				processes = append(processes, observedFixtureProcess{handle: handle, pid: pid, created: created.Nanoseconds()})
 			}
-			return handles
+			if processes[1].created < processes[0].created {
+				t.Fatal("fixture grandchild predates the worker process")
+			}
+			return processes
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	t.Fatal("worker and grandchild did not report their identity")
+	t.Fatal("worker and grandchild did not publish a complete process receipt")
 	return nil
 }
 

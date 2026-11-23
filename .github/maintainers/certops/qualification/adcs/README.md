@@ -12,7 +12,7 @@ Set `CERTOPS_WINDOWS_LANGUAGE_ASSETS` to a JSON object keyed by OS/language, for
 
 ## Windows service observation trial
 
-Set `TOKENTIMER_AGENT_HOST_OBSERVATION_RUN` before the disposable lab's first worker start, with protected local state. Use a fresh 32-character lowercase hexadecimal ID per restart. The independent LocalSystem observer echoes 32-byte challenges on `\\.\pipe\TokenTimerObservation-<run>` while CA/CNG coverage is current. The host syncs each admission check before granting a permit. Once Windows applies the Job limit, an earlier permit cannot start a child in that Job. A committed workspace pause fences later API claim allocations. Reconcile claims already in flight and use independent off-host CA/CNG evidence to verify which native effects occurred.
+Pass `--prepare-for-observation <run>` to the signed bundled installer through the official launcher with a bare API origin. It leaves the LocalSystem service disabled and records a fresh 32-character lowercase hexadecimal run ID. Verify the installed package and the approved observer’s off-host readiness before enabling the service. Bind CA/CNG evidence to the actual SCM process ID, LocalSystem SID, UTC creation time and run ID. The host checks the observer before starting the worker and applies the Job limit on loss. Use a fresh run ID on restart. A committed workspace pause fences later API claims. Reconcile claims already in flight against independent evidence.
 
 ## Results and cleanup
 
