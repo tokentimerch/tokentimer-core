@@ -14,7 +14,7 @@ Set `CERTOPS_WINDOWS_LANGUAGE_ASSETS` to a JSON object keyed by OS/language, for
 
 Use one four-hour disposable domain lab with a fresh Server 2022 AMD64 member without IIS. Bind the installed stock package, matching launcher and certificates to the approved custody receipts. The Store runner checks post-accept interruption first and then restarts a separate pending enrollment before approving and retrieving its original RequestId.
 
-Dispatch remains gated on independent CA and service evidence, loss-triggered shutdown with complete process drainage, and off-host readback. Record the exact Core commit, signed artifact identities and owned resource cleanup. Existing pending and operator-acceptance selectors cover IIS cases.
+Dispatch remains gated on independent CA and service evidence, loss-triggered shutdown with complete process drainage, and off-host readback. The named Store recovery scope binds the exact signed package and launcher digests, the named key and CA request, and each native install attempt and exit. Its result leaves exhaustive ephemeral CNG qualification open. Record the exact Core commit, signed artifact identities and owned resource cleanup. Existing pending and operator-acceptance selectors cover IIS cases.
 
 ## Results and cleanup
 

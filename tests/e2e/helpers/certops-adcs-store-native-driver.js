@@ -158,17 +158,30 @@ function createPublicEvidenceRecorder({ candidateArchiveSha256, writeEvidence, r
     } catch (error) { failed = true; throw error; } finally { busy = false; }
   };
 }
-async function verifyCandidateHost({ archivePath, candidateArchiveSha256, expectedRuntimeSha256, inspectCandidateHost, ps }) {
-  assert.ok(typeof archivePath === "string" && path.isAbsolute(archivePath), "Absolute candidate archive path is required");
-  assert.match(candidateArchiveSha256, /^[a-f0-9]{64}$/);
+function verifyQualificationMedia(filePath, expectedSha256, label) {
+  assert.ok(typeof filePath === "string" && path.isAbsolute(filePath), "Absolute " + label + " path is required");
+  assert.match(expectedSha256, /^[a-f0-9]{64}$/);
+  const file = fs.lstatSync(filePath);
+  assert.equal(file.isSymbolicLink(), false, label + " cannot be a symlink");
+  assert.equal(file.isFile(), true, label + " must be a file");
+  const actual = createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+  assert.equal(actual, expectedSha256, label + " digest mismatch");
+  return actual;
+}
+
+async function verifyCandidateHost({ archivePath, candidateArchiveSha256, expectedRuntimeSha256,
+  observationScope, launcherPath, expectedLauncherSha256, inspectCandidateHost, ps }) {
   assert.match(expectedRuntimeSha256, /^[a-f0-9]{64}$/);
   assert.equal(typeof inspectCandidateHost, "function", "Independent installed candidate inspection is required");
-  const file = fs.lstatSync(archivePath);
-  assert.equal(file.isSymbolicLink(), false, "Candidate archive cannot be a symlink");
-  assert.equal(file.isFile(), true, "Candidate archive must be a file");
-  const actual = createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex");
-  assert.equal(actual, candidateArchiveSha256, "Candidate archive digest mismatch");
-  const host = await inspectCandidateHost({ candidateArchiveSha256: actual, expectedRuntimeSha256 });
+  const actual = verifyQualificationMedia(archivePath, candidateArchiveSha256, "Candidate archive");
+  const approved = { candidateArchiveSha256: actual, expectedRuntimeSha256 };
+  if (observationScope === NAMED_STORE_SCOPE) {
+    approved.launcherSha256 = verifyQualificationMedia(launcherPath, expectedLauncherSha256, "Signed launcher");
+  }
+  const host = await inspectCandidateHost(approved);
+  if (approved.launcherSha256) {
+    assert.equal(host?.launcherSha256, approved.launcherSha256, "Independent installation evidence identifies another launcher");
+  }
   assert.equal(host?.inspectionIndependent, true);
   assert.equal(host.archiveBytesVerified, true);
   assert.equal(host.installedFilesMatchArchive, true);
@@ -585,6 +598,7 @@ async function qualifyInstalledStoreRecovery(context) {
   assert.equal(pendingContext.candidateArchiveSha256, context.candidateArchiveSha256);
   assert.equal(pendingContext.expectedRuntimeSha256, context.expectedRuntimeSha256);
   assert.equal(pendingContext.observationScope, context.observationScope);
+  assert.equal(pendingContext.expectedLauncherSha256, context.expectedLauncherSha256);
   const pending = await qualifyPendingStoreRecovery(pendingContext);
   validateSeparateStoreRecoveryEvidence(postAccept, pending, context.candidateArchiveSha256);
   return { postAccept, pending };

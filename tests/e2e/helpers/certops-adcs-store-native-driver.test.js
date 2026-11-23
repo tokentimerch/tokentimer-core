@@ -405,6 +405,23 @@ test("candidate inspection rejects absent or mismatched archive and installed se
   await assert.rejects(verifyCandidateHost({ ...candidate, async inspectCandidateHost() { return { ...host, processTokenSid: "S-1-5-19" }; } }));
 });
 
+test("named Store package inspection binds the exact signed launcher bytes", async () => {
+  const { NAMED_STORE_SCOPE } = require("./certops-adcs-store-named-observation");
+  const candidate = makeCandidateHooks();
+  const host = await candidate.inspectCandidateHost();
+  const launcherPath = require.resolve("./certops-adcs-store-native-cng.fixture");
+  const launcherSha256 = require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(launcherPath)).digest("hex");
+  const scoped = { ...candidate, observationScope: NAMED_STORE_SCOPE, launcherPath, expectedLauncherSha256: launcherSha256 };
+  await assert.rejects(verifyCandidateHost({ ...scoped, launcherPath: undefined }), /launcher path is required/);
+  await assert.rejects(verifyCandidateHost({ ...scoped, expectedLauncherSha256: "0".repeat(64) }), /launcher digest mismatch/);
+  await assert.rejects(verifyCandidateHost(scoped), /another launcher/);
+  const inspected = await verifyCandidateHost({ ...scoped, async inspectCandidateHost(approved) {
+    assert.equal(approved.launcherSha256, launcherSha256);
+    return { ...host, launcherSha256 };
+  } });
+  assert.equal(inspected.launcherSha256, launcherSha256);
+});
+
 test("candidate inspection is bound to the running SCM service lifetime", async () => {
   const candidate = makeCandidateHooks();
   const healthy = await candidate.inspectCandidateHost();
