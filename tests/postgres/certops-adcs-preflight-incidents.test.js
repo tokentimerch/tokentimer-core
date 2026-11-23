@@ -533,6 +533,70 @@ async function runProcesses(script, count = 3) {
     ),
   );
 }
+test("automatic preflight rolls back the assigned job and issuer sequence when audit fails", async () => {
+  const f = await fixture();
+  const scope = [f.workspaceId, f.issuerId];
+  await pool.query(
+    "DELETE FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='adcs-preflight'",
+    scope,
+  );
+  const readIssuer = async (client) =>
+    (
+      await client.query(
+        `SELECT i.preflight_seq::int, v.confirmed_at
+         FROM certificate_issuers i JOIN certificate_issuer_versions v
+           ON v.workspace_id=i.workspace_id AND v.issuer_id=i.id AND v.version=i.current_version
+         WHERE i.workspace_id=$1 AND i.id=$2`,
+        scope,
+      )
+    ).rows[0];
+  const readJobs = async (client) =>
+    (
+      await client.query(
+        `SELECT id, assigned_agent_id, preflight_seq::int FROM certificate_jobs
+         WHERE workspace_id=$1 AND subject_id=$2 AND operation='adcs-preflight'`,
+        scope,
+      )
+    ).rows;
+  const original = await readIssuer(pool);
+  const nextSequence = original.preflight_seq + 1;
+  const { dispatchPreflight } = require("../../apps/api/services/certops/certificateEnrollments");
+  const input = {
+    client: pool,
+    workspaceId: f.workspaceId,
+    issuerId: f.issuerId,
+    agentId: f.agentId,
+    caConfig: CA,
+    template: TEMPLATE,
+    automatic: true,
+    confirmedAt: original.confirmed_at,
+  };
+  const expectedJob = (id) => ({
+    id,
+    assigned_agent_id: f.agentId,
+    preflight_seq: nextSequence,
+  });
+  const failure = new Error("preflight audit write failed");
+  await assert.rejects(
+    dispatchPreflight({
+      ...input,
+      async audit({ client, action, metadata }) {
+        assert.equal(action, "CERTOPS_ISSUER_PREFLIGHT_DISPATCHED");
+        assert.deepEqual(await readJobs(client), [expectedJob(metadata.jobId)]);
+        assert.equal((await readIssuer(client)).preflight_seq, nextSequence);
+        throw failure;
+      },
+    }),
+    (error) => error === failure,
+  );
+  assert.deepEqual(await readJobs(pool), []);
+  assert.equal((await readIssuer(pool)).preflight_seq, original.preflight_seq);
+
+  const retried = await dispatchPreflight(input);
+  assert.deepEqual(await readJobs(pool), [expectedJob(retried.id)]);
+  assert.equal((await readIssuer(pool)).preflight_seq, nextSequence);
+});
+
 test(
   "independent API processes and scheduler processes dispatch one shared preflight",
   async () => {
