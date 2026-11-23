@@ -6,7 +6,7 @@ const { PassThrough } = require("node:stream");
 const { CANDIDATE_SHA256, nativeCounts } = require("./certops-adcs-store-native-cng.fixture");
 const { startNativeStoreObserver, verifyNativeFault } = require("./certops-adcs-store-native-observer");
 const { qualifyInstalledStoreRecovery, qualifyNativeStoreRecovery, validateNativeCounts, validateInitialNativeCounts, validateCaptureStart, stopNativeCapture, validateCaObservationStart, validateCaObservationWindow, stopCaObservation, drainQualificationResources, verifyRecoveryCheckpoint, validateCaBaselineWindow, verifyPreIssueCheckpoint, createPublicEvidenceRecorder, verifyCandidateHost, requireActiveObservationInterruption } = require("./certops-adcs-store-native-driver");
-const { validateObservedServiceStart } = require("./certops-adcs-store-native-driver");
+const { validateObservedServiceStart, validateSeparateStoreRecoveryEvidence } = require("./certops-adcs-store-native-driver");
 
 function makeEvidenceHooks() {
   const values = new Map();
@@ -73,6 +73,28 @@ test("pending restart and final drainage receipts stay bound to the same durable
     assert.deepEqual(JSON.parse(await hooks.readEvidence(saved)), { schema: 1, phase, ...evidence });
   }
   await assert.rejects(record("observations-drained", { ...evidence, serviceDrainageSha256: "invalid" }));
+});
+
+test("paired Store recovery evidence requires separate capture and receipt identities", () => {
+  const postAccept = {
+    dnsName: "certops-adcs-0000000000000011-store.example.test", candidateArchiveSha256: CANDIDATE_SHA256,
+    captureId: "1".repeat(32), observationId: "2".repeat(32), initialObservationRunId: "3".repeat(32),
+    observationRunId: "4".repeat(32), evidenceReceiptId: "5".repeat(32), evidenceReceiptSha256: "6".repeat(64),
+  };
+  const pending = {
+    dnsName: "certops-adcs-0000000000000022-store.example.test", candidateArchiveSha256: CANDIDATE_SHA256,
+    captureId: "7".repeat(32), observationId: "8".repeat(32), initialObservationRunId: "9".repeat(32),
+    observationRunId: "a".repeat(32), evidenceReceiptId: "b".repeat(32), evidenceReceiptSha256: "c".repeat(64),
+  };
+  const verify = (evidence) => validateSeparateStoreRecoveryEvidence(postAccept, evidence, CANDIDATE_SHA256);
+  assert.doesNotThrow(() => verify(pending));
+  for (const field of ["dnsName", "captureId", "observationId", "evidenceReceiptId", "evidenceReceiptSha256"]) {
+    assert.throws(() => verify({ ...pending, [field]: postAccept[field] }), { message: `Recovery scenarios reused ${field}` });
+  }
+  assert.throws(() => verify({ ...pending, initialObservationRunId: postAccept.observationRunId }), /fresh observation run/);
+  assert.throws(() => verify({ ...pending, observationRunId: pending.initialObservationRunId }), /fresh observation run/);
+  assert.throws(() => verify({ ...pending, evidenceReceiptId: undefined }));
+  assert.throws(() => verify({ ...pending, candidateArchiveSha256: "0".repeat(64) }), /different signed package/);
 });
 
 test("a service restart requires a fresh armed observation run in the same live capture", () => {

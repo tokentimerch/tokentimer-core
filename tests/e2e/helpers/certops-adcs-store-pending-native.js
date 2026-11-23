@@ -122,6 +122,7 @@ async function qualifyPendingStoreRecovery(context) {
   const installedService = await verifyCandidateHost(context);
   let { observationRunId, serviceProcess } = installedService;
   assert.match(observationRunId, OBSERVATION_RUN_ID);
+  const initialObservationRunId = observationRunId;
   const bindingsBefore = await ps(BINDING_STATE);
   assert.ok(typeof bindingsBefore === "string" && bindingsBefore.trim(), "Missing HTTP.sys binding baseline");
 
@@ -313,7 +314,7 @@ async function qualifyPendingStoreRecovery(context) {
       requestId, serialNumber: native.serialNumber, fingerprintSha256: native.fingerprintSha256,
       candidateArchiveSha256: context.candidateArchiveSha256,
       csrSpkiSha256: original.journal.csrSpkiSha256, captureId: finalCounts.captureId,
-      observationId: caObservation.observationId, observationRunId, baselineRequestId: caObservation.baselineRequestId,
+      observationId: caObservation.observationId, initialObservationRunId, observationRunId, baselineRequestId: caObservation.baselineRequestId,
       nativeSubmissions: finalCounts.submissions, nativeKeyGenerations: finalCounts.keygens, nativeAccepts: finalCounts.accepts,
       promotions: promotions.rows.length,
     };
@@ -337,7 +338,8 @@ async function qualifyPendingStoreRecovery(context) {
   const cngEvidenceSha256 = nativeCngEvidenceSha256(drainedCounts);
   const evidence = await recordEvidence("observations-drained", {
     candidateSha256: receipt.candidateArchiveSha256, dnsName, captureId: receipt.captureId,
-    observationId: receipt.observationId, observationRunId: receipt.observationRunId,
+    observationId: receipt.observationId, initialObservationRunId: receipt.initialObservationRunId,
+    observationRunId: receipt.observationRunId,
     caPublicKeySha256: drainedWindow.caPublicKeySha256,
     baselineRequestId: receipt.baselineRequestId, requestId: receipt.requestId, serialNumber: receipt.serialNumber,
     enrollmentId: receipt.enrollmentId, jobId: receipt.jobId, fingerprintSha256: receipt.fingerprintSha256,
