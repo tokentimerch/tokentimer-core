@@ -76,11 +76,13 @@ function saveSession(req) {
 }
 
 async function safeAudit(writeAudit, logger, params) {
-  if (!writeAudit) return;
+  if (!writeAudit) return false;
   try {
     await writeAudit(params);
+    return true;
   } catch (err) {
     logger?.warn?.("OIDC audit write failed", { error: err?.message });
+    return false;
   }
 }
 
@@ -310,7 +312,7 @@ async function completeOidcLogin({
     requiresExistingMembership &&
     !(await hasAnyWorkspaceMembership(pool, resolved.user.id))
   ) {
-    await safeAudit(writeAudit, logger, {
+    const loginAuditRecorded = await safeAudit(writeAudit, logger, {
       actorUserId: null,
       subjectUserId: resolved.user.id,
       action: "LOGIN_FAILED",
@@ -326,9 +328,9 @@ async function completeOidcLogin({
         issuer,
       },
     });
-    throw new Error(
+    throw Object.assign(new Error(
       "No IdP group mapping matched this login and strict membership sync is enabled for this provider. Ask an admin to add a group mapping or grant workspace access.",
-    );
+    ), { code: "no_group_mapping_matched", loginAuditRecorded });
   }
 
   if (typeof ensureInitialWorkspaceForUser === "function") {
@@ -689,7 +691,7 @@ function oidcRoutes(_passport, express) {
     const stashed = tx?.next ?? req.session?.ssoNext ?? null;
     const landingPath = sanitizeNextPath(stashed) || "/dashboard";
 
-    const failRedirect = async (reason, callbackPhase = null) => {
+    const failRedirect = async (reason, callbackPhase = null, loginAuditRecorded = false) => {
       if (returnedState && req.session) {
         try {
           await deleteOidcTxAndSave(req, returnedState);
@@ -699,23 +701,25 @@ function oidcRoutes(_passport, express) {
           });
         }
       }
-      await safeAuditRoute({
-        actorUserId: null,
-        subjectUserId: null,
-        action: "LOGIN_FAILED",
-        targetType: "auth",
-        targetId: null,
-        channel: "web",
-        workspaceId: null,
-        metadata: {
-          method: "oidc",
-          provider_slug: providerSlug,
-          protocol: "oidc",
-          reason,
-          path: req.path,
-          ...(callbackPhase ? { callback_phase: callbackPhase } : {}),
-        },
-      });
+      if (!loginAuditRecorded) {
+        await safeAuditRoute({
+          actorUserId: null,
+          subjectUserId: null,
+          action: "LOGIN_FAILED",
+          targetType: "auth",
+          targetId: null,
+          channel: "web",
+          workspaceId: null,
+          metadata: {
+            method: "oidc",
+            provider_slug: providerSlug,
+            protocol: "oidc",
+            reason,
+            path: req.path,
+            ...(callbackPhase ? { callback_phase: callbackPhase } : {}),
+          },
+        });
+      }
       const errorCode = publicOidcLoginErrorCode(reason);
       return res.redirect(
         buildLoginFailureRedirect(APP_URL, {
@@ -896,7 +900,7 @@ function oidcRoutes(_passport, express) {
         mappedReason = "email_not_verified_for_link";
       } else if (/email address/i.test(msg)) {
         mappedReason = "missing_email";
-      } else if (/strict membership sync is enabled/i.test(msg)) {
+      } else if (err?.code === "no_group_mapping_matched") {
         mappedReason = "no_group_mapping_matched";
       } else if (/could not resolve a user/i.test(msg)) {
         mappedReason = "oidc_no_user";
@@ -906,7 +910,8 @@ function oidcRoutes(_passport, express) {
         reason: mappedReason,
         callbackPhase,
       });
-      return failRedirect(mappedReason, callbackPhase);
+      const loginAuditRecorded = err?.code === "no_group_mapping_matched" && err.loginAuditRecorded === true;
+      return failRedirect(mappedReason, callbackPhase, loginAuditRecorded);
     }
   });
 

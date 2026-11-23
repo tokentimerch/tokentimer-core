@@ -486,6 +486,8 @@ describe("OIDC callback route", () => {
       idClaims.email_verified = verifiedEmail;
       const runtime = oidcProvider.getOidcRuntime(PROVIDER_SLUG);
       const originalEnsure = runtime.deps.ensureInitialWorkspaceForUser;
+      const originalAudit = runtime.deps.writeAudit;
+      runtime.deps.writeAudit = async (event) => callbackAudit.push(event);
       runtime.securityConfig.strictMembershipSync = true;
       runtime.deps.ensureInitialWorkspaceForUser = async (...args) => {
         const options = args[3];
@@ -516,10 +518,16 @@ describe("OIDC callback route", () => {
           assert.equal(location.searchParams.get("reason"), "no_group_mapping_matched");
           assert.equal(sessions.get(sid).user, undefined);
           assert.deepEqual(provisioned, []);
+          const failures = callbackAudit.filter(({ action }) => action === "LOGIN_FAILED");
+          assert.equal(failures.length, 1);
+          assert.equal(failures[0].subjectUserId, pool._state.users[0].id);
+          assert.equal(failures[0].metadata.provider_slug, PROVIDER_SLUG);
+          assert.equal(failures[0].metadata.reason, "no_group_mapping_matched");
         }
       } finally {
         runtime.securityConfig.strictMembershipSync = false;
         runtime.deps.ensureInitialWorkspaceForUser = originalEnsure;
+        runtime.deps.writeAudit = originalAudit;
       }
     });
   }
