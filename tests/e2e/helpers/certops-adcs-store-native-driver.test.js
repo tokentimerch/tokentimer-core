@@ -140,6 +140,31 @@ test("named Store observation counts independently observed persistent-key and i
   assert.throws(() => validateNativeCounts(nativeCounts(0, 0, 0), previous), /scope changed/);
 });
 
+test("named Store interruption requires a bound external loss observer and an unfinished durable install", async () => {
+  const { NAMED_STORE_SCOPE } = require("./certops-adcs-store-named-observation");
+  const { armStoreAcceptObserver, verifyNamedPostAcceptWindow } = require("./certops-adcs-store-native-driver");
+  const context = { observationScope: NAMED_STORE_SCOPE, candidateArchiveSha256: CANDIDATE_SHA256,
+    expectedLauncherSha256: "b".repeat(64) };
+  const binding = { captureId: "c".repeat(32), observationRunId: "d".repeat(32),
+    serviceProcess: { pid: 21, sid: "S-1-5-18", created: "2026-11-23T10:30:00.000Z" } };
+  await assert.rejects(armStoreAcceptObserver(context, binding), /Independent Store loss observer is required/);
+  const observer = { ready: Promise.resolve(), result: Promise.resolve(),
+    bindTarget() {}, readDrainage() {}, stopAndDrain() {}, hasLiveChild() { return false; } };
+  assert.equal(await armStoreAcceptObserver({ ...context, createNamedStoreAcceptObserver(actual) {
+    assert.deepEqual(actual, { ...binding, candidateArchiveSha256: CANDIDATE_SHA256, launcherSha256: context.expectedLauncherSha256 });
+    return observer;
+  } }, binding), observer);
+
+  const fault = { ...binding, phaseEvidenceSha256: "e".repeat(64), jobId: "job-1", containerName: "owned" };
+  const receipt = { jobId: fault.jobId, containerName: fault.containerName, status: "generated",
+    acceptedThumbprint: null, acceptedStore: null, acceptedAt: null };
+  assert.equal(verifyNamedPostAcceptWindow(fault, binding, receipt), fault.phaseEvidenceSha256);
+  assert.throws(() => verifyNamedPostAcceptWindow({ ...fault, phaseEvidenceSha256: undefined }, binding, receipt), /phase evidence/);
+  assert.throws(() => verifyNamedPostAcceptWindow(fault, binding, { ...receipt, status: "enrolled_by_agent" }), /already committed/);
+  assert.throws(() => verifyNamedPostAcceptWindow(fault, binding, { ...receipt, acceptedStore: "My" }), /already committed/);
+  assert.throws(() => verifyNamedPostAcceptWindow(fault, binding, { ...receipt, jobId: "another-job" }));
+});
+
 test("a service restart requires a fresh armed observation run in the same live capture", () => {
   const target = {
     candidateArchiveSha256: CANDIDATE_SHA256, captureId: "a".repeat(32), previousObservationRunId: "b".repeat(32),

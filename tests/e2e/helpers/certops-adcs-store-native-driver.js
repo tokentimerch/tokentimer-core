@@ -9,10 +9,10 @@ const { createHash } = require("node:crypto");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { readEnrollmentJournal } = require("../../../packages/agent/src/issuers/adcs-enrollment");
-const { buildEnrollmentContainerName } = require("../../../packages/agent/src/windows-cert-store");
+const { buildEnrollmentContainerName, readIssuedContainerRecord } = require("../../../packages/agent/src/windows-cert-store");
 const { recoveryWaitBudget } = require("./certops-adcs-uncertain-abandon");
 const { qualifyImmediateStoreRecovery } = require("./certops-adcs-store-recovery-proof");
-const { startNativeStoreObserver } = require("./certops-adcs-store-native-observer");
+const { startNativeStoreObserver, verifyNativeFault } = require("./certops-adcs-store-native-observer");
 const { inspectStoreOnlyCertificate } = require("../../../packages/agent/src/windows-cert-store/store-only");
 const { validateNativeCngEvidence, nativeCngEvidenceSha256 } = require("./certops-adcs-store-native-cng");
 const { NAMED_STORE_SCOPE, validateNamedStoreEvidence, verifyNamedStoreIdentity, namedStoreEvidenceDigest } = require("./certops-adcs-store-named-observation");
@@ -88,7 +88,7 @@ function createPublicEvidenceRecorder({ candidateArchiveSha256, writeEvidence, r
   const phases = new Set(["baseline", "post-accept", "ca-at-fault", "before-recovery-post", "before-service-start",
     "service-restarted", "ca-after-recovery", "pending-before-restart", "pending-after-restart",
     "inventory", "observations-drained", "failure"]);
-  const allowed = new Set(["candidateSha256", "dnsName", "captureId", "observationId", "observationRunId", "initialObservationRunId", "caPublicKeySha256", "baselineRequestId", "enrollmentId", "jobId", "fingerprintSha256", "csrSpkiSha256", "cngEvidenceSha256", "namedStoreEvidenceSha256", "observationScope", "ephemeralCng", "serviceDrainageSha256", "serviceStartSha256", "requestId", "serialNumber", "submissions", "keygens", "accepts", "stage", "code", "promotions"]);
+  const allowed = new Set(["candidateSha256", "dnsName", "captureId", "observationId", "observationRunId", "initialObservationRunId", "caPublicKeySha256", "baselineRequestId", "enrollmentId", "jobId", "fingerprintSha256", "csrSpkiSha256", "cngEvidenceSha256", "namedStoreEvidenceSha256", "observationScope", "ephemeralCng", "phaseEvidenceSha256", "serviceDrainageSha256", "serviceStartSha256", "requestId", "serialNumber", "submissions", "keygens", "accepts", "stage", "code", "promotions"]);
   const seen = new Set();
   const identities = new Map();
   let storeId = null, failed = false, busy = false;
@@ -101,7 +101,7 @@ function createPublicEvidenceRecorder({ candidateArchiveSha256, writeEvidence, r
     assert.ok(fields && typeof fields === "object" && !Array.isArray(fields));
     const numeric = new Set(["baselineRequestId", "submissions", "keygens", "accepts", "promotions"]);
     const hashes = new Set(["candidateSha256", "caPublicKeySha256", "fingerprintSha256", "csrSpkiSha256",
-      "cngEvidenceSha256", "namedStoreEvidenceSha256", "serviceDrainageSha256", "serviceStartSha256"]);
+      "cngEvidenceSha256", "namedStoreEvidenceSha256", "phaseEvidenceSha256", "serviceDrainageSha256", "serviceStartSha256"]);
     const ids = new Set(["captureId", "observationId", "observationRunId", "initialObservationRunId"]);
     const uuids = new Set(["enrollmentId", "jobId"]);
     const entry = { ...fields };
@@ -366,6 +366,38 @@ async function verifyRecoveryCheckpoint({ readNativeOperationCounts, readIndepen
 function requireActiveObservationInterruption() {
   throw new Error("Native AD CS qualification is blocked: active observation-loss interruption is not implemented");
 }
+async function armStoreAcceptObserver(context, binding) {
+  const { workDir, configDir, root, captureId, observationRunId, serviceProcess } = binding;
+  if (context.observationScope !== NAMED_STORE_SCOPE) {
+    return startNativeStoreObserver({ workDir, configDir, root });
+  }
+  assert.equal(typeof context.createNamedStoreAcceptObserver, "function", "Independent Store loss observer is required");
+  const observer = await context.createNamedStoreAcceptObserver({
+    candidateArchiveSha256: context.candidateArchiveSha256,
+    launcherSha256: context.expectedLauncherSha256,
+    captureId, observationRunId, serviceProcess,
+  });
+  assert.equal(typeof observer?.ready?.then, "function", "Independent observer readiness is required");
+  assert.equal(typeof observer.result?.then, "function", "Independent post-accept receipt is required");
+  for (const name of ["bindTarget", "readDrainage", "stopAndDrain", "hasLiveChild"]) {
+    assert.equal(typeof observer[name], "function", "Independent observer must bind the target and support drainage");
+  }
+  return observer;
+}
+
+function verifyNamedPostAcceptWindow(fault, binding, issuedContainer) {
+  for (const field of ["captureId", "observationRunId"]) assert.equal(fault[field], binding[field]);
+  assert.deepEqual(fault.serviceProcess, binding.serviceProcess, "Post-accept evidence identifies another service");
+  assert.match(fault.phaseEvidenceSha256, /^[a-f0-9]{64}$/, "Independent retained phase evidence is required");
+  assert.equal(issuedContainer?.containerName, fault.containerName);
+  assert.equal(issuedContainer.jobId, fault.jobId);
+  assert.equal(issuedContainer.status, "generated", "The installation receipt was already committed before the interruption");
+  for (const field of ["acceptedThumbprint", "acceptedStore", "acceptedAt"]) {
+    assert.equal(issuedContainer[field], null, "The installation receipt was already committed before the interruption");
+  }
+  return fault.phaseEvidenceSha256;
+}
+
 async function qualifyNativeStoreRecovery(context) {
   requireActiveObservationInterruption();
   assert.equal(process.platform, "win32");
@@ -413,7 +445,8 @@ async function qualifyNativeStoreRecovery(context) {
           captureId: capture.captureId, observationId: caObservation.observationId, observationRunId,
           caPublicKeySha256: caObservation.caPublicKeySha256, baselineRequestId: caObservation.baselineRequestId,
           submissions: 0, keygens: 0, accepts: 0, ...captureEvidenceDetails(lastCounts) });
-        observer = startNativeStoreObserver({ workDir, configDir, root });
+        const observerBinding = { captureId: capture.captureId, observationRunId, serviceProcess, workDir, configDir, root };
+        observer = await armStoreAcceptObserver(context, observerBinding);
         await observer.ready;
         stage = "issuing";
         const created = await fixture.request(`${api}/jobs`, "POST", {
@@ -427,11 +460,25 @@ async function qualifyNativeStoreRecovery(context) {
           JOIN certificate_enrollments e ON e.workspace_id=j.workspace_id AND e.id=j.enrollment_id
           WHERE j.workspace_id=$1 AND j.id=$2`, [fixture.workspaceId, jobId])).rows;
         assert.equal(rows.length, 1); enrollmentId = rows[0].enrollment_id; certificateId = rows[0].subject_id;
-        fs.writeFileSync(receipt, JSON.stringify({ enrollmentId, jobId, snapshotSha256: rows[0].snapshot_sha256,
-          containerName: buildEnrollmentContainerName(enrollmentId), domain: dnsName }), { flag: "wx" });
-        const fault = await observer.result;
+        const target = { enrollmentId, jobId, snapshotSha256: rows[0].snapshot_sha256,
+          containerName: buildEnrollmentContainerName(enrollmentId), domain: dnsName };
+        const named = context.observationScope === NAMED_STORE_SCOPE;
+        if (named) await observer.bindTarget(target);
+        else fs.writeFileSync(receipt, JSON.stringify(target), { flag: "wx" });
+        const observed = await observer.result;
+        let serviceDrainageSha256;
+        if (named) {
+          serviceDrainageSha256 = await verifyOwnedServiceDrainage({
+            stopAndVerifyOwnedService: (identity) => observer.readDrainage(identity),
+            candidateArchiveSha256: context.candidateArchiveSha256, captureId: capture.captureId, serviceProcess,
+          });
+        }
         await observer.stopAndDrain(); assert.equal(observer.hasLiveChild(), false);
+        const fault = named ? verifyNativeFault(observed, { configDir }) : observed;
         assert.equal(fault.enrollmentId, enrollmentId); assert.equal(fault.jobId, jobId);
+        const phaseEvidence = named ? { serviceDrainageSha256,
+          phaseEvidenceSha256: verifyNamedPostAcceptWindow(fault, observerBinding,
+            readIssuedContainerRecord({ stateDir: configDir, containerName: fault.containerName })) } : {};
         initial = readEnrollmentJournal(configDir, enrollmentId); assert.equal(initial.kind, "valid");
         beforeCounts = validateInitialNativeCounts(
           await readNativeOperationCounts({ enrollmentId, jobId, containerName: fault.containerName }), lastCounts);
@@ -441,7 +488,7 @@ async function qualifyNativeStoreRecovery(context) {
         await recordEvidence("post-accept", { candidateSha256: context.candidateArchiveSha256, dnsName, enrollmentId,
           jobId, fingerprintSha256: fault.fingerprintSha256, csrSpkiSha256: fault.csrSpkiSha256,
           captureId: capture.captureId, submissions: beforeCounts.submissions, keygens: beforeCounts.keygens,
-          accepts: beforeCounts.accepts, ...captureEvidenceDetails(beforeCounts) });
+          accepts: beforeCounts.accepts, ...captureEvidenceDetails(beforeCounts), ...phaseEvidence });
         return fault;
       },
       async caObserver({ dnsName, fingerprintSha256 }) {
@@ -604,4 +651,4 @@ async function qualifyInstalledStoreRecovery(context) {
   return { postAccept, pending };
 }
 
-module.exports = { qualifyInstalledStoreRecovery, qualifyNativeStoreRecovery, validateSeparateStoreRecoveryEvidence, captureEvidenceDetails, validateNativeCounts, validateInitialNativeCounts, validateCaptureStart, stopNativeCapture, validateCaObservationStart, validateCaObservationWindow, stopCaObservation, drainQualificationResources, verifyRecoveryCheckpoint, validateCaBaselineWindow, verifyPreIssueCheckpoint, createPublicEvidenceRecorder, verifyCandidateHost, requireActiveObservationInterruption, readStoreServiceProcess, requireStoreServiceProcess, verifyOwnedServiceDrainage, validateObservedServiceStart, startObservedStoreService, OBSERVATION_RUN_ID };
+module.exports = { qualifyInstalledStoreRecovery, qualifyNativeStoreRecovery, armStoreAcceptObserver, verifyNamedPostAcceptWindow, validateSeparateStoreRecoveryEvidence, captureEvidenceDetails, validateNativeCounts, validateInitialNativeCounts, validateCaptureStart, stopNativeCapture, validateCaObservationStart, validateCaObservationWindow, stopCaObservation, drainQualificationResources, verifyRecoveryCheckpoint, validateCaBaselineWindow, verifyPreIssueCheckpoint, createPublicEvidenceRecorder, verifyCandidateHost, requireActiveObservationInterruption, readStoreServiceProcess, requireStoreServiceProcess, verifyOwnedServiceDrainage, validateObservedServiceStart, startObservedStoreService, OBSERVATION_RUN_ID };
