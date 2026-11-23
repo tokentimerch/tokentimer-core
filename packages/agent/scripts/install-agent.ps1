@@ -510,6 +510,14 @@ function Get-ServiceNodePath {
     return (Get-ServiceCommandNodeInfo -ServiceCommand $ServiceCommand).NodePath
 }
 
+function Get-WindowsServiceCaIntent {
+    param([string[]]$Options)
+    return [pscustomobject]@{
+        Base = $Options | Where-Object { $_ -cin @('--use-bundled-ca','--use-openssl-ca') } | Select-Object -Last 1
+        System = $Options | Where-Object { $_ -cin @('--use-system-ca','--no-use-system-ca') } | Select-Object -Last 1
+    }
+}
+
 function Resolve-WindowsServiceCaOptions {
     param([string[]]$Existing, [version]$NodeVersion, [string]$ServiceCommand, [string]$MachineOptions)
     $environmentOptions = @(Get-WindowsServiceCaOptions -Existing $Existing -NodeVersion $NodeVersion)
@@ -528,12 +536,37 @@ function Resolve-WindowsServiceCaOptions {
             throw 'machine NODE_OPTIONS contains CA settings; configure explicit per-service trust before reinstalling'
         }
     }
-    if ($serviceOptions.Count -and $environmentOptions.Count -and
-        ($serviceOptions -join ' ') -cne ($environmentOptions -join ' ')) {
+    $serviceIntent = Get-WindowsServiceCaIntent -Options $serviceOptions
+    $environmentIntent = Get-WindowsServiceCaIntent -Options $environmentOptions
+    $systemSetting = @($Existing | Where-Object { $_ -match '^(?i:NODE_USE_SYSTEM_CA)=' })
+    $systemEnvironmentIntent = $environmentIntent.System
+    if (-not $systemEnvironmentIntent -and $systemSetting.Count) {
+        $systemEnvironmentIntent = if ($systemSetting[0] -ieq 'NODE_USE_SYSTEM_CA=1') { '--use-system-ca' } else { '--no-use-system-ca' }
+    }
+    if (($serviceIntent.Base -and $environmentIntent.Base -and $serviceIntent.Base -cne $environmentIntent.Base) -or
+        ($serviceIntent.System -and $systemEnvironmentIntent -and $serviceIntent.System -cne $systemEnvironmentIntent)) {
         throw 'service command and environment CA settings differ; reconcile them before reinstalling'
     }
-    if ($serviceOptions.Count) { return $serviceOptions }
-    return $environmentOptions
+
+    $resolved = @($serviceOptions)
+    foreach ($option in $environmentOptions) {
+        if (($option -cin @('--use-bundled-ca','--use-openssl-ca') -and -not $serviceIntent.Base) -or
+            ($option -cin @('--use-system-ca','--no-use-system-ca') -and -not $serviceIntent.System)) {
+            $resolved += $option
+        }
+    }
+    # Older supported Node builds recognize the flag before they recognize the environment variable.
+    $supportsSystemCaEnvironment = ($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.19.0') -or
+        ($NodeVersion.Major -eq 24 -and $NodeVersion -ge [version]'24.6.0')
+    if ($systemEnvironmentIntent -ceq '--use-system-ca' -and -not $serviceIntent.System -and
+        -not $environmentIntent.System -and -not $supportsSystemCaEnvironment) {
+        try {
+            $resolved += Get-WindowsServiceCaOptions -Existing @('NODE_OPTIONS=--use-system-ca') -NodeVersion $NodeVersion
+        } catch {
+            throw 'the selected Node runtime cannot preserve NODE_USE_SYSTEM_CA=1; upgrade Node or configure an explicit CA bundle'
+        }
+    }
+    return $resolved
 }
 
 function Assert-ServiceCaRecoveryCommand {
