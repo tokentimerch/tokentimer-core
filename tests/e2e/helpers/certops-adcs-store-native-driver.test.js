@@ -97,6 +97,41 @@ test("paired Store recovery evidence requires separate capture and receipt ident
   assert.throws(() => verify({ ...pending, candidateArchiveSha256: "0".repeat(64) }), /different signed package/);
 });
 
+test("named Store observation counts independently observed persistent-key and install evidence", () => {
+  const { NAMED_STORE_SCOPE, verifyNamedStoreIdentity } = require("./certops-adcs-store-named-observation");
+  const { captureEvidenceDetails } = require("./certops-adcs-store-native-driver");
+  const captureId = "a".repeat(32);
+  const containerName = "tokentimer-enr-00000000-0000-0000-0000-000000000001";
+  const evidence = { captureId, candidateSha256: CANDIDATE_SHA256, calibrationSha256: "b".repeat(64),
+    sourceLoss: { ca: 0, key: 0, process: 0 }, events: [] };
+  const base = { scope: NAMED_STORE_SCOPE, captureId, submissions: 0, keygens: 0, accepts: 0, namedEvidence: evidence };
+  const capture = { started: true, captureId, baseline: base, async read() {}, async stop() {} };
+  assert.throws(() => validateCaptureStart(capture, CANDIDATE_SHA256), /scope/);
+  const previous = validateCaptureStart(capture, CANDIDATE_SHA256, NAMED_STORE_SCOPE);
+  const events = [
+    { sequence: 1, kind: "named-key-create", recordId: "17", containerName },
+    { sequence: 2, kind: "ca-submission", recordId: "8", requestId: "21" },
+    { sequence: 3, kind: "certreq-accept-start", recordId: "12", pid: 1490, createdFileTime: "0000000000000001" },
+  ];
+  const issued = { ...base, submissions: 1, keygens: 1, accepts: 1, namedEvidence: { ...evidence, events } };
+  const checked = validateInitialNativeCounts(issued, previous);
+  verifyNamedStoreIdentity(checked, { containerName, requestId: "21" });
+  assert.throws(() => verifyNamedStoreIdentity(checked, { containerName: "different" }), /another key container/);
+  assert.throws(() => verifyNamedStoreIdentity(checked, { requestId: "22" }), /another CA RequestId/);
+  const report = captureEvidenceDetails(checked);
+  assert.equal(report.observationScope, NAMED_STORE_SCOPE);
+  assert.equal(report.ephemeralCng, "not-qualified");
+  assert.match(report.namedStoreEvidenceSha256, /^[a-f0-9]{64}$/);
+  assert.equal(report.cngEvidenceSha256, undefined);
+  assert.throws(() => validateNativeCounts({ ...issued, coverageComplete: true }), /exhaustive CNG/);
+  assert.throws(() => validateNativeCounts({ ...issued, accepts: 0 }), /differs from observed certreq/);
+  assert.throws(() => validateNativeCounts({ ...issued, namedEvidence: { ...issued.namedEvidence,
+    sourceLoss: { ca: 0, key: 0, process: 1 } } }), /reported loss/);
+  assert.throws(() => validateNativeCounts({ ...issued, namedEvidence: { ...issued.namedEvidence,
+    events: [events[0], { ...events[1], requestId: "22" }, events[2]] } }, checked), /rewrote a previous checkpoint/);
+  assert.throws(() => validateNativeCounts(nativeCounts(0, 0, 0), previous), /scope changed/);
+});
+
 test("a service restart requires a fresh armed observation run in the same live capture", () => {
   const target = {
     candidateArchiveSha256: CANDIDATE_SHA256, captureId: "a".repeat(32), previousObservationRunId: "b".repeat(32),

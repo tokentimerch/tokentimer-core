@@ -5,7 +5,7 @@
 // and exact cleanup. SQL reads evidence. Only the deployed worker schedules jobs.
 const assert = require("node:assert/strict");
 const { createHash, X509Certificate } = require("node:crypto");
-const { nativeCngEvidenceSha256 } = require("./certops-adcs-store-native-cng");
+const { verifyNamedStoreIdentity } = require("./certops-adcs-store-named-observation");
 const { buildEnrollmentContainerName } = require("../../../packages/agent/src/windows-cert-store");
 const { inspectStoreOnlyCertificate } = require("../../../packages/agent/src/windows-cert-store/store-only");
 const { readEnrollmentJournal } = require("../../../packages/agent/src/issuers/adcs-enrollment");
@@ -17,7 +17,7 @@ const {
   validateCaObservationStart, validateCaObservationWindow, verifyPreIssueCheckpoint,
   stopNativeCapture, stopCaObservation, createPublicEvidenceRecorder,
   verifyOwnedServiceDrainage,
-  startObservedStoreService, OBSERVATION_RUN_ID,
+  startObservedStoreService, captureEvidenceDetails, OBSERVATION_RUN_ID,
 } = require("./certops-adcs-store-native-driver");
 
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -138,7 +138,7 @@ async function qualifyPendingStoreRecovery(context) {
     assert.equal(typeof capture?.start, "function");
     assert.equal(typeof capture.stop, "function");
     await capture.start();
-    const baseline = validateCaptureStart(capture, context.candidateArchiveSha256);
+    const baseline = validateCaptureStart(capture, context.candidateArchiveSha256, context.observationScope);
     const { issuerId } = await preparePendingRun({ dnsName, agentRowId, template: PENDING_TEMPLATE });
     assert.match(issuerId, UUID);
     const ready = await verifyPreIssueCheckpoint(capture, caObservation, baseline);
@@ -146,7 +146,7 @@ async function qualifyPendingStoreRecovery(context) {
       candidateSha256: context.candidateArchiveSha256, dnsName, captureId: capture.captureId,
       observationId: caObservation.observationId, observationRunId, caPublicKeySha256: caObservation.caPublicKeySha256,
       baselineRequestId: caObservation.baselineRequestId, submissions: 0, keygens: 0, accepts: 0,
-      cngEvidenceSha256: nativeCngEvidenceSha256(ready),
+      ...captureEvidenceDetails(ready),
     });
 
     const target = { type: "windows-cert-store", reference: dnsName, store: "My" };
@@ -195,7 +195,11 @@ async function qualifyPendingStoreRecovery(context) {
     for (const field of ["csrSha256", "csrSpkiSha256", "snapshotSha256"]) assert.match(original.journal[field], SHA256);
 
     const observeRequest = () => observePendingCaRequest({ dnsName, id: requestId, execFileImpl: caObserverExec });
-    const readCounts = () => readNativeOperationCounts({ enrollmentId, jobId, containerName });
+    const readCounts = async () => {
+      const counts = await readNativeOperationCounts({ enrollmentId, jobId, containerName });
+      verifyNamedStoreIdentity(counts, { containerName, requestId });
+      return counts;
+    };
     const checkPendingWindow = async () => {
       const window = await readIndependentCaObservation({ dnsName, requestId, observation: caObservation });
       validatePendingCaWindow(window, caObservation, requestId);
@@ -205,7 +209,7 @@ async function qualifyPendingStoreRecovery(context) {
       observationId: caObservation.observationId, observationRunId, caPublicKeySha256: caObservation.caPublicKeySha256,
       baselineRequestId: caObservation.baselineRequestId, enrollmentId, jobId, requestId,
       csrSpkiSha256: original.journal.csrSpkiSha256, submissions: counts.submissions, keygens: counts.keygens,
-      accepts: counts.accepts, cngEvidenceSha256: nativeCngEvidenceSha256(counts), ...drainage,
+      accepts: counts.accepts, ...captureEvidenceDetails(counts), ...drainage,
     });
     const caPending = await observeRequest();
     assert.equal(caPending.disposition, 9);
@@ -335,7 +339,7 @@ async function qualifyPendingStoreRecovery(context) {
   }
   const { counts: drainedCounts, window: drainedWindow, serviceDrainageSha256 } = drained;
   assert.equal(serialIdentity(drainedWindow.serialNumber), serialIdentity(receipt.serialNumber));
-  const cngEvidenceSha256 = nativeCngEvidenceSha256(drainedCounts);
+  const observationDetails = captureEvidenceDetails(drainedCounts);
   const evidence = await recordEvidence("observations-drained", {
     candidateSha256: receipt.candidateArchiveSha256, dnsName, captureId: receipt.captureId,
     observationId: receipt.observationId, initialObservationRunId: receipt.initialObservationRunId,
@@ -344,9 +348,9 @@ async function qualifyPendingStoreRecovery(context) {
     baselineRequestId: receipt.baselineRequestId, requestId: receipt.requestId, serialNumber: receipt.serialNumber,
     enrollmentId: receipt.enrollmentId, jobId: receipt.jobId, fingerprintSha256: receipt.fingerprintSha256,
     csrSpkiSha256: receipt.csrSpkiSha256, submissions: drainedCounts.submissions, keygens: drainedCounts.keygens,
-    accepts: drainedCounts.accepts, promotions: receipt.promotions, cngEvidenceSha256, serviceDrainageSha256,
+    accepts: drainedCounts.accepts, promotions: receipt.promotions, ...observationDetails, serviceDrainageSha256,
   });
-  return { ...receipt, cngEvidenceSha256, serviceDrainageSha256,
+  return { ...receipt, ...observationDetails, serviceDrainageSha256,
     evidenceReceiptId: evidence.receiptId, evidenceReceiptSha256: evidence.sha256 };
 }
 
