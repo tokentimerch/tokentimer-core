@@ -4,6 +4,7 @@ const { before, after, test } = require("node:test");
 const assert = require("node:assert/strict");
 const { randomUUID } = require("node:crypto");
 const { spawnSync } = require("node:child_process");
+const { Client } = require("pg");
 
 const name = "tt-store-upgrade-" + randomUUID();
 let container, pool, migrations;
@@ -12,9 +13,55 @@ function docker(args) {
   assert.equal(result.status, 0, result.stderr || String(result.error));
   return result.stdout.trim();
 }
-function migrate() {
-  const result = spawnSync(process.execPath, ["apps/api/migrations/migrate.js"], { encoding: "utf8", timeout: 120000, env: process.env });
+function migrate(database = process.env.DB_NAME) {
+  const result = spawnSync(process.execPath, ["apps/api/migrations/migrate.js"], {
+    encoding: "utf8", timeout: 120000, env: { ...process.env, DB_NAME: database },
+  });
   assert.equal(result.status, 0, result.stderr || String(result.error));
+}
+
+async function applyHistory(client, registry) {
+  await client.query("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name VARCHAR(255) NOT NULL, executed_at TIMESTAMP DEFAULT NOW())");
+  for (const entry of registry) {
+    await client.query("BEGIN");
+    try {
+      await migrations.applyMigrationSql(client, entry);
+      await client.query("INSERT INTO migrations(version,name) VALUES ($1,$2)", [entry.version, entry.name]);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+    await migrations.applyPostCommitSql(client, entry);
+  }
+}
+
+async function withAppliedHistory(registry, check) {
+  const database = "store_upgrade_" + randomUUID().replaceAll("-", "") + "_test";
+  assert.match(database, /^store_upgrade_[a-f0-9]{32}_test$/);
+  await pool.query(`CREATE DATABASE "${database}"`);
+  const client = new Client({
+    host: process.env.DB_HOST, port: Number(process.env.DB_PORT), database,
+    user: process.env.DB_USER, password: process.env.DB_PASSWORD,
+  });
+  await client.connect();
+  try {
+    await applyHistory(client, registry);
+    await check(client, database);
+  } finally {
+    await client.end();
+  }
+}
+
+async function readLedger(client) {
+  return (await client.query("SELECT version,name,executed_at FROM migrations ORDER BY version")).rows;
+}
+
+async function assertReceiptColumns(client) {
+  const receiptFields = await client.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='certops_adcs_expected_identity_receipts'");
+  for (const column of ["origin_xid", "committed_seen_at", "receipt_claim_expires_at"]) {
+    assert.ok(receiptFields.rows.some(({ column_name }) => column_name === column), column);
+  }
 }
 
 before(async () => {
@@ -44,18 +91,9 @@ after(async () => {
 test("upgrades a real main database with PagerDuty recovery at migration 114 and repeats safely", async () => {
   const client = await pool.connect();
   try {
-    await client.query("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name VARCHAR(255) NOT NULL, executed_at TIMESTAMP DEFAULT NOW())");
-    for (const entry of migrations.migrations.filter(item => item.version <= 114)) {
-      await client.query("BEGIN");
-      try {
-        await migrations.applyMigrationSql(client, entry);
-        await client.query("INSERT INTO migrations(version,name) VALUES ($1,$2)", [entry.version, entry.name]);
-        await client.query("COMMIT");
-      } catch (error) { await client.query("ROLLBACK"); throw error; }
-      await migrations.applyPostCommitSql(client, entry);
-    }
-    const before = await client.query("SELECT version,name,executed_at FROM migrations ORDER BY version");
-    assert.equal(before.rows.at(-1).name, "distribution_pagerduty_recovery");
+    await applyHistory(client, migrations.migrations.filter(item => item.version <= 114));
+    const before = await readLedger(client);
+    assert.equal(before.at(-1).name, "distribution_pagerduty_recovery");
     migrate();
     const afterFirst = await client.query("SELECT version,name,executed_at FROM migrations WHERE version >= 109 ORDER BY version");
     assert.deepEqual(afterFirst.rows.map(({ version, name }) => [version, name]), [
@@ -81,13 +119,10 @@ test("upgrades a real main database with PagerDuty recovery at migration 114 and
       [128, "shared_sso_schema"],
     ]);
     const preserved = await client.query("SELECT version,name,executed_at FROM migrations WHERE version <= 114 ORDER BY version");
-    assert.deepEqual(preserved.rows, before.rows);
+    assert.deepEqual(preserved.rows, before);
     const objects = await client.query("SELECT to_regclass('certops_acme_store_enrollments') AS acme, to_regclass('certops_adcs_expected_identity_receipts') AS adcs, to_regprocedure('certops_sync_open_management_automation()') AS sync");
     assert.ok(objects.rows[0].acme && objects.rows[0].adcs && objects.rows[0].sync);
-    const receiptFields = await client.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='certops_adcs_expected_identity_receipts'");
-    for (const column of ["origin_xid", "committed_seen_at", "receipt_claim_expires_at"]) {
-      assert.ok(receiptFields.rows.some(({ column_name }) => column_name === column));
-    }
+    await assertReceiptColumns(client);
     const constraint = await client.query("SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid='certificate_jobs'::regclass AND conname='certificate_jobs_operation_check'");
     for (const operation of ["cleanup-from-store", "reconcile-from-store", "adcs-installation-proof"]) assert.match(constraint.rows[0].definition, new RegExp(operation));
     migrate();
@@ -95,3 +130,67 @@ test("upgrades a real main database with PagerDuty recovery at migration 114 and
     assert.deepEqual(afterSecond.rows, afterFirst.rows);
   } finally { client.release(); }
 }, { timeout: 180000 });
+
+test("fills recovery 114 and revocation 122 without rewriting an applied canonical Store ledger", async () => {
+  const missing = new Map([
+    [114, "distribution_pagerduty_recovery"],
+    [122, "certops_observed_revocation"],
+  ]);
+  const registry = migrations.migrations.filter(({ version }) => !missing.has(version));
+  await withAppliedHistory(registry, async (client, database) => {
+    const before = await readLedger(client);
+    migrate(database);
+    const upgraded = await readLedger(client);
+    assert.deepEqual(upgraded.filter(({ version }) => !missing.has(version)), before);
+    for (const [version, name] of missing) {
+      assert.equal(upgraded.find((row) => row.version === version)?.name, name);
+    }
+    await assertReceiptColumns(client);
+    migrate(database);
+    assert.deepEqual(await readLedger(client), upgraded);
+  });
+}, { timeout: 180000 });
+
+const retirementBase = ["certops_period_creator_delete", "recipient_member_verification",
+  "auto_sync_owner_username", "certops_material_reconciliation"];
+const recovery = "distribution_pagerduty_recovery";
+const observedRevocation = "certops_observed_revocation";
+const store = ["store_issuance_explicit_renewal_consent", "certops_acme_store_enrollment_identity",
+  "certops_adcs_expected_identity_receipts"];
+const receiptDeadline = "certops_adcs_receipt_deadline";
+const iis = ["certops_windows_iis_consent", "certops_material_adcs_operation_union",
+  "certops_iis_absence_proofs", "certops_enrollment_jobs_index"];
+const rotationsAndPreflight = ["agent_credential_rotations", "agent_credential_rotation_ack",
+  "certops_adcs_preflight_lookup_index"];
+const tail = ["auto_sync_creation_expiration", "shared_sso_schema"];
+
+for (const [history, applied, remaining] of [
+  ["recovery-first", [recovery], [...store, ...iis, observedRevocation, ...rotationsAndPreflight, receiptDeadline, ...tail]],
+  ["revocation-first", [recovery, observedRevocation], [...store, ...iis, ...rotationsAndPreflight, receiptDeadline, ...tail]],
+  ["Store-first", [...store, receiptDeadline], [recovery, ...iis, observedRevocation, ...rotationsAndPreflight, ...tail]],
+]) {
+  test(`retirement preview with ${history} history upgrades and survives restart`, async () => {
+    const findDefinition = (name) => {
+      const entry = migrations.migrations.find((migration) => migration.name === name);
+      assert.ok(entry, `Missing migration definition: ${name}`);
+      return entry;
+    };
+    const recorded = [...retirementBase, ...applied];
+    const registry = [
+      ...migrations.migrations.filter(({ version }) => version <= 108),
+      { ...findDefinition("certops_retirement_dossiers"), version: 109 },
+      ...recorded.map((name, index) => ({ ...findDefinition(name), version: 110 + index })),
+    ];
+    await withAppliedHistory(registry, async (client, database) => {
+      const before = await readLedger(client);
+      migrate(database);
+      const upgraded = await readLedger(client);
+      assert.deepEqual(upgraded.slice(0, before.length), before);
+      assert.deepEqual(upgraded.slice(before.length).map(({ version, name }) => [version, name]),
+        remaining.map((name, index) => [before.at(-1).version + index + 1, name]));
+      await assertReceiptColumns(client);
+      migrate(database);
+      assert.deepEqual(await readLedger(client), upgraded);
+    });
+  }, { timeout: 180000 });
+}
