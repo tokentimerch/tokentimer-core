@@ -1,5 +1,6 @@
 # Supply sso-providers.json in the ConfigMap and the keyring and referenced
 # provider environment variables in the Secret, all in the API namespace.
+# Set enabled: true on at most one provider in the manifest.
 api:
   env:
     SSO_PROVIDERS_BOOTSTRAP_FILE: /etc/tokentimer/sso/sso-providers.json

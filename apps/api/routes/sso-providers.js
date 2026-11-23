@@ -211,7 +211,7 @@ router.put(
         const action = req.body.enabled === false ? "SSO_PROVIDER_DISABLED" : "SSO_PROVIDER_UPDATED";
         await auditProvider(client, req.user.id, slug, action, {
           clearSecrets: secretChanges.cleared,
-          ...(req.body.selectForProtocol === true && { selected_for_protocol: updated.type }),
+          ...(req.body.selectForSignIn === true && { selected_for_sign_in: true }),
         });
         await auditSecretChanges(client, req.user.id, slug, secretChanges);
         return updated;

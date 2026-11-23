@@ -14,13 +14,13 @@ function appWithProviders(rows) {
   mountSsoRoutes(app, {
     express,
     passport,
-    pool: { query: async (_sql, [protocol]) => ({ rows: rows.filter((row) => row.type === protocol) }) },
+    pool: { query: async () => ({ rows: rows.filter((row) => row.enabled !== false).slice(0, 2) }) },
   });
   return app;
 }
 
-describe("Core per-protocol SSO routes", () => {
-  it("gates only the protocol with multiple enabled providers", async () => {
+describe("Core single-provider SSO routes", () => {
+  it("gates all sign-in routes while enabled providers conflict", async () => {
     const rows = [
       { slug: "first", type: "oidc", enabled: true },
       { slug: "other", type: "oidc", enabled: true },
@@ -30,14 +30,20 @@ describe("Core per-protocol SSO routes", () => {
     await request(app).get("/auth/oidc/first").expect(404);
     await request(app).get("/auth/oidc/first/callback").expect(404);
     await request(app).get("/auth/oidc/other").expect(404);
-    await request(app).get("/auth/saml/second").expect(302);
+    await request(app).get("/auth/saml/second").expect(404);
+    await request(app).post("/auth/saml/second/callback").expect(404);
+    await request(app).get("/auth/saml/second/metadata").expect(404);
   });
 
-  it("dispatches one enabled provider of each protocol", async () => {
-    const app = appWithProviders([{ type: "oidc", slug: "openid" }, { type: "saml", slug: "assertion" }]);
-    await request(app).get("/auth/oidc/openid").expect(302);
-    await request(app).get("/auth/saml/assertion").expect(302);
-    await request(app).get("/auth/oidc/assertion").expect(404);
+  it("dispatches either protocol only when it is the single enabled provider", async () => {
+    const oidc = { type: "oidc", slug: "openid", enabled: true };
+    const saml = { type: "saml", slug: "assertion", enabled: true };
+    const withOidc = appWithProviders([oidc, { ...saml, enabled: false }]);
+    await request(withOidc).get("/auth/oidc/openid").expect(302);
+    await request(withOidc).get("/auth/saml/assertion").expect(404);
+    const withSaml = appWithProviders([saml]);
+    await request(withSaml).get("/auth/saml/assertion").expect(302);
+    await request(withSaml).get("/auth/oidc/assertion").expect(404);
   });
 
   it("keeps encoded and slugless routes outside the authentication handlers", async () => {

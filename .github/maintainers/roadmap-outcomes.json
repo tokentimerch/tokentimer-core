@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reviewedAt": "2026-11-17",
+  "reviewedAt": "2026-11-23",
   "repository": "tokentimerch/tokentimer-core",
   "outcomes": [
     {
@@ -107,6 +107,17 @@
       "edition": "core",
       "horizon": "v1",
       "inRoadmap": true
+    },
+    {
+      "id": "single-sign-on",
+      "title": "Single sign-on in Core",
+      "issue": 766,
+      "edition": "core",
+      "horizon": "alongside-0.x",
+      "inRoadmap": true,
+      "implementationPrs": [
+        779
+      ]
     },
     {
       "id": "mcp",

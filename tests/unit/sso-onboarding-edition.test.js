@@ -88,7 +88,7 @@ test("the summary counts providers that can sign in and mappings on them", async
     const db = fakeDb({
       providers: [
         { slug: "okta", name: "Okta" },
-        { slug: "keycloak", name: "Keycloak", type: "saml" },
+        { slug: "keycloak", name: "Keycloak", type: "saml", enabled: false },
         { slug: "old", name: "Old", enabled: false },
       ],
       mappings: [
@@ -101,11 +101,11 @@ test("the summary counts providers that can sign in and mappings on them", async
       applicable: true,
       providers: {
         total: 3,
-        enabled: 2,
+        enabled: 1,
         signInReady: 1,
         items: [
           { slug: "okta", type: "oidc", displayName: "Okta", enabled: true, signInReady: true },
-          { slug: "keycloak", type: "saml", displayName: "Keycloak", enabled: true, signInReady: false },
+          { slug: "keycloak", type: "saml", displayName: "Keycloak", enabled: false, signInReady: false },
           { slug: "old", type: "oidc", displayName: "Old", enabled: false, signInReady: false },
         ],
       },
@@ -118,16 +118,16 @@ test("the summary counts providers that can sign in and mappings on them", async
   }
 });
 
-test("the summary gates same-protocol conflicts even with previously ready strategies", async (t) => {
+test("the summary gates cross-protocol conflicts even with previously ready strategies", async (t) => {
   setProviderRuntimeStatus("one", { registered: true, signInReady: true });
   setProviderRuntimeStatus("saml", { registered: true, signInReady: true });
   t.after(() => {
     removeProviderRuntimeStatus("one");
     removeProviderRuntimeStatus("saml");
   });
-  const db = fakeDb({ providers: [{ slug: "one" }, { slug: "two" }, { slug: "saml", type: "saml" }] });
+  const db = fakeDb({ providers: [{ slug: "one" }, { slug: "saml", type: "saml" }] });
   const out = await edition.ssoSummary({ db, user: { id: 1, isSystemAdmin: true } });
-  assert.deepEqual(out.providers.items.map((provider) => provider.signInReady), [false, false, true]);
+  assert.deepEqual(out.providers.items.map((provider) => provider.signInReady), [false, false]);
 });
 
 test("an empty deployment reports zero everywhere", async () => {

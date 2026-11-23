@@ -45,7 +45,7 @@ Check the migration Job and all six worker CronJobs. New CronJob specifications 
 
 Sign in, check the inventory and workspace recipients, run the SMTP test, and inspect discovery/delivery worker results. Follow [First asset and alert check](FIRST_ASSET.md) when verifying the full notification path. If you use CertOps, confirm agent compatibility and renewal state before scheduling real work.
 
-If you adopt a database with SSO, verify the local administrator and both active protocols. Resolve same-protocol conflicts in **SSO Providers** before directing users to the new installation. See [changing providers](AUTHENTICATION.md#single-sign-on).
+If you adopt a database with SSO, verify local administrator access and select a single enabled provider in **SSO Providers** if more than one is enabled. Verify sign-in through the selected provider before directing users to the new installation. See [changing providers](AUTHENTICATION.md#single-sign-on).
 
 ## Recover a failed upgrade
 

@@ -18,7 +18,7 @@
       "slug": "keycloak-saml",
       "type": "saml",
       "displayName": "Keycloak SAML",
-      "enabled": true,
+      "enabled": false,
       "config": {
         "issuer": "https://api.example.com/saml",
         "entry_point": "https://idp.example.com/realms/internal/protocol/saml",

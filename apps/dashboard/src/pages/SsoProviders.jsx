@@ -189,7 +189,7 @@ export default function SsoProviders({ session, onLogout, onAccountClick }) {
     try {
       const { data } = await apiClient.put(`/api/admin/sso/providers/${slug}`, {
         enabled: true,
-        selectForProtocol: true,
+        selectForSignIn: true,
       });
       if (
         Array.isArray(data?.sso_reload_warnings) &&
@@ -227,14 +227,7 @@ export default function SsoProviders({ session, onLogout, onAccountClick }) {
     }
   }
 
-  const conflicts = ['oidc', 'saml']
-    .map(type => ({
-      type,
-      providers: providers.filter(
-        provider => provider.enabled && provider.type === type
-      ),
-    }))
-    .filter(conflict => conflict.providers.length > 1);
+  const enabledProviders = providers.filter(provider => provider.enabled);
 
   const headerActions = (
     <HStack spacing={2} flexWrap='wrap'>
@@ -259,21 +252,21 @@ export default function SsoProviders({ session, onLogout, onAccountClick }) {
     <SsoAdminPageShell
       seoTitle='SSO Providers'
       title='SSO Providers'
-      subtitle='Configure one active OIDC provider and one active SAML provider for sign-in.'
+      subtitle='Core supports one active SSO provider, either OIDC or SAML.'
       variant='wide'
       actions={headerActions}
       session={session}
       onLogout={onLogout}
       onAccountClick={onAccountClick}
     >
-      {conflicts.map(({ type, providers: choices }) => (
-        <StatusPanel key={type} status='warning'>
+      {enabledProviders.length > 1 ? (
+        <StatusPanel status='warning'>
           <VStack align='start'>
             <Text>
-              Multiple {type.toUpperCase()} providers are enabled. Select one to
-              keep enabled for {type.toUpperCase()} sign-in.
+              Multiple SSO providers are enabled. Sign-in is paused. Select one
+              provider to keep enabled for this installation.
             </Text>
-            {choices.map(provider => (
+            {enabledProviders.map(provider => (
               <DashboardActionButton
                 key={provider.slug}
                 isLoading={selectingSlug === provider.slug}
@@ -285,7 +278,7 @@ export default function SsoProviders({ session, onLogout, onAccountClick }) {
             ))}
           </VStack>
         </StatusPanel>
-      ))}
+      ) : null}
       {loading && providers.length === 0 ? (
         <DashboardPanel role='status' aria-busy='true'>
           <DashboardState type='loading' title='Loading providers...' />

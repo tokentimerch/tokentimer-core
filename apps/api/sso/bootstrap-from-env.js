@@ -20,7 +20,6 @@ const {
   listProviders,
   lockProviderChanges,
   enabledProviderRows,
-  conflictingProviderTypes,
 } = require("./provider-registry.js");
 const { bumpSsoConfigVersion } = require("./sso-config-version.js");
 
@@ -115,7 +114,7 @@ async function upsertManifestProvider(pool, entry, meta = {}, txOpts = {}) {
     type: entry.type,
     displayName: entry.displayName,
     enabled: entry.enabled === true,
-    selectForProtocol: txOpts.selectForProtocol === true,
+    selectForSignIn: txOpts.selectForSignIn === true,
     sortOrder: entry.sort_order ?? 100,
     config,
     claim_mapping: entry.claim_mapping || {},
@@ -148,7 +147,7 @@ async function upsertManifestProvider(pool, entry, meta = {}, txOpts = {}) {
 async function disableRemovedProviders(pool, manifestSlugs, meta = {}, txOpts = {}) {
   const all = await listProviders(txOpts.dbClient || pool);
   for (const p of all) {
-    if (manifestSlugs.has(p.slug) || txOpts.unresolvedTypes.has(p.type)) continue;
+    if (manifestSlugs.has(p.slug)) continue;
     const locks = p.locked_fields || [];
     if (!locks.length) continue;
     await updateProvider(
@@ -183,11 +182,14 @@ async function reconcileSsoProvidersFromEnv(pool, opts = {}) {
     throw new Error("The SSO bootstrap manifest requires a providers array.");
   }
   const { providers } = manifest;
-  if (conflictingProviderTypes(providers.filter((provider) => provider.enabled === true)).size) {
-    const err = new Error("Name at most one enabled provider per protocol in the bootstrap manifest.");
+  const enabledEntries = providers.filter((entry) => entry.enabled === true);
+  if (enabledEntries.length > 1) {
+    const err = new Error("Core allows one active SSO provider. Set enabled: true for at most one OIDC or SAML provider in the bootstrap manifest.");
     err.code = "active_provider_exists";
+    logger.error?.(err.message);
     throw err;
   }
+  const [configuredProvider] = enabledEntries;
   const slugs = providers.map((p) => p.slug);
   const collision = detectSlugEnvCollisions(slugs);
   if (!collision.ok) {
@@ -213,26 +215,25 @@ async function reconcileSsoProvidersFromEnv(pool, opts = {}) {
     try {
       await lockProviderChanges(client);
       const enabledRows = await enabledProviderRows(client);
-      const unresolvedTypes = conflictingProviderTypes(enabledRows);
-      const selected = new Set();
-      for (const entry of providers) {
-        if (!unresolvedTypes.has(entry.type) || entry.enabled !== true ||
-            !enabledRows.some((row) => row.slug === entry.slug && row.type === entry.type)) continue;
-        try {
-          await upsertManifestProvider(pool, entry, {}, { ...txOpts, selectForProtocol: true });
-          selected.add(entry.slug);
-          unresolvedTypes.delete(entry.type);
-        } catch (err) {
-          // The local-admin guard runs before writes. Other protocol bootstrapping can continue.
-          if (err.code !== "last_login_method") throw err;
-          logger.warn?.("SSO bootstrap needs a usable local administrator before selecting the provider", { type: entry.type });
+      let selectedSlug;
+      if (enabledRows.length > 1) {
+        if (configuredProvider && enabledRows.some((row) =>
+          row.slug === configuredProvider.slug && row.type === configuredProvider.type)) {
+          try {
+            await upsertManifestProvider(pool, configuredProvider, {}, { ...txOpts, selectForSignIn: true });
+            selectedSlug = configuredProvider.slug;
+          } catch (err) {
+            if (err.code !== "last_login_method") throw err;
+          }
+        }
+        if (!selectedSlug) {
+          await client.query("ROLLBACK");
+          logger.warn?.("SSO bootstrap requires a usable local administrator and selection of one currently enabled provider.");
+          return { skipped: true, reason: "provider_selection_required" };
         }
       }
-      for (const type of unresolvedTypes) {
-        logger.warn?.("SSO bootstrap requires selection of an enabled provider for this protocol", { type });
-      }
-      await disableRemovedProviders(pool, manifestSlugs, {}, { ...txOpts, unresolvedTypes });
-      const ordered = providers.filter(entry => !selected.has(entry.slug) && !unresolvedTypes.has(entry.type)).sort(
+      await disableRemovedProviders(pool, manifestSlugs, {}, txOpts);
+      const ordered = providers.filter((entry) => entry.slug !== selectedSlug).sort(
         (a, b) => Number(a.enabled === true) - Number(b.enabled === true),
       );
       for (const entry of ordered) {

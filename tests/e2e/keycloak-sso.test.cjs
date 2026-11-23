@@ -266,7 +266,7 @@ async function verifySamlLogoutWithConcurrentRead({
 }
 
 test(
-  "Core signs in and out with Keycloak OIDC and SAML while both providers are active",
+  "Core allows one active Keycloak provider and signs in and out over OIDC and SAML in turn",
   {
     skip: process.env.TT_KEYCLOAK_E2E !== "1",
     timeout: 300000,
@@ -495,26 +495,37 @@ test(
     await next.click();
     await next.click();
     await adminPage.getByRole("button", { name: "Save and run test" }).click();
-    await adminPage.getByRole("button", { name: "Enable provider", exact: true }).click();
-    await adminPage.waitForURL(url => url.pathname === "/system-settings" &&
-      url.searchParams.get("provider") === "saml");
-    await createMapping(adminPage, "saml");
+    const enableSaml = adminPage.getByRole("button", { name: "Enable provider", exact: true });
+    const [conflict] = await Promise.all([
+      adminPage.waitForResponse(response =>
+        new URL(response.url()).pathname === adminPath + "/saml" &&
+        response.request().method() === "PUT"),
+      enableSaml.click(),
+    ]);
+    assert.equal(conflict.status(), 409);
+    const warning = await conflict.json();
+    assert.equal(warning.code, "active_provider_exists");
+    assert.match(warning.error, /one active SSO provider, either OIDC or SAML/);
+    await adminPage.getByText(warning.error, { exact: true }).first().waitFor();
 
-    const saml = await (await admin.request.get(api + adminPath + "/saml")).json();
-    assert.equal(saml.enabled, true);
-    const enabledProtocols = Object.entries((await (
-      await admin.request.get(api + "/api/auth/features")
-    ).json()).providers);
-    assert.deepEqual(enabledProtocols.map(([type, providers]) => [type, providers.length, providers[0]?.signInReady]),
-      [["oidc", 1, true], ["saml", 1, true]]);
-
-    await waitingPage.evaluate(() => window.dispatchEvent(new Event("pageshow")));
-    await waitingPage.getByRole("link", { name: "Sign in with Keycloak SAML", exact: true }).waitFor();
-    await waitingPage.getByRole("link", { name: "Sign in with Keycloak OIDC", exact: true }).waitFor();
-    await waiting.close();
-    t.diagnostic("Keycloak SAML was enabled from the standalone wizard and appeared beside OIDC on an existing login page");
-
+    let saml;
     for (const type of ["oidc", "saml"]) {
+      if (type === "saml") {
+        await write(admin.request, api, app, "PUT", adminPath + "/oidc", { enabled: false }, 200);
+        await enableSaml.click();
+        await adminPage.waitForURL(url => url.pathname === "/system-settings" &&
+          url.searchParams.get("provider") === "saml");
+        await createMapping(adminPage, "saml");
+        saml = await (await admin.request.get(api + adminPath + "/saml")).json();
+        assert.equal(saml.enabled, true);
+        assert.equal((await (await admin.request.get(api + adminPath + "/oidc")).json()).enabled, false);
+
+        await waitingPage.evaluate(() => window.dispatchEvent(new Event("pageshow")));
+        await waitingPage.getByRole("link", { name: "Sign in with Keycloak SAML", exact: true }).waitFor();
+        assert.equal(await waitingPage.getByRole("link", { name: "Sign in with Keycloak OIDC", exact: true }).count(), 0);
+        await waiting.close();
+        t.diagnostic("The wizard showed the one-provider limit. Switching from OIDC to SAML refreshed the open login page.");
+      }
       const displayName = "Keycloak " + type.toUpperCase();
       const context = await localContext();
       const page = await context.newPage();
@@ -532,10 +543,10 @@ test(
       const features = await (
         await context.request.get(api + "/api/auth/features")
       ).json();
-      assert.ok(
-        features.providers[type].some((p) => p.slug === type && p.signInReady),
-        type + " sign-in readiness",
-      );
+      const otherType = type === "oidc" ? "saml" : "oidc";
+      assert.deepEqual(features.providers[type].map(p => [p.slug, p.signInReady]), [[type, true]]);
+      assert.deepEqual(features.providers[otherType], []);
+      assert.equal((await context.request.get(api + "/auth/" + otherType + "/" + otherType)).status(), 404);
       if (type === "saml") {
         const metadata = await context.request.get(
           api + "/auth/saml/saml/metadata",
@@ -544,8 +555,6 @@ test(
         assert.match(await metadata.text(), /AssertionConsumerService/);
       }
       await page.goto(app + "/login?next=%2Fworkspaces");
-      await page.getByRole("link", { name: "Sign in with Keycloak OIDC", exact: true }).waitFor();
-      await page.getByRole("link", { name: "Sign in with Keycloak SAML", exact: true }).waitFor();
       await page
         .getByRole("link", { name: "Sign in with " + displayName, exact: true })
         .click();
@@ -649,6 +658,30 @@ test(
           " administrator setup, browser sign-in, Core session and logout passed",
       );
     }
+    // Model an adopted database that already has two enabled providers.
+    docker("exec", pg, "psql", "-U", "postgres", "-d", "tt_sso_test", "-v", "ON_ERROR_STOP=1", "-c",
+      "UPDATE sso_providers SET enabled = TRUE WHERE slug = 'oidc'");
+    const blocked = await (await admin.request.get(api + "/api/auth/features")).json();
+    assert.deepEqual(blocked.providers, { oidc: [], saml: [] });
+
+    await adminPage.goto(app + "/sso-providers");
+    await adminPage.getByText(/Multiple SSO providers are enabled/).waitFor();
+    const [selection] = await Promise.all([
+      adminPage.waitForResponse(response =>
+        new URL(response.url()).pathname === adminPath + "/saml" &&
+        response.request().method() === "PUT"),
+      adminPage.getByRole("button", { name: "Select Keycloak SAML", exact: true }).click(),
+    ]);
+    assert.equal(selection.status(), 200);
+    await adminPage.getByText(/Multiple SSO providers are enabled/).waitFor({ state: "hidden" });
+    const restored = await (await admin.request.get(api + "/api/auth/features")).json();
+    assert.deepEqual(restored.providers.oidc, []);
+    assert.deepEqual(restored.providers.saml.map(provider => provider.slug), ["saml"]);
+    const linked = docker("exec", pg, "psql", "-U", "postgres", "-d", "tt_sso_test", "-At", "-c",
+      "SELECT provider_slug FROM external_identities ORDER BY provider_slug");
+    assert.deepEqual(linked.split(/\r?\n/), ["oidc", "saml"]);
+    t.diagnostic("A local administrator recovered an adopted mixed-protocol database and kept both linked identities.");
+
     docker("stop", kc);
     const recovery = await localContext();
     await write(
@@ -680,10 +713,10 @@ test(
       await recovery.request.get(api + "/api/auth/features")
     ).json();
     assert.deepEqual(features.providers.saml, []);
-    assert.deepEqual(features.providers.oidc.map(p => p.slug), ["oidc"]);
+    assert.deepEqual(features.providers.oidc, []);
     await recovery.close();
     t.diagnostic(
-      "Local admin signed in with Keycloak offline and disabled SAML without disabling OIDC",
+      "Local admin signed in with Keycloak offline and disabled the selected SAML provider",
     );
   },
 );

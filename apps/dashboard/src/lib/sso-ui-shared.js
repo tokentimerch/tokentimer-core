@@ -108,7 +108,7 @@ export const SSO_RELOAD_REASON_LABELS = {
   config_build_failed: 'Could not build strategy config',
   secret_keyring_missing: 'SSO secrets keyring is not configured',
   provider_selection_required:
-    'Select one enabled provider for this protocol to restore sign-in',
+    'Select one enabled SSO provider to restore sign-in',
   provider_disabled: 'Provider is disabled',
   discovery_required_or_manual_endpoints_missing:
     'Discovery failed; set endpoints manually',

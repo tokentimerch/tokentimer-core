@@ -182,10 +182,10 @@ describe('Core provider administration', () => {
     }
   );
 
-  it('shows selection only for an enabled same-protocol conflict', async () => {
+  it('offers every enabled provider during a cross-protocol conflict', async () => {
     const providers = [
       { slug: 'openid', displayName: 'OpenID', type: 'oidc', enabled: true },
-      { slug: 'backup', displayName: 'Backup', type: 'saml', enabled: true },
+      { slug: 'backup', displayName: 'Backup', type: 'saml', enabled: false },
       {
         slug: 'assertion',
         displayName: 'Assertion',
@@ -207,17 +207,18 @@ describe('Core provider administration', () => {
     api.get.mockResolvedValueOnce({
       data: {
         providers: [
-          providers[0],
-          { ...providers[1], enabled: false },
+          { ...providers[0], enabled: false },
+          providers[1],
           providers[2],
         ],
       },
     });
     mount(<SsoProviders session={{}} />);
     expect(
-      await screen.findByText(/Multiple SAML providers are enabled/)
+      await screen.findByText(/Multiple SSO providers are enabled/)
     ).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Select OpenID' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Select OpenID' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Select Backup' })).toBeNull();
     click('Select Assertion');
     await waitFor(() =>
       expect(showWarning).toHaveBeenCalledWith(reloadWarning)
@@ -225,12 +226,12 @@ describe('Core provider administration', () => {
     await waitFor(() =>
       expect(api.put).toHaveBeenCalledExactlyOnceWith(
         '/api/admin/sso/providers/assertion',
-        { enabled: true, selectForProtocol: true }
+        { enabled: true, selectForSignIn: true }
       )
     );
     await waitFor(() =>
       expect(
-        screen.queryByText(/Multiple SAML providers are enabled/)
+        screen.queryByText(/Multiple SSO providers are enabled/)
       ).toBeNull()
     );
   });

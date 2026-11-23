@@ -4843,7 +4843,7 @@ paths:
       tags: [Auth]
       operationId: createSsoProvider
       summary: Create an OIDC or SAML provider
-      description: Self-hosted system administrator session required. Core allows one active OIDC provider and one active SAML provider. Check runtime readiness and warnings before directing users to a new provider.
+      description: Self-hosted system administrator session required. Core allows one active SSO provider per installation, either OIDC or SAML. Check runtime readiness and warnings before directing users to a new provider.
       parameters:
         - $ref: "#/components/parameters/CsrfTokenHeader"
       requestBody:
@@ -4897,7 +4897,7 @@ paths:
       tags: [Auth]
       operationId: updateSsoProvider
       summary: Update SSO provider settings
-      description: Self-hosted system administrator session required. The slug and protocol are immutable. Changing a linked OIDC issuer returns 409 with code issuer_has_linked_accounts. Omitted fields retain their values. When several enabled providers share a protocol, choose one using enabled and selectForProtocol. Resolving the conflict requires a usable local administrator account.
+      description: Self-hosted system administrator session required. The slug and protocol are immutable. Changing a linked OIDC issuer returns 409 with code issuer_has_linked_accounts. Omitted fields retain their values. Core permits one active SSO provider per installation. When several providers are already enabled, choose the one to keep using enabled and selectForSignIn. Resolving the conflict requires a usable local administrator account.
       parameters:
         - $ref: "#/components/parameters/CsrfTokenHeader"
       requestBody:
@@ -13968,8 +13968,8 @@ components:
               type: object
               writeOnly: true
               additionalProperties: { type: string }
-            selectForProtocol:
-              description: On update, set with enabled true to select this enabled provider and disable its same-protocol peers while preserving their records.
+            selectForSignIn:
+              description: On update, set with enabled true to select this enabled provider and disable all other active providers while preserving their records.
               type: boolean
             clearSecrets:
               description: Names of stored secrets to remove on update.

@@ -46,21 +46,14 @@ async function enabledProviderRows(client) {
   return rows;
 }
 
-function conflictingProviderTypes(providers) {
-  const seen = new Set();
-  const conflicts = new Set();
-  for (const { type, enabled } of providers) {
-    if (enabled === false) continue;
-    if (seen.has(type)) conflicts.add(type);
-    seen.add(type);
-  }
-  return conflicts;
+function hasEnabledProviderConflict(providers) {
+  return providers.filter((provider) => provider.enabled).length > 1;
 }
 
 function selectionRequired() {
   return providerChangeError(
     "provider_selection_required",
-    "Select an enabled provider of this protocol to resume sign-in.",
+    "Select one enabled SSO provider to restore sign-in on this Core installation.",
   );
 }
 
@@ -73,22 +66,22 @@ async function requireLocalAdmin(client) {
   }
 }
 
-async function activateProvider(client, { slug, type, enabled }, { select, userId } = {}) {
-  const peers = (await enabledProviderRows(client)).filter((row) => row.type === type);
+async function activateProvider(client, { slug, enabled }, { select, userId } = {}) {
+  const peers = await enabledProviderRows(client);
   if (peers.length > 1) {
     if (!select || !enabled) throw selectionRequired();
-    await client.query("SELECT slug FROM sso_providers WHERE enabled AND type = $1 FOR UPDATE", [type]);
+    await client.query("SELECT slug FROM sso_providers WHERE enabled FOR UPDATE");
     await lockSystemAdminMutation(client);
     await requireLocalAdmin(client);
     const { rows } = await client.query(
-      "UPDATE sso_providers SET enabled = FALSE, updated_at = NOW() WHERE enabled AND type = $1 AND slug <> $2 RETURNING slug",
-      [type, slug],
+      "UPDATE sso_providers SET enabled = FALSE, updated_at = NOW() WHERE enabled AND slug <> $1 RETURNING slug, type",
+      [slug],
     );
     for (const peer of rows) {
       await writeAudit({
         client, actorUserId: userId, subjectUserId: null, action: "SSO_PROVIDER_DISABLED",
         targetType: "sso_provider",
-        metadata: { slug: peer.slug, type, selected_provider_slug: slug },
+        metadata: { slug: peer.slug, type: peer.type, selected_provider_slug: slug },
       });
     }
     return;
@@ -96,14 +89,14 @@ async function activateProvider(client, { slug, type, enabled }, { select, userI
   if (peers.length === 1 && peers[0].slug !== slug) {
     throw providerChangeError(
       "active_provider_exists",
-      "Disable the active provider of this protocol before enabling another one.",
+      "Core allows only one active SSO provider, either OIDC or SAML. Disable the active provider before enabling another.",
     );
   }
 }
 
 async function assertProviderCanBeDisabled(client, provider) {
   if (!provider.enabled) return;
-  if (conflictingProviderTypes(await enabledProviderRows(client)).has(provider.type)) {
+  if ((await enabledProviderRows(client)).length > 1) {
     throw selectionRequired();
   }
   await lockSystemAdminMutation(client);
@@ -200,7 +193,7 @@ async function listProviders(pool, opts = {}) {
        FROM sso_providers
       ORDER BY sort_order, display_name`,
   );
-  const conflicts = conflictingProviderTypes(res.rows);
+  const hasConflict = hasEnabledProviderConflict(res.rows);
   const out = [];
   for (const row of res.rows) {
     const secretsSet = await listSecretNames(pool, row.id);
@@ -208,7 +201,7 @@ async function listProviders(pool, opts = {}) {
       rowToProvider(row, {
         secretsSet,
         includeRuntime: opts.includeStatuses !== false,
-        selectionRequired: row.enabled && conflicts.has(row.type),
+        selectionRequired: row.enabled && hasConflict,
       }),
     );
   }
@@ -229,8 +222,8 @@ async function getProvider(pool, slug) {
   const row = await getProviderRow(pool, slug);
   if (!row) return null;
   const secretsSet = await listSecretNames(pool, row.id);
-  const conflicts = row.enabled && conflictingProviderTypes(await enabledProviderRows(pool));
-  return rowToProvider(row, { secretsSet, selectionRequired: conflicts && conflicts.has(row.type) });
+  const needsSelection = row.enabled && (await enabledProviderRows(pool)).length > 1;
+  return rowToProvider(row, { secretsSet, selectionRequired: needsSelection });
 }
 
 function stripComputedFromConfigPayload(config, slug, type) {
@@ -286,7 +279,7 @@ async function createProvider(pool, payload, meta = {}, opts = {}) {
   try {
     if (ownsClient) await client.query("BEGIN");
     await lockProviderChanges(client);
-    if (payload.enabled === true) await activateProvider(client, { slug, type });
+    if (payload.enabled === true) await activateProvider(client, { slug });
     const ins = await client.query(
       `INSERT INTO sso_providers
          (slug, type, display_name, enabled, sort_order, config, claim_mapping, security, locked_fields)
@@ -436,11 +429,12 @@ async function updateProvider(pool, slug, payload, meta = {}, opts = {}) {
       );
       enforceLocksOnUpdate({ locked_fields: mergedLocks }, { config: changedConfig });
     }
-    if (payload.selectForProtocol === true && (payload.enabled !== true || !existing.enabled || payload.clearSecrets?.length)) {
+    const select = payload.selectForSignIn === true;
+    if (select && (payload.enabled !== true || !existing.enabled || payload.clearSecrets?.length)) {
       throw selectionRequired();
     }
-    if ((payload.enabled === true && !existing.enabled) || payload.selectForProtocol === true) {
-      await activateProvider(client, existing, { select: payload.selectForProtocol === true, userId: meta.userId });
+    if ((payload.enabled === true && !existing.enabled) || select) {
+      await activateProvider(client, existing, { select, userId: meta.userId });
     }
     if (payload.enabled === false || payload.clearSecrets?.length) {
       await assertProviderCanBeDisabled(client, existing);
@@ -673,7 +667,7 @@ module.exports = {
   getProviderRow,
   lockProviderChanges,
   enabledProviderRows,
-  conflictingProviderTypes,
+  hasEnabledProviderConflict,
   createProvider,
   updateProvider,
   deleteProvider,

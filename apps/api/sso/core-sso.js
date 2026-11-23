@@ -31,10 +31,10 @@ const startLimiter = createSsoRateLimitMiddleware({ phase: "start" });
 const callbackLimiter = createSsoRateLimitMiddleware({ phase: "callback" });
 
 async function loadProviders(db, options) {
-  const { conflictingProviderTypes, listProviders } = require("./provider-registry.js");
+  const { hasEnabledProviderConflict, listProviders } = require("./provider-registry.js");
   const providers = await listProviders(db, options);
-  const conflicts = conflictingProviderTypes(providers);
-  return providers.map((provider) => provider.enabled && conflicts.has(provider.type)
+  if (!hasEnabledProviderConflict(providers)) return providers;
+  return providers.map((provider) => provider.enabled
     ? { ...provider, enabled: false, disabledReason: "provider_selection_required" }
     : provider);
 }
@@ -94,10 +94,9 @@ function mountSsoRoutes(app, { passport, express, pool }) {
       try {
         await reloadAllSsoStrategiesIfStale();
         const { rows } = await pool.query(
-          "SELECT slug FROM sso_providers WHERE enabled = TRUE AND type = $1 LIMIT 2",
-          [protocol],
+          "SELECT slug, type FROM sso_providers WHERE enabled = TRUE LIMIT 2",
         );
-        if (rows.length !== 1 || rows[0].slug !== slug) return notFound(res);
+        if (rows.length !== 1 || rows[0].type !== protocol || rows[0].slug !== slug) return notFound(res);
         assertSsoConfigCurrentForProvider(slug);
         return next();
       } catch (err) {
