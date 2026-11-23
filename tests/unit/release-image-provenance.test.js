@@ -6,17 +6,25 @@ const path = require("node:path");
 const workflow = fs.readFileSync(path.resolve(__dirname,"../../.github/workflows/release.yml"),"utf8");
 
 function verifyPublisher(source) {
+  const proof=source.match(/^  verify-provenance:\r?\n([\s\S]*?)(?=^  [a-z][a-z0-9-]*:)/m)?.[1];
+  assert.ok(proof,"Release provenance preflight absent");
+  assert.match(proof,/commit: \$\{\{ steps\.provenance\.outputs\.commit \}\}/);
+  assert.match(proof,/ref: \$\{\{ github\.sha \}\}/);
+  assert.match(proof,/fetch-depth: 0/);
+  assert.match(proof,/id: provenance[\s\S]+run: node scripts\/check-release-provenance\.cjs\r?\n/);
   const job=source.match(/^  build-and-push-docker:\r?\n([\s\S]*?)(?=^  [a-z][a-z0-9-]*:)/m)?.[1];
   assert.ok(job,"Shared Docker publication job absent");
+  assert.match(job,/needs: \[verify-provenance, pack-agent\]/);
   assert.deepEqual([...job.matchAll(/^\s+- component: (\S+)\s*$/gm)].map(match=>match[1]).sort(),["api","dashboard","k8s-controller","worker"]);
   assert.equal((source.match(/uses: docker\/build-push-action@/g)||[]).length,1,"Review provenance of every image publisher");
   const producer=job.indexOf("id: source_identity");
   const publish=job.indexOf("uses: docker/build-push-action@");
   assert.ok(producer>=0&&producer<publish,"Resolve checked-out source before publishing");
+  assert.match(job.slice(0,producer),/uses: actions\/checkout@[^\r\n]+\r?\n\s+with:\r?\n\s+ref: \$\{\{ needs\.verify-provenance\.outputs\.commit \}\}/);
   const identity=job.slice(producer,publish);
+  assert.match(identity,/EXPECTED_RELEASE_COMMIT: \$\{\{ needs\.verify-provenance\.outputs\.commit \}\}/);
   assert.match(identity,/REVISION="\$\(git rev-parse --verify HEAD\)"/);
-  assert.match(identity,/EVENT_REVISION="\$\(git rev-parse --verify "\$\{GITHUB_SHA\}\^\{commit\}"\)"/);
-  assert.match(identity,/test "\$REVISION" = "\$EVENT_REVISION"/);
+  assert.match(identity,/test "\$REVISION" = "\$EXPECTED_RELEASE_COMMIT"/);
   assert.match(identity,/printf 'revision=%s\\n' "\$REVISION" >> "\$GITHUB_OUTPUT"/);
   const publishing=job.slice(publish);
   assert.match(publishing,/file: \$\{\{ matrix\.dockerfile \}\}/);
@@ -37,7 +45,11 @@ test("publication guard rejects absent, hardcoded or prematurely published prove
     workflow.replace("org.opencontainers.image.revision=${{ steps.source_identity.outputs.revision }}","org.opencontainers.image.revision=0000000000000000000000000000000000000000"),
     workflow.replace("org.opencontainers.image.source=https://github.com/${{ github.repository }}","org.opencontainers.image.source=https://example.test/unrelated"),
     workflow.replace("id: source_identity","id: unbound_identity"),
-    workflow.replace('test "$REVISION" = "$EVENT_REVISION"','echo "identity comparison omitted"'),
+    workflow.replace('test "$REVISION" = "$EXPECTED_RELEASE_COMMIT"','echo "identity comparison omitted"'),
+    workflow.replace("commit: ${{ steps.provenance.outputs.commit }}","commit: ${{ github.sha }}"),
+    workflow.replace("needs: [verify-provenance, pack-agent]","needs: pack-agent"),
+    workflow.replace("ref: ${{ needs.verify-provenance.outputs.commit }}","ref: ${{ github.ref }}"),
+    workflow.replace("EXPECTED_RELEASE_COMMIT: ${{ needs.verify-provenance.outputs.commit }}","EXPECTED_RELEASE_COMMIT: ${{ github.sha }}"),
     workflow.replace(identityStep,"").replace("          cache-to: type=gha,mode=max",`          cache-to: type=gha,mode=max\n${identityStep}`),
     workflow+'\n  uncovered-publisher:\n    steps:\n      - uses: docker/build-push-action@unreviewed\n',
   ])assert.throws(()=>verifyPublisher(changed));
