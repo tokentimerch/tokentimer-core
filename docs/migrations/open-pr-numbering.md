@@ -78,6 +78,8 @@ Canonical installs use version 125 for the AD CS preflight index. A recognized r
 
 The integrated Windows Store and IIS preview previously used 115 for observed revocation and 116–122 for Store and IIS. The runner preserves those recorded pairs and appends only missing definitions.
 
+For a recognized retirement preview with `certops_retirement_dossiers` at 109, the runner preserves supported orders of PagerDuty recovery, Windows Store and observed revocation and appends only missing definitions. The runner rejects Store migrations recorded at 109–111 before DDL. Preserve that ledger for reviewed recovery.
+
 ## Applied history and supported previews
 
 The runner serializes concurrent migrations before reading history. Fresh

@@ -7,7 +7,7 @@ and CSV/JSON export. See [Audit event catalog](../audit-events.md) for other
 TokenTimer actions.
 
 - `CERTOPS_ISSUER_CREATED`: `{ issuerId, issuerName, kind }` records issuer creation.
-- `CERTOPS_ISSUER_PREFLIGHT_DISPATCHED`: `{ issuerId, issuerName, caConfig, template, jobId, agentId }` records a CA preflight request. Older events may contain only IDs.
+- `CERTOPS_ISSUER_PREFLIGHT_DISPATCHED`: `{ issuerId, issuerName, caConfig, template, jobId, agentId }` records a CA preflight requested manually or by the renewal scheduler. Older events may contain only IDs.
 - `CERTOPS_ISSUER_KEY_CONFIRMED`: `{ issuerId, issuerName, version, caKeySha256, caConfig, template }` records confirmation of a CA public-key pin.
 - `CERTOPS_ENROLLMENT_CREATED`: `{ enrollmentId, issuerId, jobId }` records a new enrollment request.
 - `CERTOPS_ENROLLMENT_RECONCILE_PROPOSED`: `{ enrollmentId, requestId }` records an operator-provided CA request ID for reconciliation.

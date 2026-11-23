@@ -113,6 +113,8 @@ does not promise a version or add a v1.0.0 gate.
   ([#504](https://github.com/tokentimerch/tokentimer-core/issues/504)):
   service discovery, typed connectors, controlled activation and fleet
   operations build on shipped Windows/IIS and AD CS support.
+  AD CS recovery and ACME issuance, renewal and recovery without IIS
+  still require native qualification on the exact signed Windows package.
   Distribution provides consumer discovery and lifecycle groundwork. Other
   service connectors and unsupported activation methods remain separate work.
 - **Windows agent with a bundled runtime**
