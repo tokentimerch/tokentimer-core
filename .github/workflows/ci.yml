@@ -1050,7 +1050,8 @@ jobs:
               volume.target === bootstrap.environment[key] && volume.read_only === true));
           }
           const providers = require("./sso-providers.json").providers;
-          assert.deepEqual(providers.filter(provider => provider.enabled).map(provider => provider.type).sort(), ["oidc", "saml"]);
+          assert.deepEqual(providers.map(provider => provider.type).sort(), ["oidc", "saml"]);
+          assert.deepEqual(providers.filter(provider => provider.enabled).map(provider => provider.type), ["oidc"]);
           NODE
 
       - name: Validate dev compose
