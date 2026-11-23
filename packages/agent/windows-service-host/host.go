@@ -80,7 +80,7 @@ func newAgentHost(childExe string, childArgs []string, env []string, log *hostLo
 		name, _, _ := strings.Cut(entry, "=")
 		// Inherited preload settings can run code outside the installed agent.
 		if strings.EqualFold(name, "NODE_OPTIONS") || strings.EqualFold(name, "NODE_PATH") ||
-			strings.EqualFold(name, observationRunEnv) {
+			strings.EqualFold(name, observationRunEnv) || strings.EqualFold(name, admissionEnv) {
 			continue
 		}
 		childEnv = append(childEnv, entry)
@@ -94,10 +94,10 @@ func newAgentHost(childExe string, childArgs []string, env []string, log *hostLo
 // this host too) and to isolate the child's own Ctrl+Break handling from
 // this host's.
 func (h *agentHost) start() error {
-	return h.startChild(nil)
+	return h.startChild(nil, "")
 }
 
-func (h *agentHost) startChild(beforeResume func() error) error {
+func (h *agentHost) startChild(beforeResume func() error, admissionBinding string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.cmd != nil {
@@ -105,6 +105,9 @@ func (h *agentHost) startChild(beforeResume func() error) error {
 	}
 	cmd := exec.Command(h.childExe, h.childArgs...)
 	cmd.Env = h.env
+	if admissionBinding != "" {
+		cmd.Env = append(append([]string(nil), h.env...), admissionEnv+"="+admissionBinding)
+	}
 	cmd.Stdout = h.log.childWriter("stdout")
 	cmd.Stderr = h.log.childWriter("stderr")
 	cmd.SysProcAttr = &syscall.SysProcAttr{

@@ -33,9 +33,13 @@ type observationPipe struct {
 	run  string
 }
 
-func connectObservation(run string) (serviceObservation, error) {
+func validObservationRun(run string) bool {
 	decoded, err := hex.DecodeString(run)
-	if err != nil || len(decoded) != 16 || hex.EncodeToString(decoded) != run {
+	return err == nil && len(decoded) == 16 && hex.EncodeToString(decoded) == run
+}
+
+func connectObservation(run string) (serviceObservation, error) {
+	if !validObservationRun(run) {
 		return nil, fmt.Errorf("observation run must be 32 lowercase hexadecimal characters")
 	}
 	name, err := windows.UTF16PtrFromString(observationPipeName(run))

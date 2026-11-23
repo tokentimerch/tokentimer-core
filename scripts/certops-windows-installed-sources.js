@@ -52,6 +52,8 @@ module.exports = Object.freeze([
   "packages/agent/reference/verified-extraction/job_windows.go",
   "packages/agent/windows-service-host/host.go",
   "packages/agent/windows-service-host/observation_windows.go",
+  "packages/agent/windows-service-host/admission_windows.go",
+  "packages/agent/src/observation-admission.js",
   "packages/agent/windows-service-host/main.go",
   "packages/agent/windows-service-host/service_windows.go",
   "packages/contracts/certops/job-payload.schema.json",

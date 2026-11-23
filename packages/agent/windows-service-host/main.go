@@ -100,18 +100,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	log := newHostLogger(os.Getenv("TOKENTIMER_AGENT_CONFIG_DIR"))
+	configDir := os.Getenv("TOKENTIMER_AGENT_CONFIG_DIR")
+	log := newHostLogger(configDir)
 	defer log.Close()
 	stopTimeout := resolveStopTimeout(os.Getenv)
 	host := newAgentHost(childArgs[0], childArgs[1:], env, log)
 
 	run, observed := os.LookupEnv(observationRunEnv)
 	if isService {
-		var openObservation func() (serviceObservation, error)
+		handler := &tokenTimerAgentService{host: host, stopTimeout: stopTimeout, log: log}
 		if observed {
-			openObservation = func() (serviceObservation, error) { return connectObservation(run) }
+			handler.openObservation = func() (serviceObservation, error) { return connectObservation(run) }
+			handler.observationRun = run
+			handler.observationDir = configDir
 		}
-		runAsService(host, stopTimeout, log, openObservation)
+		runAsService(handler)
 		return
 	}
 	if observed {

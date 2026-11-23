@@ -12,7 +12,7 @@ Set `CERTOPS_WINDOWS_LANGUAGE_ASSETS` to a JSON object keyed by OS/language, for
 
 ## Windows service observation trial
 
-On a disposable lab, set `TOKENTIMER_AGENT_HOST_OBSERVATION_RUN` in the service environment before its first worker start. Use a fresh 32-character lowercase hexadecimal run ID for each intentional restart. The independent LocalSystem observer serves the local byte pipe `\\.\pipe\TokenTimerObservation-<run>` and echoes each 32-byte challenge while both CA and CNG coverage are current. A missing or stalled observer stops the worker job. A consumed run cannot restart it. Local simulations verify shutdown and containment. Native admission still requires independently verified CA/CNG continuity, fencing before new native operations, and off-host readback.
+On a disposable lab, set `TOKENTIMER_AGENT_HOST_OBSERVATION_RUN` before the first worker start, with a protected local state directory. Use a fresh 32-character lowercase hexadecimal run ID for every restart. The independent LocalSystem observer echoes 32-byte challenges on `\\.\pipe\TokenTimerObservation-<run>` while CA and CNG coverage is current. Loss stops the job and prevents reuse of the run. The host syncs each admission check before sending a claim or native permit. The native collector establishes effect starts. An issued permit can race with loss before the worker acts. Native qualification still requires fencing at the effect boundary and off-host readback.
 
 ## Results and cleanup
 

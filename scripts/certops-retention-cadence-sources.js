@@ -49,6 +49,8 @@ const REQUIRED_SOURCES = [
   "packages/agent/reference/verified-extraction/job_windows.go",
   "packages/agent/windows-service-host/host.go",
   "packages/agent/windows-service-host/observation_windows.go",
+  "packages/agent/windows-service-host/admission_windows.go",
+  "packages/agent/src/observation-admission.js",
   "scripts/certops-release-collector.py",
   "scripts/certops-release-qualification.js",
   "scripts/certops-retention-cadence-azure.js",

@@ -1,5 +1,7 @@
 "use strict";
 
+const { ADMISSION_DENIED } = require("../observation-admission");
+
 // Read-only inspection for store-only enrollment. Callers must hold the store
 // lock when using this result to decide whether to accept or complete a job.
 const path = require("node:path");
@@ -194,6 +196,7 @@ async function installStoreOnlyCertificate({ certificatePem, containerName, stat
       return { status: "succeeded", keyRotated: null, storeProof: proof };
     });
   } catch (error) {
+    if (error?.code === ADMISSION_DENIED) return { status: "failed", retryableInterrupt: true, errorMessage: "machine store observation lost; reconcile before retrying" };
     if (error?.code === "STORE_LOCK_LOST" || signal?.aborted) return { status: "failed", retryableInterrupt: true, errorMessage: "machine store lock or lease lost" };
     throw error;
   } finally { lock.release(); }
