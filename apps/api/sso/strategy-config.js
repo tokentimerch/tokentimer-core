@@ -7,6 +7,7 @@
 const { getOidcCallbackUrl, getSamlCallbackUrl } = require("./callback-urls");
 const { safeFetch, validateOutboundUrl, outboundBlockHint } = require("./safe-fetch.js");
 const { resolveIdpHttpTimeoutMs } = require("./sso-global-settings.js");
+const { matchIssuerProviderHint } = require("./oidc-provider-hints.js");
 
 const isSet = (v) =>
   typeof v === "string" && v.trim().length > 0 && v !== "undefined" && v !== "null";
@@ -325,14 +326,12 @@ function createProviderStrategyConfig(factoryDeps = {}) {
       issuerFallbacks.userInfoURL || null,
     );
     const resolvedJwks = pickUrl(jwksURI, "jwks_uri", issuerFallbacks.jwksURL || null);
-    const resolvedEndSession = pickUrl(
-      endSessionURL,
-      "end_session_endpoint",
-      // Keycloak realm and Auth0 tenant issuers have a deterministic logout
-      // endpoint; without this fallback, disableDiscovery + no explicit
-      // end_session_url silently downgrades sign-out to local-only.
-      issuerFallbacks.endSessionURL || null,
-    );
+    // Cognito discovery advertises managed logout, which uses its own parameters.
+    // An explicit override may point to an OIDC-compatible logout endpoint.
+    const resolvedEndSession =
+      matchIssuerProviderHint(issuer)?.id === "cognito"
+        ? endSessionURL
+        : pickUrl(endSessionURL, "end_session_endpoint", issuerFallbacks.endSessionURL || null);
 
     const allowDev = process.env.NODE_ENV !== "production";
     assertSecureOidcUrl(issuer, "issuer", { allowDev });

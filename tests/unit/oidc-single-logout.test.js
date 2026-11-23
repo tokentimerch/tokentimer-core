@@ -5,6 +5,7 @@ const assert = require("node:assert");
 
 const { buildEndSessionUrl } = require("../../apps/api/auth/oidc-flow");
 const { normalizeBaseUrl } = require("../../apps/api/sso/callback-urls");
+const { createProviderStrategyConfig } = require("../../apps/api/sso/strategy-config");
 
 const BASE = {
   issuer: "https://issuer.example.com",
@@ -36,18 +37,56 @@ const PROVIDER_ENDPOINTS = {
   adfs: "https://adfs.example.com/adfs/oauth2/logout",
 };
 
-/**
- * Providers we support that publish no end_session_endpoint. Verified live against
- * their discovery documents: Google and GitLab simply omit it, and Cognito does not
- * implement RP-Initiated Logout at all (it exposes a proprietary /logout taking
- * client_id + logout_uri). These must degrade to a local-only sign-out rather than
- * erroring, and operators can still point end_session_url at a custom endpoint.
- */
-const PROVIDERS_WITHOUT_END_SESSION = ["google", "gitlab", "cognito"];
+const PROVIDERS_WITHOUT_END_SESSION = ["google", "gitlab"];
 
 function cfg(endSessionURL) {
   return { ...BASE, endSessionURL };
 }
+
+describe("discovered OIDC logout endpoints", () => {
+  const cognitoDomain = "https://tt.auth.eu-west-1.amazoncognito.com";
+  const cognitoIssuers = [
+    "https://cognito-idp.eu-west-1.amazonaws.com/eu-west-1_pool",
+    "https://issuer-cognito-idp.eu-west-1.amazonaws.com/eu-west-1_pool",
+  ];
+  const discovery = {
+    authorization_endpoint: cognitoDomain + "/oauth2/authorize",
+    token_endpoint: cognitoDomain + "/oauth2/token",
+    userinfo_endpoint: cognitoDomain + "/oauth2/userInfo",
+    end_session_endpoint: cognitoDomain + "/logout",
+  };
+  const { buildOidcStrategyConfigFromProvider } = createProviderStrategyConfig({
+    fetchImpl: async () => ({ ok: true, json: async () => discovery }),
+    validateOutboundUrl: async () => ({ ok: true }),
+  });
+
+  function buildStrategy(issuer, overrides = {}) {
+    return buildOidcStrategyConfigFromProvider(
+      null,
+      { slug: "cognito", config: { issuer, client_id: BASE.clientID, ...overrides } },
+      { client_secret: BASE.clientSecret },
+    );
+  }
+
+  for (const issuer of cognitoIssuers) {
+    it(`keeps sign-out local for Cognito discovery from ${new URL(issuer).hostname}`, async () => {
+      const strategy = await buildStrategy(issuer);
+      assert.equal(strategy.tokenURL, discovery.token_endpoint);
+      assert.equal(buildEndSessionUrl(strategy, { idToken: "fixture" }), null);
+    });
+  }
+
+  it("preserves a Cognito operator's explicit OIDC-compatible end-session override", async () => {
+    const endpoint = "https://logout.example.com/oidc/end-session";
+    const strategy = await buildStrategy(cognitoIssuers[0], { end_session_url: endpoint });
+    assert.equal(strategy.endSessionURL, endpoint);
+  });
+
+  it("preserves a standard provider's discovered end-session endpoint", async () => {
+    const strategy = await buildStrategy(BASE.issuer);
+    assert.equal(strategy.endSessionURL, discovery.end_session_endpoint);
+  });
+});
 
 describe("buildEndSessionUrl (RP-initiated logout)", () => {
   it("returns null when the provider advertises no end_session_endpoint", () => {
@@ -74,12 +113,12 @@ describe("buildEndSessionUrl (RP-initiated logout)", () => {
   }
 
   it("honours a manually configured end_session_url for such providers", () => {
-    // Cognito's proprietary logout endpoint, set via provider config end_session_url.
+    const endpoint = "https://logout.example.com/oidc/end-session";
     const url = buildEndSessionUrl(
-      cfg("https://tt.auth.eu-west-1.amazoncognito.com/logout"),
+      cfg(endpoint),
       { postLogoutRedirectUri: POST_LOGOUT },
     );
-    assert.match(url, /^https:\/\/tt\.auth\.eu-west-1\.amazoncognito\.com\/logout\?/);
+    assert.equal(new URL(url).origin + new URL(url).pathname, endpoint);
     assert.equal(new URL(url).searchParams.get("client_id"), "tokentimer");
   });
 
