@@ -6,6 +6,7 @@ const { test } = require("node:test");
 
 const { guardNativeExec, takeAdmissionBinding } = require("./observation-admission");
 const { createProtocolClient, ROUTES } = require("./protocol");
+const { execWithoutShell } = require("./windows-cert-store");
 
 function deferred() {
   let resolve, reject;
@@ -76,6 +77,28 @@ test("observation refusal and cancellation deny a native launch while admission 
   }
 });
 
+test("Store cancellation after launch kills the guarded child and waits for its exit", async () => {
+  const worker = new AbortController();
+  const launched = deferred();
+  const child = new EventEmitter();
+  let kills = 0;
+  let settled = false;
+  child.kill = () => { kills++; return true; };
+  const observed = guardNativeExec(async () => {}, worker.signal, () => {
+    launched.resolve();
+    return child;
+  });
+  const command = execWithoutShell(observed, ["certreq.exe", "-accept"], 1000, worker.signal);
+  void command.then(() => { settled = true; });
+  await launched.promise;
+  worker.abort();
+  await Promise.resolve();
+  assert.equal(kills, 1);
+  assert.equal(settled, false);
+  child.emit("exit", 1);
+  assert.equal((await command).execError.code, "ABORT_ERR");
+});
+
 test("claim admission is queued and refusal neither sends nor consumes a sequence", async () => {
   const sendingHeartbeat = deferred(), completeHeartbeat = deferred(), admitEntered = deferred(), permit = deferred();
   const paths = [];
@@ -101,6 +124,27 @@ test("claim admission is queued and refusal neither sends nor consumes a sequenc
   await assert.rejects(claim, /observer lost/);
   assert.equal(allocated, 1);
   assert.equal(paths.length, 1);
+});
+
+test("locally stopped claim is neither sent nor sequenced after its permit is issued", async () => {
+  const worker = new AbortController();
+  const entered = deferred(), permit = deferred();
+  let sends = 0;
+  let allocated = 0;
+  const client = protocol(() => {
+    entered.resolve();
+    return permit.promise;
+  }, () => {
+    sends++;
+    return Promise.resolve(new Response('{"jobs":[]}', { status: 200 }));
+  }, { signal: worker.signal, sequenceAllocator: { next: () => ++allocated } });
+  const claim = client.claim();
+  await entered.promise;
+  permit.resolve();
+  worker.abort();
+  await assert.rejects(claim, { code: "network_error" });
+  assert.equal(allocated, 0);
+  assert.equal(sends, 0);
 });
 
 test("a permit already issued is not an atomic fence on claim transport or native launch", async () => {

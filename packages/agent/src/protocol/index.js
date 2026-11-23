@@ -632,6 +632,10 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     const run = admit
       ? sendQueue.then(async () => {
         await admit();
+        if (signal?.aborted) {
+          throw new AgentProtocolError("claim canceled before dispatch", AGENT_PROTOCOL_ERROR_CODES.NETWORK_ERROR,
+            { cause: signal.reason });
+        }
         return performSend(nextSequence());
       })
       : sendQueue.then(() => performSend(nextSequence()));
