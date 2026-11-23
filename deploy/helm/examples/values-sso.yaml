@@ -2,9 +2,6 @@
 # provider environment variables in the Secret, all in the API namespace.
 api:
   env:
-    # Inherit the installation policy. Fresh setups default to strict sync.
-    # Existing setups retain their policy. Verify mappings before forcing "true".
-    # SSO_STRICT_MEMBERSHIP_SYNC: "true"
     SSO_PROVIDERS_BOOTSTRAP_FILE: /etc/tokentimer/sso/sso-providers.json
   envFrom:
     - secretRef:

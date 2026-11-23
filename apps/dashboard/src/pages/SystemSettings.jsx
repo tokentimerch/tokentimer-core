@@ -62,7 +62,7 @@ import {
 
 const DEFAULT_SSO_FORM = {
   allow_auto_link_local_accounts: false,
-  strict_membership_sync: true,
+  strict_membership_sync: false,
   config_sync_interval_ms: 45000,
   idp_http_timeout_ms: 20000,
   allow_private_idp_urls: false,
@@ -682,8 +682,8 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                     <Box flex={1} pr={4}>
                       <FormLabel mb={0}>Strict membership sync</FormLabel>
                       <FormHelperText mt={0} fontSize='xs'>
-                        Deny sign-in without mapped or existing access and revoke
-                        workspace roles this provider no longer grants.
+                        Revoke SSO-sourced workspace roles that no longer match
+                        group mappings on login.
                       </FormHelperText>
                     </Box>
                     <Switch

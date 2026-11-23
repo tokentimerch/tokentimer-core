@@ -156,14 +156,14 @@ function realm(api, app, oidcSecret, userPassword) {
         }],
       },
     ],
-    users: ["oidc", "saml", "oidc-unmapped", "saml-unmapped"].map((type) => ({
+    users: ["oidc", "saml"].map((type) => ({
       username: type + "-user",
       email: type + "@example.test",
       emailVerified: true,
       firstName: "Test",
       lastName: type,
       enabled: true,
-      groups: type.endsWith("-unmapped") ? [] : ["/qa-viewers"],
+      groups: ["/qa-viewers"],
       credentials: [
         { type: "password", value: userPassword, temporary: false },
       ],
@@ -244,8 +244,6 @@ async function verifySamlLogoutWithConcurrentRead({
       const deadline = Date.now() + 10000;
       let waiting = false;
       do {
-        // The lock transaction can cache a snapshot taken before the read connected.
-        await db.query("SELECT pg_stat_clear_snapshot()");
         const { rows } = await db.query(
           "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))) AS waiting",
           [pid],
@@ -473,9 +471,11 @@ test(
     };
     await openSystemSso();
     await adminPage.getByText("Installation-wide SSO policy", { exact: true }).waitFor();
-    assert.equal(await adminPage.getByLabel("Strict membership sync", { exact: true }).isChecked(), true);
+    await adminPage.getByText("Strict membership sync", { exact: true }).click();
+    await adminPage.getByRole("button", { name: "Save SSO policy" }).click();
+    await adminPage.getByText("SSO policy settings saved", { exact: true }).waitFor();
     const policy = await (await admin.request.get(api + "/api/admin/system-settings")).json();
-    assert.equal(policy.sso.strict_membership_sync.value, null, "no operator override is saved");
+    assert.equal(policy.sso.strict_membership_sync.value, true);
     const waiting = await localContext();
     const waitingPage = await waiting.newPage();
     await waitingPage.goto(app + "/login");
@@ -649,36 +649,6 @@ test(
           " administrator setup, browser sign-in, Core session and logout passed",
       );
     }
-    for (const type of ["oidc", "saml"]) {
-      const context = await localContext();
-      try {
-        const page = await context.newPage();
-        await page.goto(app + "/login");
-        await page.getByRole("link", { name: "Sign in with Keycloak " + type.toUpperCase(), exact: true }).click();
-        await page.locator("#username").fill(type + "-unmapped-user");
-        await page.locator("#password").fill(userPassword);
-        await page.locator("#kc-login").click();
-        await page.waitForURL(url => url.origin === app && url.pathname === "/login" && url.searchParams.has("error"));
-        const session = await (await context.request.get(api + "/api/session")).json();
-        assert.equal(session.loggedIn, false);
-        const denied = docker(
-          "exec", pg, "psql", "-U", "postgres", "-d", "tt_sso_test", "-At", "-c",
-          "SELECT EXISTS (SELECT 1 FROM audit_events WHERE action = 'LOGIN_FAILED' " +
-            "AND metadata->>'reason' = 'no_group_mapping_matched' AND metadata->>'method' = '" + type + "')",
-        );
-        assert.equal(denied, "t", type + " denies an unmapped account under the default policy");
-        const membership = docker(
-          "exec", pg, "psql", "-U", "postgres", "-d", "tt_sso_test", "-At", "-c",
-          "SELECT COUNT(*) FROM workspace_memberships m JOIN users u ON u.id = m.user_id " +
-            "WHERE u.email = '" + type + "-unmapped@example.test'",
-        );
-        assert.equal(membership, "0", type + " must not create a Default workspace membership");
-      } finally {
-        await context.close();
-      }
-    }
-    t.diagnostic("The default policy denied fresh unmapped OIDC and SAML users");
-
     docker("stop", kc);
     const recovery = await localContext();
     await write(

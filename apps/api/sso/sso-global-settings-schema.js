@@ -15,7 +15,7 @@ const SSO_GLOBAL_SETTINGS_RESPONSE_KEY = "sso";
  */
 const SSO_GLOBAL_DEFAULTS = {
   allow_auto_link_local_accounts: false,
-  strict_membership_sync: true,
+  strict_membership_sync: false,
   config_sync_interval_ms: 45_000,
   idp_http_timeout_ms: 20_000,
   allow_private_idp_urls: false,

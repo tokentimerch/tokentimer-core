@@ -92,7 +92,7 @@ function resolveProviderSecurityConfig(provider, globalSettings = cachedGlobal) 
     strictMembershipSync: resolveBoolPolicy(
       security.strict_membership_sync,
       global.strict_membership_sync,
-      SSO_GLOBAL_DEFAULTS.strict_membership_sync,
+      false,
     ),
     pkce: toBool(security.pkce, true),
     signAuthnRequests: toBool(security.sign_authn_requests, false),
