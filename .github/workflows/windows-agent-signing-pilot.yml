@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PILOT_SOURCE: '9c47d07bb7c4e4763e83c0bc1b590fea0e89f924'
+  PILOT_SOURCE: '47a144e5b825a206126ba759219f344f4d117ecb'
   PILOT_VERSION: '0.20.0'
   PILOT_NODE_VERSION: '24.22.3'
   PILOT_GO_VERSION: '1.26.11'
@@ -29,7 +29,7 @@ env:
 
 jobs:
   build:
-    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == '9c47d07bb7c4e4763e83c0bc1b590fea0e89f924'
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == '47a144e5b825a206126ba759219f344f4d117ecb'
     permissions:
       contents: read
     runs-on: ubuntu-24.04
@@ -133,7 +133,7 @@ jobs:
           retention-days: 1
 
   sign-amd64:
-    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == '9c47d07bb7c4e4763e83c0bc1b590fea0e89f924'
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && inputs.reviewed_source_sha == '47a144e5b825a206126ba759219f344f4d117ecb'
     needs: build
     environment: windows-agent-signing
     permissions:
