@@ -536,7 +536,7 @@ async function createAutomaticAdcsRenewal({
     const candidate = await findEligibleAdcsPreflightAgent({db:dbPool,
       workspaceId:certificate.workspace_id,reference:fields.target.reference,target:fields.target,
       ownerId:storeOnly || explicitIp ? certificate.deployed_agent_id : null,env});
-    if (version?.confirmed_at && version?.ca_key_sha256 && version?.ca_config && version?.template) {
+    if (mode === "real" && version?.confirmed_at && version?.ca_key_sha256 && version?.ca_config && version?.template) {
       await preflightDispatcher({
         client: dbPool,
         workspaceId: certificate.workspace_id,
@@ -546,6 +546,7 @@ async function createAutomaticAdcsRenewal({
         template: version.template,
         automatic: true,
         confirmedAt: version.confirmed_at,
+        target: fields.target,
         ...(!candidate ? { unavailableTarget:fields.target.reference } : {}),
         env,
       });
