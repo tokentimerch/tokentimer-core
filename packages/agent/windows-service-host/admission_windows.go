@@ -37,13 +37,27 @@ type observedAdmission struct {
 	failure  chan error
 	onLoss   func()
 
-	probeMu sync.Mutex
-	stopped atomic.Bool
-	lost    atomic.Bool
+	probeMu  sync.Mutex
+	resumeMu sync.Mutex
+	stopped  atomic.Bool
+	lost     atomic.Bool
 }
 
 func (a *observedAdmission) revoke() {
+	a.resumeMu.Lock()
 	a.stopped.Store(true)
+	a.resumeMu.Unlock()
+}
+
+// lockResume orders the actual thread resume against a recorded revocation.
+// The caller releases this narrow lock after ResumeThread has returned.
+func (a *observedAdmission) lockResume() (func(), error) {
+	a.resumeMu.Lock()
+	if a.stopped.Load() {
+		a.resumeMu.Unlock()
+		return nil, fmt.Errorf("observation admission closed during startup")
+	}
+	return a.resumeMu.Unlock, nil
 }
 
 func (a *observedAdmission) fail(err error) {

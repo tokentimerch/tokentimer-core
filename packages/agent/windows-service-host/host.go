@@ -94,10 +94,10 @@ func newAgentHost(childExe string, childArgs []string, env []string, log *hostLo
 // this host too) and to isolate the child's own Ctrl+Break handling from
 // this host's.
 func (h *agentHost) start() error {
-	return h.startChild(nil, "")
+	return h.startChild(nil, nil, "")
 }
 
-func (h *agentHost) startChild(beforeResume func() error, admissionBinding string) error {
+func (h *agentHost) startChild(beforeResume func() error, lockResume func() (func(), error), admissionBinding string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.cmd != nil {
@@ -121,10 +121,11 @@ func (h *agentHost) startChild(beforeResume func() error, admissionBinding strin
 		CreationFlags: windows.CREATE_NO_WINDOW | windows.CREATE_NEW_PROCESS_GROUP,
 	}
 	var err error
-	if beforeResume == nil {
+	contained := beforeResume != nil || lockResume != nil
+	if !contained {
 		err = cmd.Start()
 	} else {
-		h.job, err = verifiedextraction.StartProcessInJob(context.Background(), cmd, beforeResume)
+		h.job, err = verifiedextraction.StartProcessInJob(context.Background(), cmd, beforeResume, lockResume)
 	}
 	if err != nil {
 		return fmt.Errorf("agentHost: failed to start %s: %w", h.childExe, err)
@@ -138,7 +139,7 @@ func (h *agentHost) startChild(beforeResume func() error, admissionBinding strin
 		h.mu.Unlock()
 		close(h.exited)
 	}()
-	if beforeResume == nil {
+	if !contained {
 		h.log.Printf("started child pid=%d exe=%s args=%v", cmd.Process.Pid, h.childExe, h.childArgs)
 	}
 	return nil

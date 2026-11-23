@@ -127,12 +127,9 @@ func (s *tokenTimerAgentService) Execute(args []string, r <-chan svc.ChangeReque
 			if err := observer.check(); err != nil {
 				return err
 			}
-			if admission.stopped.Load() {
-				return errors.New("observation admission closed during startup")
-			}
 			close(armed)
 			return nil
-		}, binding); err != nil {
+		}, admission.lockResume, binding); err != nil {
 			s.log.Printf("observed worker start refused: %v", err)
 			return false, 0
 		}

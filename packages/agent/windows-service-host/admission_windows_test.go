@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -216,7 +217,7 @@ func TestIssuedPermitCannotStartToolAfterWindowsJobFence(t *testing.T) {
 				}
 				return nil
 			}}, func() { fenceApplied = host.prepareObservedStop() }, host.pid)
-			if err := host.startChild(func() error { return nil }, broker.binding()); err != nil {
+			if err := host.startChild(func() error { return nil }, nil, broker.binding()); err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() {
@@ -322,5 +323,88 @@ func TestAdmissionLossNotificationWaitsForHostFence(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("loss was not delivered after the host interruption")
+	}
+}
+
+func TestRecordedRevocationBlocksSuspendedWorkerResume(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "worker-ran")
+	host := newAgentHost(nodeExe(t), []string{
+		"-e", "require('node:fs').writeFileSync(process.argv[1], 'started')", marker,
+	}, nil, newTestLogger(t))
+
+	startupReady, continueStartup, interrupting := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(continueStartup) }) })
+	var unavailable atomic.Bool
+	observerLoss := errors.New("simulated observer loss while startup is armed")
+	observer := &simulatedObservation{probe: func() error {
+		if unavailable.Load() {
+			return observerLoss
+		}
+		return nil
+	}}
+	gate := &observedAdmission{
+		observer: observer,
+		failure:  make(chan error, 1),
+		onLoss: func() {
+			close(interrupting)
+			host.interruptObservedChild()
+		},
+	}
+	started := make(chan error, 1)
+	go func() {
+		started <- host.startChild(func() error {
+			if err := observer.check(); err != nil {
+				return err
+			}
+			close(startupReady)
+			<-continueStartup
+			return nil
+		}, gate.lockResume, "")
+	}()
+	select {
+	case <-startupReady:
+	case err := <-started:
+		t.Fatalf("child failed before arming: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("suspended startup did not reach arming")
+	}
+
+	unavailable.Store(true)
+	go gate.check()
+	select {
+	case <-interrupting:
+		if !gate.stopped.Load() {
+			t.Fatal("observer loss was not recorded before host interruption")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("failed to acquire revocation during suspended startup")
+	}
+	// The loss handler is waiting for the host lock. The child must remain
+	// suspended even though interruption and its notification cannot finish.
+	release.Do(func() { close(continueStartup) })
+	var startupErr error
+	select {
+	case startupErr = <-started:
+	case <-time.After(8 * time.Second):
+		t.Fatal("suspended startup did not release the host lock")
+	}
+	select {
+	case err := <-gate.failure:
+		if !errors.Is(err, observerLoss) {
+			t.Fatalf("unexpected observation failure: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("host interruption remained blocked")
+	}
+	if startupErr == nil {
+		_ = host.stopObservedChild()
+		t.Fatal("revoked startup reached the native resume")
+	}
+	if !strings.HasSuffix(startupErr.Error(), "observation admission closed during startup") {
+		t.Fatalf("unexpected startup refusal or unverified cleanup: %v", startupErr)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("revoked worker code ran or could not be verified: %v", err)
 	}
 }

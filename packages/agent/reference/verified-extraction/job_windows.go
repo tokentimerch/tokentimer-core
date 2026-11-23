@@ -32,13 +32,14 @@ type ProcessJob struct {
 
 var isProcessInJob = windows.NewLazySystemDLL("kernel32.dll").NewProc("IsProcessInJob")
 
-// StartProcessInJob assigns a suspended child before it can execute. On
-// success the caller must wait on cmd and close the job.
-func StartProcessInJob(ctx context.Context, cmd *exec.Cmd, beforeResume func() error) (*ProcessJob, error) {
-	return startProcessInJob(ctx, cmd, beforeResume, 5*time.Second)
+// StartProcessInJob assigns a suspended child before it can execute. If
+// supplied, lockResume authorizes the native resume and returns its release
+// function. On success the caller must wait on cmd and close the job.
+func StartProcessInJob(ctx context.Context, cmd *exec.Cmd, beforeResume func() error, lockResume func() (func(), error)) (*ProcessJob, error) {
+	return startProcessInJob(ctx, cmd, beforeResume, lockResume, 5*time.Second)
 }
 
-func startProcessInJob(ctx context.Context, cmd *exec.Cmd, beforeResume func() error, failedStartWait time.Duration) (_ *ProcessJob, startErr error) {
+func startProcessInJob(ctx context.Context, cmd *exec.Cmd, beforeResume func() error, lockResume func() (func(), error), failedStartWait time.Duration) (_ *ProcessJob, startErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -110,6 +111,13 @@ func startProcessInJob(ctx context.Context, cmd *exec.Cmd, beforeResume func() e
 		if err := beforeResume(); err != nil {
 			return nil, err
 		}
+	}
+	if lockResume != nil {
+		release, err := lockResume()
+		if err != nil {
+			return nil, err
+		}
+		defer release()
 	}
 	prior, err := windows.ResumeThread(thread)
 	if err != nil || prior != 1 {
@@ -219,7 +227,7 @@ func (j *ProcessJob) Stop(timeout time.Duration) error {
 
 func runContained(ctx context.Context, cmd *exec.Cmd, beforeResume func() error) error {
 	// The installer must retain protected staging until its direct child exits.
-	job, err := startProcessInJob(ctx, cmd, beforeResume, 0)
+	job, err := startProcessInJob(ctx, cmd, beforeResume, nil, 0)
 	if err != nil {
 		return err
 	}
