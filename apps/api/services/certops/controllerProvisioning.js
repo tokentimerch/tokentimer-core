@@ -696,6 +696,8 @@ async function recordControllerProvisioningEventTimestamp({
   occurredAt,
 } = {}) {
   if (!occurredAt) return;
+  // A late event can still carry evidence. It cannot advance provisioning
+  // timestamps after the control plane has fenced or orphaned the job.
   const terminalColumnByEventType = {
     "job.completed": "completed_at",
     "job.failed": "failed_at",
@@ -709,7 +711,8 @@ async function recordControllerProvisioningEventTimestamp({
         WHERE d.job_id = j.id
           AND j.id = $1
           AND j.workspace_id = $2
-          AND j.source = '${CONTROLLER_PROVISIONING_JOB_SOURCE}'`,
+          AND j.source = '${CONTROLLER_PROVISIONING_JOB_SOURCE}'
+          AND j.status NOT IN ('cancelled', 'orphaned_unknown_effect')`,
       [jobId, workspaceId, occurredAt],
     );
     return;
@@ -726,7 +729,8 @@ async function recordControllerProvisioningEventTimestamp({
       WHERE d.job_id = j.id
         AND j.id = $1
         AND j.workspace_id = $2
-        AND j.source = '${CONTROLLER_PROVISIONING_JOB_SOURCE}'`,
+        AND j.source = '${CONTROLLER_PROVISIONING_JOB_SOURCE}'
+        AND j.status NOT IN ('cancelled', 'orphaned_unknown_effect')`,
     [jobId, workspaceId, occurredAt],
   );
 }

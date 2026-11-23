@@ -148,6 +148,7 @@ const ALL_ACTION_TYPES = [
   'CERTOPS_GENERIC_SECRET_REDACTION_APPLIED',
   'CERTOPS_JOB_APPROVAL_GRANTED',
   'CERTOPS_JOB_APPROVAL_REJECTED',
+  'CERTOPS_JOB_CANCELLED',
   'CERTOPS_AGENT_BOOTSTRAP_TOKEN_CREATED',
   'CERTOPS_AGENT_BOOTSTRAP_TOKEN_REVOKED',
   'CERTOPS_AGENT_REGISTERED',
@@ -1174,6 +1175,10 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       const parts = [];
       if (md.jobId) parts.push(`Job: ${md.jobId}`);
       if (md.status) parts.push(`Status: ${md.status}`);
+      if (md.previousStatus)
+        parts.push(`Previous status: ${md.previousStatus}`);
+      if (md.needsOperatorReconciliation)
+        parts.push('Host verification required');
       if (md.payloadHash) parts.push(`Payload hash: ${md.payloadHash}`);
       if (md.canonicalIntentHash)
         parts.push(`Intent hash: ${md.canonicalIntentHash}`);
@@ -1882,7 +1887,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
 
     if (
       action === 'CERTOPS_JOB_APPROVAL_GRANTED' ||
-      action === 'CERTOPS_JOB_APPROVAL_REJECTED'
+      action === 'CERTOPS_JOB_APPROVAL_REJECTED' ||
+      action === 'CERTOPS_JOB_CANCELLED'
     ) {
       const formatted = formatCertOpsApprovalMetadata(ev);
       if (formatted) return formatted;

@@ -4,6 +4,41 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { canCancelCertOpsJob } = require("../../apps/api/services/certops/jobCancellation");
+const { attachJobPendingReasons } = require("../../apps/api/services/certops/jobPendingReason");
+const { attachUserDisplayNames } = require("../../apps/api/services/certops/userDisplayNames");
+
+it("keeps job-detail cancellation unavailable for managed enrollment and distribution workflows", async () => {
+  const job = {
+    id: "70cf03d0-29ba-4a98-9e2b-c71d1852aa74",
+    status: "pending",
+    executorKind: "agent",
+    assignedAgentId: "fixture-agent",
+  };
+  assert.equal(canCancelCertOpsJob(job), true);
+  for (const field of ["publication", "materialDeployment", "materialCleanup", "materialReconciliation", "distributionRollout"]) {
+    assert.equal(canCancelCertOpsJob({ ...job, payload: { [field]: {} } }), false);
+  }
+
+  const [bound] = await attachJobPendingReasons({
+    db: {
+      async query(sql) {
+        assert.match(sql, /enrollment_id IS NOT NULL/);
+        return { rows: [{ id: job.id }] };
+      },
+    },
+    workspaceId: "fixture-workspace",
+    jobs: [job],
+  });
+  const [decorated] = await attachUserDisplayNames({
+    records: [bound],
+    idKey: "approvedByUserId",
+    nameKey: "approvedByDisplayName",
+  });
+  assert.equal(canCancelCertOpsJob(decorated), false);
+  const publicJob = JSON.parse(JSON.stringify(decorated));
+  assert.equal(Object.keys(publicJob).some(key => /enrollment|issuer/i.test(key)), false);
+});
 
 const routesSource = fs.readFileSync(
   path.resolve(__dirname, "../../apps/api/routes/certops.js"),
@@ -213,6 +248,7 @@ describe("CertOps route hardening", () => {
       "POST /api/v1/workspaces/:id/certops/imports",
       "POST /api/v1/workspaces/:id/certops/jobs",
       "POST /api/v1/workspaces/:id/certops/jobs/:jobId/approve",
+      "POST /api/v1/workspaces/:id/certops/jobs/:jobId/cancel",
       "POST /api/v1/workspaces/:id/certops/jobs/:jobId/reject",
       "POST /api/v1/workspaces/:id/certops/jobs/bulk-renew",
       "POST /api/v1/workspaces/:id/certops/management-periods/:periodId/stop",
@@ -238,6 +274,17 @@ describe("CertOps route hardening", () => {
     for (const guard of ["requireCertOpsEnabled", "requireCertOpsSessionUser", "requireCertOpsWriteRole"]) assert.ok(block.includes(guard));
     assertOpenApiRoute("/api/v1/workspaces/{id}/certops/jobs/{jobId}/approval-review", "get");
     assert.match(openApiSource, /reviewHash:/);
+  });
+
+  it("restricts job cancellation to human managers and allows it while paused", () => {
+    const block = routeBlock("post", "/api/v1/workspaces/:id/certops/jobs/:jobId/cancel");
+    for (const guard of [
+      "rejectKeyMaterial", "requireCertOpsEnabled", "requireCertOpsSessionUser", "requireCertOpsWriteRole",
+    ]) {
+      assert.ok(block.includes(guard), guard);
+    }
+    assert.ok(!block.includes("requireWorkspaceCertOpsActive"));
+    assertOpenApiRoute("/api/v1/workspaces/{id}/certops/jobs/{jobId}/cancel", "post");
   });
 
   it("gates renewal-profile reads on at least workspace_manager", () => {

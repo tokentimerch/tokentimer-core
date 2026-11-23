@@ -66,6 +66,7 @@ included in the audit metadata.
 - **CERTOPS_RENEWAL_PROFILE_DETACHED** metadata: `{ managedCertificateId, commonName, profileId, profileName, invalidatedIntents }`.
 - **CERTOPS_JOB_APPROVAL_GRANTED** metadata: `{ jobId, status, payloadHash, canonicalIntentHash, reason }` (`reason` present only when the approver supplied one).
 - **CERTOPS_JOB_APPROVAL_REJECTED** metadata: `{ jobId, status, reason }` (`reason` present only when the approver supplied one).
+- **CERTOPS_JOB_CANCELLED** records the operator, job ID, previous status, terminal status and whether host reconciliation is required.
 - **CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED** / **CERTOPS_WORKSPACE_APPROVAL_POLICY_DISABLED** metadata: `{ workspaceId, previousRequireApprovalAlways, certOpsRequireApprovalAlways }`.
 - **CERTOPS_WORKSPACE_PAUSED** / **CERTOPS_WORKSPACE_RESUMED** metadata: `{ workspaceId, previousCertOpsPaused, certOpsPaused, certOpsEnabled, certOpsActive, reason }`.
 - **CERTOPS_CONTROLLER_OBSERVATION_ACCEPTED** metadata: `{ apiTokenId, clusterId, managedCertificateId, observationId, resourceRecreated, targetId, certificateInstanceId }`.

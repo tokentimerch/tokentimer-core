@@ -2030,7 +2030,11 @@ async function renewJobLease({
     if (job.status !== "claimed" && job.status !== "running") {
       throw serviceError(
         "Certificate job is not in a renewable lease state",
-        CERTOPS_AGENT_LEASE_INVALID,
+        // A fenced claim is terminal for the agent. The 409 ownership
+        // response stops renewal immediately instead of allowing grace.
+        job.status === "cancelled" || job.status === "orphaned_unknown_effect"
+          ? CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH
+          : CERTOPS_AGENT_LEASE_INVALID,
       );
     }
 

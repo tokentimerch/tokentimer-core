@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-22 (Core 0.20.0, main bbf87f4a).
+Last reviewed: 2026-11-23 (Core 0.20.0, main ecf85a2b).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -140,7 +140,10 @@ does not promise a version or add a v1.0.0 gate.
   [cancellation #344](https://github.com/tokentimerch/tokentimer-core/issues/344),
   [manual evidence #341](https://github.com/tokentimerch/tokentimer-core/issues/341)
   and [restore decommissioned identities #410](https://github.com/tokentimerch/tokentimer-core/issues/410).
-  Scope each against the released lifecycle before implementation.
+  Core cancellation covers eligible agent jobs and requires reconciliation
+  when real host effects are uncertain. Jobs with dedicated enrollment or
+  distribution lifecycle controls stay on those paths. Controller, external
+  executor and consuming-edition adoption remain follow-on work.
 - **Release provenance**
   ([#300](https://github.com/tokentimerch/tokentimer-core/issues/300)).
   Require release-branch ancestry and successful push CI for the exact tag
