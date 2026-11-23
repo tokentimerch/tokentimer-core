@@ -21,8 +21,20 @@ for (const line of body.split("\n")) {
 }
 const script = lines.join("\n").replaceAll("${{ github.repository }}", "test/repo");
 const bash = process.platform === "win32" ? "C:\\Program Files\\Git\\bin\\bash.exe" : "bash";
+const expectedCommit = "a".repeat(40);
+const mockCommands = `
+function node() {
+  if [ "$#" -ne 2 ] || [ "$1" != scripts/check-release-provenance.cjs ] ||
+      [ "$2" != --verify-tag ] || [ "$EXPECTED_RELEASE_COMMIT" != "${expectedCommit}" ]; then
+    return 2
+  fi
+  printf 'CHECK_TAG\\n'
+  [ "$MOCK_RELEASE_TAG_MATCHES" = true ]
+}
+function gh() { printf 'ARG:%s\\n' "$@"; }
+`;
 
-function runRelease({ windows = false, linux = true } = {}) {
+function runRelease({ windows = false, linux = true, tagMatches = true } = {}) {
   const parent = fs.realpathSync(os.tmpdir());
   const dir = fs.mkdtempSync(path.join(parent, "tt-release-assets-"));
   try {
@@ -32,8 +44,16 @@ function runRelease({ windows = false, linux = true } = {}) {
     if (linux) names.push("tokentimer-agent-0.18.2.tgz", "tokentimer-agent-0.18.2.tgz.sha256");
     if (windows) for (const arch of ["amd64", "arm64"]) names.push(`tokentimer-agent-0.18.2-windows-${arch}.tgz`, `tokentimer-agent-0.18.2-windows-${arch}.tgz.sha256`);
     for (const name of names) fs.writeFileSync(path.join(artifacts, name), "fixture");
-    const mock = "function gh() { printf 'ARG:%s\\n' \"$@\"; }\n";
-    const result = spawnSync(bash, ["-c", mock + script], { cwd: dir, env: { ...process.env, GITHUB_REF: "refs/tags/v0.18.2" }, encoding: "utf8" });
+    const result = spawnSync(bash, ["-c", mockCommands + script], {
+      cwd: dir,
+      env: {
+        ...process.env,
+        GITHUB_REF: "refs/tags/v0.18.2",
+        EXPECTED_RELEASE_COMMIT: expectedCommit,
+        MOCK_RELEASE_TAG_MATCHES: String(tagMatches),
+      },
+      encoding: "utf8",
+    });
     if (result.error) throw result.error;
     return result;
   } finally {
@@ -45,6 +65,7 @@ function runRelease({ windows = false, linux = true } = {}) {
 test("release creation retains Linux but never passes unqualified Windows archives to gh", () => {
   const result = runRelease({ windows: true });
   assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^CHECK_TAG\nARG:release$/m);
   const args = result.stdout.split("\n").filter((line) => line.startsWith("ARG:agent-dist/"));
   assert.deepEqual(args, ["ARG:agent-dist/tokentimer-agent-0.18.2.tgz", "ARG:agent-dist/tokentimer-agent-0.18.2.tgz.sha256"]);
   assert.match(result.stdout, /Windows bundled-runtime archives are withheld/);
@@ -57,4 +78,11 @@ test("Linux-only release works and missing Linux archive fails", () => {
   const missing = runRelease({ windows: true, linux: false });
   assert.notEqual(missing.status, 0);
   assert.doesNotMatch(missing.stdout, /ARG:release/);
+});
+
+test("a rejected release tag check blocks GitHub release creation", () => {
+  const result = runRelease({ tagMatches: false });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stdout, /^CHECK_TAG$/m);
+  assert.doesNotMatch(result.stdout, /ARG:release/);
 });

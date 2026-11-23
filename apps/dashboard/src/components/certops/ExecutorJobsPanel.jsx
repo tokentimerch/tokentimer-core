@@ -277,13 +277,14 @@ export default function ExecutorJobsPanel({
             key={`${workspaceId}:${linkedJobId}`}
             jobId={linkedJobId}
             refreshToken={timelineRefreshToken}
+            onJobChanged={refresh}
           />
         </Box>
       ) : null}
       {canManage && certOpsPaused ? (
         <Text fontSize='xs' color={muted} mb={2}>
-          {PAUSED_CREATE_REASON} Approving and rejecting queued jobs stays
-          available.
+          {PAUSED_CREATE_REASON} You can still approve, reject, or cancel
+          eligible jobs.
         </Text>
       ) : null}
       <HStack spacing={2} mb={3} flexWrap='wrap' align='center'>
@@ -587,6 +588,7 @@ export default function ExecutorJobsPanel({
                       <EvidenceTimeline
                         jobId={job.id}
                         refreshToken={timelineRefreshToken}
+                        onJobChanged={refresh}
                         embedded
                       />
                     ) : null}

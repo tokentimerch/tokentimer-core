@@ -5,16 +5,46 @@ on:
     tags:
       - "v*"
 
+# Serialize retries of the same tag without interrupting a publication.
+concurrency:
+  group: core-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   HELM_OCI_REGISTRY: ghcr.io
   HELM_OCI_REPO: ghcr.io/${{ github.repository_owner }}/charts
 
 jobs:
+  verify-provenance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      commit: ${{ steps.provenance.outputs.commit }}
+      prerelease: ${{ steps.provenance.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require successful push CI for the exact release commit
+        id: provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_PROMPT_DISABLED: '1'
+        run: node scripts/check-release-provenance.cjs
+
   # Stage 1a: scan the published architecture, then publish its unchanged OCI index.
   build-and-push-docker:
-    needs: pack-agent
+    needs: [verify-provenance, pack-agent]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       GRYPE_CHECK_FOR_APP_UPDATE: "false"
       SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:2681eccb8b02c495b013c2669cbf7f41d5c0b0b0e644e7c69bd3ea9bcb20641f # 1.22.3
@@ -35,14 +65,18 @@ jobs:
             dockerfile: apps/k8s-controller/Dockerfile
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify-provenance.outputs.commit }}
+          persist-credentials: false
 
       - name: Resolve checked-out image source
         id: source_identity
         shell: bash
+        env:
+          EXPECTED_RELEASE_COMMIT: ${{ needs.verify-provenance.outputs.commit }}
         run: |
           REVISION="$(git rev-parse --verify HEAD)"
-          EVENT_REVISION="$(git rev-parse --verify "${GITHUB_SHA}^{commit}")"
-          test "$REVISION" = "$EVENT_REVISION"
+          test "$REVISION" = "$EXPECTED_RELEASE_COMMIT"
           printf 'revision=%s\n' "$REVISION" >> "$GITHUB_OUTPUT"
 
       - name: Extract version from tag
@@ -111,6 +145,12 @@ jobs:
           done
           test "$SCAN_FAILED" -eq 0
 
+      - name: Confirm the release tag before pushing images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_RELEASE_COMMIT: ${{ needs.verify-provenance.outputs.commit }}
+        run: node scripts/check-release-provenance.cjs --verify-tag
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -121,13 +161,23 @@ jobs:
       - name: Publish the scanned OCI archive
         env:
           IMAGE: ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}:${{ steps.get_version.outputs.VERSION }}
+          REGISTRY_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           sha256sum --check "$RUNNER_TEMP/release-image.tar.sha256"
           EXPECTED_DIGEST="sha256:$(sha256sum "$RUNNER_TEMP/release-image.index.json" | cut -d ' ' -f 1)"
-          docker run --rm --volume "$RUNNER_TEMP:/release" --volume "$HOME/.docker:/auth:ro" "$SKOPEO_IMAGE" \
-            copy --all --preserve-digests --authfile /auth/config.json --digestfile /release/release-image.digest \
-            oci-archive:/release/release-image.tar "docker://$IMAGE"
+          REPOSITORY="${IMAGE%:*}"
+          DECISION="$(node scripts/check-release-registry-version.cjs \
+            image "${REPOSITORY#ghcr.io/}" "${IMAGE##*:}" "$EXPECTED_DIGEST")"
+          if [ "$DECISION" = "publish" ]; then
+            docker run --rm --volume "$RUNNER_TEMP:/release" --volume "$HOME/.docker:/auth:ro" "$SKOPEO_IMAGE" \
+              copy --all --preserve-digests --authfile /auth/config.json --digestfile /release/release-image.digest \
+              oci-archive:/release/release-image.tar "docker://$IMAGE"
+          else
+            test "$DECISION" = "reuse"
+            printf '%s' "$EXPECTED_DIGEST" > "$RUNNER_TEMP/release-image.digest"
+          fi
+          unset REGISTRY_TOKEN
           test "$(cat "$RUNNER_TEMP/release-image.digest")" = "$EXPECTED_DIGEST"
           ACTUAL_DIGEST="$(docker run --rm --volume "$HOME/.docker:/auth:ro" "$SKOPEO_IMAGE" \
             inspect --raw --authfile /auth/config.json "docker://$IMAGE" | sha256sum | cut -d ' ' -f 1)"
@@ -137,7 +187,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-image-security-${{ matrix.component }}
+          name: release-image-security-${{ matrix.component }}-attempt-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/release-image-amd64.json
             ${{ runner.temp }}/release-image*.digest
@@ -146,8 +196,9 @@ jobs:
           if-no-files-found: error
 
   sign-images:
-    needs: build-and-push-docker
+    needs: [verify-provenance, build-and-push-docker]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     strategy:
       matrix:
@@ -158,10 +209,22 @@ jobs:
           - k8s-controller
 
     permissions:
+      contents: read
       packages: write
       id-token: write
 
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify-provenance.outputs.commit }}
+          sparse-checkout: scripts/check-release-provenance.cjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Confirm the release tag before signing images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_RELEASE_COMMIT: ${{ needs.verify-provenance.outputs.commit }}
+        run: node scripts/check-release-provenance.cjs --verify-tag
       - name: Extract version from tag
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
@@ -206,11 +269,18 @@ jobs:
 
   # Stage 1b: package Helm chart (no OCI publish yet).
   build-helm-chart:
+    needs: verify-provenance
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
+    outputs:
+      artifact-id: ${{ steps.upload-chart.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify-provenance.outputs.commit }}
+          persist-credentials: false
 
       - name: Extract version from tag
         id: get_version
@@ -249,27 +319,35 @@ jobs:
           helm template tokentimer "$CHART" --set config.adminEmail=ci@example.com >/dev/null
 
       - name: Upload Helm package artifact
+        id: upload-chart
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: helm-chart
+          name: helm-chart-attempt-${{ github.run_attempt }}
           path: .helm-pkg/tokentimer-${{ steps.get_version.outputs.VERSION }}.tgz
           if-no-files-found: error
 
   # Stage 1c: build agent release tarball + checksum (verified in verify-release).
   pack-agent:
+    needs: verify-provenance
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       actions: read
       pull-requests: read
+    outputs:
+      artifact-id: ${{ steps.upload-agent.outputs.artifact-id }}
     env:
-      GO_VERSION: "1.26.10"
+      GO_VERSION: "1.26.11"
+      # Required only to inspect the immutable accepted archive.
+      RETAINED_0200_GO_VERSION: "1.26.10"
       GOTOOLCHAIN: local
       GOFLAGS: -buildvcs=false
       GRYPE_CHECK_FOR_APP_UPDATE: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.verify-provenance.outputs.commit }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -277,12 +355,6 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.22.3'
-
-      - name: Set up pinned patched Go toolchain
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
 
       - name: Retrieve the accepted 0.20.0 archive
         id: accepted-agent
@@ -292,17 +364,35 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/certops-agent-acceptance.cjs .github/releases/0.20.0-agent-acceptance.json "$QUALIFIED_AGENT_SHA256" agent-dist
 
+      - name: Set up exact agent Go toolchain
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: ${{ steps.accepted-agent.outcome == 'success' && env.RETAINED_0200_GO_VERSION || env.GO_VERSION }}
+          cache: false
+
       - name: Pack agent release tarball
         if: steps.accepted-agent.outcome == 'skipped'
+        env:
+          EXPECTED_RELEASE_COMMIT: ${{ needs.verify-provenance.outputs.commit }}
         run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_RELEASE_COMMIT"
+          git diff --quiet HEAD -- packages/agent
           test "$(go env GOVERSION)" = "go${GO_VERSION}"
           test "$(go env GOFLAGS)" = -buildvcs=false
           test "$(node --version)" = v24.22.3
           test "$(npm --version)" = 11.19.1
           node packages/agent/scripts/pack-release.js --out-dir agent-dist
+          # The archive already contains the rebuilt helpers. Restore only these
+          # tracked build outputs so provenance can verify the original source.
+          git restore --source="$EXPECTED_RELEASE_COMMIT" --worktree -- \
+            packages/agent/bin/tokentimer-observed-revocation-linux-amd64 \
+            packages/agent/bin/tokentimer-observed-revocation-linux-arm64
 
       - name: Verify shipped native toolchain and provenance
         env:
+          EXPECTED_RELEASE_COMMIT: ${{ needs.verify-provenance.outputs.commit }}
+          EXPECTED_AGENT_GO_VERSION: ${{ steps.accepted-agent.outcome == 'success' && env.RETAINED_0200_GO_VERSION || env.GO_VERSION }}
           PRODUCER_SOURCE_SHA: ${{ steps.accepted-agent.outputs.source_sha }}
           PRODUCER_RUN_ID: ${{ steps.accepted-agent.outputs.producer_run_id }}
         run: |
@@ -311,7 +401,7 @@ jobs:
           archive=("$GITHUB_WORKSPACE"/agent-dist/*.tgz)
           test "${#archive[@]}" -eq 1
           source_dir="$GITHUB_WORKSPACE"
-          source_sha="$GITHUB_SHA"
+          source_sha="$EXPECTED_RELEASE_COMMIT"
           producer_run="$GITHUB_RUN_ID"
           if [ -n "$PRODUCER_SOURCE_SHA" ]; then
             source_dir="$RUNNER_TEMP/qualified-agent-source"
@@ -322,7 +412,7 @@ jobs:
           fi
           cd "$source_dir"
           GITHUB_RUN_ID="$producer_run" node "$GITHUB_WORKSPACE/scripts/verify-agent-native-package.js" \
-            --archive "${archive[0]}" --go-version "$GO_VERSION" \
+            --archive "${archive[0]}" --go-version "$EXPECTED_AGENT_GO_VERSION" \
             --source-sha "$source_sha" --out "$GITHUB_WORKSPACE/agent-dist/native-provenance.json"
 
       - name: Scan shipped package for fixed High and Critical advisories
@@ -348,7 +438,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: agent-native-verification
+          name: agent-native-verification-attempt-${{ github.run_attempt }}
           path: |
             agent-dist/native-provenance.json
             agent-dist/native-security.json
@@ -365,9 +455,10 @@ jobs:
           node scripts/certops-azure-keyvault-package.cjs verify-release "${archive[0]}" "$QUALIFIED_AGENT_SHA256"
 
       - name: Upload agent release artifacts
+        id: upload-agent
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: agent-release
+          name: agent-release-attempt-${{ github.run_attempt }}
           path: |
             agent-dist/*.tgz
             agent-dist/*.sha256
@@ -376,15 +467,27 @@ jobs:
   # Stage 2: verify all artifacts before Helm OCI publish.
   verify-release:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs:
       - build-and-push-docker
       - sign-images
       - build-helm-chart
       - pack-agent
+    outputs:
+      chart-artifact-id: ${{ needs.build-helm-chart.outputs.artifact-id }}
+      agent-artifact-id: ${{ needs.pack-agent.outputs.artifact-id }}
     permissions:
       packages: read
       contents: read
     steps:
+      - name: Require the package producer artifact IDs
+        env:
+          CHART_ARTIFACT_ID: ${{ needs.build-helm-chart.outputs.artifact-id }}
+          AGENT_ARTIFACT_ID: ${{ needs.pack-agent.outputs.artifact-id }}
+        run: |
+          set -euo pipefail
+          [[ "$CHART_ARTIFACT_ID" =~ ^[1-9][0-9]*$ && "$AGENT_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] ||
+            { echo "::error::Missing release package producer artifact ID."; exit 1; }
       - name: Extract version from tag
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
@@ -421,7 +524,7 @@ jobs:
       - name: Download Helm package artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: helm-chart
+          artifact-ids: ${{ needs.build-helm-chart.outputs.artifact-id }}
           path: .helm-pkg
 
       - name: Verify Helm package
@@ -438,7 +541,7 @@ jobs:
       - name: Download agent release artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: agent-release
+          artifact-ids: ${{ needs.pack-agent.outputs.artifact-id }}
           path: agent-dist
 
       - name: Verify agent release artifacts
@@ -452,15 +555,25 @@ jobs:
   # Stage 3a: publish Helm to OCI only after verification (chart refs versioned images).
   publish-helm-chart:
     runs-on: ubuntu-latest
-    needs: verify-release
+    needs: [verify-provenance, verify-release]
+    timeout-minutes: 15
+    # All versions write the same Artifact Hub metadata tag.
+    concurrency:
+      group: core-release-helm-publication
+      cancel-in-progress: false
     permissions:
       packages: write
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: deploy/helm/artifacthub-repo.yml
+          ref: ${{ needs.verify-provenance.outputs.commit }}
+          sparse-checkout: |
+            deploy/helm/artifacthub-repo.yml
+            scripts/check-release-provenance.cjs
+            scripts/check-release-registry-version.cjs
           sparse-checkout-cone-mode: false
+          persist-credentials: false
 
       - name: Extract version from tag
         id: get_version
@@ -477,17 +590,37 @@ jobs:
       - name: Download Helm package artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: helm-chart
+          artifact-ids: ${{ needs.verify-release.outputs.chart-artifact-id }}
           path: .helm-pkg
+
+      - name: Confirm the release tag before pushing the chart
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_RELEASE_COMMIT: ${{ needs.verify-provenance.outputs.commit }}
+        run: node scripts/check-release-provenance.cjs --verify-tag
 
       - name: Log in to OCI registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.HELM_OCI_REGISTRY }} -u ${{ github.actor }} --password-stdin
 
       - name: Push chart to OCI registry
-        run: helm push .helm-pkg/tokentimer-${{ steps.get_version.outputs.VERSION }}.tgz oci://${{ env.HELM_OCI_REPO }}
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          CHART=".helm-pkg/tokentimer-${VERSION}.tgz"
+          EXPECTED_DIGEST="sha256:$(sha256sum "$CHART" | cut -d ' ' -f 1)"
+          REPOSITORY="${HELM_OCI_REPO#ghcr.io/}/tokentimer"
+          DECISION="$(node scripts/check-release-registry-version.cjs chart "$REPOSITORY" "$VERSION" "$EXPECTED_DIGEST")"
+          if [ "$DECISION" = "publish" ]; then
+            helm push "$CHART" "oci://$HELM_OCI_REPO"
+            test "$(node scripts/check-release-registry-version.cjs chart "$REPOSITORY" "$VERSION" "$EXPECTED_DIGEST")" = "reuse"
+          else
+            test "$DECISION" = "reuse"
+          fi
 
       - name: Install oras
-        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
+        uses: oras-project/setup-oras@ac735097e22fe643015b0d19645f7c9a69942128 # v2.0.4
 
       - name: Log in to OCI registry (oras)
         run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ${{ env.HELM_OCI_REGISTRY }} -u ${{ github.actor }} --password-stdin
@@ -508,20 +641,25 @@ jobs:
   # release-tokentimer-core skill overwrites them via `gh release edit` after.
   create-release:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs:
+      - verify-provenance
       - verify-release
       - publish-helm-chart
-    if: >-
-      !contains(github.ref_name, 'alpha') &&
-      !contains(github.ref_name, 'beta') &&
-      !contains(github.ref_name, 'rc')
+    if: needs.verify-provenance.outputs.prerelease == 'false'
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify-provenance.outputs.commit }}
+          sparse-checkout: scripts/check-release-provenance.cjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - name: Download agent release artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: agent-release
+          artifact-ids: ${{ needs.verify-release.outputs.agent-artifact-id }}
           path: agent-dist
 
       - name: Detect existing GitHub Release for tag
@@ -531,7 +669,11 @@ jobs:
         run: |
           set -euo pipefail
           TAG_NAME="${GITHUB_REF#refs/tags/}"
-          if gh release view "$TAG_NAME" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+          if IS_DRAFT=$(gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$IS_DRAFT" != "false" ]; then
+              echo "::error::The release is still a draft. Follow the Core release runbook to verify its assets before publishing."
+              exit 1
+            fi
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Release already exists for ${TAG_NAME}; a re-run of this job has nothing left to do here (immutable assets cannot be re-uploaded once published; the release-tokentimer-core skill owns title/body edits from this point on)."
           else
@@ -542,6 +684,7 @@ jobs:
         if: steps.release_lookup.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_RELEASE_COMMIT: ${{ needs.verify-provenance.outputs.commit }}
         run: |
           set -euo pipefail
           TAG_NAME="${GITHUB_REF#refs/tags/}"
@@ -552,8 +695,10 @@ jobs:
           if compgen -G 'agent-dist/*-windows-*.tgz' >/dev/null; then
             echo '::warning::Windows bundled-runtime archives are withheld pending signed, digest-bound pre-publication qualification.'
           fi
+          node scripts/check-release-provenance.cjs --verify-tag
           gh release create "$TAG_NAME" \
             --repo "${{ github.repository }}" \
+            --verify-tag \
             --title "${TAG_NAME}" \
             --notes "Automated placeholder release for ${TAG_NAME}. Windows bundled-runtime archives are withheld pending qualification. See CHANGELOG.md; finalized release notes are added shortly after publication." \
             "$LINUX_ARCHIVE" "${LINUX_ARCHIVE}.sha256"
