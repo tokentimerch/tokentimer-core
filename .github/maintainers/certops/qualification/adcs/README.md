@@ -10,14 +10,6 @@ For native enrollment, pending approval/denial, renewal, recovery, IIS/CNG custo
 
 Set `CERTOPS_WINDOWS_LANGUAGE_ASSETS` to a JSON object keyed by OS/language, for example `2022/de-DE`, with `uri` and `sha256` for each official Server display-language CAB. Use a private HTTPS Azure Blob and a read-only SAS that remains valid through installation on both CA and member; refresh expired URLs before another dispatch. The checksum, installed resources and actual SYSTEM language are verified. A Basic language capability alone does not qualify a display-language slot.
 
-### Signed Windows Store recovery
-
-Use one four-hour disposable domain lab with a fresh Server 2022 AMD64 member without IIS. Bind the installed stock package, matching launcher and certificates to the approved custody receipts. The Store runner checks post-accept interruption first and then restarts a separate pending enrollment before approving and retrieving its original RequestId.
-
-Dispatch remains gated on independent CA and service evidence, loss-triggered shutdown with complete process drainage, and off-host readback. The named Store recovery scope binds the exact signed package and launcher digests, the named key and CA request, and each native install attempt and exit. Its result leaves exhaustive ephemeral CNG qualification open. Record the exact Core commit, signed artifact identities and owned resource cleanup. Existing pending and operator-acceptance selectors cover IIS cases. The experimental journal workflow rejects unsupported installation phases before requesting protected lab access.
-
-Before Azure access, run `node scripts/certops-adcs-store-media-preflight.js <custody-receipt> <approved-receipt-sha256> <signed-source-sha> <reviewed-signing-workflow-sha>`. The read-only check verifies the exact GitHub signing attempts and artifact metadata. Keep media verification, the live collector canary and protected lab admission as separate checks.
-
 ## Results and cleanup
 
 **Shards.** The `shard` input defaults to `all`: one serial lab, the only mode that produces release evidence. `parallel` provisions five labs at once (`issuance`, `renewals`, `pending-and-ca`, `templates-and-uncertain`, `uncertain-recovery`; 30 vCPUs, so check regional quota) and a failure in one shard cannot hide the scenarios of another. Shards are diagnostic: their reports are `not-qualified`/`experimental`, each is checked only for completing every scenario it owns, and none can fill a native release slot. Shards apply to the plain comprehensive scope only; `issuance` also carries the production worker and package acceptance. The scenario-to-shard map is `tests/e2e/helpers/certops-adcs-shards.js`, and a unit test fails if a mandatory scenario has no owner.
@@ -31,3 +23,11 @@ During a campaign, monitor workflow status or the managed command's ARM executio
 Lab teardown runs with `always()`. Keep scheduled `certops-adcs-lab-janitor.yml` enabled and its separate `certops-adcs-cleanup` environment able to authenticate without human approval. It deletes only expired, owned labs; verify both normal teardown and cancellation cleanup before relying on this infrastructure.
 
 Hierarchy, issuer reassignment, standalone CA feasibility, response-loss/journal crash experiments and elapsed 24-hour campaigns are deferred to the extended follow-up branch. No native qualification is claimed until actual runs pass.
+
+## Signed Windows Store recovery
+
+Use one four-hour disposable domain lab with a fresh Server 2022 AMD64 member without IIS. Bind the installed stock package, matching launcher and certificates to the approved custody receipts. The Store runner checks post-accept interruption first and then restarts a separate pending enrollment before approving and retrieving its original RequestId.
+
+Dispatch remains gated on independent CA and service evidence, loss-triggered shutdown with complete process drainage, and off-host readback. The named Store recovery scope binds the exact signed package and launcher digests, the named key and CA request, and each native install attempt and exit. Its result leaves exhaustive ephemeral CNG qualification open. Record the exact Core commit, signed artifact identities and owned resource cleanup. Existing pending and operator-acceptance selectors cover IIS cases. The experimental journal workflow rejects unsupported installation phases before requesting protected lab access.
+
+Before Azure access, run `node scripts/certops-adcs-store-media-preflight.js <custody-receipt> <approved-receipt-sha256> <signed-source-sha> <reviewed-signing-workflow-sha>`. The read-only check verifies the exact GitHub signing attempts and artifact metadata. Keep media verification, the live collector canary and protected lab admission as separate checks.
