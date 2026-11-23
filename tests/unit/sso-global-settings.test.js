@@ -60,9 +60,21 @@ describe("sso-global-settings", () => {
     assert.strictEqual(resolved.strictMembershipSync, true);
   });
 
-  it("resolveProviderSecurityConfig defaults strictMembershipSync to false when unset anywhere", () => {
-    const resolved = resolveProviderSecurityConfig({ security: {} }, {});
-    assert.strictEqual(resolved.strictMembershipSync, false);
+  it("enables strict membership sync when policy is unset", () => {
+    assert.strictEqual(resolveProviderSecurityConfig({}).strictMembershipSync, true);
+    assert.strictEqual(resolveProviderSecurityConfig({}, {}).strictMembershipSync, true);
+  });
+
+  it("preserves explicit installation-wide and provider opt-outs", async () => {
+    await refreshGlobalSsoSettings({}, {
+      async getJsonSettingValue(_pool, _column, key) {
+        return key === "strict_membership_sync" ? false : null;
+      },
+    });
+    assert.strictEqual(resolveProviderSecurityConfig({}).strictMembershipSync, false);
+    const provider = { security: { strict_membership_sync: false } };
+    const global = { strict_membership_sync: true };
+    assert.strictEqual(resolveProviderSecurityConfig(provider, global).strictMembershipSync, false);
   });
 
   it("uses persisted timeout settings unless the environment overrides them", async () => {
