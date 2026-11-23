@@ -109,17 +109,6 @@
       "inRoadmap": true
     },
     {
-      "id": "single-sign-on",
-      "title": "Single sign-on in Core",
-      "issue": 766,
-      "edition": "core",
-      "horizon": "alongside-0.x",
-      "inRoadmap": true,
-      "implementationPrs": [
-        779
-      ]
-    },
-    {
       "id": "mcp",
       "title": "MCP operator interface",
       "issue": 502,

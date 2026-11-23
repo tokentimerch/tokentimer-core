@@ -62,17 +62,6 @@ called stable while they are open.
 
 ---
 
-## Alongside 0.x -- does not gate v1.0.0
-
-Accepted work that ships in 0.x stages on its own schedule. v1.0.0 can be
-called stable while it is open.
-
-- **Single sign-on** ([#766](https://github.com/tokentimerch/tokentimer-core/issues/766)).
-  Core supports one active SSO provider per installation (OIDC or SAML),
-  guided setup, and group-to-role mappings. Keycloak is the reference integration.
-
----
-
 ## v1.0.0 -- RBAC and role model cleanup
 
 Target release for breaking or structural authorization changes
