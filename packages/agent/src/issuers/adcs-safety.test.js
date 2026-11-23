@@ -12,6 +12,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { evaluateEnrollmentSafety, createEnrollmentSafetyGuard, SAFETY_REUSE_MS } = require("./adcs-safety");
 const { computeSpkiSha256Hex } = require("./adcs-enrollment");
+const { ADMISSION_DENIED, guardNativeExec } = require("../observation-admission");
 const caBytes = fs.readFileSync(path.resolve(__dirname, "../../reference/adcs-cmc/testdata/ca.cer"));
 const pin = computeSpkiSha256Hex(caBytes);
 const snapshot = { kind: "adcs", transport: "dcom", caConfig: "ca.example.com\\Example CA", template: "SafeWeb",
@@ -60,6 +61,34 @@ test("exact local rule is mandatory before any probe or cache mutation", async (
     const executionContext = { adcsEnrollmentRules: [], adcsPreflightImpl() { calls += 1; return { preflightResult: facts() }; } };
     const result = await createEnrollmentSafetyGuard()({ snapshot, executionContext, stateDir });
     assert.equal(result.errorCode, "ADCS_CA_CONFIG_UNSAFE"); assert.equal(calls, 0); assert.deepEqual(fs.readdirSync(stateDir), []);
+  } finally { await fsp.rm(stateDir, { recursive: true, force: true }); }
+});
+
+test("observed enrollment safety denies a native preflight before certutil launches", async () => {
+  const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "adcs-observed-preflight-"));
+  try {
+    const observedAdmission = new AbortController();
+    const approvals = [];
+    let launches = 0;
+    let legacyAttempts = 0;
+    const executionContext = {
+      observedAdmission: observedAdmission.signal,
+      adcsEnrollmentRules: [{ caConfig: snapshot.caConfig, template: snapshot.template, dnsScopes: ["example.com"], keyAlgorithms: ["rsa"] }],
+      adcsPreflightExecFileImpl() { legacyAttempts++; throw new Error("unguarded preflight refused by test"); },
+      windowsExecFileImpl: guardNativeExec(async (stage) => {
+        approvals.push(stage);
+        throw Object.assign(new Error("observation lost"), { code: ADMISSION_DENIED });
+      }, observedAdmission.signal, () => { launches++; throw new Error("native launch refused by test"); }),
+    };
+    const check = createEnrollmentSafetyGuard();
+    await assert.rejects(check({ snapshot, executionContext, stateDir }), { code: ADMISSION_DENIED });
+    assert.deepEqual(approvals, ["native"]);
+    assert.equal(launches, 0);
+    assert.equal(legacyAttempts, 0);
+    delete executionContext.windowsExecFileImpl;
+    assert.equal((await check({ snapshot, executionContext, stateDir })).errorCode, "ADCS_CA_CONFIG_UNSAFE");
+    assert.equal(legacyAttempts, 0);
+    assert.deepEqual(fs.readdirSync(stateDir), []);
   } finally { await fsp.rm(stateDir, { recursive: true, force: true }); }
 });
 test("bounded same-attempt reuse rechecks snapshot constraints, new entries refresh and stale reads expire", async () => {

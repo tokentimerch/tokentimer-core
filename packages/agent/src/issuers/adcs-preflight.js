@@ -12,6 +12,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
+const { ADMISSION_DENIED } = require("../observation-admission");
 
 const execFileAsync = promisify(execFile);
 
@@ -263,6 +264,11 @@ function runCertutil(execFileImpl, argv, timeoutMs) {
   });
 }
 
+function throwIfObservationInterrupted(error) {
+  // Leave enrollment state intact for reconciliation instead of recording a CA or template refusal.
+  if (error?.code === ADMISSION_DENIED || error?.code === "ABORT_ERR") throw error;
+}
+
 async function runCertutilPreflight({
   caConfig,
   template,
@@ -294,7 +300,8 @@ async function runCertutilPreflight({
   async function readText(label, argv) {
     note(`AD CS preflight reading ${label}`);
     try { return textOf(await call(argv)); }
-    catch (_error) {
+    catch (error) {
+      throwIfObservationInterrupted(error);
       // An unreadable flag must not hide another observed unsafe flag or
       // prevent the independently required CA-certificate pin check.
       note(`AD CS preflight could not read ${label}`);
@@ -324,7 +331,8 @@ async function runCertutilPreflight({
           const der = await fs.readFile(certPath);
           const parsed = certificateFromDer(der);
           if (parsed && parsed.notBefore && parsed.notAfter) caCertificates.push(parsed);
-        } catch (_certError) {
+        } catch (error) {
+          throwIfObservationInterrupted(error);
           // One unreadable certificate does not become a safe pin.
         }
       }
@@ -486,7 +494,8 @@ async function executeAdcsPreflight({
       execFileImpl,
       ...(probe ? {} : { info: note }),
     });
-  } catch (_error) {
+  } catch (error) {
+    throwIfObservationInterrupted(error);
     note("AD CS preflight could not read the CA");
     return {
       status: "failed",
