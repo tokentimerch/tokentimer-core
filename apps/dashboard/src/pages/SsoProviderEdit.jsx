@@ -115,6 +115,16 @@ function setPolicyOverride(setForm, key, choice) {
   });
 }
 
+function providerForm(provider) {
+  return {
+    displayName: provider.displayName,
+    enabled: provider.enabled,
+    config: { ...(provider.config || {}) },
+    claim_mapping: { ...(provider.claim_mapping || {}) },
+    security: { ...(provider.security || {}) },
+  };
+}
+
 export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
   const { slug } = useParams();
   const navigate = useNavigate();
@@ -125,12 +135,18 @@ export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
   const [signingKeyDraft, setSigningKeyDraft] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [impact, setImpact] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const [identityPolicy, setIdentityPolicy] = useState('');
   const [membershipPolicy, setMembershipPolicy] = useState('');
+  const hasUnsavedChanges =
+    provider &&
+    (Boolean(secretDraft || signingKeyDraft) ||
+      JSON.stringify(form) !== JSON.stringify(providerForm(provider)));
+  const isBusy = saving || testing;
   const dependencyCounts = impact?.dependency_counts;
   const hasDependencies = Object.values(dependencyCounts || {}).some(
     count => count > 0
@@ -149,13 +165,7 @@ export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
       const res = await apiClient.get(`/api/admin/sso/providers/${slug}`);
       const p = res.data;
       setProvider(p);
-      setForm({
-        displayName: p.displayName,
-        enabled: p.enabled,
-        config: { ...(p.config || {}) },
-        claim_mapping: { ...(p.claim_mapping || {}) },
-        security: { ...(p.security || {}) },
-      });
+      setForm(providerForm(p));
     } catch (e) {
       showWarning(e?.response?.data?.error || 'Failed to load provider');
     } finally {
@@ -177,13 +187,18 @@ export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
   }
 
   async function runTest() {
+    setTesting(true);
+    setTestResult(null);
     try {
+      if (hasUnsavedChanges && !(await save())) return;
       const res = await apiClient.post(`/api/admin/sso/providers/${slug}/test`);
       setTestResult(res.data);
       if (res.data?.ok) showSuccess('All checks passed');
       else showWarning(res.data?.reason || 'Test reported issues');
     } catch (e) {
       showWarning(e?.response?.data?.error || 'Test failed');
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -209,13 +224,11 @@ export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
       setSaving(true);
       const res = await apiClient.put(`/api/admin/sso/providers/${slug}`, body);
       setProvider(res.data);
-      setForm(f => ({
-        ...f,
-        displayName: res.data.displayName,
-        enabled: res.data.enabled,
-      }));
-      setSecretDraft('');
-      setSigningKeyDraft('');
+      setForm(current => (current === form ? providerForm(res.data) : current));
+      setSecretDraft(current => (current === secretDraft ? '' : current));
+      setSigningKeyDraft(current =>
+        current === signingKeyDraft ? '' : current
+      );
       showSuccess('Provider saved');
       return res.data;
     } catch (e) {
@@ -391,6 +404,7 @@ export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
               </Box>
               <Switch
                 isChecked={!!form.enabled}
+                isDisabled={isBusy}
                 onChange={e => {
                   const next = e.target.checked;
                   if (!next) {
@@ -817,15 +831,25 @@ export default function SsoProviderEdit({ session, onLogout, onAccountClick }) {
               variant='outline'
               colorScheme='red'
               leftIcon={<FiTrash2 />}
+              isDisabled={isBusy}
               onClick={() => previewImpact({ delete: true })}
             >
               Delete provider
             </DashboardActionButton>
             <HStack spacing={2}>
-              <DashboardActionButton variant='outline' onClick={runTest}>
-                Test
+              <DashboardActionButton
+                variant='outline'
+                isLoading={testing}
+                isDisabled={isBusy}
+                onClick={runTest}
+              >
+                {hasUnsavedChanges ? 'Save and run test' : 'Test'}
               </DashboardActionButton>
-              <PrimaryButton isLoading={saving} onClick={() => save()}>
+              <PrimaryButton
+                isLoading={saving && !testing}
+                isDisabled={isBusy}
+                onClick={() => save()}
+              >
                 Save
               </PrimaryButton>
             </HStack>

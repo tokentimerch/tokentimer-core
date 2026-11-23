@@ -236,6 +236,70 @@ describe('Core provider administration', () => {
     );
   });
 
+  it.each([true, false])(
+    'saves a newly entered client secret before testing when save succeeds: %s',
+    async saveSucceeds => {
+      const existing = {
+        slug: 'office',
+        type: 'oidc',
+        enabled: false,
+        displayName: 'Office',
+        config: {
+          issuer: 'https://idp.example.test',
+          client_id: 'test-client',
+        },
+      };
+      api.get.mockResolvedValue({ data: existing });
+      api.post.mockResolvedValue({ data: { ok: true, checks: [] } });
+      let resolveSave;
+      let rejectSave;
+      api.put.mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            resolveSave = resolve;
+            rejectSave = reject;
+          })
+      );
+      mount(<SsoProviderEdit session={{}} />);
+      await screen.findByLabelText(/^Client secret/);
+      enter(/^Display name/, 'New office');
+      enter(/^Client secret/, 'synthetic-secret');
+      const test = screen.getByRole('button', {
+        name: /^(Test|Save and run test)$/,
+      });
+      fireEvent.click(test);
+      expect(api.put).toHaveBeenCalledExactlyOnceWith(
+        '/api/admin/sso/providers/office',
+        expect.objectContaining({
+          displayName: 'New office',
+          secrets: { client_secret: 'synthetic-secret' },
+        })
+      );
+      expect(api.put.mock.calls[0][1]).not.toHaveProperty('enabled');
+      expect(api.post).not.toHaveBeenCalled();
+      if (!saveSucceeds) {
+        rejectSave(new Error('Unavailable'));
+        await waitFor(() =>
+          expect(showWarning).toHaveBeenCalledWith('Save failed')
+        );
+        expect(api.post).not.toHaveBeenCalled();
+        expect(screen.getByLabelText(/^Client secret/)).toHaveValue(
+          'synthetic-secret'
+        );
+        return;
+      }
+      resolveSave({ data: { ...existing, displayName: 'New office' } });
+      await screen.findByText('Last test result');
+      expect(api.post).toHaveBeenCalledExactlyOnceWith(
+        '/api/admin/sso/providers/office/test'
+      );
+      expect(screen.getByLabelText(/^Client secret/)).toHaveValue('');
+      fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+      expect(api.put).toHaveBeenCalledTimes(1);
+      expect(api.post).toHaveBeenCalledTimes(2);
+    }
+  );
+
   it('previews dependencies and requires explicit retirement choices', async () => {
     api.get.mockResolvedValue({
       data: {
