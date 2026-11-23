@@ -171,10 +171,14 @@ router.delete(
            two_factor_enabled = FALSE,
            two_factor_secret = NULL,
            is_admin = FALSE,
+           is_admin_manual = FALSE,
            updated_at = NOW()
          WHERE id = $4`,
         [anonEmail, "Deleted Account", dummyHash, userId],
       );
+
+      await client.query("DELETE FROM external_identities WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM sso_system_admin_grants WHERE user_id = $1", [userId]);
 
       // Proactively remove memberships so the anonymized account no longer belongs to orgs
       await client.query(

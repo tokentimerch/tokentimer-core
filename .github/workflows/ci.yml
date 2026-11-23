@@ -45,7 +45,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: "11.28.8"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -606,6 +606,14 @@ jobs:
           RV_TEST_DB_USER: ${{ env.DB_USER }}
           RV_TEST_DB_PASSWORD: ${{ env.DB_PASSWORD }}
         run: node --test --test-force-exit tests/postgres/operator-oauth-retention-history.test.js
+      - name: Verify SAML request isolation and concurrent provider selection on PostgreSQL
+        run: node --test tests/postgres/saml-cache-provider.test.js tests/postgres/sso-provider-selection.test.js
+      - name: Verify OIDC and SAML dashboard sign-in against Keycloak
+        env:
+          TT_KEYCLOAK_E2E: "1"
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          node --test tests/e2e/keycloak-sso.test.cjs
       - name: Verify alert date serialization across host timezones
         run: node --test tests/postgres/alert-queue-timezones.test.js
       - name: Exercise PagerDuty lifecycle and actual recipient-runtime interoperability
@@ -1015,6 +1023,36 @@ jobs:
 
       - name: Validate production compose + images overlay
         run: DB_PASSWORD=ci-synthetic-only SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.images.yml config -q
+
+      - name: Validate SSO compose setup and bootstrap
+        env:
+          DB_PASSWORD: ci-synthetic-only
+          SESSION_SECRET: dummy
+        run: |
+          set -euo pipefail
+          scratch="$RUNNER_TEMP/tokentimer-sso-compose"
+          mkdir -p "$scratch/secrets"
+          cp deploy/compose/docker-compose{,.images,.sso}.yml "$scratch/"
+          cp deploy/compose/sso-providers.example.json "$scratch/sso-providers.json"
+          touch "$scratch/secrets/sso.env"
+          printf '%s\n' '{}' > "$scratch/secrets/sso-keyring.json"
+          cd "$scratch"
+          SSO_SECRETS_KEYRING=ci-inline docker compose -f docker-compose.yml config --format json > dashboard.json
+          SSO_SECRETS_KEYRING= docker compose -f docker-compose.yml -f docker-compose.images.yml -f docker-compose.sso.yml config --format json > bootstrap.json
+          node <<'NODE'
+          const assert = require("node:assert/strict");
+          const dashboard = require("./dashboard.json").services.api;
+          const bootstrap = require("./bootstrap.json").services.api;
+          assert.equal(dashboard.environment.SSO_SECRETS_KEYRING, "ci-inline");
+          assert.equal(bootstrap.environment.SSO_SECRETS_KEYRING, "");
+          for (const key of ["SSO_PROVIDERS_BOOTSTRAP_FILE", "SSO_SECRETS_KEYRING_FILE"]) {
+            assert.ok(bootstrap.volumes.some(volume =>
+              volume.target === bootstrap.environment[key] && volume.read_only === true));
+          }
+          const providers = require("./sso-providers.json").providers;
+          assert.deepEqual(providers.map(provider => provider.type).sort(), ["oidc", "saml"]);
+          assert.deepEqual(providers.filter(provider => provider.enabled).map(provider => provider.type), ["oidc"]);
+          NODE
 
       - name: Validate dev compose
         run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.dev.yml config -q
@@ -1483,14 +1521,14 @@ jobs:
         run: |
           if ($env:EXPECTED_SHA -cnotmatch '^[a-f0-9]{40}$' -or $env:EXPECTED_SHA -cne $env:GITHUB_SHA) { throw 'Candidate SHA mismatch' }
           if ($env:RUNNER_ENVIRONMENT -cne 'github-hosted') { throw 'A disposable GitHub-hosted runner is required' }
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: '11.28.8'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           cache: pnpm
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: packages/agent/reference/observed-revocation/go.mod
           cache: false

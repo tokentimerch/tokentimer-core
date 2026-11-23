@@ -62,6 +62,7 @@ scenarios=(
   "minimal:${CHART}/examples/values-minimal.yaml"
   "external-db:${CHART}/examples/values-external-db.yaml"
   "full-test:${CHART}/examples/values-full-test.yaml"
+  "sso:${CHART}/examples/values-sso.yaml"
 )
 
 for item in "${scenarios[@]}"; do
@@ -117,6 +118,14 @@ assert_not_contains() {
   local message="$3"
   [[ "${actual}" != *"${unexpected}"* ]] || fail "${message}: unexpectedly found ${unexpected}"
 }
+
+echo "==> verify the SSO bootstrap file, Secret reference and read-only mount"
+sso_render="$(cat "${OUT}/rendered-sso.yaml")"
+assert_contains "${sso_render}" "name: SSO_PROVIDERS_BOOTSTRAP_FILE" "SSO Deployment"
+assert_contains "${sso_render}" "value: \"/etc/tokentimer/sso/sso-providers.json\"" "SSO Deployment"
+assert_contains "${sso_render}" $'secretRef:\n                name: "tokentimer-sso"' "SSO Secret reference"
+assert_contains "${sso_render}" $'configMap:\n            name: "tokentimer-sso-providers"' "SSO ConfigMap reference"
+assert_contains "${sso_render}" $'mountPath: /etc/tokentimer/sso\n              name: sso-providers\n              readOnly: true' "SSO ConfigMap mount"
 
 component_blocks() {
   local rendered="$1"

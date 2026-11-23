@@ -71,14 +71,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "b3205238c1040752991569efcc4a047367ccfaddc457dc8410783aa8022017fe"
+          "sha256": "5a58112addb2fc187a9fa88e89c2479fff5bee4f540917a6b4bac6959467b843"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "b3205238c1040752991569efcc4a047367ccfaddc457dc8410783aa8022017fe"
+          "sha256": "5a58112addb2fc187a9fa88e89c2479fff5bee4f540917a6b4bac6959467b843"
         },
         {
           "id": "auth-route-compat-contract",
@@ -603,7 +603,7 @@
           "kind": "module",
           "path": "apps/api/services/operator/memberInvites.js",
           "status": "existing",
-          "sha256": "5e917d71782027cc3c7e2e0102045b0f12a8877e874e851d6cab2db10216b601"
+          "sha256": "f588619d34e6c7ec5acf8895d789892cc5e005c0f58c82a5d322e9b7e4084150"
         },
         {
           "id": "mcp-member-invite-validation",
@@ -617,7 +617,7 @@
           "kind": "module",
           "path": "apps/api/services/operator/memberInvitePolicy.js",
           "status": "existing",
-          "sha256": "0f480cf8abeb0d1f03afe196f517f9c084c1ebdecf7608c39da5282430c4d08b"
+          "sha256": "a4712762f4fcab5d598bb9d35bc929a946018cf87ef9474dbcf9c32747bebb9c"
         },
         {
           "id": "mcp-inventory-updates",
@@ -673,7 +673,7 @@
           "kind": "test",
           "path": "tests/postgres/operator-inventory.test.js",
           "status": "existing",
-          "sha256": "6a78daf2a2407018633453c291f9c4ed8310c1ec7b8de1b89773ec07896f69f2"
+          "sha256": "3d89844c5b49edf9366e52344c296a8be1b2a8da038fd5194dd8f9748409f045"
         },
         {
           "id": "mcp-connection-lifetimes-migration",

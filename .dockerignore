@@ -47,6 +47,10 @@ npm-debug.log*
 **/*.spec.js
 tests/
 
+# Local SSO deployment secrets
+deploy/compose/secrets/
+deploy/compose/sso-providers.json
+
 # Deployment configs (not needed inside images)
 k8s/
 docker-compose*.yml

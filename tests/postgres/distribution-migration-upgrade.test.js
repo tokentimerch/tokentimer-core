@@ -114,7 +114,9 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
       if(delivered)await pool.query("INSERT INTO alert_queue(user_id,certops_agent_id,alert_key,threshold_days,due_date,channels,status) VALUES($1,$2,$3,0,CURRENT_DATE,'[]'::jsonb,'sent')",[f.actor,f.consumer,`cert_distribution:${incident.id}:2:resolved`]);
     }
     await pool.query("ALTER TABLE certops_consumer_deployments DROP COLUMN staging_job_id");
-    migrations.push(...pending.filter(entry=>[90,91,96,97,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126].includes(entry.version)));
+    const finishingMigrations = pending.filter(({ version }) =>
+      [90, 91, 96, 97].includes(version) || version > 108);
+    migrations.push(...finishingMigrations);
     await runMigrations();
     assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=89 OR (version BETWEEN 92 AND 108 AND version NOT IN (96,97)) ORDER BY version")).rows,beforeVerificationLedger);
     assert.equal((await pool.query("SELECT to_regclass('public.certops_material_retirement_dossiers') AS name")).rows[0].name, "certops_material_retirement_dossiers");
@@ -273,6 +275,8 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
   {"version":124,"name":"agent_credential_rotation_ack"},
   {"version":125,"name":"certops_adcs_preflight_lookup_index"},
   {"version":126,"name":"certops_adcs_receipt_deadline"},
+  {"version":127,"name":"auto_sync_creation_expiration"},
+  {"version":128,"name":"shared_sso_schema"},
 ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition

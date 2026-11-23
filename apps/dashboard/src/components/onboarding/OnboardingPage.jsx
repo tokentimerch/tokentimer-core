@@ -301,7 +301,7 @@ const STATUS_BADGE = {
   upcoming: { label: 'Next', colorScheme: 'gray' },
 };
 
-function JourneyRail({ steps, shownId, onSelect }) {
+export function JourneyRail({ steps, shownId, onSelect }) {
   const { muted } = useDashboardTheme();
   const finished = steps.filter(
     s => s.status === 'done' || s.status === 'skipped'

@@ -7,8 +7,8 @@ Open **Audit** in the dashboard and select **This workspace** to include machine
 ## Authentication and account
 
 - `REGISTRATION` records an account created through an invitation. Metadata includes `method` and `invited_role`.
-- `LOGIN_SUCCESS` records a password sign-in with `method`. `LOGIN_SUCCESS_2FA` also records `factor`.
-- `LOGIN_FAILED` records `email` and `reason` for a failed sign-in against a known account.
+- `LOGIN_SUCCESS` records the sign-in `method`. OIDC and SAML also record `provider_slug`. `LOGIN_SUCCESS_2FA` records the second `factor`.
+- `LOGIN_FAILED` records a `reason`. Password failures against a known account include `email`. For SSO, use `method` and `provider_slug` to investigate failures that occur before an account is identified.
 - `LOGOUT` records a session sign-out with `via`.
 - `TWO_FACTOR_ENABLED` and `TWO_FACTOR_DISABLED` record `factor` and `via`. Disabling can come from account settings or password reset.
 - `EMAIL_VERIFIED` and `EMAIL_VERIFICATION_RESENT` record the email-link `method`.

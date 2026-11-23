@@ -189,7 +189,7 @@ describe("operator token inventory on PostgreSQL", () => {
           : request(app).post(`/api/v1/workspaces/${workspace}/members`).set("X-Fixture-Member-Actor", run).send({ email, role: "viewer" }).then((response) => response);
         let waiting = false;
         for (let n = 0; n < 100 && !waiting; n++) {
-          waiting = (await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) AND query ILIKE '%FROM users%KEY SHARE%'", [controlPid])).rowCount > 0;
+          waiting = (await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) AND query ILIKE '%FROM users%FOR SHARE%'", [controlPid])).rowCount > 0;
           if (!waiting) await new Promise((resolve) => setTimeout(resolve, 20));
         }
         assert.equal(waiting, true, mode + " waits on the user row");

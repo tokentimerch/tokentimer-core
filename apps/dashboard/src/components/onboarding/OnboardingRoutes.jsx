@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router';
 import OnboardingPage from './OnboardingPage.jsx';
+import '../sso-setup/registerSsoEdition.js';
 
 /**
  * Single mount point for the wizard so edition apps only need one route line.

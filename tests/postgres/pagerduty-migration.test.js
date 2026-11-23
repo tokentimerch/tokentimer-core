@@ -352,6 +352,7 @@ it(`upgrades ${upgradeFrom} without replaying PagerDuty SQL or losing history`, 
     { version: 125, name: "certops_adcs_preflight_lookup_index" },
     { version: 126, name: "certops_adcs_receipt_deadline" },
     { version: 127, name: "auto_sync_creation_expiration" },
+    { version: 128, name: "shared_sso_schema" },
   ]);
   assert.equal(
     (

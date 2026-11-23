@@ -32,6 +32,6 @@ For Helm, update your values or managed Secret and run `helm upgrade` with the s
 
 ## Preserve recovery keys
 
-Keep `SESSION_SECRET` stable: it protects sessions and derives the key used to encrypt stored settings. CertOps has separate signing and registration wrapping keys. Enterprise also has an SSO secrets keyring. Back up these alongside the database and matching deployment version.
+Keep `SESSION_SECRET` stable because it protects sessions and derives the key used to encrypt stored settings. Back up the SSO secrets keyring and CertOps wrapping keys when used, alongside the database and matching deployment version.
 
 Key rotation is an operation with its own recovery requirements. Do not generate replacement keys during an ordinary upgrade or restore. See [Backup and restore](BACKUP_RESTORE.md) and the [advanced reference](CONFIGURATION.md).

@@ -11,6 +11,8 @@ function fixture({
   target = 2,
   owner = 9,
   existingRole = "admin",
+  authMethod = "local",
+  emailVerified = true,
   method = "post",
   auditFails = false,
 } = {}) {
@@ -26,6 +28,7 @@ function fixture({
       audits: [],
       auditQueryCounts: [],
       emails: [],
+      templates: [],
       metrics: 0,
     };
   const router = new Proxy(
@@ -67,11 +70,17 @@ function fixture({
         return { rowCount: 3, rows: [{ id: owner }, { id: 1 }, { id: target }] };
       if (sql.includes("SELECT created_by,plan FROM workspaces"))
         return { rowCount: 1, rows: [{ created_by: owner, plan: "oss" }] };
-      if (sql.includes("SELECT id, display_name FROM users"))
+      if (sql.includes("SELECT id, display_name, auth_method, email_verified FROM users"))
         return {
           rowCount: 1,
-          rows: [{ id: target, display_name: "Owned test user" }],
+          rows: [{
+            id: target, display_name: "Owned test user",
+            auth_method: authMethod, email_verified: emailVerified,
+          }],
         };
+      if (sql.startsWith("SELECT 1 FROM workspace_memberships WHERE user_id")) {
+        return { rowCount: state.role ? 1 : 0, rows: state.role ? [{}] : [] };
+      }
       if (sql.includes("INSERT INTO workspace_memberships")) {
         const protectedSql =
           /WHERE\s+workspace_memberships\.role\s*<>\s*'admin'/i.test(sql);
@@ -80,6 +89,8 @@ function fixture({
         state.role = args[2];
         return { rowCount: 1, rows: [{ user_id: target }] };
       }
+      if (sql.includes("INSERT INTO workspace_invitations"))
+        return { rowCount: 1, rows: [] };
       if (sql.includes("DELETE FROM workspace_invitations"))
         return { rowCount: 0, rows: [] };
       throw Error("Unexpected route query");
@@ -115,16 +126,19 @@ function fixture({
       },
       "../services/planLimits": { MEMBER_LIMITS: { oss: Infinity } },
       "../services/emailService": {
-        generateEmailTemplate: async () => ({
-          html: "public fixture",
-          text: "public fixture",
-        }),
+        generateEmailTemplate: async (value) => {
+          state.templates.push(value);
+          return { html: "public fixture", text: "public fixture" };
+        },
         sendEmail: async (value) => {
           state.emails.push(value);
           return { success: true };
         },
       },
-      "../utils/sanitize": { sanitizeForLogging: (value) => value },
+      "../utils/sanitize": {
+        escapeHtml: (value) => value,
+        sanitizeForLogging: (value) => value,
+      },
       "../utils/metrics": {
         workspacesCreatedTotal: { inc: noop },
         inviteSentTotal: { inc: () => state.metrics++ },
@@ -232,6 +246,31 @@ test("ordinary member updates preserve audit, invitation cleanup and notificatio
   assert.match(mutation.sql, /RETURNING\s+user_id/);
 });
 
+test("an existing SSO account receives a pending invite instead of a direct membership", async () => {
+  // SSO's legacy email_verified flag does not attest to the invited mailbox.
+  const value = fixture({ authMethod: "sso", existingRole: null });
+  await value.run();
+  assert.equal(value.response.statusCode, 201);
+  assert.deepEqual({ ...value.response.body }, { user_id: null, role: "viewer" });
+  assert.equal(value.state.role, null);
+  assert.equal(value.state.queries.some(({ sql }) => sql.includes("INSERT INTO workspace_memberships")), false);
+  const invitation = value.state.queries.find(({ sql }) => sql.includes("INSERT INTO workspace_invitations"));
+  assert.equal(invitation.args[2], "target@example.test");
+  assert.equal(value.state.templates[0].buttonText, "Sign in");
+  assert.match(value.state.templates[0].buttonUrl, /\/login$/);
+});
+
+test("email POST sends existing SSO member role edits to the member-ID endpoint", async () => {
+  const value = fixture({ authMethod: "sso", existingRole: "workspace_manager" });
+  await value.run();
+  assert.equal(value.response.statusCode, 409);
+  assert.equal(value.response.body.code, "MEMBER_ALREADY_EXISTS");
+  assert.match(value.response.body.error, /member ID/);
+  assert.equal(value.state.role, "workspace_manager");
+  assert.equal(value.state.queries.some(({ sql }) => sql.includes("INSERT INTO workspace_invitations")), false);
+  assert.equal(value.state.emails.length, 0);
+});
+
 test("role changes audit the locked prior role before commit", async () => {
   const value = fixture({ method: "patch", existingRole: "workspace_manager" });
   await value.run();
@@ -290,17 +329,18 @@ async function acceptInvitation({ existingRole, owner = false }) {
   const pool = {
     async query(sql, args) {
       state.queries.push(sql);
-      if (sql.includes("SELECT id, workspace_id, role"))
+      if (sql.includes("SELECT id, email"))
         return {
           rowCount: 1,
-          rows: [{ id: "invite", workspace_id: "workspace", role: "viewer" }],
+          rows: [{ id: "invite", email: "owned+alias@example.test" }],
         };
       if (sql.includes("INSERT INTO workspace_memberships")) {
         assert.match(sql, /w.created_by IS DISTINCT FROM \$1/);
         assert.match(sql, /WHERE workspace_memberships.role <> 'admin'/);
         if (owner || state.role === "admin") return { rowCount: 0, rows: [] };
-        state.role = args[2];
-        return { rowCount: 1, rows: [{ role: state.role }] };
+        assert.deepEqual(args, ["user", "invite", "owned+alias@example.test"]);
+        state.role = "viewer";
+        return { rowCount: 1, rows: [{ workspace_id: "workspace", role: state.role }] };
       }
       if (sql.includes("SELECT 1 FROM workspace_memberships"))
         return { rowCount: 1, rows: [{}] };
@@ -343,7 +383,7 @@ test("login invitation cannot replace an existing admin", async () => {
   assert.equal(state.audits.length, 0);
   assert.ok(
     state.queries.some((sql) =>
-      sql.startsWith("DELETE FROM workspace_invitations"),
+      sql.includes("DELETE FROM workspace_invitations"),
     ),
   );
 });

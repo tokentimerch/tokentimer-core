@@ -64,6 +64,10 @@ license.key
 !packages/agent/src/verify/fixtures/*.pem
 !packages/agent/src/verify/fixtures/*.key.pem
 
+# Local SSO deployment configuration and credentials
+/deploy/compose/secrets/
+/deploy/compose/sso-providers.json
+
 # Database
 *.sqlite
 *.db

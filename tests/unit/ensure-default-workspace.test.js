@@ -433,12 +433,13 @@ describe("ensureInitialWorkspaceForUser (pending invitation matching)", () => {
     ]);
   });
 
-  it("accepts a plus-alias invitation then deletes by matched invitation id", async () => {
+  it("claims a plus-alias invitation by its matched id and mailbox before granting its current role", async () => {
     const inviteId = "11111111-1111-1111-1111-111111111111";
     const { pool, queryLog } = makeInvitePool({
       inviteRows: [
         {
           id: inviteId,
+          email: "member+tag@example.com",
           workspace_id: "ws-invite",
           role: "workspace_manager",
         },
@@ -461,35 +462,11 @@ describe("ensureInitialWorkspaceForUser (pending invitation matching)", () => {
       "member",
     ]);
 
-    const membership = queryLog.find(
-      (q) =>
-        q.text.includes("INSERT INTO workspace_memberships") &&
-        q.params?.[1] === "ws-invite" &&
-        q.params?.[2] === "workspace_manager",
-    );
-    assert.ok(membership);
+    const claim = queryLog.find(({ text }) => text.includes("WITH claimed AS"));
+    assert.deepStrictEqual(claim.params, ["user-alias", inviteId, "member+tag@example.com"]);
+    assert.match(claim.text, /DELETE FROM workspace_invitations\s+WHERE id = \$2 AND email = \$3 AND accepted_at IS NULL/);
+    assert.match(claim.text, /INSERT INTO workspace_memberships[\s\S]*claimed\.role/);
 
-    const accept = queryLog.find((q) =>
-      q.text.includes("UPDATE workspace_invitations SET accepted_at = NOW()"),
-    );
-    assert.ok(accept);
-    assert.match(accept.text, /accepted_at IS NULL/);
-    assert.deepStrictEqual(accept.params, [inviteId]);
-
-    const cleanup = queryLog.find((q) =>
-      q.text.includes("DELETE FROM workspace_invitations"),
-    );
-    assert.ok(cleanup);
-    assert.match(cleanup.text, /id = ANY\(\$1::uuid\[\]\)/);
-    assert.deepStrictEqual(cleanup.params, [[inviteId]]);
-    assert.strictEqual(
-      queryLog.some(
-        (q) =>
-          q.text.includes("DELETE FROM workspace_invitations") &&
-          q.text.includes("LOWER(email)"),
-      ),
-      false,
-    );
   });
 
   it("does not apply membership when the pending-only lookup returns no rows", async () => {
@@ -515,5 +492,81 @@ describe("ensureInitialWorkspaceForUser (pending invitation matching)", () => {
       queryLog.some((q) => q.text.includes("DELETE FROM workspace_invitations")),
       false,
     );
+  });
+
+  it("skips invitation lookup during SSO without a verified mailbox", async () => {
+    const { pool, queryLog } = makeInvitePool();
+    const { ensureInitialWorkspaceForUser } = loadWorkspaceService(pool);
+    await ensureInitialWorkspaceForUser(
+      "user-sso",
+      "member@example.com",
+      "SSO Member",
+      { sso: true, verifiedEmail: null },
+    );
+
+    assert.strictEqual(invitationSelect(queryLog), undefined);
+    assert.ok(queryLog.some((entry) => entry.text.includes("FROM workspace_memberships WHERE user_id")));
+  });
+
+  it("redeems invitations before strict SSO admission without joining the default workspace", async () => {
+    const invite = { id: "invitation", email: "verified@example.test", workspace_id: "invited-workspace", role: "viewer" };
+    const { pool, queryLog } = makeInvitePool({ inviteRows: [invite], alreadyMember: false });
+    const audits = [];
+    const { ensureInitialWorkspaceForUser } = loadWorkspaceService(pool, async entry => { audits.push(entry); });
+    await ensureInitialWorkspaceForUser("user", invite.email, "SSO User", {
+      sso: true, verifiedEmail: invite.email, invitationsOnly: true,
+    });
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].workspaceId, "invited-workspace");
+    assert.equal(queryLog.length, 2);
+    assert.ok(queryLog[1].text.includes("WITH claimed AS"));
+  });
+
+  it("audits a granted invitation before a later claim fails", async () => {
+    const mailbox = "verified@example.test";
+    const events = [];
+    const pool = {
+      async query(sql, params) {
+        if (sql.includes("WITH claimed AS")) {
+          const inviteId = params[1];
+          events.push("claim:" + inviteId);
+          if (inviteId === "second") throw new Error("database unavailable");
+          return { rows: [{ workspace_id: "granted", role: "viewer" }] };
+        }
+        if (sql.includes("FROM workspace_invitations")) {
+          return { rows: ["first", "second"].map((id) => ({ id, email: mailbox })) };
+        }
+        events.push("unexpected provisioning query");
+        return { rows: [] };
+      },
+    };
+    const { ensureInitialWorkspaceForUser } = loadWorkspaceService(pool, async (entry) => {
+      assert.equal(entry.action, "WORKSPACE_MEMBERSHIP_ACCEPTED");
+      assert.equal(entry.metadata.role, "viewer");
+      events.push("audit:" + entry.workspaceId);
+    });
+    await ensureInitialWorkspaceForUser("user", mailbox, "SSO User", {
+      sso: true, verifiedEmail: mailbox, invitationsOnly: true,
+    });
+    assert.deepEqual(events, ["claim:first", "audit:granted", "claim:second"]);
+  });
+
+  it("matches pending SSO invitations only by the exact verified mailbox", async () => {
+    const invitation = { id: "invite-id", email: "user.name+work@gmail.com" };
+    const { pool, queryLog } = makeInvitePool({ inviteRows: [invitation] });
+    const { ensureInitialWorkspaceForUser } = loadWorkspaceService(pool);
+    await ensureInitialWorkspaceForUser(
+      "user-sso",
+      "username@gmail.com",
+      "SSO Member",
+      { sso: true, verifiedEmail: " User.Name+work@Gmail.com " },
+    );
+
+    const select = invitationSelect(queryLog);
+    assert.match(select.text, /accepted_at IS NULL AND LOWER\(email\) = \$1/i);
+    assert.doesNotMatch(select.text, /SPLIT_PART| OR /i);
+    assert.deepStrictEqual(select.params, ["user.name+work@gmail.com"]);
+    const membership = queryLog.find((entry) => entry.text.includes("INSERT INTO workspace_memberships"));
+    assert.deepStrictEqual(membership.params, ["user-sso", invitation.id, invitation.email]);
   });
 });

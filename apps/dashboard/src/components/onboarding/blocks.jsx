@@ -15,9 +15,9 @@ import { dashboardThemeColors } from '../../styles/theme.js';
 import { SENSITIVE_PATTERN } from './certopsConfig.js';
 
 // Same palette as the agent output panel, so commands and logs look alike.
-const SHELL_BG = '#0f172a';
-const SHELL_BORDER = 'rgba(148, 163, 184, 0.28)';
-const SHELL_TEXT = '#e2e8f0';
+export const SHELL_BG = '#0f172a';
+export const SHELL_BORDER = 'rgba(148, 163, 184, 0.28)';
+export const SHELL_TEXT = '#e2e8f0';
 const SHELL_PROMPT = '#4ade80';
 // Amber marks a value the operator has not produced yet.
 const SLOT_ACCENT = '#fbbf24';
@@ -79,6 +79,7 @@ export function CopyBlock({
   label,
   text,
   language = 'text',
+  onResult,
   allowSecret = false,
   prompt = false,
   // Inside a tinted panel the muted gray can fall under AA; inherit instead.
@@ -99,9 +100,11 @@ export function CopyBlock({
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
+      onResult?.(true);
       setTimeout(() => setCopied(false), 1800);
     } catch (_) {
       setCopied(false);
+      onResult?.(false);
     }
   };
   return (
