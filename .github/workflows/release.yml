@@ -370,12 +370,22 @@ jobs:
 
       - name: Pack agent release tarball
         if: steps.accepted-agent.outcome == 'skipped'
+        env:
+          EXPECTED_RELEASE_COMMIT: ${{ needs.verify-provenance.outputs.commit }}
         run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_RELEASE_COMMIT"
+          git diff --quiet HEAD -- packages/agent
           test "$(go env GOVERSION)" = "go${GO_VERSION}"
           test "$(go env GOFLAGS)" = -buildvcs=false
           test "$(node --version)" = v24.22.3
           test "$(npm --version)" = 11.19.1
           node packages/agent/scripts/pack-release.js --out-dir agent-dist
+          # The archive already contains the rebuilt helpers. Restore only these
+          # tracked build outputs so provenance can verify the original source.
+          git restore --source="$EXPECTED_RELEASE_COMMIT" --worktree -- \
+            packages/agent/bin/tokentimer-observed-revocation-linux-amd64 \
+            packages/agent/bin/tokentimer-observed-revocation-linux-arm64
 
       - name: Verify shipped native toolchain and provenance
         env:
