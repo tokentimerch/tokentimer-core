@@ -14,16 +14,18 @@ const { recoveryWaitBudget } = require("./certops-adcs-uncertain-abandon");
 const { qualifyImmediateStoreRecovery } = require("./certops-adcs-store-recovery-proof");
 const { startNativeStoreObserver } = require("./certops-adcs-store-native-observer");
 const { inspectStoreOnlyCertificate } = require("../../../packages/agent/src/windows-cert-store/store-only");
+const { validateNativeCngEvidence, nativeCngEvidenceSha256 } = require("./certops-adcs-store-native-cng");
 
 // The fixture must implement independent write/flush, readback and storage
 // inspection. This protocol is not evidence that a real fixture is durable.
-function createPublicEvidenceRecorder({ writeEvidence, readEvidence, inspectEvidenceDurability }) {
+function createPublicEvidenceRecorder({ candidateArchiveSha256, writeEvidence, readEvidence, inspectEvidenceDurability }) {
+  assert.match(candidateArchiveSha256, /^[a-f0-9]{64}$/, "Expected candidate archive digest is required");
   for (const fn of [writeEvidence, readEvidence, inspectEvidenceDurability]) assert.equal(typeof fn, "function", "Independent durable evidence hooks are required");
   assert.notEqual(writeEvidence, readEvidence, "Evidence readback must use a separate hook");
   assert.notEqual(inspectEvidenceDurability, writeEvidence);
   assert.notEqual(inspectEvidenceDurability, readEvidence);
   const phases = new Set(["baseline", "post-accept", "ca-at-fault", "before-recovery-post", "before-service-start", "ca-after-recovery", "inventory", "observations-drained", "failure"]);
-  const allowed = new Set(["candidateSha256", "dnsName", "captureId", "observationId", "caPublicKeySha256", "baselineRequestId", "enrollmentId", "jobId", "fingerprintSha256", "csrSpkiSha256", "requestId", "serialNumber", "submissions", "keygens", "accepts", "stage", "code", "promotions"]);
+  const allowed = new Set(["candidateSha256", "dnsName", "captureId", "observationId", "caPublicKeySha256", "baselineRequestId", "enrollmentId", "jobId", "fingerprintSha256", "csrSpkiSha256", "cngEvidenceSha256", "requestId", "serialNumber", "submissions", "keygens", "accepts", "stage", "code", "promotions"]);
   const seen = new Set();
   let storeId = null, failed = false, busy = false;
   return async function recordEvidence(phase, fields) {
@@ -34,10 +36,11 @@ function createPublicEvidenceRecorder({ writeEvidence, readEvidence, inspectEvid
     assert.ok(phases.has(phase));
     assert.ok(fields && typeof fields === "object" && !Array.isArray(fields));
     const numeric = new Set(["baselineRequestId", "submissions", "keygens", "accepts", "promotions"]);
-    const hashes = new Set(["candidateSha256", "caPublicKeySha256", "fingerprintSha256", "csrSpkiSha256"]);
+    const hashes = new Set(["candidateSha256", "caPublicKeySha256", "fingerprintSha256", "csrSpkiSha256", "cngEvidenceSha256"]);
     const ids = new Set(["captureId", "observationId"]);
     const uuids = new Set(["enrollmentId", "jobId"]);
-    for (const [key, value] of Object.entries(fields)) {
+    const entry = { ...fields };
+    for (const [key, value] of Object.entries(entry)) {
       assert.ok(allowed.has(key), "Evidence field is not public or recognized");
       if (numeric.has(key)) assert.ok(Number.isSafeInteger(value) && value >= 0);
       else if (hashes.has(key)) assert.match(value, /^[a-f0-9]{64}$/);
@@ -50,7 +53,8 @@ function createPublicEvidenceRecorder({ writeEvidence, readEvidence, inspectEvid
       else if (key === "code") assert.equal(value, "QUALIFICATION_FAILED");
       else throw new Error("Unvalidated public evidence field");
     }
-    const json = JSON.stringify({ schema: 1, phase, ...fields });
+    assert.equal(entry.candidateSha256, candidateArchiveSha256, "Evidence phase candidate archive digest does not match the run");
+    const json = JSON.stringify({ schema: 1, phase, ...entry });
     const sha256 = createHash("sha256").update(json, "utf8").digest("hex");
     const written = await writeEvidence({ json, sha256 });
     assert.equal(written?.flushCompleted, true, "Evidence flush was not confirmed");
@@ -104,27 +108,30 @@ function validateNativeCounts(counts, previous = null) {
   for (const name of ["submissions", "keygens", "accepts"]) assert.ok(Number.isSafeInteger(counts[name]) && counts[name] >= 0);
   if (previous) {
     assert.equal(counts.captureId, previous.captureId);
+    assert.ok(previous.cngEvidence, "Raw CNG evidence from the previous checkpoint is required");
     for (const name of ["submissions", "keygens", "accepts"]) assert.ok(counts[name] >= previous[name]);
   }
-  return counts;
+  const cngEvidence = validateNativeCngEvidence(counts, previous?.cngEvidence);
+  return { ...counts, cngEvidence };
 }
 
-function validateInitialNativeCounts(counts, captureId) {
-  validateNativeCounts(counts);
-  assert.equal(counts.captureId, captureId);
+function validateInitialNativeCounts(counts, previous) {
+  const checked = validateNativeCounts(counts, previous);
   assert.equal(counts.submissions, 1, "Expected one CA submission before interruption");
   assert.equal(counts.keygens, 1, "Expected one key generation before interruption");
   assert.equal(counts.accepts, 1, "Expected one native acceptance before interruption");
-  return counts;
+  return checked;
 }
 
-function validateCaptureStart(capture) {
+function validateCaptureStart(capture, candidateArchiveSha256) {
   assert.equal(capture?.started, true, "Native operation capture must start before issuance");
   assert.match(capture.captureId, /^[a-f0-9]{32}$/);
   assert.equal(typeof capture.stop, "function", "Native capture must support verified drainage");
   assert.equal(typeof capture.read, "function", "Native capture must provide a live checkpoint");
   const baseline = validateNativeCounts(capture.baseline);
   assert.equal(baseline.captureId, capture.captureId, "Baseline must belong to the live capture");
+  assert.equal(baseline.cngEvidence.candidateSha256, candidateArchiveSha256,
+    "Raw CNG baseline belongs to another candidate");
   for (const name of ["submissions", "keygens", "accepts"]) {
     assert.equal(baseline[name], 0, `Expected zero ${name} before issuance`);
   }
@@ -136,11 +143,13 @@ async function stopNativeCapture(capture, lastCounts = null) {
   const stopped = await capture.stop();
   assert.equal(stopped?.drained, true, "Native capture drainage was not proven");
   assert.equal(stopped.captureId, capture.captureId, "Drained capture identity changed");
+  if (!lastCounts && stopped.finalCounts === undefined) return;
+  const finalCounts = validateNativeCounts(stopped.finalCounts, lastCounts);
+  assert.equal(finalCounts.captureId, capture.captureId, "Final counts belong to another capture");
   if (lastCounts) {
-    validateNativeCounts(stopped.finalCounts, lastCounts);
-    for (const name of ["submissions", "keygens", "accepts"]) assert.equal(stopped.finalCounts[name], lastCounts[name], "Native operation occurred after the final read");
+    for (const name of ["submissions", "keygens", "accepts"]) assert.equal(finalCounts[name], lastCounts[name], "Native operation occurred after the final read");
   }
-  return stopped.finalCounts;
+  return finalCounts;
 }
 
 function validateCaObservationStart(observation, expectedCaKeySha256) {
@@ -190,11 +199,11 @@ function validateCaBaselineWindow(window, observation) {
   assert.equal(window.maxRequestId, observation.baselineRequestId);
 }
 
-async function verifyPreIssueCheckpoint(capture, observation) {
-  const counts = await capture.read();
-  validateNativeCounts(counts, capture.baseline);
+async function verifyPreIssueCheckpoint(capture, observation, baseline) {
+  const counts = validateNativeCounts(await capture.read(), baseline);
   for (const name of ["submissions", "keygens", "accepts"]) assert.equal(counts[name], 0, "Native operation occurred before issuance");
   validateCaBaselineWindow(await observation.readBaseline(), observation);
+  return counts;
 }
 async function stopCaObservation(observation, lastWindow = null) {
   assert.equal(typeof observation?.stop, "function", "CA observation cannot be drained");
@@ -231,8 +240,7 @@ async function drainQualificationResources({ observer, caObservation, capture, l
 async function verifyRecoveryCheckpoint({ readNativeOperationCounts, readIndependentCaObservation, enrollmentId, jobId,
   containerName, dnsName, fingerprintSha256, beforeCounts, observation, lastWindow }) {
   assert.match(dnsName, /^certops-adcs-[a-f0-9]{16,32}-store\.example\.test$/);
-  const counts = await readNativeOperationCounts({ enrollmentId, jobId, containerName });
-  validateNativeCounts(counts, beforeCounts);
+  const counts = validateNativeCounts(await readNativeOperationCounts({ enrollmentId, jobId, containerName }), beforeCounts);
   for (const name of ["submissions", "keygens", "accepts"]) assert.equal(counts[name], beforeCounts[name], "Native operation occurred before recovery");
   const window = await readIndependentCaObservation({ dnsName, fingerprintSha256, observation });
   validateCaObservationWindow(window, observation, fingerprintSha256);
@@ -279,14 +287,14 @@ async function qualifyNativeStoreRecovery(context) {
         assert.equal(typeof capture?.start, "function", "Native capture start is required");
         assert.equal(typeof capture.stop, "function", "Native capture stop is required");
         await capture.start();
-        validateCaptureStart(capture);
+        const baseline = validateCaptureStart(capture, context.candidateArchiveSha256);
         await prepareRun({ dnsName, agentRowId, issuerId });
-        await verifyPreIssueCheckpoint(capture, caObservation);
+        lastCounts = await verifyPreIssueCheckpoint(capture, caObservation, baseline);
         stage = "baseline";
         await recordEvidence("baseline", { candidateSha256: context.candidateArchiveSha256, dnsName,
           captureId: capture.captureId, observationId: caObservation.observationId,
           caPublicKeySha256: caObservation.caPublicKeySha256, baselineRequestId: caObservation.baselineRequestId,
-          submissions: 0, keygens: 0, accepts: 0 });
+          submissions: 0, keygens: 0, accepts: 0, cngEvidenceSha256: nativeCngEvidenceSha256(lastCounts) });
         observer = startNativeStoreObserver({ workDir, configDir, root });
         await observer.ready;
         stage = "issuing";
@@ -307,12 +315,14 @@ async function qualifyNativeStoreRecovery(context) {
         await observer.stopAndDrain(); assert.equal(observer.hasLiveChild(), false);
         assert.equal(fault.enrollmentId, enrollmentId); assert.equal(fault.jobId, jobId);
         initial = readEnrollmentJournal(configDir, enrollmentId); assert.equal(initial.kind, "valid");
-        beforeCounts = await readNativeOperationCounts({ enrollmentId, jobId, containerName: fault.containerName });
-        validateInitialNativeCounts(beforeCounts, capture.captureId);
+        beforeCounts = validateInitialNativeCounts(
+          await readNativeOperationCounts({ enrollmentId, jobId, containerName: fault.containerName }), lastCounts);
+        lastCounts = beforeCounts;
         stage = "post-accept";
         await recordEvidence("post-accept", { candidateSha256: context.candidateArchiveSha256, dnsName, enrollmentId,
           jobId, fingerprintSha256: fault.fingerprintSha256, csrSpkiSha256: fault.csrSpkiSha256,
-          captureId: capture.captureId, submissions: beforeCounts.submissions, keygens: beforeCounts.keygens, accepts: beforeCounts.accepts });
+          captureId: capture.captureId, submissions: beforeCounts.submissions, keygens: beforeCounts.keygens,
+          accepts: beforeCounts.accepts, cngEvidenceSha256: nativeCngEvidenceSha256(beforeCounts) });
         return fault;
       },
       async caObserver({ dnsName, fingerprintSha256 }) {
@@ -343,12 +353,14 @@ async function qualifyNativeStoreRecovery(context) {
         const checkpoint = async phase => {
           const checked = await verifyRecoveryCheckpoint({ readNativeOperationCounts, readIndependentCaObservation,
             enrollmentId, jobId, containerName: fault.containerName, dnsName, fingerprintSha256: fault.fingerprintSha256,
-            beforeCounts, observation: caObservation, lastWindow });
+            beforeCounts: lastCounts, observation: caObservation, lastWindow });
+          lastCounts = checked.counts;
           stage = phase;
           await recordEvidence(phase, { candidateSha256: context.candidateArchiveSha256, dnsName, enrollmentId, jobId,
             captureId: capture.captureId, observationId: caObservation.observationId,
             fingerprintSha256: fault.fingerprintSha256, requestId: String(checked.window.requestId),
-            submissions: checked.counts.submissions, keygens: checked.counts.keygens, accepts: checked.counts.accepts });
+            submissions: checked.counts.submissions, keygens: checked.counts.keygens, accepts: checked.counts.accepts,
+            cngEvidenceSha256: nativeCngEvidenceSha256(checked.counts) });
         };
         await checkpoint("before-recovery-post");
         const recovery = await fixture.request(`${api}/enrollments/${enrollmentId}/recover`, "POST", { orphanedJobId: jobId,
@@ -362,8 +374,8 @@ async function qualifyNativeStoreRecovery(context) {
         assert.equal(final.artifacts.leafPem, initial.artifacts.leafPem); assert.equal(final.artifacts.csrPem, initial.artifacts.csrPem);
         const native = await inspectStoreOnlyCertificate({ certificatePem: final.artifacts.leafPem, containerName: final.journal.containerName });
         assert.equal(native.status, "complete"); assert.equal(native.fingerprintSha256, fault.fingerprintSha256);
-        const after = await readNativeOperationCounts({ enrollmentId, jobId, containerName: fault.containerName });
-        validateNativeCounts(after, beforeCounts);
+        const after = validateNativeCounts(
+          await readNativeOperationCounts({ enrollmentId, jobId, containerName: fault.containerName }), lastCounts);
         lastCounts = after;
         return { containerName: final.journal.containerName, fingerprintSha256: fault.fingerprintSha256,
           csrSpkiSha256: final.journal.csrSpkiSha256, newSubmissions: after.submissions - beforeCounts.submissions,
@@ -405,6 +417,7 @@ async function qualifyNativeStoreRecovery(context) {
       await recordEvidence("observations-drained", { candidateSha256: context.candidateArchiveSha256,
         captureId: capture.captureId, observationId: caObservation.observationId,
         submissions: drained.finalCounts.submissions, keygens: drained.finalCounts.keygens, accepts: drained.finalCounts.accepts,
+        cngEvidenceSha256: nativeCngEvidenceSha256(drained.finalCounts),
         requestId: String(drained.finalWindow.requestId), fingerprintSha256: drained.finalWindow.fingerprintSha256 });
     }
     // Keep the owned target receipt for evidence; a later run needs a fresh directory.

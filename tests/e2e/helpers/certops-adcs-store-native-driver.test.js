@@ -3,6 +3,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { PassThrough } = require("node:stream");
+const { CANDIDATE_SHA256, nativeCounts } = require("./certops-adcs-store-native-cng.fixture");
 const { startNativeStoreObserver, verifyNativeFault } = require("./certops-adcs-store-native-observer");
 const { qualifyInstalledStoreRecovery, qualifyNativeStoreRecovery, validateNativeCounts, validateInitialNativeCounts, validateCaptureStart, stopNativeCapture, validateCaObservationStart, validateCaObservationWindow, stopCaObservation, drainQualificationResources, verifyRecoveryCheckpoint, validateCaBaselineWindow, verifyPreIssueCheckpoint, createPublicEvidenceRecorder, verifyCandidateHost, requireActiveObservationInterruption } = require("./certops-adcs-store-native-driver");
 
@@ -10,12 +11,33 @@ function makeEvidenceHooks() {
   const values = new Map();
   let next = 0;
   return {
-    candidateArchiveSha256: "f".repeat(64),
+    candidateArchiveSha256: CANDIDATE_SHA256,
     async writeEvidence({ json }) { const receiptId = (++next).toString(16).padStart(32, "0"); values.set(receiptId, json); return { receiptId, flushCompleted: true }; },
     async readEvidence({ receiptId }) { return values.get(receiptId); },
     async inspectEvidenceDurability() { return { independentReader: true, flushVerified: true, persistentStore: true, continuityProven: true, storeId: "e".repeat(64) }; },
   };
 }
+
+test("the evidence recorder rejects a different candidate before writing that phase", async () => {
+  const hooks = makeEvidenceHooks();
+  let writes = 0;
+  const record = createPublicEvidenceRecorder({
+    ...hooks,
+    async writeEvidence(entry) {
+      writes++;
+      return hooks.writeEvidence(entry);
+    },
+  });
+  const candidateSha256 = hooks.candidateArchiveSha256;
+  const otherCandidate = "a".repeat(64);
+  await record("baseline", { candidateSha256, submissions: 0 });
+  await assert.rejects(record("post-accept", { candidateSha256: otherCandidate }), /candidate/i);
+  assert.equal(writes, 1);
+  await assert.rejects(record("post-accept", { candidateSha256 }), /permanently invalidated/);
+  await assert.rejects(createPublicEvidenceRecorder(hooks)("baseline", {}), /candidate/i);
+  await assert.rejects(createPublicEvidenceRecorder(hooks)("baseline", { candidateSha256: otherCandidate }), /candidate/i);
+  assert.throws(() => createPublicEvidenceRecorder({ ...hooks, candidateArchiveSha256: undefined }), /candidate/i);
+});
 test("native observer starts only the scoped lab script and refuses unproven drainage", async () => {
   const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.kill = () => {};
   const observer = startNativeStoreObserver({ workDir: "owned", configDir: "config", root: "root", nodeExecutable: "node.exe",
@@ -40,34 +62,89 @@ test("native proof fails before journal inspection when key possession or draina
     nativeProcessDrained: true, keyPossessionVerified: false }, { configDir: "unused" }));
 });
 
+test("native operation counts cannot claim coverage with counters alone", () => {
+  const counts = { captureId: "a".repeat(32), coverageComplete: true, submissions: 0, keygens: 0, accepts: 0 };
+  assert.throws(() => validateNativeCounts(counts), /raw CNG evidence/i);
+});
+
 test("native operation counts require continuous complete capture", () => {
-  const before = { captureId: "a".repeat(32), coverageComplete: true, submissions: 1, keygens: 1, accepts: 1 };
+  const before = nativeCounts();
   assert.equal(validateNativeCounts({ ...before }, before).captureId, before.captureId);
   for (const change of [{ coverageComplete: false }, { captureId: "b".repeat(32) }, { keygens: 0 }, { accepts: null }]) {
     assert.throws(() => validateNativeCounts({ ...before, ...change }, before));
   }
 });
 
+test("ephemeral CNG coverage requires matching raw create and finalize events for both providers", () => {
+  const baseline = nativeCounts({ submissions: 0, keygens: 0, accepts: 0 });
+  assert.deepEqual(validateNativeCounts(baseline), baseline);
+  const wrongCapture = structuredClone(baseline);
+  wrongCapture.cngEvidence.captureId = "b".repeat(32);
+  assert.throws(() => validateNativeCounts(wrongCapture), /another capture/);
+
+  const ncryptOnly = structuredClone(baseline);
+  ncryptOnly.cngEvidence.events.splice(4, 4);
+  ncryptOnly.cngEvidence.events[4].sequence = 5;
+  assert.throws(() => validateNativeCounts(ncryptOnly), /ephemeral NCrypt and BCrypt/);
+
+  const named = structuredClone(baseline);
+  named.cngEvidence.events[0].evidence.payload.nameKind = "non-null";
+  assert.throws(() => validateNativeCounts(named), /must use an ephemeral key/);
+  const wrongHandle = structuredClone(baseline);
+  wrongHandle.cngEvidence.events[7].evidence.payload.handleCorrelation = "2".repeat(64);
+  assert.throws(() => validateNativeCounts(wrongHandle), /unobserved key/);
+  const unrelatedReturn = structuredClone(baseline);
+  unrelatedReturn.cngEvidence.events[1].evidence.pid++;
+  assert.throws(() => validateNativeCounts(unrelatedReturn), /does not match/);
+});
+
+test("CNG checkpoints reject missing calls, altered history and a mismatched key count", () => {
+  const supplied = nativeCounts();
+  const before = validateNativeCounts(supplied);
+  assert.deepEqual(validateNativeCounts(nativeCounts({ keygens: 2 }), before), nativeCounts({ keygens: 2 }));
+  assert.throws(() => validateNativeCounts({ ...supplied, keygens: 0 }), /do not match raw CNG/);
+
+  const unfinished = structuredClone(supplied);
+  unfinished.cngEvidence.events.pop();
+  assert.throws(() => validateNativeCounts(unfinished), /unfinished calls/);
+  const missing = structuredClone(supplied);
+  missing.cngEvidence.events.splice(1, 1);
+  assert.throws(() => validateNativeCounts(missing), /gap or duplicate/);
+  const failed = structuredClone(supplied);
+  failed.cngEvidence.events.at(-1).evidence.payload.status = "80090009";
+  assert.throws(() => validateNativeCounts(failed), /generation call failed/);
+
+  supplied.cngEvidence.events[0].evidence.payload.invocationFingerprint = "2".repeat(64);
+  supplied.cngEvidence.events[1].evidence.payload.invocationFingerprint = "2".repeat(64);
+  assert.doesNotThrow(() => validateNativeCounts(supplied));
+  assert.throws(() => validateNativeCounts(supplied, before), /rewrote a previous checkpoint/);
+  const newCandidate = nativeCounts();
+  newCandidate.cngEvidence.candidateSha256 = "1".repeat(64);
+  assert.throws(() => validateNativeCounts(newCandidate, before), /candidate changed/);
+});
+
 test("native capture must count the one initial key, request and acceptance", () => {
-  const counts = { captureId: "a".repeat(32), coverageComplete: true, submissions: 1, keygens: 1, accepts: 1 };
-  assert.equal(validateInitialNativeCounts(counts, counts.captureId), counts);
+  const counts = nativeCounts();
+  const baseline = nativeCounts({ submissions: 0, keygens: 0, accepts: 0 });
+  assert.deepEqual(validateInitialNativeCounts(counts, baseline), counts);
   for (const changed of [{ keygens: 2 }, { accepts: 2 }, { submissions: 2 }, { captureId: "b".repeat(32) }]) {
-    assert.throws(() => validateInitialNativeCounts({ ...counts, ...changed }, counts.captureId));
+    assert.throws(() => validateInitialNativeCounts({ ...counts, ...changed }, baseline));
   }
 });
 
 
 test("capture baseline is complete, empty, bound and has verified drainage", async () => {
   const id = "a".repeat(32);
-  const baseline = { captureId: id, coverageComplete: true, submissions: 0, keygens: 0, accepts: 0 };
+  const baseline = nativeCounts({ captureId: id, submissions: 0, keygens: 0, accepts: 0 });
   const valid = { started: true, captureId: id, baseline, async read() { return baseline; }, async stop() { return { captureId: id, drained: true }; } };
-  assert.equal(validateCaptureStart(valid), baseline);
+  assert.deepEqual(validateCaptureStart(valid, CANDIDATE_SHA256), baseline);
+  assert.throws(() => validateCaptureStart(valid, "1".repeat(64)), /another candidate/);
   await stopNativeCapture(valid);
   for (const invalid of [
     { ...valid, started: false }, { ...valid, baseline: { ...baseline, coverageComplete: false } },
     { ...valid, baseline: { ...baseline, captureId: "b".repeat(32) } },
     { ...valid, baseline: { ...baseline, submissions: 1 } }, { ...valid, stop: undefined }, { ...valid, read: undefined },
-  ]) assert.throws(() => validateCaptureStart(invalid));
+  ]) assert.throws(() => validateCaptureStart(invalid, CANDIDATE_SHA256));
   await assert.rejects(stopNativeCapture({ ...valid, async stop() { return { captureId: id, drained: false }; } }));
   await assert.rejects(stopNativeCapture({ ...valid, async stop() { return { captureId: "b".repeat(32), drained: true }; } }));
 });
@@ -108,7 +185,7 @@ test("drainage preserves the original error and attempts every cleanup", async (
 
 test("recovery checkpoint rejects capture loss, extra operations and changed CA state", async () => {
   const captureId = "a".repeat(32), observationId = "b".repeat(32), key = "c".repeat(64), fingerprint = "d".repeat(64);
-  const counts = { captureId, coverageComplete: true, submissions: 1, keygens: 1, accepts: 1 };
+  const counts = nativeCounts({ captureId });
   const observation = { observationId, caPublicKeySha256: key, baselineRequestId: 1 };
   const window = { coverageComplete: true, observationId, caPublicKeySha256: key, baselineRequestId: 1,
     lossFree: true, noPurgeProven: true, noRestoreProven: true, globalCount: 1, matchingIssuedCount: 1,
@@ -136,9 +213,9 @@ test("baseline checkpoint rejects changed identity, loss and requests before iss
     assert.throws(() => validateCaBaselineWindow({ ...window, ...change }, observation));
   }
   const captureId = "d".repeat(32);
-  const baseline = { captureId, coverageComplete: true, submissions: 0, keygens: 0, accepts: 0 };
+  const baseline = nativeCounts({ captureId, submissions: 0, keygens: 0, accepts: 0 });
   await verifyPreIssueCheckpoint({ baseline, async read() { return baseline; } },
-    { ...observation, async readBaseline() { return window; } });
+    { ...observation, async readBaseline() { return window; } }, baseline);
 });
 
 test("public evidence requires independent readback and stable verified durability", async () => {
@@ -195,7 +272,7 @@ test("both native recovery entries fail before inspecting the host or starting e
 
 test("CA drainage detects a submission during native capture drainage", async () => {
   const captureId = "a".repeat(32), observationId = "b".repeat(32), key = "c".repeat(64), fingerprint = "d".repeat(64);
-  const counts = { captureId, coverageComplete: true, submissions: 1, keygens: 1, accepts: 1 };
+  const counts = nativeCounts({ captureId });
   const window = { coverageComplete: true, observationId, caPublicKeySha256: key, baselineRequestId: 1,
     lossFree: true, noPurgeProven: true, noRestoreProven: true, globalCount: 1, matchingIssuedCount: 1,
     unknownIssuedCount: 0, subjectRequestCount: 1, fingerprintSha256: fingerprint, requestId: "2" };

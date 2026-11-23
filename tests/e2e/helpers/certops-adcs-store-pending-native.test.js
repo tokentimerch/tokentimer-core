@@ -2,13 +2,12 @@
 
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
+const { nativeCounts } = require("./certops-adcs-store-native-cng.fixture");
 const {
   qualifyPendingStoreRecovery, verifyPendingJournalIdentity, verifyPendingOperationCounts,
 } = require("./certops-adcs-store-pending-native");
 
-const counts = (accepts) => ({
-  captureId: "a".repeat(32), coverageComplete: true, submissions: 1, keygens: 1, accepts,
-});
+const counts = (accepts) => nativeCounts({ accepts });
 
 test("native pending Store recovery refuses before opening a fixture when interruption is unavailable", async () => {
   const context = new Proxy({}, {

@@ -5,6 +5,7 @@
 // and exact cleanup. SQL reads evidence. Only the deployed worker schedules jobs.
 const assert = require("node:assert/strict");
 const { createHash, X509Certificate } = require("node:crypto");
+const { nativeCngEvidenceSha256 } = require("./certops-adcs-store-native-cng");
 const { buildEnrollmentContainerName } = require("../../../packages/agent/src/windows-cert-store");
 const { inspectStoreOnlyCertificate } = require("../../../packages/agent/src/windows-cert-store/store-only");
 const { readEnrollmentJournal } = require("../../../packages/agent/src/issuers/adcs-enrollment");
@@ -34,16 +35,17 @@ function verifyPendingJournalIdentity(original, observed) {
 }
 
 function verifyPendingOperationCounts(pending, afterRestart, installed) {
-  validateNativeCounts(pending);
-  validateNativeCounts(afterRestart, pending);
-  validateNativeCounts(installed, afterRestart);
-  for (const counts of [pending, afterRestart, installed]) {
+  const checkedPending = validateNativeCounts(pending);
+  const checkedRestarted = validateNativeCounts(afterRestart, checkedPending);
+  const checkedInstalled = validateNativeCounts(installed, checkedRestarted);
+  for (const counts of [checkedPending, checkedRestarted, checkedInstalled]) {
     assert.equal(counts.submissions, 1, "Expected just one CA submission");
     assert.equal(counts.keygens, 1, "Expected just one CNG key generation");
   }
-  assert.equal(pending.accepts, 0);
-  assert.equal(afterRestart.accepts, 0);
-  assert.equal(installed.accepts, 1, "Expected just one native Store acceptance");
+  assert.equal(checkedPending.accepts, 0);
+  assert.equal(checkedRestarted.accepts, 0);
+  assert.equal(checkedInstalled.accepts, 1, "Expected just one native Store acceptance");
+  return checkedInstalled;
 }
 
 function serialIdentity(value) {
@@ -91,7 +93,7 @@ async function qualifyPendingStoreRecovery(context) {
   let installedCounts;
   try {
     await capture.start();
-    const baseline = validateCaptureStart(capture);
+    const baseline = validateCaptureStart(capture, context.candidateArchiveSha256);
     const { issuerId } = await preparePendingRun({ dnsName, agentRowId, template: PENDING_TEMPLATE });
     assert.match(issuerId, UUID);
     const ready = validateNativeCounts(await capture.read(), baseline);
@@ -146,7 +148,7 @@ async function qualifyPendingStoreRecovery(context) {
     const readCounts = () => readNativeOperationCounts({ enrollmentId, jobId, containerName });
     const caPending = await observeRequest();
     assert.equal(caPending.disposition, 9);
-    const pendingCounts = validateNativeCounts(await readCounts(), baseline);
+    const pendingCounts = validateNativeCounts(await readCounts(), ready);
     assert.equal(pendingCounts.submissions, 1);
     assert.equal(pendingCounts.keygens, 1);
     assert.equal(pendingCounts.accepts, 0);
@@ -212,8 +214,7 @@ async function qualifyPendingStoreRecovery(context) {
     const caIssued = await observeCaRequest({ dnsName, fingerprintSha256: native.fingerprintSha256, execFileImpl: caObserverExec });
     assert.equal(serialIdentity(caIssued.serialNumber), serialIdentity(native.serialNumber));
 
-    const finalCounts = await readCounts();
-    verifyPendingOperationCounts(pendingCounts, restartedCounts, finalCounts);
+    const finalCounts = verifyPendingOperationCounts(pendingCounts, restartedCounts, await readCounts());
     verifyPendingRecovery({
       originalRequestId: requestId, afterRestartRequestId: restarted.journal.requestId,
       retrievedRequestId: installed.request_id, caPending, caIssued,
@@ -242,6 +243,7 @@ async function qualifyPendingStoreRecovery(context) {
       requestId, serialNumber: native.serialNumber, fingerprintSha256: native.fingerprintSha256,
       candidateArchiveSha256: context.candidateArchiveSha256,
       csrSpkiSha256: original.journal.csrSpkiSha256, captureId: finalCounts.captureId,
+      cngEvidenceSha256: nativeCngEvidenceSha256(finalCounts),
       nativeSubmissions: finalCounts.submissions, nativeKeyGenerations: finalCounts.keygens, nativeAccepts: finalCounts.accepts,
       promotions: promotions.rows.length,
     };
