@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-20 (Core 0.20.0, main 9deb2fc5).
+Last reviewed: 2026-11-22 (Core 0.20.0, main bbf87f4a).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -62,20 +62,6 @@ called stable while they are open.
 
 ---
 
-## Alongside 0.x -- does not gate v1.0.0
-
-Accepted work that ships in 0.x stages on its own schedule. v1.0.0 can be
-called stable while it is open.
-
-- **MCP operator interface**
-  ([#502](https://github.com/tokentimerch/tokentimer-core/issues/502),
-  implementation [PR #406](https://github.com/tokentimerch/tokentimer-core/pull/406)).
-  Scoped inventory queries and updates, contact and invitation actions,
-  remote sign-in, and ACME issuance and renewal requests ship in 0.19.0.
-  Deletes and provider-side actions remain follow-on work.
-
----
-
 ## v1.0.0 -- RBAC and role model cleanup
 
 Target release for breaking or structural authorization changes
@@ -112,6 +98,9 @@ Per-user personal default already exists. v1.0.0 adds a separate
 These themes make queued requests and follow-ons discoverable. Inclusion
 does not promise a version or add a v1.0.0 gate.
 
+- **MCP operator follow-ons**: inventory deletion, provider-side actions,
+  and workspace-manager invitations require separate scope and edition
+  decisions. See the [shipped Core interface](packages/mcp/README.md).
 - **Incident response and escalation**
   ([#503](https://github.com/tokentimerch/tokentimer-core/issues/503)):
   owner/backup thresholds, acknowledgement, delivery fallback and external
@@ -154,6 +143,8 @@ does not promise a version or add a v1.0.0 gate.
   Scope each against the released lifecycle before implementation.
 - **Release provenance**
   ([#300](https://github.com/tokentimerch/tokentimer-core/issues/300)).
+  Require release-branch ancestry and successful push CI for the exact tag
+  commit before publication. Verify the gate in a prerelease run.
 
 Performance tests with regression budgets
 ([#235](https://github.com/tokentimerch/tokentimer-core/issues/235));
