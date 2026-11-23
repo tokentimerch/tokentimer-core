@@ -15,19 +15,33 @@ on:
       phase:
         description: Durable native journal phase that must actually be observed before owned service interruption
         type: choice
-        options: ['keygen_intent', 'prepared', 'submitting', 'installing', 'accepted-before-bind', 'bound-before-complete']
+        options: ['keygen_intent', 'prepared', 'submitting', 'installing']
         default: 'installing'
       language:
         description: Installed native Windows display language on CA and member
         type: choice
         options: ['en-US', 'de-DE', 'fr-FR']
         default: 'en-US'
-permissions:
-  contents: read
-  id-token: write
+permissions: {}
 jobs:
+  preflight:
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require a supported journal phase before protected lab admission
+        shell: pwsh
+        env:
+          JOURNAL_PHASE: ${{ inputs.phase }}
+        run: |
+          if ($env:JOURNAL_PHASE -cnotin @('keygen_intent', 'prepared', 'submitting', 'installing')) {
+            throw 'This journal phase is unavailable through the experimental runner'
+          }
   lab:
-    if: github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
+    needs: preflight
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     environment: certops-adcs-lab
     timeout-minutes: 150
