@@ -25,6 +25,7 @@ const { createCertificateJob } = require("./jobs");
 const { adcsCaBucket } = require("./renewalCapacity");
 const { lockWorkspaceForCertOpsSideEffect } = require("./workspaceKillSwitch");
 const { iisSelectorKey } = require("./windowsRenewalOwnership");
+const { findEligibleAdcsPreflightAgent } = require("./adcsPreflightGate");
 const {
   loadRefreshJobs, refreshState, refreshIdempotencyKey,
   QUEUE_TIMEOUT_MS, issuerRefreshStates,
@@ -333,6 +334,7 @@ function dispatchPreflight({
   beforeLock,
   automatic = false,
   confirmedAt = null,
+  target = null,
   unavailableTarget = null,
   env = process.env,
 }) {
@@ -375,6 +377,12 @@ function dispatchPreflight({
       const jobs = await loadRefreshJobs(tx, context);
       const state = refreshState(jobs,version);
       if (state.state !== "required" && !(state.state === "retrying" && state.dispatch)) return null;
+      if (target) {
+        const selected = await findEligibleAdcsPreflightAgent({
+          db: tx, workspaceId, reference: target.reference, target, ownerId: agentId, env,
+        });
+        if (!selected) return null;
+      }
       refreshKey = refreshIdempotencyKey({ ...context,previousId: jobs[0]?.id });
     }
     const recent = await tx.query(
@@ -410,6 +418,7 @@ function dispatchPreflight({
       subjectType: "external",
       subjectId: issuerId,
       assignedAgentId: agentId,
+      ...(automatic && target ? { requiredTargetSelector: target.reference } : {}),
       payload: {
         schemaVersion: 1,
         action: "adcs-preflight",
