@@ -3,6 +3,11 @@ const { randomUUID } = require("node:crypto");
 
 const requestContext = new AsyncLocalStorage();
 
+function isRequestCorrelationId(value) {
+  return typeof value === "string" && value.length === 36 &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 function getRequestContext() {
   const state = requestContext.getStore();
   return state?.active ? state.context : undefined;
@@ -39,6 +44,18 @@ function requestCorrelation(req, res, next) {
   requestContext.run(state, next);
 }
 
+function runWithRequestCorrelation(correlationId, work) {
+  if (!isRequestCorrelationId(correlationId)) return work();
+  const state = { context: Object.freeze({ correlationId }), active: true };
+  return requestContext.run(state, async () => {
+    try {
+      return await work();
+    } finally {
+      state.active = false;
+    }
+  });
+}
+
 function requestCompletionLogger(logger) {
   return (req, res, next) => {
     res.once("finish", () => {
@@ -72,8 +89,10 @@ function requestCompletionLogger(logger) {
 
 module.exports = {
   getRequestContext,
+  isRequestCorrelationId,
   attachRequestContext,
   captureRequestContext,
   requestCorrelation,
+  runWithRequestCorrelation,
   requestCompletionLogger,
 };

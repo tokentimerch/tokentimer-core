@@ -748,6 +748,7 @@ app.use(require("./routes/health"));
 app.use(require("./routes/usage"));
 // --- CONTROL CENTER (extracted to routes/controlCenter.js) ---
 app.use(require("./routes/controlCenter"));
+app.use(require("./routes/dashboardDiagnostics"));
 // --- ALERTS (extracted to routes/alerts.js) ---
 app.use(require("./routes/alerts"));
 app.use(require("./routes/incidentActions"));
