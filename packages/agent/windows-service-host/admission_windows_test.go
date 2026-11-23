@@ -13,19 +13,26 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func admissionFixture(t *testing.T, observer serviceObservation) (*observedAdmission, *admissionBroker) {
+func admissionFixture(t *testing.T, observer serviceObservation, onLoss func(), workerPID func() uint32) (*observedAdmission, *admissionBroker) {
 	t.Helper()
-	gate := &observedAdmission{observer: observer, failure: make(chan error, 1), onLoss: func() {}}
+	if onLoss == nil {
+		onLoss = func() {}
+	}
+	gate := &observedAdmission{observer: observer, failure: make(chan error, 1), onLoss: onLoss}
 	journal, err := os.Create(filepath.Join(t.TempDir(), "admission.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = journal.Close() })
-	broker, err := startAdmissionBroker(gate, "0123456789abcdef0123456789abcdef", journal, func() uint32 { return uint32(os.Getpid()) })
+	if workerPID == nil {
+		workerPID = func() uint32 { return uint32(os.Getpid()) }
+	}
+	broker, err := startAdmissionBroker(gate, "0123456789abcdef0123456789abcdef", journal, workerPID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +94,7 @@ func TestAdmissionRevokedWhileProbeIsSuspended(t *testing.T) {
 					return errors.New("simulated observer loss")
 				}
 				return nil
-			}})
+			}}, nil, nil)
 			// Unblock before the broker cleanup waits for its request goroutine.
 			t.Cleanup(func() { unblock.Do(func() { close(release) }) })
 			type response struct {
@@ -121,7 +128,7 @@ func TestAdmissionRevokedWhileProbeIsSuspended(t *testing.T) {
 }
 
 func TestAdmissionNodeWorkerUsesAuthenticatedPermit(t *testing.T) {
-	_, broker := admissionFixture(t, &simulatedObservation{probe: func() error { return nil }})
+	_, broker := admissionFixture(t, &simulatedObservation{probe: func() error { return nil }}, nil, nil)
 	module, err := filepath.Abs("../src/observation-admission.js")
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +150,7 @@ func TestAdmissionNodeWorkerUsesAuthenticatedPermit(t *testing.T) {
 }
 
 func TestAdmissionJournalFailureRevokesBeforePermit(t *testing.T) {
-	gate, broker := admissionFixture(t, &simulatedObservation{probe: func() error { return nil }})
+	gate, broker := admissionFixture(t, &simulatedObservation{probe: func() error { return nil }}, nil, nil)
 	if err := broker.journal.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -169,5 +176,151 @@ func TestAdmissionSecureJournalRejectsNonlocalRoot(t *testing.T) {
 			release()
 			t.Fatalf("unprotected state directory accepted: %s", dir)
 		}
+	}
+}
+
+// Exercise a real child_process.execFile inside the Windows job. The test
+// lets the permitted Node worker live long enough to attempt the launch
+// after the fence, instead of relying on killing Node first.
+func TestIssuedPermitCannotStartToolAfterWindowsJobFence(t *testing.T) {
+	module, err := filepath.Abs("../src/observation-admission.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const script = "const fs = require('node:fs'); " +
+		"const {guardNativeExec, takeAdmissionBinding, createOperationAdmission} = require(process.argv[1]); " +
+		"const [ready, resume, started, result] = process.argv.slice(2); " +
+		"const admit = createOperationAdmission(takeAdmissionBinding(), () => {}); " +
+		"const exec = guardNativeExec(async (stage, signal) => { " +
+		"await admit(stage, signal); fs.writeFileSync(ready, 'permitted'); " +
+		"while (!fs.existsSync(resume)) await new Promise(r => setTimeout(r, 10)); " +
+		"}); " +
+		"exec(process.execPath, ['-e', \"require('node:fs').writeFileSync(process.argv[1], 'started')\", started], {}) " +
+		".then(() => fs.writeFileSync(result, 'launched'), () => fs.writeFileSync(result, 'blocked'));"
+
+	for _, fence := range []bool{false, true} {
+		name := "live-observation"
+		if fence {
+			name = "revoked-before-exec"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			ready, resume := filepath.Join(dir, "permit"), filepath.Join(dir, "resume")
+			started, outcome := filepath.Join(dir, "effect"), filepath.Join(dir, "outcome")
+			host := newAgentHost(nodeExe(t), []string{"-e", script, module, ready, resume, started, outcome}, nil, newTestLogger(t))
+			var unavailable atomic.Bool
+			var fenceApplied bool
+			gate, broker := admissionFixture(t, &simulatedObservation{probe: func() error {
+				if unavailable.Load() {
+					return errors.New("simulated observer loss after grant")
+				}
+				return nil
+			}}, func() { fenceApplied = host.prepareObservedStop() }, host.pid)
+			if err := host.startChild(func() error { return nil }, broker.binding()); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := host.stopObservedChild(); err != nil {
+					t.Errorf("drain fixture: %v", err)
+				}
+			})
+
+			if got := readAdmissionMarker(t, ready); got != "permitted" {
+				t.Fatalf("worker never obtained the initial permit: %q", got)
+			}
+			records := readAdmissionRecords(t, broker)
+			if len(records) != 1 || records[0]["decision"] != "eligible" ||
+				records[0]["workerPid"] != float64(host.pid()) {
+				t.Fatalf("initial permit was not backed by this worker's durable admission check: %v", records)
+			}
+			if fence {
+				unavailable.Store(true)
+				if err := gate.check(); err == nil {
+					t.Fatal("observer loss was ignored")
+				}
+				select {
+				case <-gate.failure:
+					if !fenceApplied {
+						t.Fatal("host notified observer loss without a successful job fence")
+					}
+				default:
+					t.Fatal("loss notification missing after fencing")
+				}
+			}
+
+			if err := os.WriteFile(resume, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got := readAdmissionMarker(t, outcome)
+			if fence {
+				if _, err := os.Stat(started); got != "blocked" || !os.IsNotExist(err) {
+					t.Fatalf("native child ran after the job fence: outcome=%q markerError=%v", got, err)
+				}
+			} else if got != "launched" || readAdmissionMarker(t, started) != "started" {
+				t.Fatalf("healthy control did not start the same child: %q", got)
+			}
+			select {
+			case <-host.exited:
+				if err := host.wait(); err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("fixture worker did not exit")
+			}
+		})
+	}
+}
+
+func readAdmissionMarker(t *testing.T, file string) string {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(file)
+		if err == nil && len(data) > 0 {
+			return string(data)
+		}
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("worker did not write %s", filepath.Base(file))
+	return ""
+}
+
+func TestAdmissionLossNotificationWaitsForHostFence(t *testing.T) {
+	entered, done := make(chan struct{}), make(chan struct{})
+	var finish sync.Once
+	t.Cleanup(func() { finish.Do(func() { close(done) }) })
+	gate := &observedAdmission{
+		failure: make(chan error, 1),
+		onLoss: func() {
+			close(entered)
+			<-done
+		},
+	}
+	fault := errors.New("simulated observer loss")
+	go gate.fail(fault)
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("host interruption was not invoked")
+	}
+	if !gate.stopped.Load() {
+		t.Fatal("new permits remained open during the job interruption")
+	}
+	select {
+	case <-gate.failure:
+		t.Fatal("loss notification preceded the host interruption")
+	default:
+	}
+	finish.Do(func() { close(done) })
+	select {
+	case err := <-gate.failure:
+		if !errors.Is(err, fault) {
+			t.Fatalf("wrong observation failure: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("loss was not delivered after the host interruption")
 	}
 }

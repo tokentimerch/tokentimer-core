@@ -49,8 +49,10 @@ func (a *observedAdmission) revoke() {
 func (a *observedAdmission) fail(err error) {
 	a.revoke()
 	if a.lost.CompareAndSwap(false, true) {
+		// The service handler must not see loss before the host has
+		// attempted the Windows job fence and termination.
+		a.onLoss()
 		a.failure <- err
-		go a.onLoss()
 	}
 }
 

@@ -12,7 +12,7 @@ Set `CERTOPS_WINDOWS_LANGUAGE_ASSETS` to a JSON object keyed by OS/language, for
 
 ## Windows service observation trial
 
-On a disposable lab, set `TOKENTIMER_AGENT_HOST_OBSERVATION_RUN` before the first worker start, with a protected local state directory. Use a fresh 32-character lowercase hexadecimal run ID for every restart. The independent LocalSystem observer echoes 32-byte challenges on `\\.\pipe\TokenTimerObservation-<run>` while CA and CNG coverage is current. Loss stops the job and prevents reuse of the run. The host syncs each admission check before sending a claim or native permit. The native collector establishes effect starts. An issued permit can race with loss before the worker acts. Native qualification still requires fencing at the effect boundary and off-host readback.
+Set `TOKENTIMER_AGENT_HOST_OBSERVATION_RUN` before the disposable lab's first worker start, with protected local state. Use a fresh 32-character lowercase hexadecimal ID per restart. The independent LocalSystem observer echoes 32-byte challenges on `\\.\pipe\TokenTimerObservation-<run>` while CA/CNG coverage is current. The host syncs an admission check before each permit. After Windows applies the Job limit, a prior permit cannot start an ordinary child in that Job. The API orders claim allocation against committed workspace pauses. A Windows loss still needs a trusted server-side revocation path. Earlier effects, independent CA/CNG continuity and off-host readback remain qualification requirements.
 
 ## Results and cleanup
 

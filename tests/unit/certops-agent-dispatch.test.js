@@ -4,6 +4,10 @@ const { describe, it, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const { bindAuthenticatedAgent } = require("../../apps/api/services/certops/agentCredentialFence");
+const {
+  lockWorkspaceForCertOpsSideEffect,
+  setWorkspaceCertOpsPauseState,
+} = require("../../apps/api/services/certops/workspaceKillSwitch");
 const FIXTURE_CREDENTIAL_HASH = "a".repeat(64);
 
 const {
@@ -1731,6 +1735,158 @@ describe("agentDispatch.claimJobs", () => {
     );
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
   });
+
+  // The local permit, retained transport request and SQL are simulated. The
+  // actual credential fence, pause writer, workspace admission and claim service
+  // run here; this does not exercise HTTP auth, SCM or PostgreSQL concurrency.
+  for (const pauseBeforeApiAdmission of [false, true]) {
+    it(
+      pauseBeforeApiAdmission
+        ? "denies a queued observed claim after a trusted workspace pause commits"
+        : "still admits a queued observed claim when observer loss is invisible to the API",
+      async () => {
+        let committedPaused = false;
+        let transactionPaused = false;
+        let observationLive = true;
+        let claims = 0;
+        let signatures = 0;
+        let selections = 0;
+        let offered = false;
+        const order = [];
+        const selectedJob = {
+          id: 42,
+          workspace_id: WORKSPACE_A,
+          operation: "renew",
+          subject_type: "certificate",
+          subject_id: "cert-1",
+          payload: { domain: "example.com" },
+          executor_kind: "agent",
+        };
+        const dbPool = createMockPool((sql, params) => {
+          if (sql.includes("SET last_sequence")) {
+            return { rows: [{ id: "agent-row-1" }] };
+          }
+          if (sql.includes("FROM workspaces")) {
+            assert.equal(params[0], WORKSPACE_A);
+            if (sql.includes("FOR SHARE")) {
+              assert.match(sql, /FOR SHARE SKIP LOCKED/);
+              order.push("api-workspace-authority");
+              assert.equal(observationLive, false);
+            } else {
+              assert.match(sql, /FOR UPDATE/);
+            }
+            return { rows: [{ id: WORKSPACE_A, certops_paused: committedPaused,
+              certops_require_approval_always: false }] };
+          }
+          if (sql.includes("UPDATE workspaces")) {
+            transactionPaused = params[0];
+            return { rows: [] };
+          }
+          if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+          if (sql.includes("SELECT declared_target_selectors")) {
+            return { rows: [{ declared_target_selectors: ["*.example.com"],
+              declared_command_profile_names: [], supported_dns_providers: [] }] };
+          }
+          if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+            selections++;
+            return { rows: [selectedJob] };
+          }
+          if (sql.includes("SET status = 'claimed'")) {
+            claims++;
+            return { rows: [{ ...selectedJob, status: "claimed", claim_id: "claim-uuid-1",
+              lease_expires_at: new Date("2026-07-22T10:15:00.000Z"), attempt_count: 1 }] };
+          }
+          throw new Error("Unexpected queued-claim SQL: " + sql);
+        });
+        // Expose a pause to the queued request only after its writer commits.
+        // The fake client models commit visibility, not real database locking.
+        const query = dbPool.client.query;
+        dbPool.client.query = async (sql, params) => {
+          const command = sql.trim().toUpperCase();
+          if (command === "BEGIN") transactionPaused = committedPaused;
+          const result = await query(sql, params);
+          if (command === "COMMIT") {
+            if (!committedPaused && transactionPaused) order.push("trusted-pause-committed");
+            committedPaused = transactionPaused;
+          }
+          if (command === "ROLLBACK") transactionPaused = committedPaused;
+          return result;
+        };
+        dbPool.query = dbPool.client.query;
+
+        const agent = agentFixture(); // Starts after successful credential auth.
+        let releaseRequest;
+        const held = new Promise((resolve) => { releaseRequest = resolve; });
+        const queuedRequest = (async () => {
+          assert.equal(observationLive, true);
+          order.push("local-permit-before-queue");
+          await held;
+          order.push("api-entry");
+          const result = await claimJobsImpl({
+            dbPool, agent, envelope: { sequence: 1 },
+            body: { maxJobs: 1, supportedActions: ["renew"] },
+            env: { CERTOPS_AGENT_LOG_STORAGE_ENABLED: "false" },
+            deps: {
+              ...CLAIM_DEPS_BASE,
+              lockWorkspaceForCertOpsSideEffect: (options) => lockWorkspaceForCertOpsSideEffect({
+                ...options, env: { CERTOPS_ENABLED: "true" },
+              }),
+              signJobForDispatch: async (options) => {
+                signatures++;
+                assert.equal(options.client, dbPool.client);
+                return CLAIM_DEPS_BASE.signJobForDispatch(options);
+              },
+            },
+          });
+          offered = true;
+          return result;
+        })();
+        const outcome = queuedRequest.then((result) => ({ result }), (error) => ({ error }));
+        try {
+          assert.deepEqual(dbPool.state.transaction, []);
+          observationLive = false;
+          order.push("simulated-observer-loss");
+          if (pauseBeforeApiAdmission) {
+            await setWorkspaceCertOpsPauseState({ dbPool, workspaceId: WORKSPACE_A,
+              certOpsPaused: true, reason: "Qualification observer unavailable", actorUserId: 1,
+              env: { CERTOPS_ENABLED: "true" } });
+            assert.equal(committedPaused, true);
+            assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+            assert.deepEqual(dbPool.state.audits.map((audit) => audit.action), ["CERTOPS_WORKSPACE_PAUSED"]);
+          }
+          const claimTransactionStart = dbPool.state.transaction.length;
+          releaseRequest();
+          const settled = await outcome;
+          assert.ok(order.indexOf("simulated-observer-loss") < order.indexOf("api-entry"));
+          assert.ok(order.indexOf("api-entry") < order.indexOf("api-workspace-authority"));
+          if (pauseBeforeApiAdmission) {
+            assert.equal(settled.error?.code, "CERTOPS_WORKSPACE_PAUSED");
+            assert.equal(settled.result, undefined);
+            assert.equal(offered, false);
+            assert.equal(selections, 0);
+            assert.equal(claims, 0);
+            assert.equal(signatures, 0);
+            assert.ok(order.indexOf("trusted-pause-committed") < order.indexOf("api-workspace-authority"));
+            assert.deepEqual(dbPool.state.transaction.slice(claimTransactionStart), ["BEGIN", "ROLLBACK"]);
+            assert.equal(dbPool.state.queries.some(({ text }) => /certops_agent_log_job_state|certops_agent_log_stream/.test(text)), false);
+          } else {
+            assert.equal(settled.error, undefined);
+            assert.equal(committedPaused, false);
+            assert.equal(offered, true);
+            assert.equal(selections, 1);
+            assert.equal(claims, 1);
+            assert.equal(signatures, 1);
+            assert.equal(settled.result.jobs[0].jobId, "42");
+            assert.deepEqual(dbPool.state.transaction.slice(claimTransactionStart), ["BEGIN", "COMMIT"]);
+          }
+          assert.equal(dbPool.state.released, true);
+        } finally {
+          releaseRequest();
+          await outcome;
+        }
+      },
+    );
+  }
 
   it("returns an empty set without selecting when supportedActions is empty", async () => {
     const dbPool = createMockPool((sql) => {

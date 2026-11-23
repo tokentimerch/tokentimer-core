@@ -122,8 +122,13 @@ func (s *tokenTimerAgentService) Execute(args []string, r <-chan svc.ChangeReque
 			<-done
 		}()
 		if err := s.host.startChild(func() error {
-			if err := admission.check(); err != nil {
+			// Until the child resumes, only startup can probe the observer.
+			// Return failure to startChild, which owns the suspended job.
+			if err := observer.check(); err != nil {
 				return err
+			}
+			if admission.stopped.Load() {
+				return errors.New("observation admission closed during startup")
 			}
 			close(armed)
 			return nil
