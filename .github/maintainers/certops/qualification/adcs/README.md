@@ -16,6 +16,8 @@ Use one four-hour disposable domain lab with a fresh Server 2022 AMD64 member wi
 
 Dispatch remains gated on independent CA and service evidence, loss-triggered shutdown with complete process drainage, and off-host readback. The named Store recovery scope binds the exact signed package and launcher digests, the named key and CA request, and each native install attempt and exit. Its result leaves exhaustive ephemeral CNG qualification open. Record the exact Core commit, signed artifact identities and owned resource cleanup. Existing pending and operator-acceptance selectors cover IIS cases.
 
+Before Azure access, run `node scripts/certops-adcs-store-media-preflight.js <custody-receipt> <approved-receipt-sha256> <signed-source-sha> <reviewed-signing-workflow-sha>`. The read-only check verifies the exact GitHub signing attempts and artifact metadata. Keep media verification, the live collector canary and protected lab admission as separate checks.
+
 ## Results and cleanup
 
 **Shards.** The `shard` input defaults to `all`: one serial lab, the only mode that produces release evidence. `parallel` provisions five labs at once (`issuance`, `renewals`, `pending-and-ca`, `templates-and-uncertain`, `uncertain-recovery`; 30 vCPUs, so check regional quota) and a failure in one shard cannot hide the scenarios of another. Shards are diagnostic: their reports are `not-qualified`/`experimental`, each is checked only for completing every scenario it owns, and none can fill a native release slot. Shards apply to the plain comprehensive scope only; `issuance` also carries the production worker and package acceptance. The scenario-to-shard map is `tests/e2e/helpers/certops-adcs-shards.js`, and a unit test fails if a mandatory scenario has no owner.
