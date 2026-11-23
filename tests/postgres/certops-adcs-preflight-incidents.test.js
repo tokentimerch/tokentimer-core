@@ -978,7 +978,7 @@ test("automatic preflight finds eligible agent 101 among 125 declarations", asyn
       {
         dbPool: pool,
         certificate,
-        mode: "execute",
+        mode: "real",
         env: process.env,
         preflightDispatcher: async (value) => calls.push(value),
       },
@@ -1307,3 +1307,58 @@ test(
     );
   },
 );
+
+test("automatic preflight rechecks and binds the selected target", async () => {
+  const f = await fixture();
+  const target = { type: "windows-cert-store", reference: f.certs[0].domain, store: "My" };
+  const scope = [f.workspaceId, f.issuerId];
+  await pool.query(
+    `UPDATE certops_agents SET agent_version='0.20.0',capabilities_updated_at=NOW(),
+      declared_capabilities='["adcs-enroll-v1","windows-store-only-adcs-v1","evidence-claim-binding-v1"]'::jsonb
+     WHERE workspace_id=$1 AND id=$2`,
+    [f.workspaceId, f.agentId],
+  );
+  await pool.query(
+    "DELETE FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='adcs-preflight'",
+    scope,
+  );
+  const version = (await pool.query(
+    "SELECT confirmed_at FROM certificate_issuer_versions WHERE workspace_id=$1 AND issuer_id=$2",
+    scope,
+  )).rows[0];
+  const { dispatchPreflight } = require("../../apps/api/services/certops/certificateEnrollments");
+  const options = {
+    client: pool, workspaceId: f.workspaceId, issuerId: f.issuerId, agentId: f.agentId,
+    caConfig: CA, template: TEMPLATE, confirmedAt: version.confirmed_at, automatic: true, target,
+  };
+  const declare = (selectors) => pool.query(
+    "UPDATE certops_agents SET declared_target_selectors=$3::jsonb,last_seen_at=NOW() WHERE workspace_id=$1 AND id=$2",
+    [f.workspaceId, f.agentId, JSON.stringify(selectors)],
+  );
+  const routing = async () => (await pool.query(
+    `SELECT id,assigned_agent_id,required_target_selector FROM certificate_jobs
+     WHERE workspace_id=$1 AND subject_id=$2 AND operation='adcs-preflight' ORDER BY preflight_seq`,
+    scope,
+  )).rows;
+
+  await declare([target.reference, f.certs[1].domain]);
+  const stale = await dispatchPreflight({
+    ...options,
+    beforeLock: () => declare([f.certs[1].domain]),
+  });
+  assert.equal(stale, null);
+  assert.deepEqual(await routing(), []);
+
+  await declare([target.reference]);
+  const automatic = await dispatchPreflight(options);
+  assert.deepEqual(await routing(), [{
+    id: automatic.id, assigned_agent_id: f.agentId, required_target_selector: target.reference,
+  }]);
+
+  await declare([f.certs[1].domain]);
+  const manual = await dispatchPreflight({ ...options, automatic: false });
+  assert.deepEqual(await routing(), [
+    { id: automatic.id, assigned_agent_id: f.agentId, required_target_selector: target.reference },
+    { id: manual.id, assigned_agent_id: f.agentId, required_target_selector: null },
+  ]);
+});
