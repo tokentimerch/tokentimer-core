@@ -105,9 +105,18 @@ func main() {
 	stopTimeout := resolveStopTimeout(os.Getenv)
 	host := newAgentHost(childArgs[0], childArgs[1:], env, log)
 
+	run, observed := os.LookupEnv(observationRunEnv)
 	if isService {
-		runAsService(host, stopTimeout, log)
+		var openObservation func() (serviceObservation, error)
+		if observed {
+			openObservation = func() (serviceObservation, error) { return connectObservation(run) }
+		}
+		runAsService(host, stopTimeout, log, openObservation)
 		return
+	}
+	if observed {
+		fmt.Fprintln(os.Stderr, "tokentimer-agent-host: required observation is supported only under SCM")
+		os.Exit(2)
 	}
 	os.Exit(runInteractive(host, stopTimeout, log))
 }

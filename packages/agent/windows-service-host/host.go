@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
+	verifiedextraction "tokentimer-verified-extraction"
 )
 
 // defaultStopTimeout bounds how long a graceful stop waits for the child
@@ -56,8 +58,10 @@ type agentHost struct {
 	env       []string
 	log       *hostLogger
 
-	mu  sync.Mutex
-	cmd *exec.Cmd
+	mu                 sync.Mutex
+	cmd                *exec.Cmd
+	job                *verifiedextraction.ProcessJob
+	observationStopErr error
 	// exited is closed exactly once, when cmd.Wait() returns. Closing
 	// (rather than sending a value) lets every interested goroutine -
 	// the service handler's own exit-watcher and stopGracefully's timeout
@@ -75,7 +79,8 @@ func newAgentHost(childExe string, childArgs []string, env []string, log *hostLo
 	for _, entry := range env {
 		name, _, _ := strings.Cut(entry, "=")
 		// Inherited preload settings can run code outside the installed agent.
-		if strings.EqualFold(name, "NODE_OPTIONS") || strings.EqualFold(name, "NODE_PATH") {
+		if strings.EqualFold(name, "NODE_OPTIONS") || strings.EqualFold(name, "NODE_PATH") ||
+			strings.EqualFold(name, observationRunEnv) {
 			continue
 		}
 		childEnv = append(childEnv, entry)
@@ -89,6 +94,10 @@ func newAgentHost(childExe string, childArgs []string, env []string, log *hostLo
 // this host too) and to isolate the child's own Ctrl+Break handling from
 // this host's.
 func (h *agentHost) start() error {
+	return h.startChild(nil)
+}
+
+func (h *agentHost) startChild(beforeResume func() error) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.cmd != nil {
@@ -108,7 +117,13 @@ func (h *agentHost) start() error {
 		// process group so the same event never also reaches this host.
 		CreationFlags: windows.CREATE_NO_WINDOW | windows.CREATE_NEW_PROCESS_GROUP,
 	}
-	if err := cmd.Start(); err != nil {
+	var err error
+	if beforeResume == nil {
+		err = cmd.Start()
+	} else {
+		h.job, err = verifiedextraction.StartProcessInJob(context.Background(), cmd, beforeResume)
+	}
+	if err != nil {
 		return fmt.Errorf("agentHost: failed to start %s: %w", h.childExe, err)
 	}
 	h.cmd = cmd
@@ -120,8 +135,61 @@ func (h *agentHost) start() error {
 		h.mu.Unlock()
 		close(h.exited)
 	}()
-	h.log.Printf("started child pid=%d exe=%s args=%v", cmd.Process.Pid, h.childExe, h.childArgs)
+	if beforeResume == nil {
+		h.log.Printf("started child pid=%d exe=%s args=%v", cmd.Process.Pid, h.childExe, h.childArgs)
+	}
 	return nil
+}
+
+func (h *agentHost) prepareObservedStop() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.job != nil && h.job.PrepareStop() == nil
+}
+
+// interruptObservedChild runs independently of SCM status and logging. Only
+// the owner of h.job can close its handle or transfer it to the drain path.
+func (h *agentHost) interruptObservedChild() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.job == nil {
+		return
+	}
+	_ = h.job.PrepareStop()
+	if err := h.job.Terminate(); err != nil {
+		h.job.Close()
+		h.job = nil
+		h.observationStopErr = fmt.Errorf("job termination unverified: %w", err)
+	}
+}
+
+// stopObservedChild terminates the contained job and waits for the root's
+// output and exit to be reaped. It is used only by the observation lifecycle.
+func (h *agentHost) stopObservedChild() error {
+	h.mu.Lock()
+	job, exited, stopErr := h.job, h.exited, h.observationStopErr
+	h.job = nil
+	h.mu.Unlock()
+	if job == nil {
+		if stopErr != nil {
+			return stopErr
+		}
+		return fmt.Errorf("observed process job is missing")
+	}
+	defer job.Close()
+	const timeout = 5 * time.Second
+	deadline := time.Now().Add(timeout)
+	if err := job.Stop(timeout); err != nil {
+		return err
+	}
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-exited:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("observed root exit was not reaped")
+	}
 }
 
 // wait blocks until the child exits on its own (crash or clean exit not

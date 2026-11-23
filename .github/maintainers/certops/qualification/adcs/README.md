@@ -10,6 +10,10 @@ For native enrollment, pending approval/denial, renewal, recovery, IIS/CNG custo
 
 Set `CERTOPS_WINDOWS_LANGUAGE_ASSETS` to a JSON object keyed by OS/language, for example `2022/de-DE`, with `uri` and `sha256` for each official Server display-language CAB. Use a private HTTPS Azure Blob and a read-only SAS that remains valid through installation on both CA and member; refresh expired URLs before another dispatch. The checksum, installed resources and actual SYSTEM language are verified. A Basic language capability alone does not qualify a display-language slot.
 
+## Windows service observation trial
+
+On a disposable lab, set `TOKENTIMER_AGENT_HOST_OBSERVATION_RUN` in the service environment before its first worker start. Use a fresh 32-character lowercase hexadecimal run ID for each intentional restart. The independent LocalSystem observer serves the local byte pipe `\\.\pipe\TokenTimerObservation-<run>` and echoes each 32-byte challenge while both CA and CNG coverage are current. A missing or stalled observer stops the worker job. A consumed run cannot restart it. Local simulations verify shutdown and containment. Native admission still requires independently verified CA/CNG continuity, fencing before new native operations, and off-host readback.
+
 ## Results and cleanup
 
 **Shards.** The `shard` input defaults to `all`: one serial lab, the only mode that produces release evidence. `parallel` provisions five labs at once (`issuance`, `renewals`, `pending-and-ca`, `templates-and-uncertain`, `uncertain-recovery`; 30 vCPUs, so check regional quota) and a failure in one shard cannot hide the scenarios of another. Shards are diagnostic: their reports are `not-qualified`/`experimental`, each is checked only for completing every scenario it owns, and none can fill a native release slot. Shards apply to the plain comprehensive scope only; `issuance` also carries the production worker and package acceptance. The scenario-to-shard map is `tests/e2e/helpers/certops-adcs-shards.js`, and a unit test fails if a mandatory scenario has no owner.
