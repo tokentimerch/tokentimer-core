@@ -6,6 +6,7 @@ import {
   HStack,
   Icon,
   IconButton,
+  Select,
   Spinner,
   Text,
   Tooltip,
@@ -21,7 +22,7 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import CopyableId from '../CopyableId.jsx';
 import {
@@ -41,12 +42,56 @@ import { useCertOpsJobTimeline } from './useCertOpsJobs.js';
 import AgentShellConsole from './AgentShellConsole.jsx';
 import { JobDetailsButton, JobExecutionSummary } from './JobDetailsButton.jsx';
 import JobApprovalScope from './JobApprovalScope.jsx';
+import CancelCertOpsJob from './CancelCertOpsJob.jsx';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
+import { useCertOpsCanManage } from './useCertOps.js';
 import { indexAgentsByAnyId } from './certopsAgentLabel.js';
 import { truncationSummary } from './certopsPagination.js';
 
 const REDACTION_TOOLTIP = 'Sensitive values were removed before storage.';
+const ORDER_PREFERENCE_KEY = 'tt_certops_timeline_order';
+const OLDEST_FIRST = 'oldest-first';
+const NEWEST_FIRST = 'newest-first';
+let sessionOrder;
+
+function readTimelineOrder() {
+  if (sessionOrder) return sessionOrder;
+  try {
+    if (window.localStorage.getItem(ORDER_PREFERENCE_KEY) === NEWEST_FIRST) {
+      return NEWEST_FIRST;
+    }
+  } catch {
+    // Storage can be unavailable in private or restricted browsing.
+  }
+  return OLDEST_FIRST;
+}
+
+function subscribeToTimelineOrder(notify) {
+  const onStorage = event => {
+    if (event.key === ORDER_PREFERENCE_KEY || event.key === null) notify();
+  };
+  window.addEventListener('storage', onStorage);
+  window.addEventListener(ORDER_PREFERENCE_KEY, notify);
+  return () => {
+    window.removeEventListener('storage', onStorage);
+    window.removeEventListener(ORDER_PREFERENCE_KEY, notify);
+  };
+}
+
+function setTimelineOrder(order) {
+  try {
+    if (order === NEWEST_FIRST) {
+      window.localStorage.setItem(ORDER_PREFERENCE_KEY, order);
+    } else {
+      window.localStorage.removeItem(ORDER_PREFERENCE_KEY);
+    }
+    sessionOrder = undefined;
+  } catch {
+    sessionOrder = order;
+  }
+  window.dispatchEvent(new Event(ORDER_PREFERENCE_KEY));
+}
 
 /** Marker diameter; spine is centered through this column. */
 const TIMELINE_MARKER = 24;
@@ -152,19 +197,47 @@ function mergeTimelineItems(logEntries, evidence) {
   });
 }
 
+function labelTimelineAttempts(items, logsTruncated) {
+  let startedCount = 0;
+  return items.map(item => {
+    if (item.kind !== 'log' || item.entry.eventType !== 'job.started') {
+      return item;
+    }
+    startedCount += 1;
+    const reported = reportedAttemptNumber(item.entry);
+    if (reported !== null) {
+      return {
+        ...item,
+        attemptLabel: reported > 1 ? `Attempt ${reported}` : null,
+      };
+    }
+    // Older attempts can be missing when the returned logs were truncated.
+    const attemptLabel =
+      startedCount < 2
+        ? null
+        : logsTruncated
+          ? 'Later attempt'
+          : `Attempt ${startedCount}`;
+    return { ...item, attemptLabel };
+  });
+}
+
 function TimelineItem({
   item,
   attemptLabel,
   compact = false,
   hideDetail = false,
 }) {
-  const { muted, border, dashboard } = useDashboardTheme();
+  const { muted, dashboard } = useDashboardTheme();
   const dotBg = dashboard.bg.panel;
   const isEvidence = item.kind === 'evidence';
   const { entry } = item;
   const type = isEvidence ? entry.evidenceType : entry.eventType;
-  const IconCmp = timelineIcon(item.kind, type);
-  const scheme = timelineIconColor(item.kind, type);
+  const isLateReport =
+    !isEvidence &&
+    entry.metadata?.jobStatusTransitionIgnoredReason === 'terminal_regression';
+  const IconCmp = isLateReport ? AlertTriangle : timelineIcon(item.kind, type);
+  const scheme = isLateReport ? 'gray' : timelineIconColor(item.kind, type);
   const title = isEvidence ? evidenceTypeLabel(type) : eventTypeLabel(type);
   const timestamp = formatDateTime(
     isEvidence ? entry.observedAt || entry.createdAt : entry.createdAt
@@ -182,7 +255,8 @@ function TimelineItem({
     ? metadataSummary || subjectLabel || 'No subject recorded'
     : entry.message || entry.status || '';
   const decidedByName =
-    !isEvidence && (type === 'approval.granted' || type === 'approval.rejected')
+    !isEvidence &&
+    ['approval.granted', 'approval.rejected', 'job.cancelled'].includes(type)
       ? userFacingName(entry.createdByUserId, entry.createdByDisplayName)
       : '';
 
@@ -223,6 +297,9 @@ function TimelineItem({
           {attemptLabel ? (
             <CertOpsBadge colorScheme='blue'>{attemptLabel}</CertOpsBadge>
           ) : null}
+          {isLateReport ? (
+            <CertOpsBadge colorScheme='gray'>Late report</CertOpsBadge>
+          ) : null}
           {redacted ? <RedactionBadge /> : null}
         </HStack>
         {!compact && isEvidence && entry.subjectId ? (
@@ -252,7 +329,8 @@ function TimelineItem({
         ) : null}
         {decidedByName ? (
           <Text fontSize='xs' color={muted}>
-            Decided by {decidedByName}
+            {type === 'job.cancelled' ? 'Cancelled by' : 'Decided by'}{' '}
+            {decidedByName}
           </Text>
         ) : null}
         <Text fontSize='xs' color={muted}>
@@ -271,12 +349,19 @@ function TimelineItem({
 export default function EvidenceTimeline({
   jobId,
   onClose,
+  onJobChanged,
   refreshToken,
   compact = false,
   embedded = false,
 }) {
   const { workspaceId } = useWorkspace();
+  const canManage = useCertOpsCanManage();
   const { muted, border, dashboard } = useDashboardTheme();
+  const order = useSyncExternalStore(
+    subscribeToTimelineOrder,
+    readTimelineOrder,
+    () => OLDEST_FIRST
+  );
   const failureBg = dashboard.callout.dangerSurface;
   const failureBorder = dashboard.callout.dangerBorder;
   const waitingBg = dashboard.callout.warningSurface;
@@ -291,9 +376,15 @@ export default function EvidenceTimeline({
     evidencePagination,
     loading,
     error,
+    refresh,
   } = useCertOpsJobTimeline(jobId, refreshToken);
 
-  if (loading) {
+  if (
+    loading ||
+    (job &&
+      (job.id !== jobId ||
+        (job.workspaceId && job.workspaceId !== workspaceId)))
+  ) {
     return (
       <Flex justify='center' align='center' py={8}>
         <Spinner size='sm' />
@@ -317,15 +408,17 @@ export default function EvidenceTimeline({
     );
   }
 
-  const items = mergeTimelineItems(logEntries, evidence);
-  let startedCount = 0;
-
   const logTruncation = truncationSummary({
     shown: Array.isArray(logEntries) ? logEntries.length : 0,
     pagination: logPagination,
     noun: 'log entries',
   });
   const logsTruncated = Boolean(logTruncation);
+  const items = labelTimelineAttempts(
+    mergeTimelineItems(logEntries, evidence),
+    logsTruncated
+  );
+  if (order === NEWEST_FIRST) items.reverse();
 
   const truncationNotes = [
     logTruncation,
@@ -354,22 +447,6 @@ export default function EvidenceTimeline({
           bg={border}
         />
         {items.map(item => {
-          let attemptLabel = null;
-          if (item.kind === 'log' && item.entry.eventType === 'job.started') {
-            startedCount += 1;
-            const reported = reportedAttemptNumber(item.entry);
-            if (reported !== null) {
-              // Executor-reported counter is truncation-proof.
-              if (reported > 1) attemptLabel = `Attempt ${reported}`;
-            } else if (startedCount > 1) {
-              // Older entries may be truncated away, in which case counting
-              // visible job.started entries yields a wrong absolute number;
-              // fall back to a non-absolute label.
-              attemptLabel = logsTruncated
-                ? 'Later attempt'
-                : `Attempt ${startedCount}`;
-            }
-          }
           const logMessage =
             item.kind === 'log'
               ? item.entry.message || item.entry.status || ''
@@ -381,7 +458,7 @@ export default function EvidenceTimeline({
             <TimelineItem
               key={item.id}
               item={item}
-              attemptLabel={attemptLabel}
+              attemptLabel={item.attemptLabel}
               compact={compact}
               hideDetail={hideDetail}
             />
@@ -477,8 +554,35 @@ export default function EvidenceTimeline({
 
       <JobExecutionSummary job={job} agentsById={agentsById} />
       <JobApprovalScope job={job} />
+      {canManage && workspaceId ? (
+        <CancelCertOpsJob
+          key={`${workspaceId}:${job.id}`}
+          workspaceId={workspaceId}
+          job={job}
+          onCancelled={() => {
+            refresh();
+            onJobChanged?.();
+          }}
+        />
+      ) : null}
 
       <Divider borderColor={border} opacity={0.85} />
+      {items.length > 0 ? (
+        <HStack as='label' alignSelf='flex-end' spacing={2}>
+          <Text as='span' fontSize='xs' color={muted}>
+            Timeline order
+          </Text>
+          <Select
+            size='sm'
+            w='auto'
+            value={order}
+            onChange={event => setTimelineOrder(event.target.value)}
+          >
+            <option value={OLDEST_FIRST}>Oldest first (default)</option>
+            <option value={NEWEST_FIRST}>Newest first</option>
+          </Select>
+        </HStack>
+      ) : null}
       {timelineBody}
 
       {truncationNotes.length > 0 ? (

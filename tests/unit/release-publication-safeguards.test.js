@@ -175,6 +175,38 @@ test("privileged workflow jobs use the verified source and keep the release pref
   }
   const chart = release["build-helm-chart"];
   const agent = release["pack-agent"];
+  assert.equal(agent.env.GO_VERSION, "1.26.11");
+  const retainedReceipt = JSON.parse(readFileSync(
+    join(__dirname, "../../.github/releases/0.20.0-agent-acceptance.json"), "utf8"));
+  assert.equal("go" + agent.env.RETAINED_0200_GO_VERSION, retainedReceipt.toolchain.goVersion);
+  const retainedStep = agent.steps.find(step => step.id === "accepted-agent");
+  assert.equal(retainedStep.if, "github.ref == 'refs/tags/v0.20.0' || startsWith(github.ref, 'refs/tags/v0.20.0-')");
+  const setupGo = agent.steps.find(step => step.uses?.startsWith("actions/setup-go@"));
+  const goVersion = "${{ steps.accepted-agent.outcome == 'success' && env.RETAINED_0200_GO_VERSION || env.GO_VERSION }}";
+  assert.equal(setupGo.with["go-version"], goVersion);
+  assert.ok(agent.steps.indexOf(retainedStep) < agent.steps.indexOf(setupGo));
+  const packStep = agent.steps.find(step => step.name === "Pack agent release tarball");
+  assert.equal(packStep.if, "steps.accepted-agent.outcome == 'skipped'");
+  assert.equal(packStep.env?.EXPECTED_RELEASE_COMMIT, verifiedCommit);
+  assert.ok(agent.steps.indexOf(setupGo) < agent.steps.indexOf(packStep));
+  assert.ok(packStep.run.includes('test "$(go env GOVERSION)" = "go${GO_VERSION}"'));
+  const commands = packStep.run.replace(/\\\n[ \t]*/g, "").split("\n");
+  const sourceCheck = commands.indexOf('test "$(git rev-parse HEAD)" = "$EXPECTED_RELEASE_COMMIT"');
+  const cleanCheck = commands.indexOf("git diff --quiet HEAD -- packages/agent");
+  const packCommand = commands.indexOf("node packages/agent/scripts/pack-release.js --out-dir agent-dist");
+  const restore = commands.findIndex(command => command.startsWith("git restore "));
+  assert.equal(commands.filter(command => command.startsWith("git restore ")).length, 1);
+  assert.ok(sourceCheck >= 0 && sourceCheck < cleanCheck && cleanCheck < packCommand && packCommand < restore,
+    "The exact clean source must be checked before packaging and generated outputs restored afterward");
+  assert.deepEqual(commands[restore].split(/\s+/), [
+    "git", "restore", '--source="$EXPECTED_RELEASE_COMMIT"', "--worktree", "--",
+    "packages/agent/bin/tokentimer-observed-revocation-linux-amd64",
+    "packages/agent/bin/tokentimer-observed-revocation-linux-arm64",
+  ]);
+  const verifyNative = agent.steps.find(step => step.name === "Verify shipped native toolchain and provenance");
+  assert.ok(agent.steps.indexOf(packStep) < agent.steps.indexOf(verifyNative));
+  assert.equal(verifyNative.env.EXPECTED_AGENT_GO_VERSION, goVersion);
+  assert.ok(verifyNative.run.includes('--go-version "$EXPECTED_AGENT_GO_VERSION"'));
   const expression = value => "${{ " + value + " }}";
   for (const [job, uploader, name] of [
     [chart, "upload-chart", "helm-chart"],

@@ -290,3 +290,10 @@ export async function rejectJob(workspaceId, jobId, { reason } = {}) {
   );
   return res.data;
 }
+
+export async function cancelJob(workspaceId, jobId) {
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/jobs/${encodeURIComponent(jobId)}/cancel`
+  );
+  return res.data;
+}
