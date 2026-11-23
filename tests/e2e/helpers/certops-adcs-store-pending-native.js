@@ -16,7 +16,7 @@ const {
   requireActiveObservationInterruption, verifyCandidateHost, validateCaptureStart, validateNativeCounts,
   validateCaObservationStart, validateCaObservationWindow, verifyPreIssueCheckpoint,
   stopNativeCapture, stopCaObservation, createPublicEvidenceRecorder,
-  readStoreServiceProcess, requireStoreServiceProcess, verifyOwnedServiceDrainage,
+  verifyOwnedServiceDrainage,
   startObservedStoreService, OBSERVATION_RUN_ID,
 } = require("./certops-adcs-store-native-driver");
 
@@ -120,13 +120,12 @@ async function qualifyPendingStoreRecovery(context) {
   const query = (sql, values) => fixture.pool.query(sql, values);
   const recordEvidence = createPublicEvidenceRecorder(context);
   const installedService = await verifyCandidateHost(context);
-  let { observationRunId } = installedService;
+  let { observationRunId, serviceProcess } = installedService;
   assert.match(observationRunId, OBSERVATION_RUN_ID);
   const bindingsBefore = await ps(BINDING_STATE);
   assert.ok(typeof bindingsBefore === "string" && bindingsBefore.trim(), "Missing HTTP.sys binding baseline");
 
   const dnsName = createRunDnsName();
-  let serviceProcess = requireStoreServiceProcess(await readStoreServiceProcess(ps));
   let capture, caObservation, failure, submitted, installedCounts, issuedWindow, drained, receipt;
   try {
     caObservation = await createIndependentCaObservation({ dnsName });

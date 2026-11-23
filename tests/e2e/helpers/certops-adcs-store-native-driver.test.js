@@ -321,11 +321,13 @@ test("public evidence requires independent readback and stable verified durabili
 function makeCandidateHooks() {
   const candidateArchiveSha256 = require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(__filename)).digest("hex");
   const expectedRuntimeSha256 = "e".repeat(64);
+  const serviceProcess = { pid: 123, sid: "S-1-5-18", created: "2026-10-01T00:00:00.000Z" };
   return { archivePath: __filename, candidateArchiveSha256, expectedRuntimeSha256,
+    async ps() { return JSON.stringify(serviceProcess); },
     async inspectCandidateHost() { return { inspectionIndependent: true, archiveBytesVerified: true,
       installedFilesMatchArchive: true, protectedInstallation: true, serviceOwned: true, serviceIdentity: "LocalSystem",
       processTokenSid: "S-1-5-18", noIis: true, storeOnlyAdcsCapability: true,
-      agentArchiveSha256: candidateArchiveSha256, runtimeSha256: expectedRuntimeSha256 }; } };
+      agentArchiveSha256: candidateArchiveSha256, runtimeSha256: expectedRuntimeSha256, serviceProcess }; } };
 }
 
 test("candidate inspection rejects absent or mismatched archive and installed service", async () => {
@@ -336,6 +338,27 @@ test("candidate inspection rejects absent or mismatched archive and installed se
   const host = await candidate.inspectCandidateHost();
   await assert.rejects(verifyCandidateHost({ ...candidate, async inspectCandidateHost() { return { ...host, installedFilesMatchArchive: false }; } }));
   await assert.rejects(verifyCandidateHost({ ...candidate, async inspectCandidateHost() { return { ...host, processTokenSid: "S-1-5-19" }; } }));
+});
+
+test("candidate inspection is bound to the running SCM service lifetime", async () => {
+  const candidate = makeCandidateHooks();
+  const healthy = await candidate.inspectCandidateHost();
+  const { serviceProcess } = healthy;
+  assert.deepEqual((await verifyCandidateHost(candidate)).serviceProcess, serviceProcess);
+  for (const changed of [
+    { ...serviceProcess, pid: serviceProcess.pid + 1 },
+    { ...serviceProcess, created: "2026-10-01T00:00:01.000Z" },
+    { ...serviceProcess, sid: "S-1-5-19" },
+    {},
+  ]) {
+    await assert.rejects(verifyCandidateHost({
+      ...candidate,
+      async ps() { return JSON.stringify(changed); },
+    }), /service process|S-1-5-18/);
+  }
+  await assert.rejects(verifyCandidateHost({
+    ...candidate, async inspectCandidateHost() { return { ...healthy, serviceProcess: undefined }; },
+  }), /service process/i);
 });
 
 test("both native recovery entries fail before inspecting the host or starting either scenario", async () => {

@@ -72,7 +72,7 @@ async function startObservedStoreService(context, captureId, previousObservation
   const restarted = validateObservedServiceStart(await context.startAndVerifyObservedService(target), target);
   const installed = await verifyCandidateHost(context);
   assert.equal(installed.observationRunId, restarted.observationRunId, "Installed service uses a different observation run");
-  assert.deepEqual(await readStoreServiceProcess(context.ps), restarted.process, "Restart evidence identifies another service process");
+  assert.deepEqual(installed.serviceProcess, restarted.process, "Restart evidence identifies another service process");
   return restarted;
 }
 
@@ -150,7 +150,7 @@ function createPublicEvidenceRecorder({ candidateArchiveSha256, writeEvidence, r
     } catch (error) { failed = true; throw error; } finally { busy = false; }
   };
 }
-async function verifyCandidateHost({ archivePath, candidateArchiveSha256, expectedRuntimeSha256, inspectCandidateHost }) {
+async function verifyCandidateHost({ archivePath, candidateArchiveSha256, expectedRuntimeSha256, inspectCandidateHost, ps }) {
   assert.ok(typeof archivePath === "string" && path.isAbsolute(archivePath), "Absolute candidate archive path is required");
   assert.match(candidateArchiveSha256, /^[a-f0-9]{64}$/);
   assert.match(expectedRuntimeSha256, /^[a-f0-9]{64}$/);
@@ -172,6 +172,9 @@ async function verifyCandidateHost({ archivePath, candidateArchiveSha256, expect
   assert.equal(host.storeOnlyAdcsCapability, true);
   assert.equal(host.agentArchiveSha256, actual);
   assert.equal(host.runtimeSha256, expectedRuntimeSha256);
+  const inspectedProcess = requireStoreServiceProcess(host.serviceProcess);
+  const runningProcess = requireStoreServiceProcess(await readStoreServiceProcess(ps));
+  assert.deepEqual(runningProcess, inspectedProcess, "Independent package inspection identifies a different running service process");
   return host;
 }
 function validateNativeCounts(counts, previous = null) {
@@ -342,9 +345,8 @@ async function qualifyNativeStoreRecovery(context) {
   }
   const recordEvidence = createPublicEvidenceRecorder(context);
   const installedService = await verifyCandidateHost(context);
-  let { observationRunId } = installedService;
+  let { observationRunId, serviceProcess } = installedService;
   assert.match(observationRunId, OBSERVATION_RUN_ID);
-  let serviceProcess = requireStoreServiceProcess(await readStoreServiceProcess(ps));
   const root = path.resolve(__dirname, "../../..");
   const receipt = path.join(workDir, "store-accept-target.json");
   const query = (sql, args = []) => fixture.pool.query(sql, args);
