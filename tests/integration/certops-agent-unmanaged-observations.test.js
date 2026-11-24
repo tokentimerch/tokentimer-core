@@ -8,6 +8,7 @@ const { Client, Pool } = require("pg");
 const { migrations } = require("../../apps/api/migrations/migrate");
 const { persistAgentDiscoveryEvidenceBatch } = require("../../apps/api/services/certops/agentObservations");
 const { bindAuthenticatedCredential } = require("../../apps/api/services/certops/agentCredentialFence");
+const { isObservedCertificateCompromised } = require("../../apps/api/services/certops/certificateSecurity");
 const { listCertificateIdentities, retireCertificateIdentity, stopManagingSource } = require("../../apps/api/services/certops/certificateIdentity");
 const { countActiveManagedCertificatesWithClient, importPublicCertificates, listManagedCertificates } = require("../../apps/api/services/certops/inventory");
 
@@ -432,6 +433,46 @@ describe("Quota-blocked agent observations on real PostgreSQL", function () {
       assert.equal((await result()).checkedAt, null);
       assert.equal((await result()).lastVerified.verdict, "revoked");
       assert.equal((await result()).revision, 52);
+    }
+  });
+
+  it("preserves verified revocation until a fresh good result arrives", async () => {
+    for (const { limit, verdict } of [{ limit: 0, verdict: "issuer_revoked" }, { limit: 1, verdict: "revoked" }]) {
+      const principal = await agent(limit);
+      const now = Date.now();
+      function report(revision, result, checkedOffset, validOffset) {
+        const item = observation("/etc/ssl/freshness.pem");
+        item.metadata.push({ name: "observedRevocationRevision", value: String(revision) });
+        if (result === "disabled") {
+          item.metadata.push({ name: "observedRevocationState", value: result });
+        } else {
+          item.metadata.push(
+            { name: "observedRevocationVerdict", value: result },
+            { name: "observedChainStatus", value: "valid" },
+            { name: "observedRevocationCheckedAt", value: new Date(now + checkedOffset).toISOString() },
+            { name: "observedRevocationValidUntil", value: new Date(now + validOffset).toISOString() },
+          );
+        }
+        return item;
+      }
+      const current = async () => limit
+        ? (await rows("certificate_instances", principal.workspaceId))[0].public_metadata.observedRevocation
+        : (await rows("certops_slot_observations", principal.workspaceId))[0].observed_revocation;
+      const compromised = () => isObservedCertificateCompromised(db, principal.workspaceId, fingerprint);
+
+      await send(principal, 1, [report(1, verdict, -300000, 3600000)]);
+      await send(principal, 2, [report(2, "good", -120000, -60000)]);
+      assert.equal((await current()).verdict, verdict, "expired reports must preserve the last verified revocation");
+      assert.equal(await compromised(), true);
+
+      await send(principal, 3, [report(3, "disabled")]);
+      await send(principal, 4, [report(4, "good", 60000, 3600000)]);
+      assert.equal((await current()).lastVerified.verdict, verdict, "future reports must preserve the last verified revocation");
+      assert.equal(await compromised(), true);
+
+      await send(principal, 5, [report(5, "good", -30000, 3600000)]);
+      assert.equal((await current()).verdict, "good");
+      assert.equal(await compromised(), false);
     }
   });
 
