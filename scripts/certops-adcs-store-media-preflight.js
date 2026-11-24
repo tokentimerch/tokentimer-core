@@ -29,7 +29,7 @@ function requireVerifiedGitHubCommit(read, sha) {
     "GitHub did not verify an exact reviewed source or workflow commit");
 }
 
-function requireOfficialMedia(read, type, receipt) {
+function requireOfficialMedia(read, type, receipt, workflowCommit) {
   const source = SOURCES[type];
   const runId = receipt[type + "Run"];
   const attempt = receipt[type + "Attempt"];
@@ -42,7 +42,7 @@ function requireOfficialMedia(read, type, receipt) {
   assert.match(receipt[type + "ReceiptSha256"], SHA256);
 
   const workflowPath = source.workflow;
-  const workflow = read("contents/" + workflowPath + "?ref=" + receipt.workflowCommit);
+  const workflow = read("contents/" + workflowPath + "?ref=" + workflowCommit);
   assert.ok(workflow?.encoding === "base64" && typeof workflow.content === "string",
     "Exact signing workflow cannot be read");
   const pinned = Buffer.from(workflow.content, "base64").toString("utf8")
@@ -52,7 +52,7 @@ function requireOfficialMedia(read, type, receipt) {
 
   const run = read("actions/runs/" + runId + "/attempts/" + attempt);
   assert.ok(String(run?.id) === runId && String(run?.run_attempt) === attempt &&
-    run.head_repository?.full_name === REPOSITORY && run.head_sha === receipt.workflowCommit &&
+    run.head_repository?.full_name === REPOSITORY && run.head_sha === workflowCommit &&
     run.head_branch === "main" && run.event === "workflow_dispatch" &&
     run.status === "completed" && run.conclusion === "success" &&
     [workflowPath, workflowPath + "@refs/heads/main"].includes(run.path),
@@ -66,17 +66,30 @@ function requireOfficialMedia(read, type, receipt) {
     receiptSha256: receipt[type + "ReceiptSha256"] };
 }
 
-function verifyMediaPreflight(raw, { receiptSha256, expectedSource, expectedWorkflow, read, now = Date.now() }) {
+function verifyMediaPreflight(raw, {
+  receiptSha256, expectedSource, expectedWorkflow: expectedPackageWorkflow,
+  expectedLauncherWorkflow = expectedPackageWorkflow, read, now = Date.now(),
+}) {
   assert.match(receiptSha256, SHA256);
   assert.match(expectedSource, SHA);
-  assert.match(expectedWorkflow, SHA);
+  assert.match(expectedPackageWorkflow, SHA);
+  assert.match(expectedLauncherWorkflow, SHA);
   assert.ok(Buffer.isBuffer(raw) && raw.length > 0 && raw.length <= RECEIPT_LIMIT,
     "A bounded custody receipt is required");
   assert.equal(createHash("sha256").update(raw).digest("hex"), receiptSha256, "Custody receipt digest mismatch");
   const receipt = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
   assert.equal(receipt?.channel, "windows-amd64-fresh-install-lab-only");
   assert.equal(receipt.sourceCommit, expectedSource, "Signed media source differs from the reviewed candidate");
-  assert.equal(receipt.workflowCommit, expectedWorkflow, "Custody signing workflow differs from the reviewed main commit");
+  const hasSeparateWorkflowCommits = Object.hasOwn(receipt, "packageWorkflowCommit") ||
+    Object.hasOwn(receipt, "launcherWorkflowCommit");
+  assert.ok(!hasSeparateWorkflowCommits || !Object.hasOwn(receipt, "workflowCommit"),
+    "Custody receipt must use either a shared workflow commit or separate package and launcher commits");
+  const packageWorkflowCommit = hasSeparateWorkflowCommits ? receipt.packageWorkflowCommit : receipt.workflowCommit;
+  const launcherWorkflowCommit = hasSeparateWorkflowCommits ? receipt.launcherWorkflowCommit : receipt.workflowCommit;
+  assert.equal(packageWorkflowCommit, expectedPackageWorkflow,
+    "Custody package signing workflow differs from the reviewed main commit");
+  assert.equal(launcherWorkflowCommit, expectedLauncherWorkflow,
+    "Custody launcher signing workflow differs from the reviewed main commit");
   assert.match(receipt.policySha256, SHA256);
   assert.match(receipt.issuerSha256, SHA256);
   assert.match(receipt.packagePublisherLeafSha256, SHA256);
@@ -85,13 +98,16 @@ function verifyMediaPreflight(raw, { receiptSha256, expectedSource, expectedWork
   assert.match(receipt.packageOfflinePublisherNotAfterUtc, OFFLINE_DEADLINE);
   assert.ok(Date.parse(receipt.packageOfflinePublisherNotAfterUtc) > now, "Offline publisher admission expired");
   requireVerifiedGitHubCommit(read, expectedSource);
-  requireVerifiedGitHubCommit(read, receipt.workflowCommit);
+  requireVerifiedGitHubCommit(read, packageWorkflowCommit);
+  if (launcherWorkflowCommit !== packageWorkflowCommit) requireVerifiedGitHubCommit(read, launcherWorkflowCommit);
   return {
     scope: "adcs-named-store-media-metadata",
     sourceCommit: receipt.sourceCommit,
-    workflowCommit: receipt.workflowCommit,
-    package: requireOfficialMedia(read, "package", receipt),
-    launcher: requireOfficialMedia(read, "launcher", receipt),
+    ...(packageWorkflowCommit === launcherWorkflowCommit ? { workflowCommit: packageWorkflowCommit } : {}),
+    packageWorkflowCommit,
+    launcherWorkflowCommit,
+    package: requireOfficialMedia(read, "package", receipt, packageWorkflowCommit),
+    launcher: requireOfficialMedia(read, "launcher", receipt, launcherWorkflowCommit),
     policySha256: receipt.policySha256,
     issuerSha256: receipt.issuerSha256,
     publisherLeafSha256: receipt.packagePublisherLeafSha256,
@@ -101,8 +117,9 @@ function verifyMediaPreflight(raw, { receiptSha256, expectedSource, expectedWork
 }
 
 function main(args) {
-  assert.equal(args.length, 4, "Expected custody receipt path, approved receipt SHA-256, signed candidate SHA and reviewed signing workflow SHA");
-  const [file, receiptSha256, expectedSource, expectedWorkflow] = args;
+  assert.ok(args.length === 4 || args.length === 5,
+    "Expected custody receipt path, approved receipt SHA-256, signed candidate SHA, reviewed package workflow SHA and optional reviewed launcher workflow SHA");
+  const [file, receiptSha256, expectedSource, expectedWorkflow, expectedLauncherWorkflow] = args;
   const info = fs.lstatSync(file);
   assert.ok(info.isFile() && !info.isSymbolicLink() && info.size > 0 && info.size <= RECEIPT_LIMIT,
     "The custody receipt must be a bounded regular file");
@@ -114,7 +131,10 @@ function main(args) {
       throw new Error("GitHub metadata could not be independently verified");
     }
   };
-  process.stdout.write(JSON.stringify(verifyMediaPreflight(fs.readFileSync(file), { receiptSha256, expectedSource, expectedWorkflow, read })) + "\n");
+  const result = verifyMediaPreflight(fs.readFileSync(file), {
+    receiptSha256, expectedSource, expectedWorkflow, expectedLauncherWorkflow, read,
+  });
+  process.stdout.write(JSON.stringify(result) + "\n");
 }
 
 if (require.main === module) {
