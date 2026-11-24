@@ -45,7 +45,7 @@ const outputPath = path.join(
   "agent-protocol-validator.generated.js",
 );
 const ucs2lengthSourcePath = require.resolve("ajv/dist/runtime/ucs2length.js", {
-  paths: [repoRoot],
+  paths: [repoRoot, ...(process.env.NODE_PATH || "").split(path.delimiter).filter(Boolean)],
 });
 const ucs2lengthVendorDir = path.join(packageRoot, "vendor", "ajv-runtime");
 const ucs2lengthVendorPath = path.join(ucs2lengthVendorDir, "ucs2length.js");
@@ -73,6 +73,41 @@ function main() {
   ajv.addFormat("date-time", DATE_TIME_FORMAT);
 
   const validate = ajv.compile(schema);
+  const destinationContractPath = path.join(repoRoot, "packages", "contracts", "certops");
+  const destinationAjv = new Ajv({
+    allErrors: false,
+    strict: false,
+    ownProperties: true,
+    code: { source: true, esm: false },
+  });
+  destinationAjv.addFormat("uuid", UUID_FORMAT);
+  destinationAjv.addFormat("date-time", DATE_TIME_FORMAT);
+  const [
+    signedDispatch,
+    wireV1,
+    destination,
+    destinationJob,
+  ] = [
+    "signed-dispatch-payload",
+    "signed-dispatch-wire-v1",
+    "deployment-destination",
+    "deployment-destination-job-payload",
+  ].map((name) => JSON.parse(fs.readFileSync(path.join(destinationContractPath, name + ".schema.json"), "utf8")));
+  for (const contract of [signedDispatch, wireV1, destination, destinationJob]) {
+    destinationAjv.addSchema(contract);
+  }
+  const observationSchemaId = destination.$id + "#/definitions/validation";
+  destinationAjv.getSchema(observationSchemaId);
+  const destinationOutput = standaloneCode(destinationAjv, {
+    validateJob: destinationJob.$id,
+    validateObservation: observationSchemaId,
+  }).replace(UCS2LENGTH_REQUIRE_RE, UCS2LENGTH_RELATIVE_REQUIRE);
+  if (/require\(["'](?!\.\.\/ajv-runtime\/ucs2length)/.test(destinationOutput)) {
+    throw new Error("Generated deployment destination validator depends on an external package");
+  }
+  fs.writeFileSync(path.join(packageRoot, "vendor", "contracts", "deployment-destination-validator.generated.js"),
+    "/* GENERATED FILE - regenerate with node packages/agent/scripts/build-protocol-validator.js. */\n" + destinationOutput);
+
   let code = standaloneCode(ajv, validate);
 
   if (!UCS2LENGTH_REQUIRE_RE.test(code)) {

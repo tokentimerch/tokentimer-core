@@ -2,6 +2,8 @@
 
 The agent runs on the host that holds certificate keys. TokenTimer plans and audits work; the agent enforces local policy and executes allowed jobs. It connects outbound to the control plane over HTTPS and does not accept inbound connections. Agent-local private keys stay on that host. Explicitly configured certificate distribution transfers a certificate/key bundle through your material store to authorized consumers while the private key stays outside TokenTimer's control plane.
 
+A locally assembled agent can provide a v1 deployment destination adapter for signed, read-only validation. The job names an opaque zone, destination and material revision that must match local policy. The agent reports a claim-bound receipt with the affected services, permitted effects and snapshot digests. Core does not admit these jobs by default. See the [deployment destination contract](../../packages/contracts/certops/deployment-destination.schema.json).
+
 ## Start here
 
 1. Enable CLM on the control plane and prepare a workspace bootstrap token.

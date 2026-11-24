@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/deployment-destination-job-payload.schema.json",
+  "title": "CertOps Deployment Destination Validation Job",
+  "description": "Read-only validation through the native signed agent path.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "jobId",
+    "workspaceId",
+    "agentId",
+    "requestedAt",
+    "issuedAt",
+    "expiresAt",
+    "nonce",
+    "signingKeyId",
+    "claimId",
+    "attemptId",
+    "leaseExpiresAt",
+    "action",
+    "mode",
+    "deploymentDestination"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/schemaVersion"
+    },
+    "jobId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/jobId"
+    },
+    "workspaceId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/workspaceId"
+    },
+    "agentId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/agentId"
+    },
+    "requestedAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/requestedAt"
+    },
+    "issuedAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/issuedAt"
+    },
+    "expiresAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/expiresAt"
+    },
+    "nonce": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/nonce"
+    },
+    "signingKeyId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/signingKeyId"
+    },
+    "claimId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/claimId"
+    },
+    "attemptId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/attemptId"
+    },
+    "leaseExpiresAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/leaseExpiresAt"
+    },
+    "attemptCount": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/attemptCount"
+    },
+    "action": {
+      "const": "validate-deployment-destination"
+    },
+    "mode": {
+      "const": "real"
+    },
+    "deploymentDestination": {
+      "$ref": "https://tokentimer.io/contracts/certops/deployment-destination.schema.json#/definitions/scope"
+    },
+    "signature": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-wire-v1.schema.json#/properties/signature"
+    }
+  }
+}

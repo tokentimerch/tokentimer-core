@@ -6971,3 +6971,210 @@ describe("discovery scan ordering", () => {
     }
   });
 });
+
+describe("signed deployment destination validation", () => {
+  let workDir;
+  let signingKey;
+
+  beforeEach(() => {
+    workDir = makeTempConfigDir();
+    signingKey = generateSigningKeyPair();
+  });
+
+  afterEach(() => {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  });
+
+  const destination = {
+    version: 1,
+    zoneRef: "zone-1",
+    destinationKind: "test-appliance",
+    destinationRef: "portal-1",
+    materialRef: "material-1",
+    materialRevision: "revision-2",
+    fingerprintSha256: "a".repeat(64),
+  };
+  const validation = {
+    configurationSha256: "b".repeat(64),
+    trustSha256: "c".repeat(64),
+    observedStateSha256: "d".repeat(64),
+    planSha256: "e".repeat(64),
+    affectedServiceRefs: ["portal-https"],
+    permittedEffects: ["replace-certificate"],
+  };
+
+  function signValidationJob(overrides = {}) {
+    const now = Date.now();
+    const job = {
+      schemaVersion: 1,
+      jobId: "validation-job-1",
+      workspaceId: "11111111-2222-4333-8444-555555555555",
+      agentId: TEST_BOUND_AGENT_ID,
+      action: "validate-deployment-destination",
+      mode: "real",
+      requestedAt: new Date(now).toISOString(),
+      issuedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+      nonce: "validation-test-nonce-001",
+      signingKeyId: signingKey.signingKeyId,
+      claimId: "validation-claim-1",
+      attemptId: "validation-claim-1",
+      leaseExpiresAt: new Date(now + 60_000).toISOString(),
+      deploymentDestination: destination,
+      ...overrides,
+    };
+    job.signature = signJobPayload({ job, privateKeyPem: signingKey.privateKeyPem });
+    return job;
+  }
+
+  function setup({ validate, targetSelectors = ["portal-1"], client = createRecordingClient() } = {}) {
+    const outboxDir = path.join(workDir, "outbox");
+    const config = {
+      execution: {
+        enabled: true,
+        dryRun: true,
+        outboxDir,
+        replayStorePath: path.join(workDir, "replay.json"),
+        clockDriftToleranceMs: 0,
+      },
+      pinnedSigningKey: {
+        signingKeyId: signingKey.signingKeyId,
+        publicKeyPem: signingKey.publicKeyPem,
+      },
+    };
+    const executionContext = buildExecutionContext({
+      config,
+      deploymentDestinations: validate ? [{ version: 1, destinationKind: "test-appliance", validate }] : [],
+    });
+    return {
+      outboxDir,
+      executionContext,
+      client,
+      run: (job, options = {}) => handleClaimedJob({
+        job,
+        executionContext,
+        client,
+        policyEngine: engineWith({}, { declaredTargetSelectors: targetSelectors }),
+        boundAgentId: TEST_BOUND_AGENT_ID,
+        log: silentLog,
+        ...options,
+      }),
+    };
+  }
+
+  it("persists a claim-bound receipt before delivery and can retransmit without revalidation", async () => {
+    const { hashDeploymentDestinationValidation } = require("../../contracts/certops/deployment-destination.cjs");
+    const job = signValidationJob();
+    let validationCalls = 0;
+    const { run, outboxDir, client, executionContext } = setup({
+      validate: async ({ scope, jobId, checkLease, signal }) => {
+        validationCalls += 1;
+        assert.deepEqual(scope, { ...destination, workspaceId: job.workspaceId, agentId: job.agentId });
+        assert(Object.isFrozen(scope));
+        assert.equal(jobId, job.jobId);
+        assert.equal(signal.aborted, false);
+        await checkLease();
+        return validation;
+      },
+    });
+    assert(resolveClaimSupportedActions(executionContext).includes(job.action));
+    const recordResult = client.reportResult;
+    client.reportResult = async () => { throw new Error("delivery unavailable"); };
+    assert.equal((await run(job)).status, "succeeded");
+    const [entry] = listOutboxEntries(outboxDir);
+    assert.equal(entry.result.claimId, job.claimId);
+    assert.deepEqual(entry.result.deploymentDestinationValidation, {
+      version: 1,
+      validation,
+      bindingSha256: hashDeploymentDestinationValidation(job, validation),
+    });
+    client.reportResult = recordResult;
+    await drainOutbox(outboxDir, client);
+    assert.equal(listOutboxEntries(outboxDir).length, 0);
+    assert.deepEqual(client.calls.reportResult[0].deploymentDestinationValidation, entry.result.deploymentDestinationValidation);
+    assert.equal(validationCalls, 1);
+  });
+
+  it("rejects a wrong agent, a tampered signature, and a destination outside local policy before adapter access", async () => {
+    let validationCalls = 0;
+    const { run, client } = setup({
+      validate: () => { validationCalls += 1; return validation; },
+      targetSelectors: [],
+    });
+    assert.equal((await run(signValidationJob(), { boundAgentId: "a-different-agent" })).status, "failed");
+    const altered = signValidationJob();
+    altered.deploymentDestination = { ...destination, materialRevision: "tampered" };
+    assert.equal((await run(altered)).status, "failed");
+    assert.equal((await run(signValidationJob())).status, "rejected");
+    assert.equal(client.calls.renewLease.length, 0);
+    assert.equal(validationCalls, 0);
+  });
+
+  it("does not advertise or execute validation without a trusted startup adapter", async () => {
+    const job = signValidationJob();
+    const { run, client, executionContext } = setup();
+    assert.equal(resolveClaimSupportedActions(executionContext).includes(job.action), false);
+    assert.equal((await run(job)).status, "blocked");
+    assert.equal(client.calls.reportResult[0].errorMessage, "destination_adapter_unavailable");
+  });
+
+  it("rejects extra signed fields even if the signature is valid", async () => {
+    let invoked = false;
+    const { run, client } = setup({ validate: () => { invoked = true; return validation; } });
+    const job = signValidationJob({
+      deploymentDestination: { ...destination, destinationRef: "https://untrusted.example" },
+    });
+    assert.equal((await run(job)).status, "blocked");
+    assert.equal(client.calls.reportResult[0].errorMessage, "destination_validation_scope_invalid");
+    assert.equal(client.calls.renewLease.length, 0);
+    assert.equal(invoked, false);
+  });
+
+  it("keeps invalid adapter output and thrown secrets out of public results", async () => {
+    const secret = "do-not-emit";
+    const { run, client } = setup({
+      validate: ({ scope }) => {
+        if (scope.materialRevision === "revision-3") throw new Error("password=" + secret);
+        return { ...validation, credential: secret };
+      },
+    });
+    assert.equal((await run(signValidationJob())).status, "blocked");
+    assert.equal((await run(signValidationJob({
+      nonce: "validation-test-nonce-002",
+      deploymentDestination: { ...destination, materialRevision: "revision-3" },
+    }))).status, "blocked");
+    assert.deepEqual(client.calls.reportResult.map((result) => result.errorMessage), [
+      "destination_validation_evidence_invalid",
+      "destination_validation_failed",
+    ]);
+    assert.equal(JSON.stringify(client.calls.reportResult).includes(secret), false);
+  });
+
+  it("suppresses a receipt if the lease fails its final confirmation", async () => {
+    const client = createRecordingClient();
+    const renewLease = client.renewLease;
+    let renewals = 0;
+    client.renewLease = (parameters) => {
+      renewals += 1;
+      return renewals < 3 ? renewLease(parameters) : Promise.reject(new Error("lease unavailable"));
+    };
+    const { run } = setup({ validate: () => validation, client });
+    assert.equal((await run(signValidationJob())).status, "blocked");
+    assert.equal(renewals, 3);
+    assert.equal(client.calls.reportResult[0].deploymentDestinationValidation, undefined);
+  });
+
+  it("propagates shutdown and suppresses a receipt while validation is active", async () => {
+    const controller = new AbortController();
+    const { run, client } = setup({
+      validate: ({ signal }) => {
+        controller.abort();
+        assert.equal(signal.aborted, true);
+        return validation;
+      },
+    });
+    assert.equal((await run(signValidationJob(), { shutdownSignal: controller.signal })).status, "blocked");
+    assert.equal(client.calls.reportResult[0].errorMessage, "destination_validation_aborted");
+    assert.equal(client.calls.reportResult[0].deploymentDestinationValidation, undefined);
+  });
+});

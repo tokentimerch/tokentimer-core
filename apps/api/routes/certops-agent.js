@@ -439,6 +439,8 @@ function handleAgentRouteError(res, error) {
         error: "Result status is invalid",
         code: CERTOPS_AGENT_RESULT_STATUS_INVALID,
       });
+    case "CERTOPS_DESTINATION_VALIDATION_UNAVAILABLE":
+      return res.status(422).json({ error: error.message, code: error.code });
     case "CERTOPS_MATERIAL_CONTRACT_INVALID":
     case "CERTOPS_MATERIAL_RECEIPT_REQUIRED":
     case "CERTOPS_MATERIAL_RECEIPT_UNEXPECTED":

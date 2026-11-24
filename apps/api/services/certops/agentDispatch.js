@@ -2878,6 +2878,10 @@ async function ingestResult({
       );
     }
 
+    if (body.deploymentDestinationValidation) {
+      throw serviceError("Deployment destination validation is unavailable", "CERTOPS_DESTINATION_VALIDATION_UNAVAILABLE");
+    }
+
     // A store installation is reconciled only from a live claim. Once the
     // lease expires, recovery must obtain its own claim and re-prove the same
     // installation; a late result cannot race the orphan reaper. Preserve the

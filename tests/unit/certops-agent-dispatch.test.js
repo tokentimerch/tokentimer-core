@@ -3007,6 +3007,22 @@ describe("agentDispatch.ingestResult", () => {
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
   });
 
+  it("refuses deployment destination receipts on live and terminal claims before nonce replay", async () => {
+    for (const status of ["running", "succeeded"]) {
+      const dbPool = createMockPool((sql) => {
+        if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow({ status })] };
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      await assert.rejects(ingestResult({
+        dbPool,
+        agent: agentFixture(),
+        body: resultBody({ status: "succeeded", deploymentDestinationValidation: {} }),
+        deps: { consumeNonce: async () => assert.fail("unsupported receipt reached nonce processing") },
+      }), { code: "CERTOPS_DESTINATION_VALIDATION_UNAVAILABLE" });
+      assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+    }
+  });
+
   it("rejects a sequence regression after nonce consumption and rolls the whole transaction back", async () => {
     let nonceConsumed = false;
     const dbPool = createMockPool((sql) => {

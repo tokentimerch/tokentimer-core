@@ -20043,7 +20043,7 @@ components:
                   maxItems: 16
                   items:
                     type: string
-                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, adcs-installation-proof, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store, cleanup-from-store, reconcile-from-store]
+                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, adcs-installation-proof, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store, cleanup-from-store, reconcile-from-store, validate-deployment-destination]
     CertOpsAgentClaimResponse:
       type: object
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.
@@ -20403,6 +20403,20 @@ components:
                   type: object
                   nullable: true
                   description: Result messages for an adcs-preflight job. Shape defined by packages/contracts/certops/adcs-preflight-result-contract.schema.json.
+                deploymentDestinationValidation:
+                  type: object
+                  additionalProperties: false
+                  required: [version, validation, bindingSha256]
+                  description: Claim-bound read-only destination validation receipt. Shape defined by packages/contracts/certops/deployment-destination.schema.json. Available only with deployment destination admission.
+                  properties:
+                    version:
+                      type: integer
+                      enum: [1]
+                    validation:
+                      type: object
+                    bindingSha256:
+                      type: string
+                      pattern: '^[a-f0-9]{64}$'
                 claimId:
                   type: string
                   maxLength: 128

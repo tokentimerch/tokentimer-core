@@ -238,9 +238,18 @@ function buildJobPolicyDescriptor(job) {
  */
 const { publicationSession, executePinnedDeployment, reconcilePinnedDeployment, resolveBindingPolicy, withMaterialLock } = require("./material-store/lifecycle");
 const { readProtectedFile, resolveStore } = require("./material-store");
+const { VALIDATE_DEPLOYMENT_DESTINATION } = require("../vendor/contracts/deployment-destination.cjs");
+const {
+  isDeploymentDestinationValidationJob,
+  registerDeploymentDestinations,
+  validateDeploymentDestination,
+} = require("./deployment-destinations");
 
 function buildSignedJobPolicyDescriptor(job) {
   const descriptor = {};
+  if (job?.action === VALIDATE_DEPLOYMENT_DESTINATION) {
+    descriptor.targetSelector = job.deploymentDestination?.destinationRef;
+  }
   if (job?.target?.reference !== undefined) {
     descriptor.targetSelector = job.target.reference;
   }
@@ -514,9 +523,12 @@ const OBSERVE_ONLY_CLAIM_ACTIONS = Object.freeze([]);
  */
 function resolveClaimSupportedActions(executionContext) {
   if (executionContext !== null && executionContext !== undefined && executionContext.enabled === true) {
-    return AGENT_DECLARED_CAPABILITIES.includes("adcs-store-proof-only-v1")
+    const actions = AGENT_DECLARED_CAPABILITIES.includes("adcs-store-proof-only-v1")
       ? Object.freeze([...EXECUTABLE_JOB_ACTIONS, "adcs-installation-proof"])
       : EXECUTABLE_JOB_ACTIONS;
+    return executionContext.deploymentDestinationRegistry?.hasValidators
+      ? Object.freeze([...actions, VALIDATE_DEPLOYMENT_DESTINATION])
+      : actions;
   }
   return OBSERVE_ONLY_CLAIM_ACTIONS;
 }
@@ -1684,6 +1696,7 @@ async function handleClaimedJob({
   client,
   executionContext = null,
   boundAgentId,
+  shutdownSignal,
   requireSignedAgentId = DEFAULT_REQUIRE_SIGNED_AGENT_ID,
   log = null,
 }) {
@@ -1697,6 +1710,7 @@ async function handleClaimedJob({
     executionContext,
     executionEnabled,
     boundAgentId,
+    shutdownSignal,
     requireSignedAgentId,
     log,
   });
@@ -1912,6 +1926,7 @@ async function handleSignedJob({
   executionContext,
   executionEnabled,
   boundAgentId,
+  shutdownSignal,
   requireSignedAgentId = DEFAULT_REQUIRE_SIGNED_AGENT_ID,
   log,
 }) {
@@ -2068,6 +2083,15 @@ async function handleSignedJob({
     return reportJobRejection({ ...rejectionArgs, verdict: windowVerdict });
   }
 
+  if (job.action === VALIDATE_DEPLOYMENT_DESTINATION && !isDeploymentDestinationValidationJob(job)) {
+    return persistAndTransmitOutcome({
+      outboxDir: resolvedOutboxDir,
+      client,
+      result: { jobId, attemptId, claimId, nonce, status: "blocked", errorMessage: "destination_validation_scope_invalid" },
+      log,
+    });
+  }
+
   // 5. Agent-local policy (default deny; ADR-0002 local policy wins).
   const policyVerdict = policyEngine.evaluateJob(buildSignedJobPolicyDescriptor(job));
   if (!policyVerdict.allowed) {
@@ -2190,7 +2214,9 @@ async function handleSignedJob({
         leaseClient: client,
         leaseState,
         executionContext: materialRecoveryOnly ? { ...executionContext, materialRecoveryOnly: true } : executionContext,
-        signal: leaseHeartbeat.signal,
+        signal: job.action === VALIDATE_DEPLOYMENT_DESTINATION && shutdownSignal
+          ? AbortSignal.any([leaseHeartbeat.signal, shutdownSignal])
+          : leaseHeartbeat.signal,
         log,
         jobLog: jobLogSession?.logger,
       }));
@@ -2258,6 +2284,9 @@ async function handleSignedJob({
         ...(outcome.deploymentReceipt ? { deploymentReceipt: outcome.deploymentReceipt } : {}),
         ...(outcome.cleanupReceipt?{cleanupReceipt:outcome.cleanupReceipt}:{}),
         ...(outcome.reconciliationReceipt?{reconciliationReceipt:outcome.reconciliationReceipt}:{}),
+        ...(outcome.deploymentDestinationValidation
+          ? { deploymentDestinationValidation: outcome.deploymentDestinationValidation }
+          : {}),
         // ADR-0014: awaiting_issuer (and other AD CS outcomes) carry enrollment
         // state; required by agent-protocol when status is awaiting_issuer.
         ...(outcome.enrollmentResult
@@ -2494,6 +2523,18 @@ async function executeJob({
       return { status: "dry_run_complete", keyRotated: null };
     }
     return { status: "succeeded", keyRotated: null };
+  }
+
+  if (action === VALIDATE_DEPLOYMENT_DESTINATION) {
+    return validateDeploymentDestination({
+      job, jobId, claimId, attemptId, signal,
+      registry: executionContext.deploymentDestinationRegistry,
+      clockOffsetMs: executionContext.clockEstimator?.getOffsetMs(),
+      checkLease: async () => {
+        const gate = await renewJobLeaseOrAbort({ ...leaseOpts, required: true });
+        if (!gate.ok) throw new Error("destination_validation_lease_unavailable");
+      },
+    });
   }
 
   if (action === "adcs-preflight") {
@@ -7303,7 +7344,7 @@ function createCandidateAgentId(hostname = os.hostname(), pid = process.pid) {
  *   windowsKeySurvivorHelperPath: string|undefined,
  * }|null}
  */
-function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, windowsConnectImpl, windowsKeySurvivorHelperPath } = {}) {
+function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, windowsConnectImpl, windowsKeySurvivorHelperPath, deploymentDestinations = [] } = {}) {
   if (!config?.execution || config.execution.enabled !== true) {
     return null;
   }
@@ -7345,6 +7386,7 @@ function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, 
     acmeAccounts: config.acmeAccounts || null,
     materialStores: config.materialStores || null,
     materialBindings: config.materialBindings || null,
+    deploymentDestinationRegistry: registerDeploymentDestinations(deploymentDestinations),
     acmeExecFileImpl,
     windowsExecFileImpl,
     windowsConnectImpl,
@@ -7368,13 +7410,13 @@ function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, 
  *   signal, used by tests to stop the loops deterministically
  * @returns {Promise<void>}
  */
-async function runAgent(_argv, { signal: externalSignal } = {}) {
+async function runAgent(_argv, { signal: externalSignal, deploymentDestinations } = {}) {
   const configDir = resolveConfigDir();
   const config = loadAgentConfig({ configDir });
 
   // Execution context (null in bootstrap/observe-only mode). Built before
   // any network call so a corrupted replay store fails startup immediately.
-  const executionContext = buildExecutionContext({ config });
+  const executionContext = buildExecutionContext({ config, deploymentDestinations });
   const canRunWindowsMaintenance =
     process.platform === "win32" && executionContext?.execution.dryRun === false;
 
@@ -7654,6 +7696,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
               client,
               executionContext,
               boundAgentId: registeredAgentId,
+              shutdownSignal: controller.signal,
               requireSignedAgentId: config.requireSignedAgentId,
               log: (msg, details) => defaultAgentLogger.error(msg, details),
             });

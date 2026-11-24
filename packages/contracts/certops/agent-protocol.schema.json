@@ -439,7 +439,8 @@
               "adcs-preflight",
               "deploy-from-store",
               "cleanup-from-store",
-              "reconcile-from-store"
+              "reconcile-from-store",
+              "validate-deployment-destination"
             ]
           },
           "description": "Subset of job-payload.schema.json actions this agent build can execute, plus protocol_smoke for diagnostic-kind agents (ADR-0012 decision 7): a diagnostic agent must declare supportedActions: [\"protocol_smoke\"] to ever match a protocol_smoke job, since the claim query joins this array against certificate_jobs.operation directly. distribute-trust/revoke-trust are the two trust-anchor actions (ADR-0012 decisions 17/20i). adcs-preflight is the read-only AD CS issuer validation job (adcs-preflight-payload.schema.json, ADR-0014 decision 5)."
@@ -587,6 +588,9 @@
         },
         "reconciliationReceipt": {
           "$ref": "#/definitions/materialDistribution_reconciliationReceipt"
+        },
+        "deploymentDestinationValidation": {
+          "$ref": "#/definitions/deploymentDestination_validationReceipt"
         }
       },
       "allOf": [
@@ -608,6 +612,30 @@
             "properties": {
               "enrollmentResult": {
                 "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "deploymentDestinationValidation"
+            ]
+          },
+          "then": {
+            "required": [
+              "claimId",
+              "nonce"
+            ],
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              },
+              "claimId": {
+                "type": "string"
+              },
+              "nonce": {
+                "type": "string"
               }
             }
           }
@@ -1775,6 +1803,79 @@
               }
             }
           }
+        }
+      }
+    },
+    "deploymentDestination_opaqueRef": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    },
+    "deploymentDestination_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "deploymentDestination_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configurationSha256",
+        "trustSha256",
+        "observedStateSha256",
+        "planSha256",
+        "affectedServiceRefs",
+        "permittedEffects"
+      ],
+      "properties": {
+        "configurationSha256": {
+          "$ref": "#/definitions/deploymentDestination_sha256"
+        },
+        "trustSha256": {
+          "$ref": "#/definitions/deploymentDestination_sha256"
+        },
+        "observedStateSha256": {
+          "$ref": "#/definitions/deploymentDestination_sha256"
+        },
+        "planSha256": {
+          "$ref": "#/definitions/deploymentDestination_sha256"
+        },
+        "affectedServiceRefs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/deploymentDestination_opaqueRef",
+            "type": "string"
+          }
+        },
+        "permittedEffects": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,63}$"
+          }
+        }
+      }
+    },
+    "deploymentDestination_validationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "validation",
+        "bindingSha256"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "validation": {
+          "$ref": "#/definitions/deploymentDestination_validation"
+        },
+        "bindingSha256": {
+          "$ref": "#/definitions/deploymentDestination_sha256"
         }
       }
     }

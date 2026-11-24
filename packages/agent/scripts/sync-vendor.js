@@ -14,6 +14,11 @@ const packageRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(packageRoot, "..", "..");
 
 const VENDOR_MAP = [
+  {
+    from: path.join(repoRoot, "packages", "contracts", "certops", "deployment-destination.cjs"),
+    to: path.join(packageRoot, "vendor", "contracts", "deployment-destination.cjs"),
+    raw: true,
+  },
     {
       from: path.join(repoRoot,"packages","contracts","certops","material-provider.cjs"),
       to: path.join(packageRoot,"vendor","contracts","material-provider.cjs"),

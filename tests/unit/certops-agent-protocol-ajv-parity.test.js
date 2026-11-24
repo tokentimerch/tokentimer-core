@@ -41,6 +41,36 @@ describe("CertOps agent-protocol AJV parity (agent vs API)", () => {
     assert.ok(ids.has("result-extra-property-invalid"));
   });
 
+
+  it("enforces the same closed claim-bound destination receipt on both sides", () => {
+    const base = FIXTURES.find(({ id }) => id === "result-succeeded-valid").message;
+    const result = structuredClone(base);
+    Object.assign(result.body, {
+      claimId: "claim-1",
+      nonce: "destination-validation-nonce-1",
+      deploymentDestinationValidation: {
+        version: 1,
+        validation: {
+          configurationSha256: "a".repeat(64),
+          trustSha256: "b".repeat(64),
+          observedStateSha256: "c".repeat(64),
+          planSha256: "d".repeat(64),
+          affectedServiceRefs: ["service-1"],
+          permittedEffects: ["replace-certificate"],
+        },
+        bindingSha256: "e".repeat(64),
+      },
+    });
+    for (const validate of [validateAgentSide, validateApiSide]) {
+      assert.equal(validate(result).valid, true);
+      assert.equal(validate({ ...result, body: { ...result.body, status: "blocked" } }).valid, false);
+      assert.equal(validate({ ...result, body: { ...result.body, claimId: null } }).valid, false);
+      const unsafeResult = structuredClone(result);
+      unsafeResult.body.deploymentDestinationValidation.validation.unexpected = true;
+      assert.equal(validate(unsafeResult).valid, false);
+    }
+  });
+
   for (const fixture of FIXTURES) {
     it(`agrees on ${fixture.id} (expectValid=${fixture.expectValid})`, () => {
       const agent = validateAgentSide(fixture.message);

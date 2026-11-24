@@ -1,0 +1,118 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/deployment-destination.schema.json",
+  "title": "CertOps Deployment Destination v1",
+  "description": "Closed scopes and public validation results for locally provisioned certificate deployment destinations. References are opaque identifiers.",
+  "definitions": {
+    "opaqueRef": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "zoneRef",
+        "destinationKind",
+        "destinationRef",
+        "materialRef",
+        "materialRevision",
+        "fingerprintSha256"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "zoneRef": {
+          "$ref": "#/definitions/opaqueRef"
+        },
+        "destinationKind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+        },
+        "destinationRef": {
+          "$ref": "#/definitions/opaqueRef"
+        },
+        "materialRef": {
+          "$ref": "#/definitions/opaqueRef"
+        },
+        "materialRevision": {
+          "$ref": "#/definitions/opaqueRef"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/sha256"
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configurationSha256",
+        "trustSha256",
+        "observedStateSha256",
+        "planSha256",
+        "affectedServiceRefs",
+        "permittedEffects"
+      ],
+      "properties": {
+        "configurationSha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "trustSha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "observedStateSha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "planSha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "affectedServiceRefs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/opaqueRef",
+            "type": "string"
+          }
+        },
+        "permittedEffects": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,63}$"
+          }
+        }
+      }
+    },
+    "validationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "validation",
+        "bindingSha256"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "validation": {
+          "$ref": "#/definitions/validation"
+        },
+        "bindingSha256": {
+          "$ref": "#/definitions/sha256"
+        }
+      }
+    }
+  }
+}
