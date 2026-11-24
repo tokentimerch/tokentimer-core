@@ -217,5 +217,30 @@ describe(
       );
       assert.equal(left.rows[0].n, 1);
     });
+
+    it("keeps a physical writer reserved across reassignment and workspace deletion", async () => {
+      const owner = await buildWorkspace();
+      const reassigned = await buildWorkspace();
+      const domain = hex(32);
+      const reserve = (workspaceId) => pool.query(
+        `INSERT INTO certops_deployment_destination_operations
+           (workspace_id, mutation_domain_sha256, operation_id, owner_job_id, owner_claim_id, owner_agent_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT DO NOTHING`,
+        [workspaceId, domain, hex(32), crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()],
+      );
+
+      assert.equal((await reserve(owner.ws)).rowCount, 1);
+      assert.equal((await reserve(reassigned.ws)).rowCount, 0);
+
+      const response = await request(app).delete(`/api/v1/workspaces/${owner.ws}`);
+      assert.equal(response.status, 204, JSON.stringify(response.body));
+      assert.equal((await reserve(reassigned.ws)).rowCount, 0);
+      const hold = await pool.query(
+        `SELECT workspace_id FROM certops_deployment_destination_operations WHERE mutation_domain_sha256 = $1`,
+        [domain],
+      );
+      assert.deepEqual(hold.rows, [{ workspace_id: owner.ws }]);
+    });
   },
 );
