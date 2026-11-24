@@ -1,8 +1,12 @@
 # Install Core with Docker Compose
 
-## Recover a single VM after host failure
+## Choose the VM topology
 
-Install the standard Compose stack on one VM. Configure the hypervisor to restart that VM on another host with access to its disks, including the PostgreSQL volume, and preserve its network identity and public URL. Enable Docker at boot. TokenTimer is unavailable while the VM and services restart. Rehearse host loss and confirm you can sign in through the same URL and see your existing records. If you use CertOps, also check for a fresh agent heartbeat.
+Use the standard Compose installation for your edition when deploying on one VM. Core operators can start with [Clone and configure](#step-1---clone-and-configure).
+
+- **Your hypervisor can restart the VM after host failure.** Install on one VM, allow for downtime while it restarts, then [rehearse recovery](#recover-a-single-vm-after-host-failure).
+- **You need service to continue when an application VM fails.** Use the [Enterprise Compose guide](https://tokentimer.ch/docs/enterprise/install-compose) with a bundle containing the two-VM overlay. Provide a redundant load balancer, an HA PostgreSQL writer endpoint, and a cluster manager that fences the old worker host before starting workers on its peer. During takeover, verify that an existing session can save a record and that exactly one worker set is active.
+- **Some or all HA dependencies are missing.** Install on one VM and [test a backup restore](#test-recovery-from-backup). If the measured downtime or data loss exceeds your requirements, identify and test the missing infrastructure before relying on automatic failover.
 
 ## Step 1 - Clone and configure
 
@@ -117,6 +121,14 @@ TokenTimer creates the admin user automatically on first startup from `ADMIN_EMA
 Recommended next steps: invite team members (Workspace Settings, Members), add your first [token](https://tokentimer.ch/docs/self-hosted/tokens), configure alert thresholds and channels in [Expiry reminders and thresholds](https://tokentimer.ch/docs/self-hosted/alerts), and configure SMTP (via System Settings UI or [env vars](CONFIGURATION.md)).
 
 Continue with [First asset and alert check](FIRST_ASSET.md). For settings and restarts, see [Configuration basics](CONFIGURATION_BASICS.md).
+
+## Recover a single VM after host failure
+
+Configure the hypervisor to restart the same VM on a surviving host with access to its disks, including the PostgreSQL volume. Preserve its network identity and public URL, and enable Docker at boot. During a host-loss rehearsal, time the interruption until you can sign in through that URL, open an existing asset and save a test change. If you use CertOps, check for a fresh agent heartbeat. If the VM or its disks cannot be recovered, use the backup procedure below.
+
+## Test recovery from backup
+
+During the rehearsal, save timestamped test records at regular intervals until the simulated failure. Follow the Compose restore procedure for your edition ([Core recovery steps](BACKUP_RESTORE.md#restore)) on an isolated VM with an empty database, matching software versions, configuration and keys. Record the time from the simulated failure until you can sign in through the test URL, read a restored asset and save a test change. Compare the latest restored timestamped test record with the time of failure to measure the data gap. If you use CertOps, verify a lab agent can reach the restored instance.
 
 ## Private-CA Vault connections
 
