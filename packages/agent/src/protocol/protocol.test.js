@@ -750,7 +750,7 @@ test("destination validation receipt: checks authority after the preceding fetch
     },
     authorizeDestinationValidationReceipt: (context) => {
       guardCalls += 1;
-      return authorized && verifiesReceipt(context);
+      return authorized && verifiesReceipt(context) ? () => authorized : null;
     },
   });
   const heartbeat = client.heartbeat({ agentVersion: "0.1.0" });
@@ -796,7 +796,7 @@ test("destination validation receipt: checks authority after a pending credentia
     sequenceAllocator: { next: () => ++sequence },
     authorizeDestinationValidationReceipt: (context) => {
       guardCalls += 1;
-      return authorized && verifiesReceipt(context);
+      return authorized && verifiesReceipt(context) ? () => authorized : null;
     },
   });
   const denied = assert.rejects(client.reportResult(result), destinationValidationDenied());
@@ -835,7 +835,7 @@ test("destination validation receipt: authorizes the exact frozen snapshot and c
     ...options,
     authorizeDestinationValidationReceipt: (context) => {
       contexts.push(context);
-      return verifiesReceipt(context);
+      return verifiesReceipt(context) ? () => true : null;
     },
   });
   const accepted = client.reportResult(result);
@@ -886,6 +886,96 @@ test("destination validation receipt: authorizes the exact frozen snapshot and c
   assert.equal(contexts.length, 4);
 });
 
+test("destination validation receipt: checks the authorized generation at the send boundary", async () => {
+  const { result, verifiesReceipt } = destinationValidationFixture();
+  const guardStarted = Promise.withResolvers();
+  const guardDecision = Promise.withResolvers();
+  const events = [];
+  const calls = [];
+  let generation = 1;
+  let sequence = 0;
+  let assertCurrent = guardDecision.promise;
+  const client = createProtocolClient({
+    ...destinationProtocolOptions,
+    sequenceAllocator: {
+      next: () => {
+        events.push("sequence");
+        return ++sequence;
+      },
+    },
+    fetchImpl: (url, init) => {
+      events.push("fetch");
+      calls.push(JSON.parse(init.body));
+      return Promise.resolve(Response.json({ accepted: true }));
+    },
+    authorizeDestinationValidationReceipt: (context) => {
+      guardStarted.resolve(verifiesReceipt(context));
+      return assertCurrent;
+    },
+  });
+
+  const denied = assert.rejects(client.reportResult(result), destinationValidationDenied());
+  assert.equal(await guardStarted.promise, true);
+  const authorizedGeneration = generation;
+  guardDecision.resolve(() => {
+    events.push("assertion");
+    return generation === authorizedGeneration;
+  });
+  queueMicrotask(() => {
+    generation += 1;
+    events.push("revocation");
+  });
+  await denied;
+  assert.deepEqual(events, ["revocation", "assertion"]);
+  assert.equal(sequence, 0);
+  assert.deepEqual(calls, []);
+
+  await client.reportResult(ordinaryResult);
+  assert.equal(calls[0].sequence, 1);
+  assert.equal(calls[0].body.jobId, ordinaryResult.jobId);
+
+  events.length = 0;
+  const currentGeneration = generation;
+  assertCurrent = () => {
+    events.push("assertion");
+    queueMicrotask(() => {
+      generation += 1;
+      events.push("revocation");
+    });
+    return generation === currentGeneration;
+  };
+  await client.reportResult(result);
+  assert.deepEqual(events, ["assertion", "sequence", "fetch", "revocation"]);
+  assert.equal(calls[1].sequence, 2);
+  assert.deepEqual(calls[1].body.deploymentDestinationValidation, result.deploymentDestinationValidation);
+});
+
+test("destination validation receipt: rejects an invalid final assertion before allocating a sequence", async () => {
+  const { result } = destinationValidationFixture();
+  const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
+  let sequence = 0;
+  let decision;
+  const client = createProtocolClient({
+    ...destinationProtocolOptions,
+    sequenceAllocator: { next: () => ++sequence },
+    authorizeDestinationValidationReceipt: () => decision,
+  });
+  for (const invalid of [
+    true,
+    () => "true",
+    () => Promise.resolve(true),
+    async () => { throw new Error("async assertion rejected"); },
+    () => { throw new Error("local policy changed"); },
+  ]) {
+    decision = invalid;
+    await assert.rejects(client.reportResult(result), destinationValidationDenied());
+  }
+  assert.equal(sequence, 0);
+  assert.equal(calls.length, 0);
+  await client.reportResult(ordinaryResult);
+  assert.equal(calls[0].parsedBody.sequence, 1);
+});
+
 test("destination validation receipt: aborts a stalled guard before allocating a sequence", async () => {
   const { result } = destinationValidationFixture();
   const guardStarted = Promise.withResolvers();
@@ -908,7 +998,7 @@ test("destination validation receipt: aborts a stalled guard before allocating a
   abort.abort();
   await denied;
   assert.equal(guardSignal.aborted, true);
-  guardDecision.resolve(true);
+  guardDecision.resolve(() => true);
   await new Promise(setImmediate);
   assert.equal(sequence, 0);
   assert.equal(calls.length, 0);
@@ -930,7 +1020,7 @@ test("destination validation receipt: reauthorizes each due outbox retry", async
     sequenceAllocator: { next: () => ++sequence },
     authorizeDestinationValidationReceipt: (context) => {
       guardReceipts.push(context.receipt);
-      return authorized && verifiesReceipt(context);
+      return authorized && verifiesReceipt(context) ? () => authorized : null;
     },
   });
 

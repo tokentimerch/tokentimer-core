@@ -13,6 +13,7 @@ const https = require("node:https");
 const crypto = require("node:crypto");
 const { addAbortListener } = require("node:events");
 const { URL } = require("node:url");
+const { types } = require("node:util");
 const {
   assertNoPrivateKeyMaterial,
   redactGenericSecrets,
@@ -591,7 +592,7 @@ function validationReceiptUnauthorized() {
     AGENT_PROTOCOL_ERROR_CODES.DESTINATION_VALIDATION_RECEIPT_UNAUTHORIZED);
 }
 
-async function assertValidationReceiptAuthorized(envelope, authorize, signal) {
+async function prepareValidationReceiptAuthority(envelope, authorize, signal) {
   const { jobId, attemptId, claimId, nonce, status, deploymentDestinationValidation: receipt } = envelope.body;
   if (claimId !== attemptId || signal.aborted) throw validationReceiptUnauthorized();
   const { validation } = receipt;
@@ -604,17 +605,29 @@ async function assertValidationReceiptAuthorized(envelope, authorize, signal) {
     }) }),
   });
   let listener;
-  let allowed;
+  let assertCurrent;
   try {
     const aborted = new Promise((resolve) => { listener = addAbortListener(signal, () => resolve(false)); });
-    allowed = await Promise.race([aborted, authorize(context)]);
+    assertCurrent = await Promise.race([aborted, authorize(context)]);
   } catch {
     // The trusted callback can encounter local policy or provisioning errors.
   } finally {
     listener?.[Symbol.dispose]();
   }
-  if (allowed !== true || signal.aborted) throw validationReceiptUnauthorized();
-  return signal;
+  if (typeof assertCurrent !== "function" || signal.aborted) throw validationReceiptUnauthorized();
+  return () => {
+    try {
+      if (!signal.aborted) {
+        const current = assertCurrent();
+        if (current === true && !signal.aborted) return;
+        // Observe rejection from a misconfigured async checker without waiting.
+        if (types.isPromise(current)) void Promise.resolve(current).catch(() => {});
+      }
+    } catch {
+      // Refuse without exposing policy details.
+    }
+    throw validationReceiptUnauthorized();
+  };
 }
 
 function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredential, signal, requestTimeoutMs = REQUEST_TIMEOUT_MS, fetchImpl = fetch, allowInsecureLocalHttp = false, onServerDate = null, sequenceAllocator = null, authorizeDestinationValidationReceipt = null } = {}) {
@@ -667,8 +680,9 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
   let sendQueue = Promise.resolve();
   function enqueueSequencedSend(performSend, authorizeValidationReceipt = null) {
     const run = sendQueue.then(authorizeValidationReceipt === null ? () => performSend(nextSequence()) : async () => {
-      const authoritySignal = await authorizeValidationReceipt();
-      if (authoritySignal.aborted) throw validationReceiptUnauthorized();
+      const assertCurrent = await authorizeValidationReceipt();
+      // Keep the last generation check in the same turn as sequence and send.
+      assertCurrent();
       return performSend(nextSequence());
     });
     // Keep the chain alive whether the send succeeds or fails; failures
@@ -1010,7 +1024,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
       return send(ROUTES.RESULTS, token, guarded
         ? { ...guarded, sentAt: new Date().toISOString(), sequence }
         : buildEnvelope({ ...envelopeOptions, sequence }));
-    }, guarded ? () => assertValidationReceiptAuthorized(guarded, authorizeDestinationValidationReceipt,
+    }, guarded ? () => prepareValidationReceiptAuthority(guarded, authorizeDestinationValidationReceipt,
       combinedAbortSignal(signal, requestTimeoutMs)) : null);
     if (!ok) throw new AgentProtocolError(`reportResult failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return json ?? {};
