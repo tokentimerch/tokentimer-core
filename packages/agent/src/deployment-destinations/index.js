@@ -7,6 +7,7 @@ const {
   EXECUTE_DEPLOYMENT_DESTINATION,
   hashDeploymentDestinationValidation,
   hasMatchingDeploymentDestinationReceipt,
+  hasMatchingDeploymentDestinationOperation,
 } = require("../../vendor/contracts/deployment-destination.cjs");
 const {
   validateJob,
@@ -14,6 +15,7 @@ const {
 } = require("../../vendor/contracts/deployment-destination-validator.generated.js");
 
 const { canonicalizeJobPayload } = require("../../vendor/contracts/canonical-json.cjs");
+const { holdDestinationOwnership } = require("./ownership");
 
 const PREFLIGHT_TIMEOUT_MS = 30_000;
 const READ_LEASE_REUSE_MS = 1000;
@@ -102,7 +104,8 @@ function isDeploymentDestinationValidationJob(job) {
 
 function isDeploymentDestinationExecutionJob(job) {
   return job?.action === EXECUTE_DEPLOYMENT_DESTINATION &&
-    validateJob(job) && job.claimId === job.attemptId && hasMatchingDeploymentDestinationReceipt(job);
+    validateJob(job) && job.claimId === job.attemptId && hasMatchingDeploymentDestinationReceipt(job) &&
+    (!Object.hasOwn(job, "deploymentDestinationOperation") || hasMatchingDeploymentDestinationOperation(job));
 }
 
 function clonePublicValidation(observed) {
@@ -167,7 +170,7 @@ async function validateDeploymentDestination({ job, jobId, claimId, attemptId, r
 }
 
 async function preflightDeploymentDestinationExecution({
-  job, jobId, claimId, attemptId, registry, signal, checkLease, clockOffsetMs, dryRun,
+  job, jobId, claimId, attemptId, registry, signal, checkLease, clockOffsetMs, dryRun, stateDir,
 }) {
   if (!isDeploymentDestinationExecutionJob(job) || job.jobId !== jobId ||
       job.claimId !== claimId || job.attemptId !== attemptId) {
@@ -203,11 +206,25 @@ async function preflightDeploymentDestinationExecution({
       if (!observed || canonicalizeJobPayload(observed) !== canonicalizeJobPayload(validation)) {
         return { status: "blocked", errorMessage: "destination_execution_validation_changed" };
       }
+      const operation = job.deploymentDestinationOperation;
+      if (operation && prepared?.mutationDomainSha256 !== operation.mutationDomainSha256) {
+        return { status: "blocked", errorMessage: "destination_execution_ownership_domain_mismatch" };
+      }
       await lease.refresh();
+      if (!operation) return { status: "blocked", errorMessage: "destination_execution_protection_unavailable" };
 
-      // The preflight never calls the prepared mutator. Native mutation needs
-      // an owned destination hold and durable intent that survive interruption.
-      return { status: "blocked", errorMessage: "destination_execution_protection_unavailable" };
+      // No mutator is invoked and ownership is never released by this slice.
+      // Keep the hold independent from the job journal and result outbox.
+      let held;
+      try {
+        held = holdDestinationOwnership({ stateDir, workspaceId: job.workspaceId, jobId, operation });
+      } catch {
+        return { status: "blocked", errorMessage: "destination_execution_ownership_unavailable" };
+      }
+      return {
+        status: "blocked",
+        errorMessage: held ? "destination_execution_ownership_held" : "destination_execution_ownership_conflict",
+      };
     }, executionSignal);
   } catch {
     return {

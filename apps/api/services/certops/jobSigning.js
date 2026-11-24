@@ -649,7 +649,7 @@ async function signJobForDispatch(options = {}) {
         signedJob.claimId !== signedJob.attemptId || !validateSignedJob(signedJob).valid) {
       throw serviceError("Invalid deployment destination dispatch", CERTOPS_SIGNING_PAYLOAD_INVALID);
     }
-    await destinations.persistSignedDestinationDispatch({ client: db, signedJob, nonce });
+    await destinations.persistSignedDestinationDispatch({ client: db, signedJob, nonce, agentRowId: agentId });
   }
 
   await db.query(

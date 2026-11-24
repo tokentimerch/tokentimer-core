@@ -2551,7 +2551,9 @@ async function executeJob({
     };
     return action === VALIDATE_DEPLOYMENT_DESTINATION
       ? validateDeploymentDestination(destinationJob)
-      : preflightDeploymentDestinationExecution({ ...destinationJob, dryRun: execution.dryRun });
+      : preflightDeploymentDestinationExecution({
+        ...destinationJob, dryRun: execution.dryRun, stateDir: executionContext.deploymentDestinationStateDir,
+      });
   }
 
   if (action === "adcs-preflight") {
@@ -7361,7 +7363,10 @@ function createCandidateAgentId(hostname = os.hostname(), pid = process.pid) {
  *   windowsKeySurvivorHelperPath: string|undefined,
  * }|null}
  */
-function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, windowsConnectImpl, windowsKeySurvivorHelperPath, deploymentDestinations = [] } = {}) {
+function buildExecutionContext({
+  config, acmeExecFileImpl, windowsExecFileImpl, windowsConnectImpl, windowsKeySurvivorHelperPath,
+  deploymentDestinations = [], deploymentDestinationStateDir,
+} = {}) {
   if (!config?.execution || config.execution.enabled !== true) {
     return null;
   }
@@ -7404,6 +7409,7 @@ function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, 
     materialStores: config.materialStores || null,
     materialBindings: config.materialBindings || null,
     deploymentDestinationRegistry: registerDeploymentDestinations(deploymentDestinations),
+    deploymentDestinationStateDir,
     acmeExecFileImpl,
     windowsExecFileImpl,
     windowsConnectImpl,
@@ -7433,7 +7439,9 @@ async function runAgent(_argv, { signal: externalSignal, deploymentDestinations 
 
   // Execution context (null in bootstrap/observe-only mode). Built before
   // any network call so a corrupted replay store fails startup immediately.
-  const executionContext = buildExecutionContext({ config, deploymentDestinations });
+  const executionContext = buildExecutionContext({
+    config, deploymentDestinations, deploymentDestinationStateDir: configDir,
+  });
   const canRunWindowsMaintenance =
     process.platform === "win32" && executionContext?.execution.dryRun === false;
 

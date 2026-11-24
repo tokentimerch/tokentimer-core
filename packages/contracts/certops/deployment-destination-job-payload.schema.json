@@ -82,6 +82,9 @@
     },
     "deploymentDestinationApproval": {
       "$ref": "https://tokentimer.io/contracts/certops/deployment-destination.schema.json#/definitions/approval"
+    },
+    "deploymentDestinationOperation": {
+      "$ref": "https://tokentimer.io/contracts/certops/deployment-destination.schema.json#/definitions/operation"
     }
   },
   "if": {
@@ -108,6 +111,11 @@
         {
           "required": [
             "deploymentDestinationApproval"
+          ]
+        },
+        {
+          "required": [
+            "deploymentDestinationOperation"
           ]
         }
       ]

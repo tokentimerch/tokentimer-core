@@ -317,7 +317,9 @@ Current behavior:
 
 ## Deployment destination extension
 
-The v1 validation candidate at `ef2ebce70c89` passed 260 focused Core tests and a signed, synthetic HTTPS validation with zero destination writes. The native lifecycle accepts bounded public receipts only through current, authenticated claims with explicit edition policy. Validation expires 15 minutes after acceptance for execution approval and dispatch. Execution requires independent approval of the exact validated scope and local preflight. Destination admission defaults to disabled. The edition policy must check current entitlement, workspace and target routing, and requester and approver authority in the supplied transaction. Read-only adapter checks can reuse the controller confirmation for at most one second within the lease and signed deadline. The agent renews at preflight boundaries. Mutation, observation, recovery, and real destination qualification remain gated. See the [canonical contract](../../../../packages/contracts/certops/deployment-destination.schema.json).
+An edition may explicitly compose read-only validation and execution preflight. A receipt expires for approval and dispatch after 15 minutes. Both the controller and the local adapter must resolve the canonical mutation domain independently. Validation receipts must bind that domain before reserving an execution claim. The local hold requires an owner-only Linux state directory and durable directory sync.
+
+Use one authoritative controller and workspace per writer domain, including all aliases and restored copies. Report delivery, lease expiry, and restart leave both holds intact. Native mutation remains disabled. See the [canonical contract](../../../../packages/contracts/certops/deployment-destination.schema.json).
 
 ## Related
 

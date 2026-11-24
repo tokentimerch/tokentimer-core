@@ -20,6 +20,8 @@ const {
   requireDestinationPolicy,
   assertDestinationExecutionSource,
   assertSignedDestinationAuthority,
+  reserveDestinationOperation,
+  assertDestinationOperationLease,
   checkDestinationResult,
 } = require("./deploymentDestinations");
 const crypto = require("node:crypto");
@@ -1703,11 +1705,19 @@ async function claimJobs({
         }
       }
 
+      const destinationOperation = row.operation === EXECUTE_DESTINATION
+        ? await reserveDestinationOperation({
+          client, agent, job: row, policy: deps.deploymentDestinationPolicy, claimId: crypto.randomUUID(),
+        })
+        : null;
+      if (row.operation === EXECUTE_DESTINATION && !destinationOperation) continue;
+
+      const claimIdExpression = destinationOperation ? "$4::uuid" : "gen_random_uuid()";
       const claimed = await client.query(
         `UPDATE certificate_jobs
             SET status = 'claimed',
                 claimed_by_agent_id = $2,
-                claim_id = gen_random_uuid(),
+                claim_id = ${claimIdExpression},
                 lease_expires_at = NOW() + make_interval(secs => $3),
                 lease_renewed_at = NULL,
                 attempt_count = attempt_count + 1,
@@ -1717,10 +1727,15 @@ async function claimJobs({
           RETURNING id, claim_id, lease_expires_at, attempt_count, operation,
                     subject_type, subject_id, payload, mode, created_at, status,
                     enrollment_id`,
-        [row.id, agent.id, leaseSeconds],
+        destinationOperation
+          ? [row.id, agent.id, leaseSeconds, destinationOperation.ownerClaimId]
+          : [row.id, agent.id, leaseSeconds],
       );
       const job = claimed.rows[0];
-      if (!job || (job.status && job.status !== "claimed")) continue;
+      if (!job || (job.status && job.status !== "claimed")) {
+        if (destinationOperation) throw serviceError("Reserved destination claim could not be committed", DESTINATION_UNAVAILABLE);
+        continue;
+      }
 
       const payload =
         job.payload && typeof job.payload === "object"
@@ -1915,6 +1930,7 @@ async function claimJobs({
           payloadSha256: row.approved_payload_hash,
           intentSha256: row.approved_canonical_intent_hash,
         };
+        basePayload.deploymentDestinationOperation = destinationOperation;
       }
       const signedJob = await signJob({
         client,
@@ -2028,7 +2044,10 @@ async function assertDestinationDispatchAllowed(client, agent, job, policy, phas
     client, workspaceId: agent.workspaceId, jobId: job.id, assignedAgentId: job.assigned_agent_id,
     agentId: agent.agentId, payload: job.payload,
   });
-  if (phase === "lease") assertSignedDestinationAuthority(job);
+  if (phase === "lease") {
+    assertSignedDestinationAuthority(job);
+    await assertDestinationOperationLease({ client, agent, job, policy });
+  }
 }
 
 async function renewJobLease({
@@ -2097,7 +2116,8 @@ async function renewJobLease({
       );
     }
 
-    if (isDestinationOperation(job.operation)) {
+    const destinationLease = isDestinationOperation(job.operation);
+    if (destinationLease) {
       if (job.lease_live !== true) throw serviceError("Destination claim expired", CERTOPS_AGENT_LEASE_INVALID);
       await assertDestinationDispatchAllowed(client, agent, job, deps.deploymentDestinationPolicy, "lease");
     }
@@ -2126,14 +2146,15 @@ async function renewJobLease({
       `UPDATE certificate_jobs
           SET status = 'running',
               started_at = COALESCE(started_at, NOW()),
-              lease_expires_at = NOW() + make_interval(secs => $2),
+              lease_expires_at = ${destinationLease ? "clock_timestamp()" : "NOW()"} + make_interval(secs => $2),
               lease_renewed_at = NOW(),
               updated_at = NOW()
-        WHERE id = $1
+        WHERE id = $1${destinationLease ? " AND lease_expires_at > clock_timestamp()" : ""}
         RETURNING id, status, claim_id, lease_expires_at, lease_renewed_at`,
       [job.id, leaseSeconds],
     );
     const row = updated.rows[0];
+    if (destinationLease && !row) throw serviceError("Destination claim expired", CERTOPS_AGENT_LEASE_INVALID);
 
     const nonceOutcome = await extendNonce({
       client,
@@ -3219,7 +3240,7 @@ async function ingestResult({
                 ELSE reconciliation_reason
               END,
               updated_at = NOW()
-        WHERE id = $1
+        WHERE id = $1${destinationResult ? " AND lease_expires_at > clock_timestamp()" : ""}
         RETURNING id, status, error_code, completed_at,
                   needs_operator_reconciliation, reconciliation_reason`,
       [
@@ -3235,6 +3256,7 @@ async function ingestResult({
     );
 
     const row = updated.rows[0];
+    if (destinationResult && !row) throw serviceError("Destination claim expired", CERTOPS_AGENT_LEASE_INVALID);
     if (row && job.claim_id) {
       await closeClaimStreamSafely(client, {
         workspaceId: agent.workspaceId,

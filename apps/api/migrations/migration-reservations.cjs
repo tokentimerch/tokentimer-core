@@ -52,6 +52,7 @@ const reservations = Object.freeze({
   127: "auto_sync_creation_expiration",
   128: "shared_sso_schema",
   130: "certops_deployment_destination_operations",
+  131: "certops_deployment_destination_ownership",
 });
 
 function validateMigrationReservations(migrations) {

@@ -7027,7 +7027,7 @@ describe("signed deployment destination lifecycle", () => {
     return job;
   }
 
-  function signExecutionJob(overrides = {}) {
+  function signExecutionJob(overrides = {}, approvedValidation = validation) {
     const { hashDeploymentDestinationValidation } = require("../../contracts/certops/deployment-destination.cjs");
     const validatedJob = signValidationJob();
     return signValidationJob({
@@ -7042,13 +7042,25 @@ describe("signed deployment destination lifecycle", () => {
         validationClaimId: validatedJob.claimId,
         receipt: {
           version: 1,
-          validation,
-          bindingSha256: hashDeploymentDestinationValidation(validatedJob, validation),
+          validation: approvedValidation,
+          bindingSha256: hashDeploymentDestinationValidation(validatedJob, approvedValidation),
         },
       },
       deploymentDestinationApproval: { payloadSha256: "1".repeat(64), intentSha256: "2".repeat(64) },
       ...overrides,
     });
+  }
+
+  function signOwnedExecutionJob(domain, overrides = {}, {
+    changeOwnership, includeApprovedDomain = true,
+  } = {}) {
+    const { createDeploymentDestinationOperation } = require("../../contracts/certops/deployment-destination.cjs");
+    const approved = includeApprovedDomain ? { ...validation, mutationDomainSha256: domain } : validation;
+    const job = signExecutionJob(overrides, approved);
+    const operation = createDeploymentDestinationOperation(job, domain);
+    job.deploymentDestinationOperation = changeOwnership ? changeOwnership(operation) : operation;
+    job.signature = signJobPayload({ job, privateKeyPem: signingKey.privateKeyPem });
+    return job;
   }
 
   function setup({
@@ -7071,6 +7083,7 @@ describe("signed deployment destination lifecycle", () => {
     };
     const executionContext = buildExecutionContext({
       config,
+      deploymentDestinationStateDir: workDir,
       deploymentDestinations: validate
         ? [{ version: 1, destinationKind: "test-appliance", validate, authorizeExecution, prepareExecution }]
         : [],
@@ -7350,5 +7363,99 @@ describe("signed deployment destination lifecycle", () => {
     assert.equal((await stopped.run(job, { shutdownSignal: controller.signal })).status, "blocked");
     assert.equal(stopped.client.calls.reportResult[0].errorMessage, "destination_execution_aborted");
     assert.equal(prepared, false);
+  });
+
+  it("refuses mismatched local domains or signed ownership before acquiring a marker", async () => {
+    let calls = 0;
+    const domain = "1".repeat(64);
+    const { run, client } = setup({
+      validate: () => validation,
+      authorizeExecution: () => true,
+      prepareExecution: (request) => {
+        calls += 1;
+        assert.equal(request.mutationDomainSha256, undefined);
+        return { validation: { ...validation, mutationDomainSha256: domain }, mutationDomainSha256: "2".repeat(64) };
+      },
+      dryRun: false,
+    });
+    const tampered = signOwnedExecutionJob(domain, {}, {
+      changeOwnership: (operation) => ({ ...operation, ownerClaimId: "different-claim" }),
+    });
+    assert.equal((await run(tampered)).status, "blocked");
+    assert.equal(client.calls.reportResult[0].errorMessage, "destination_execution_scope_invalid");
+    const legacy = signOwnedExecutionJob(domain, { nonce: "ownership-legacy-receipt-nonce" }, {
+      includeApprovedDomain: false,
+    });
+    assert.equal((await run(legacy)).status, "blocked");
+    assert.equal(client.calls.reportResult[1].errorMessage, "destination_execution_scope_invalid");
+    assert.equal(client.calls.renewLease.length, 0);
+    assert.equal(calls, 0);
+    const job = signOwnedExecutionJob(domain, { nonce: "ownership-mismatch-nonce-002" });
+    assert.equal((await run(job)).status, "blocked");
+    assert.equal(client.calls.reportResult[2].errorMessage, "destination_execution_ownership_domain_mismatch");
+    assert.equal(calls, 1);
+    assert(!fs.existsSync(path.join(workDir, "deployment-destination-ownership")));
+  });
+
+  it("never acquires ownership after the final controller lease confirmation fails", async () => {
+    const domain = "1".repeat(64);
+    const client = createRecordingClient();
+    const renewLease = client.renewLease;
+    let renewals = 0;
+    client.renewLease = (parameters) => {
+      renewals += 1;
+      return renewals < 4 ? renewLease(parameters) : Promise.reject(new Error("lease lost"));
+    };
+    const { run } = setup({
+      client, dryRun: false,
+      validate: () => validation,
+      authorizeExecution: () => true,
+      prepareExecution: () => ({ validation: { ...validation, mutationDomainSha256: domain }, mutationDomainSha256: domain }),
+    });
+    assert.equal((await run(signOwnedExecutionJob(domain))).status, "blocked");
+    assert.equal(renewals, 4);
+    assert.equal(client.calls.reportResult[0].errorMessage, "destination_execution_preflight_failed");
+    assert(!fs.existsSync(path.join(workDir, "deployment-destination-ownership")));
+  });
+
+  it("holds the canonical domain after approval and retains it across reporting and agent restart", {
+    skip: process.platform !== "linux",
+  }, async () => {
+    const domain = "1".repeat(64);
+    const adapter = {
+      validate: () => validation,
+      authorizeExecution: () => true,
+      prepareExecution: () => ({
+        validation: { ...validation, mutationDomainSha256: domain }, mutationDomainSha256: domain,
+        execute: () => assert.fail("owned preflight must not invoke mutation"),
+      }),
+      dryRun: false,
+    };
+    const first = setup(adapter);
+    const job = signOwnedExecutionJob(domain);
+    assert(!resolveClaimSupportedActions(first.executionContext).includes(job.action));
+    const reportResult = first.client.reportResult;
+    first.client.reportResult = async () => { throw new Error("delivery unavailable"); };
+    assert.equal((await first.run(job)).status, "blocked");
+    const [pending] = listOutboxEntries(first.outboxDir);
+    assert.equal(pending.result.errorMessage, "destination_execution_ownership_held");
+    first.client.reportResult = reportResult;
+    await drainOutbox(first.outboxDir, first.client);
+    assert.deepEqual(listOutboxEntries(first.outboxDir), []);
+    const directory = path.join(workDir, "deployment-destination-ownership");
+    const [filename] = fs.readdirSync(directory);
+    const marker = path.join(directory, filename);
+    const original = fs.readFileSync(marker, "utf8");
+    assert.equal(JSON.parse(original).jobId, job.jobId);
+
+    const next = setup(adapter);
+    const retry = signOwnedExecutionJob(domain, {
+      jobId: "after-restart", claimId: "new-claim", attemptId: "new-claim", nonce: "ownership-mismatch-nonce-003",
+    });
+    assert.equal((await next.run(retry)).status, "blocked");
+    assert.equal(next.client.calls.reportResult[0].errorMessage, "destination_execution_ownership_conflict");
+    const readOnly = signValidationJob({ nonce: "ownership-read-only-nonce-001" });
+    assert.equal((await next.run(readOnly)).status, "succeeded");
+    assert.equal(fs.readFileSync(marker, "utf8"), original);
   });
 });

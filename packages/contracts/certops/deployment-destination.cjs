@@ -39,7 +39,31 @@ function hasMatchingDeploymentDestinationReceipt(job) {
   }, execution.receipt.validation) === execution.receipt.bindingSha256;
 }
 
+function createDeploymentDestinationOperation(job, mutationDomainSha256) {
+  const operationId = createHash("sha256").update(canonicalizeJobPayload({
+    contract: "certops-deployment-destination-operation-v1",
+    workspaceId: job.workspaceId,
+    agentId: job.agentId,
+    mutationDomainSha256,
+    scope: job.deploymentDestination,
+    execution: job.deploymentDestinationExecution,
+    approval: job.deploymentDestinationApproval,
+  })).digest("hex");
+  return { version: 1, operationId, mutationDomainSha256, ownerClaimId: job.claimId };
+}
+
+function hasMatchingDeploymentDestinationOperation(job) {
+  const operation = job.deploymentDestinationOperation;
+  return operation?.version === 1 &&
+    typeof operation.mutationDomainSha256 === "string" && /^[a-f0-9]{64}$/.test(operation.mutationDomainSha256) &&
+    typeof job.claimId === "string" && operation.ownerClaimId === job.claimId &&
+    operation.mutationDomainSha256 === job.deploymentDestinationExecution?.receipt?.validation?.mutationDomainSha256 &&
+    operation.operationId === createDeploymentDestinationOperation(job, operation.mutationDomainSha256).operationId;
+}
+
 module.exports = {
+  createDeploymentDestinationOperation,
+  hasMatchingDeploymentDestinationOperation,
   VALIDATE_DEPLOYMENT_DESTINATION,
   EXECUTE_DEPLOYMENT_DESTINATION,
   isDeploymentDestinationAction,

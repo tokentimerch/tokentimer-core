@@ -1315,6 +1315,109 @@ describe("agentDispatch.claimJobs", () => {
     }),
   };
 
+
+  it("reserves destination ownership in the same transaction as the signed claim", async () => {
+    const {
+      computeCanonicalIntentHash, computeJobPayloadApprovalHash,
+    } = require("../../apps/api/services/certops/jobApprovals");
+    const {
+      hasMatchingDeploymentDestinationOperation, hashDeploymentDestinationValidation,
+    } = require("../../packages/contracts/certops/deployment-destination.cjs");
+    const agent = agentFixture({ agentId: "wire-agent-id" });
+    const validationJobId = "00000000-0000-4000-8000-000000000030";
+    const validationClaimId = "00000000-0000-4000-8000-000000000031";
+    const deploymentDestination = {
+      version: 1, zoneRef: "zone-1", destinationKind: "test-appliance", destinationRef: "portal-1",
+      materialRef: "certificate-local", materialRevision: "revision-2", fingerprintSha256: "a".repeat(64),
+    };
+    const validation = {
+      configurationSha256: "a".repeat(64), trustSha256: "b".repeat(64), observedStateSha256: "c".repeat(64),
+      planSha256: "d".repeat(64), affectedServiceRefs: ["portal"], permittedEffects: ["replace-cert"],
+      mutationDomainSha256: "f".repeat(64),
+    };
+    const receipt = {
+      version: 1, validation, bindingSha256: hashDeploymentDestinationValidation({
+        workspaceId: agent.workspaceId, agentId: agent.agentId, jobId: validationJobId,
+        claimId: validationClaimId, deploymentDestination,
+      }, validation),
+    };
+    const payload = {
+      schemaVersion: 1, deploymentDestination,
+      deploymentDestinationExecution: { version: 1, validationJobId, validationClaimId, receipt },
+    };
+    const operation = "execute-deployment-destination";
+    const row = {
+      id: "00000000-0000-4000-8000-000000000032", workspace_id: agent.workspaceId, operation, executor_kind: "agent",
+      status: "pending", mode: "real", source: "api", attempt_count: 0, payload, assigned_agent_id: agent.id,
+      required_target_selector: deploymentDestination.destinationRef, requested_by_user_id: "requester",
+      approved_by_user_id: "approver", approved_at: new Date(),
+      approved_payload_hash: computeJobPayloadApprovalHash(payload),
+      approved_canonical_intent_hash: computeCanonicalIntentHash({
+        operation, assignedAgentId: agent.id, requiredTargetSelector: deploymentDestination.destinationRef, payload,
+      }),
+    };
+    const domain = "f".repeat(64);
+
+    for (const scenario of ["conflict", "signing-failure", "success"]) {
+      let reserved;
+      let claimed = false;
+      const dbPool = createMockPool((sql, params) => {
+        if (sql.includes("SELECT last_sequence")) return { rows: [{ last_sequence: 0 }] };
+        if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+        if (sql.includes("SELECT declared_target_selectors")) {
+          return { rows: [{ declared_target_selectors: [deploymentDestination.destinationRef] }] };
+        }
+        if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: [row] };
+        if (sql.includes("validation_fresh")) {
+          return { rows: [{
+            id: validationJobId, claim_id: validationClaimId, validation_fresh: true, payload: { deploymentDestination },
+            result_metadata: { deploymentDestinationValidation: { version: 1, agentId: agent.agentId, claimId: validationClaimId, receipt } },
+          }] };
+        }
+        if (sql.includes("pg_try_advisory_xact_lock")) return { rows: [{ locked: true }] };
+        if (sql.includes("INSERT INTO certops_deployment_destination_operations")) {
+          if (scenario === "conflict") return { rows: [] };
+          reserved = params;
+          return { rows: [{ operation_id: params[2] }] };
+        }
+        if (sql.includes("SET status = 'claimed'")) {
+          claimed = true;
+          assert.equal(params[3], reserved[4]);
+          assert.match(sql, /claim_id = \$4::uuid/);
+          return { rows: [{ ...row, status: "claimed", claim_id: params[3], attempt_count: 1,
+            lease_expires_at: new Date(Date.now() + 60_000), created_at: new Date(),
+          }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      const poll = () => claimJobs({
+        dbPool, agent, body: { supportedActions: [operation] }, env: { CERTOPS_AGENT_LOG_STORAGE_ENABLED: "false" },
+        deps: {
+          ...CLAIM_DEPS_BASE,
+          deploymentDestinationPolicy: { authorize: () => true, resolveMutationDomain: () => domain },
+          signJobForDispatch({ job }) {
+            assert(claimed);
+            assert.deepEqual(job.deploymentDestinationOperation, {
+              version: 1, operationId: reserved[2], mutationDomainSha256: domain, ownerClaimId: job.claimId,
+            });
+            assert(hasMatchingDeploymentDestinationOperation(job));
+            if (scenario === "signing-failure") throw new Error("signing failed");
+            return job;
+          },
+        },
+      });
+      if (scenario === "signing-failure") {
+        await assert.rejects(poll(), /signing failed/);
+        assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+      } else {
+        const polled = await poll();
+        assert.equal(polled.jobs.length, scenario === "success" ? 1 : 0);
+        assert.equal(claimed, scenario === "success");
+        assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+      }
+    }
+  });
+
   it("derives the IIS reassociation guard from the registration rather than job payload", async () => {
     const target={type:"windows-iis",reference:"example.com",store:"My",binding:{site:"Default Web Site",port:443,address:"192.0.2.10"}};
     const row={id:42,workspace_id:WORKSPACE_A,operation:"renew",subject_type:"managed_certificate",subject_id:"cert-1",
@@ -2701,6 +2804,36 @@ describe("agentDispatch.renewJobLease", () => {
     );
   });
 
+  it("does not revive a destination lease that expires during policy revalidation", async () => {
+    const agent = agentFixture({ agentId: "agent-wire-42" });
+    const deploymentDestination = {
+      version: 1, zoneRef: "zone-1", destinationKind: "test-appliance", destinationRef: "portal-1",
+      materialRef: "material-local", materialRevision: "revision-1", fingerprintSha256: "a".repeat(64),
+    };
+    const row = {
+      id: "job-1", operation: "validate-deployment-destination", status: "running", mode: "real",
+      assigned_agent_id: agent.id, claimed_by_agent_id: agent.id, claim_id: "claim-1",
+      required_target_selector: deploymentDestination.destinationRef, lease_live: true,
+      payload: { deploymentDestination },
+    };
+    let revalidated = false;
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("FOR UPDATE")) return { rows: [row] };
+      assert.equal(revalidated, true);
+      assert.match(sql, /lease_expires_at = clock_timestamp\(\) \+ make_interval/);
+      assert.match(sql, /WHERE id = \$1 AND lease_expires_at > clock_timestamp\(\)/);
+      return { rows: [] };
+    });
+    await assert.rejects(renewJobLease({
+      dbPool, agent, jobId: row.id, claimId: row.claim_id,
+      deps: {
+        deploymentDestinationPolicy: { authorize() { revalidated = true; return true; } },
+        extendJobNonceExpiry: () => assert.fail("expired destination nonce must not be extended"),
+      },
+    }), { code: CERTOPS_AGENT_LEASE_INVALID });
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+  });
+
   it("requires independent current approval before extending a destination execution lease", async () => {
     const agent = agentFixture({ id: "agent-row-1", agentId: "agent-wire-42" });
     const row = {
@@ -3055,6 +3188,7 @@ describe("agentDispatch.ingestResult", () => {
     const validation = {
       configurationSha256: "b".repeat(64), trustSha256: "c".repeat(64), observedStateSha256: "d".repeat(64),
       planSha256: "e".repeat(64), affectedServiceRefs: ["admin-portal"], permittedEffects: ["replace-cert"],
+      mutationDomainSha256: "f".repeat(64),
     };
     const signed = {
       jobId: "42", claimId: "claim-uuid-1", workspaceId: agent.workspaceId, agentId: agent.agentId,
@@ -3079,9 +3213,13 @@ describe("agentDispatch.ingestResult", () => {
     });
     let consumes = 0;
     let policyChecks = 0;
+    let currentDomain = validation.mutationDomainSha256;
+    let expiresDuringCommit = false;
     const dbPool = createMockPool((sql, params) => {
       if (sql.includes("FOR UPDATE")) return { rows: [row] };
       if (sql.includes("UPDATE certificate_jobs")) {
+        assert.match(sql, /WHERE id = \$1 AND lease_expires_at > clock_timestamp\(\)/);
+        if (expiresDuringCommit) return { rows: [] };
         row = { ...row, status: params[1], completed_at: new Date(), result_metadata: JSON.parse(params[6]) };
         return { rows: [row] };
       }
@@ -3099,7 +3237,7 @@ describe("agentDispatch.ingestResult", () => {
           assert.equal(agentRowId, agent.id);
           assert.deepEqual(scope, deploymentDestination);
           return true;
-        } },
+        }, resolveMutationDomain: () => currentDomain },
         consumeNonce() {
           consumes += 1;
           return row.status === "succeeded" ? { consumed: false, code: "CERTOPS_NONCE_REPLAYED" } : { consumed: true };
@@ -3116,16 +3254,26 @@ describe("agentDispatch.ingestResult", () => {
     assert.equal(consumes, 0);
     assert.equal(policyChecks, 0);
     row.lease_live = true;
+    currentDomain = "5".repeat(64);
+    await assert.rejects(report(), invalid);
+    assert.equal(consumes, 0);
+    currentDomain = validation.mutationDomainSha256;
+    expiresDuringCommit = true;
+    await assert.rejects(report(), { code: CERTOPS_AGENT_LEASE_INVALID });
+    assert.equal(dbPool.state.transaction.at(-1), "ROLLBACK");
+    assert.equal(row.result_metadata.deploymentDestinationValidation, undefined);
+    expiresDuringCommit = false;
     assert.equal((await report()).status, "succeeded");
     assert.deepEqual(row.result_metadata.deploymentDestinationValidation, {
       version: 1, agentId: agent.agentId, claimId: signed.claimId, receipt,
     });
     assert.equal(row.result_metadata.deploymentDestinationDispatch.bindingSha256, dispatch.bindingSha256);
     assert.equal(JSON.stringify(row.result_metadata).includes(nonce), false);
+    currentDomain = null;
     assert.equal((await report()).duplicate, true);
     await assert.rejects(report({ deploymentDestinationValidation: makeReceipt({ ...validation, planSha256: "f".repeat(64) }) }), invalid);
-    assert.equal(consumes, 2);
-    assert.equal(policyChecks, 1);
+    assert.equal(consumes, 3);
+    assert.equal(policyChecks, 3);
   });
 
   it("accepts only fail-closed destination execution preflight results, on first delivery and replay", async () => {
