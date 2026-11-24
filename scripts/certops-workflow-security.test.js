@@ -229,3 +229,44 @@ test("manual qualification cannot bypass the trusted main reference",()=>{
   assert.ok(validateWorkflow(workflow,name).length);
  }
 });
+
+test("no-IIS preparation retains only the independently verified run and bounds failure cleanup", () => {
+ const fs=require("node:fs"),path=require("node:path");
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const name="certops-adcs-store-noiis-prepare.yml";
+ const workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows",name),"utf8"));
+ const azure=require("./certops-azure-scope-policy");
+ assert.ok(azure.PROVISION.includes(name));
+ assert.deepEqual(azure.validate(name,workflow),[]);
+ assert.deepEqual(validateWorkflow(workflow,name),[]);
+ const altered=[
+  ["untrusted trigger",w=>w.on.schedule=[{cron:"0 * * * *"}]],
+  ["mutable target",w=>w.jobs.register.steps[0].with.ref="untrusted"],
+  ["default working directory",w=>w.defaults={run:{"working-directory":"other"}}],
+  ["shared cleanup queue",w=>w.concurrency.group="certops-retention24h-owned-azure-lifecycle"],
+  ["untrusted resource scope",w=>w.env.STORE_GROUP="shared"],
+  ["verification role",w=>w.jobs.verify.environment="certops-adcs-lab"],
+  ["verification mutation",w=>w.jobs.verify.steps[2].run=w.jobs.register.steps[2].run],
+  ["failure evidence",w=>delete w.jobs.verify.steps[3].if],
+  ["registration evidence path",w=>w.jobs.verify.steps[3].with.path="qualification-results/"],
+  ["successful verify without evidence",w=>w.jobs.verify.steps[3].with["if-no-files-found"]="warn"],
+  ["registration handoff",w=>w.jobs.prepare.needs=["register"]],
+  ["untrusted approval digest",w=>w.jobs.prepare.env.STORE_REGISTRATION_SHA256="test"],
+  ["unsupported preparation mode",w=>w.jobs.prepare.steps[2].run=w.jobs.prepare.steps[2].run.replace("-StoreNoIisPrepare 1","-StoreNoIisPrepare 0")],
+  ["unbounded preparation",w=>w.jobs.prepare["timeout-minutes"]=181],
+  ["cleanup of successful preparations",w=>w.jobs["cleanup-failed"].if=w.jobs["cleanup-failed"].if.replace(" != 'success'"," == 'success'")],
+  ["cleanup without exact activation equality",w=>w.jobs["cleanup-failed"].if=w.jobs["cleanup-failed"].if.replace(" && needs.prepare.outputs.cleanup_activation == needs.verify.outputs.receipt_sha256","")],
+  ["cleanup for another owner",w=>w.jobs["cleanup-failed"].env.STORE_REGISTRATION="foreign"],
+  ["cleanup evidence",w=>delete w.jobs["cleanup-failed"].steps[3].if],
+ ];
+ for(const id of ["register","verify","prepare","cleanup-failed"])altered.push([id+" main guard",w=>w.jobs[id].if="always()"]);
+ for(const [description,change] of altered){
+  const candidate=structuredClone(workflow);
+  change(candidate);
+  assert.ok(azure.validate(name,candidate).length,description);
+  assert.ok(validateWorkflow(candidate,name).length,description);
+ }
+ const unrelated=validateWorkflow(workflow,"certops-unrelated-paid-lab.yml");
+ assert.ok(unrelated.some(error=>error.includes("lifecycle inventory")));
+ assert.ok(unrelated.some(error=>error.includes("independent always cleanup")));
+});
