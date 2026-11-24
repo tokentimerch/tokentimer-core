@@ -200,6 +200,20 @@ function verifyStagedMedia(raw, { receiptSha256, packageReceiptPath, launcherRec
     cmsSha256: pkg.cmsSha256, sbomSha256: pkg.sbomSha256 };
 }
 
+function readGitHubMetadata(apiPath, invoke = execFileSync) {
+  const args = ["api", "--method", "GET", "repos/" + REPOSITORY + "/" + apiPath];
+  if (apiPath.startsWith("commits/") && SHA.test(apiPath.slice("commits/".length))) {
+    // Commit responses include diffs that can exceed the local metadata buffer.
+    args.push("--jq", "{sha,commit:{verification:{verified:.commit.verification.verified}}}");
+  }
+  try {
+    return JSON.parse(invoke("gh", args,
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000, maxBuffer: 256 * 1024 }));
+  } catch {
+    throw new Error("GitHub metadata could not be independently verified");
+  }
+}
+
 function main(args) {
   if (args[0] === "--staged") {
     assert.equal(args.length, 7,
@@ -214,16 +228,8 @@ function main(args) {
     "Expected custody receipt path, approved receipt SHA-256, signed candidate SHA, reviewed package workflow SHA and optional reviewed launcher workflow SHA");
   const [file, receiptSha256, expectedSource, expectedWorkflow, expectedLauncherWorkflow] = args;
   const { bytes } = measureRegularFile(file, RECEIPT_LIMIT, true);
-  const read = (apiPath) => {
-    try {
-      return JSON.parse(execFileSync("gh", ["api", "--method", "GET", "repos/" + REPOSITORY + "/" + apiPath],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000, maxBuffer: 256 * 1024 }));
-    } catch {
-      throw new Error("GitHub metadata could not be independently verified");
-    }
-  };
   const result = verifyMediaPreflight(bytes, {
-    receiptSha256, expectedSource, expectedWorkflow, expectedLauncherWorkflow, read,
+    receiptSha256, expectedSource, expectedWorkflow, expectedLauncherWorkflow, read: readGitHubMetadata,
   });
   process.stdout.write(JSON.stringify(result) + "\n");
 }
@@ -232,4 +238,4 @@ if (require.main === module) {
   try { main(process.argv.slice(2)); }
   catch (error) { process.stderr.write("Named Store media preflight refused: " + error.message.split("\n")[0] + "\n"); process.exitCode = 1; }
 }
-module.exports = { verifyMediaPreflight, verifyStagedMedia };
+module.exports = { readGitHubMetadata, verifyMediaPreflight, verifyStagedMedia };

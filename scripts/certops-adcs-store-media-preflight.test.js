@@ -7,7 +7,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { verifyMediaPreflight, verifyStagedMedia } = require("./certops-adcs-store-media-preflight");
+const { readGitHubMetadata, verifyMediaPreflight, verifyStagedMedia } = require("./certops-adcs-store-media-preflight");
 
 const candidate = "a".repeat(40);
 const workflow = "b".repeat(40);
@@ -16,6 +16,31 @@ const now = Date.parse("2030-01-01T00:00:00Z");
 const artifactHash = (digit) => "sha256:" + digit.repeat(64);
 const packagePath = ".github/workflows/windows-agent-signing-pilot.yml";
 const launcherPath = ".github/workflows/windows-agent-launcher-signing-pilot.yml";
+
+test("CLI requests only signed commit identity when the full response exceeds the buffer", () => {
+  const commit = { sha: candidate, commit: { verification: { verified: false } } };
+  const oversized = JSON.stringify({ ...commit, files: [{ patch: "x".repeat(300 * 1024) }] });
+  const read = readGitHubMetadata("commits/" + candidate, (command, args, options) => {
+    assert.equal(command, "gh");
+    assert.equal(options.maxBuffer, 256 * 1024);
+    assert.ok(Buffer.byteLength(oversized) > options.maxBuffer);
+    assert.deepEqual(args, ["api", "--method", "GET", "repos/tokentimerch/tokentimer-core/commits/" + candidate,
+      "--jq", "{sha,commit:{verification:{verified:.commit.verification.verified}}}"]);
+    return JSON.stringify(commit);
+  });
+  assert.deepEqual(read, commit);
+});
+
+test("CLI keeps full metadata and the existing buffer for signing workflow lookups", () => {
+  const endpoint = "actions/runs/42/attempts/1";
+  const response = { id: 42, run_attempt: 1, event: "workflow_dispatch" };
+  assert.deepEqual(readGitHubMetadata(endpoint, (command, args, options) => {
+    assert.equal(command, "gh");
+    assert.deepEqual(args, ["api", "--method", "GET", "repos/tokentimerch/tokentimer-core/" + endpoint]);
+    assert.equal(options.maxBuffer, 256 * 1024);
+    return JSON.stringify(response);
+  }), response);
+});
 
 function fixture({ launcherWorkflow = workflow } = {}) {
   const receipt = {
