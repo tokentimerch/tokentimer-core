@@ -96,7 +96,7 @@ describe("CertOps agent-protocol AJV parity (agent vs API)", () => {
     }
   });
 
-  it("keeps destination execution off the public claim and receipt surfaces", () => {
+  it("keeps destination execution off claim polls and pairs each preview receipt with its outcome", () => {
     const claim = FIXTURES.find(({ id }) => id === "claim-valid").message;
     const result = FIXTURES.find(({ id }) => id === "result-succeeded-valid").message;
     for (const validate of [validateAgentSide, validateApiSide]) {
@@ -106,11 +106,24 @@ describe("CertOps agent-protocol AJV parity (agent vs API)", () => {
       assert.equal(validate({ ...claim, body: { ...claim.body,
         supportedActions: [...claim.body.supportedActions, "execute-deployment-destination"],
       } }).valid, false);
-      for (const [status, state] of [["succeeded", "confirmed"], ["orphaned_unknown_effect", "unknown"]]) {
-        assert.equal(validate({ ...result, body: { ...result.body, status,
-          claimId: "claim-1", nonce: "destination-execution-nonce-1",
-          deploymentDestinationExecutionReceipt: { version: 1, state },
-        } }).valid, false);
+      const confirmed = {
+        state: "confirmed", verifiedFingerprintSha256: "a".repeat(64),
+        verifiedServiceRefs: ["portal"], verificationSha256: "b".repeat(64),
+      };
+      for (const [status, outcome] of [["succeeded", confirmed], ["orphaned_unknown_effect", { state: "unknown" }]]) {
+        const receipt = { version: 1, intendedEffectSha256: "c".repeat(64), outcome, bindingSha256: "d".repeat(64) };
+        const body = {
+          ...result.body, status, attemptId: "claim-1", claimId: "claim-1", nonce: "destination-execution-nonce-1",
+          keyRotated: null,
+          deploymentDestinationExecutionReceipt: receipt,
+        };
+        assert.equal(validate({ ...result, body }).valid, true);
+        assert.equal(validate({ ...result, body: { ...body, status: "blocked" } }).valid, false);
+        assert.equal(validate({ ...result, body: { ...body, claimId: null } }).valid, false);
+        assert.equal(validate({ ...result, body: { ...body, errorMessage: "extra detail" } }).valid, false);
+        assert.equal(validate({ ...result, body: { ...body, deploymentDestinationExecutionReceipt: {
+          ...receipt, outcome: { ...outcome, extra: "not allowed" },
+        } } }).valid, false);
       }
     }
   });

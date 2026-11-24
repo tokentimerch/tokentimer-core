@@ -309,6 +309,78 @@
           "$ref": "#/definitions/sha256"
         }
       }
+    },
+    "executionOutcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "verifiedFingerprintSha256",
+            "verifiedServiceRefs",
+            "verificationSha256"
+          ],
+          "properties": {
+            "state": {
+              "const": "confirmed"
+            },
+            "verifiedFingerprintSha256": {
+              "$ref": "#/definitions/sha256"
+            },
+            "verifiedServiceRefs": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/definitions/opaqueRef",
+                "type": "string"
+              }
+            },
+            "verificationSha256": {
+              "$ref": "#/definitions/sha256"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "unknown"
+            }
+          }
+        }
+      ]
+    },
+    "executionReceipt": {
+      "description": "Preview receipt binding the verified outcome to the durable intended-effect record and the signed owner claim.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "intendedEffectSha256",
+        "outcome",
+        "bindingSha256"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "intendedEffectSha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "outcome": {
+          "$ref": "#/definitions/executionOutcome"
+        },
+        "bindingSha256": {
+          "$ref": "#/definitions/sha256"
+        }
+      }
     }
   }
 }

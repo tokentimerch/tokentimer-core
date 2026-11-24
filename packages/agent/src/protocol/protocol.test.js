@@ -613,6 +613,58 @@ test("reportResult: sends only closed, claim-bound historical destination receip
   assert.equal(calls.length, 1);
 });
 
+test("reportResult: validates status and scope for synthetic destination execution receipts", async () => {
+  const calls = stubFetch([
+    { status: 202, json: { accepted: true } },
+    { status: 202, json: { accepted: true } },
+  ]);
+  const client = createProtocolClient({
+    serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+  const scope = { jobId: "job-1", attemptId: "claim-1", claimId: "claim-1", nonce: "nonce-0123456789abcdef" };
+  const confirmed = {
+    state: "confirmed", verifiedFingerprintSha256: "a".repeat(64),
+    verifiedServiceRefs: ["portal-https"], verificationSha256: "b".repeat(64),
+  };
+  const unknown = { state: "unknown" };
+  const typedResult = (outcome, status) => ({
+    ...scope, status,
+    deploymentDestinationExecutionReceipt: {
+      version: 1, intendedEffectSha256: "c".repeat(64), outcome, bindingSha256: "d".repeat(64),
+    },
+  });
+  const succeeded = typedResult(confirmed, "succeeded");
+  const orphaned = typedResult(unknown, "orphaned_unknown_effect");
+  await client.reportResult(succeeded);
+  await client.reportResult(orphaned);
+  for (const [index, result] of [succeeded, orphaned].entries()) {
+    assert.equal(calls[index].parsedBody.body.status, result.status);
+    assert.equal(calls[index].parsedBody.body.claimId, scope.claimId);
+    assert.equal(calls[index].parsedBody.body.nonce, scope.nonce);
+    assert.deepEqual(calls[index].parsedBody.body.deploymentDestinationExecutionReceipt,
+      result.deploymentDestinationExecutionReceipt);
+  }
+  const observationReceipt = {
+    version: 1, observation: { state: "inconclusive", observedStateSha256: null, affectedServiceRefs: [] },
+    bindingSha256: "e".repeat(64),
+  };
+  for (const invalid of [
+    typedResult(confirmed, "orphaned_unknown_effect"),
+    typedResult(unknown, "succeeded"),
+    typedResult(unknown, "blocked"),
+    typedResult({ ...confirmed, verificationSha256: null }, "succeeded"),
+    typedResult({ ...unknown, verifiedServiceRefs: [] }, "orphaned_unknown_effect"),
+    { ...succeeded, claimId: null },
+    { ...succeeded, attemptId: "different-attempt" },
+    { ...succeeded, nonce: null },
+    { ...succeeded, deploymentDestinationObservationReceipt: observationReceipt },
+  ]) {
+    await assert.rejects(client.reportResult(invalid), { code: AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE });
+  }
+  assert.equal(calls.length, 2);
+});
+
 test("reportResult: forwards claimId and nonce in the body when provided", async () => {
   const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
 

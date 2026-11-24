@@ -20417,6 +20417,49 @@ components:
                     bindingSha256:
                       type: string
                       pattern: '^[a-f0-9]{64}$'
+                deploymentDestinationExecutionReceipt:
+                  type: object
+                  additionalProperties: false
+                  required: [version, intendedEffectSha256, outcome, bindingSha256]
+                  description: Preview execution receipt. The stock controller rejects submission before nonce consumption. The canonical agent protocol pairs confirmed with succeeded and unknown with orphaned_unknown_effect.
+                  properties:
+                    version:
+                      type: integer
+                      enum: [1]
+                    intendedEffectSha256:
+                      type: string
+                      pattern: '^[a-f0-9]{64}$'
+                    outcome:
+                      oneOf:
+                        - type: object
+                          additionalProperties: false
+                          required: [state, verifiedFingerprintSha256, verifiedServiceRefs, verificationSha256]
+                          properties:
+                            state:
+                              enum: [confirmed]
+                            verifiedFingerprintSha256:
+                              type: string
+                              pattern: '^[a-f0-9]{64}$'
+                            verifiedServiceRefs:
+                              type: array
+                              minItems: 1
+                              maxItems: 8
+                              uniqueItems: true
+                              items:
+                                type: string
+                                pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$'
+                            verificationSha256:
+                              type: string
+                              pattern: '^[a-f0-9]{64}$'
+                        - type: object
+                          additionalProperties: false
+                          required: [state]
+                          properties:
+                            state:
+                              enum: [unknown]
+                    bindingSha256:
+                      type: string
+                      pattern: '^[a-f0-9]{64}$'
                 deploymentDestinationValidation:
                   type: object
                   additionalProperties: false

@@ -204,6 +204,9 @@ function verifyReceipt({ jobId, claimId, workspaceId, agentId, scope, receipt })
 }
 
 async function checkDestinationResult({ client, policy, agent, job, body, jobStatus }) {
+  // Execution receipts have a preview wire shape. Ingestion stays closed
+  // until native mutation and qualified evidence verification are available.
+  if (Object.hasOwn(body, "deploymentDestinationExecutionReceipt")) throw destinationError();
   const validationReceipt = body.deploymentDestinationValidation ?? null;
   const observationReceipt = body.deploymentDestinationObservationReceipt ?? null;
   if (!isDestinationOperation(job.operation)) {

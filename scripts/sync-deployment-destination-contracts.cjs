@@ -17,7 +17,10 @@ function embedDefinition(value) {
   ]));
 }
 
-for (const name of ["opaqueRef", "sha256", "validation", "validationReceipt", "historicalObservation", "observationReceipt"]) {
+for (const name of [
+  "opaqueRef", "sha256", "validation", "validationReceipt", "historicalObservation", "observationReceipt",
+  "executionOutcome", "executionReceipt",
+]) {
   protocol.definitions[prefix + name] = embedDefinition(destinationContract.definitions[name]);
 }
 const output = JSON.stringify(protocol, null, 2) + "\n";

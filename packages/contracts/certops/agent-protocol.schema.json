@@ -595,6 +595,9 @@
         },
         "deploymentDestinationObservationReceipt": {
           "$ref": "#/definitions/deploymentDestination_observationReceipt"
+        },
+        "deploymentDestinationExecutionReceipt": {
+          "$ref": "#/definitions/deploymentDestination_executionReceipt"
         }
       },
       "allOf": [
@@ -671,6 +674,128 @@
                 "type": "string"
               }
             }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "deploymentDestinationExecutionReceipt"
+            ]
+          },
+          "then": {
+            "required": [
+              "claimId",
+              "nonce"
+            ],
+            "properties": {
+              "claimId": {
+                "type": "string"
+              },
+              "nonce": {
+                "type": "string"
+              },
+              "errorMessage": {
+                "type": "null"
+              },
+              "rejectionReason": {
+                "type": "null"
+              },
+              "keyRotated": {
+                "type": "null"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "trustResult"
+                  ]
+                },
+                {
+                  "required": [
+                    "publicationReceipt"
+                  ]
+                },
+                {
+                  "required": [
+                    "publicationCertificatePem"
+                  ]
+                },
+                {
+                  "required": [
+                    "deploymentReceipt"
+                  ]
+                },
+                {
+                  "required": [
+                    "enrollmentResult"
+                  ]
+                },
+                {
+                  "required": [
+                    "preflightResult"
+                  ]
+                },
+                {
+                  "required": [
+                    "cleanupReceipt"
+                  ]
+                },
+                {
+                  "required": [
+                    "reconciliationReceipt"
+                  ]
+                },
+                {
+                  "required": [
+                    "deploymentDestinationValidation"
+                  ]
+                },
+                {
+                  "required": [
+                    "deploymentDestinationObservationReceipt"
+                  ]
+                }
+              ]
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "status": {
+                    "const": "succeeded"
+                  },
+                  "deploymentDestinationExecutionReceipt": {
+                    "properties": {
+                      "outcome": {
+                        "properties": {
+                          "state": {
+                            "const": "confirmed"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "status": {
+                    "const": "orphaned_unknown_effect"
+                  },
+                  "deploymentDestinationExecutionReceipt": {
+                    "properties": {
+                      "outcome": {
+                        "properties": {
+                          "state": {
+                            "const": "unknown"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
           }
         }
       ]
@@ -1980,6 +2105,78 @@
         },
         "observation": {
           "$ref": "#/definitions/deploymentDestination_historicalObservation"
+        },
+        "bindingSha256": {
+          "$ref": "#/definitions/deploymentDestination_sha256"
+        }
+      }
+    },
+    "deploymentDestination_executionOutcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "verifiedFingerprintSha256",
+            "verifiedServiceRefs",
+            "verificationSha256"
+          ],
+          "properties": {
+            "state": {
+              "const": "confirmed"
+            },
+            "verifiedFingerprintSha256": {
+              "$ref": "#/definitions/deploymentDestination_sha256"
+            },
+            "verifiedServiceRefs": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/definitions/deploymentDestination_opaqueRef",
+                "type": "string"
+              }
+            },
+            "verificationSha256": {
+              "$ref": "#/definitions/deploymentDestination_sha256"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "unknown"
+            }
+          }
+        }
+      ]
+    },
+    "deploymentDestination_executionReceipt": {
+      "description": "Preview receipt binding the verified outcome to the durable intended-effect record and the signed owner claim.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "intendedEffectSha256",
+        "outcome",
+        "bindingSha256"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "intendedEffectSha256": {
+          "$ref": "#/definitions/deploymentDestination_sha256"
+        },
+        "outcome": {
+          "$ref": "#/definitions/deploymentDestination_executionOutcome"
         },
         "bindingSha256": {
           "$ref": "#/definitions/deploymentDestination_sha256"

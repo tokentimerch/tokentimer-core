@@ -933,7 +933,10 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
    * report stays schema-minimal (the results route falls back to attemptId
    * when claimId is absent).
    */
-  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, claimId = null, nonce = null, clockOffsetMs = null, trustResult = null, enrollmentResult = null, preflightResult = null, publicationReceipt = null, publicationCertificatePem = null, deploymentReceipt = null, cleanupReceipt = null, reconciliationReceipt = null, deploymentDestinationValidation = null, deploymentDestinationObservationReceipt = null } = {}) {
+  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, claimId = null, nonce = null, clockOffsetMs = null, trustResult = null, enrollmentResult = null, preflightResult = null, publicationReceipt = null, publicationCertificatePem = null, deploymentReceipt = null, cleanupReceipt = null, reconciliationReceipt = null, deploymentDestinationValidation = null, deploymentDestinationObservationReceipt = null, deploymentDestinationExecutionReceipt = null } = {}) {
+    if (deploymentDestinationExecutionReceipt !== null && claimId !== attemptId) {
+      throw new AgentProtocolError("Execution receipt claim must match its attempt", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+    }
     const body = {
       jobId,
       attemptId,
@@ -952,6 +955,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
       ...(reconciliationReceipt !== null ? { reconciliationReceipt } : {}),
       ...(deploymentDestinationValidation !== null ? { deploymentDestinationValidation } : {}),
       ...(deploymentDestinationObservationReceipt !== null ? { deploymentDestinationObservationReceipt } : {}),
+      ...(deploymentDestinationExecutionReceipt !== null ? { deploymentDestinationExecutionReceipt } : {}),
       ...(enrollmentResult !== null ? { enrollmentResult } : {}),
       ...(preflightResult !== null ? { preflightResult } : {}),
     };

@@ -7513,6 +7513,129 @@ describe("signed deployment destination lifecycle", () => {
     assert.equal(fs.readFileSync(marker, "utf8"), markerAtFirstDelivery);
   });
 
+  for (const state of ["confirmed", "unknown"]) {
+    it(`binds a synthetic ${state} receipt to persisted intent and replays its exact outbox result`, {
+      skip: process.platform !== "linux",
+    }, async () => {
+      const {
+        createDeploymentDestinationExecutionIntent,
+        bindDeploymentDestinationExecutionReceipt,
+        hasMatchingDeploymentDestinationExecutionReceipt,
+      } = require("../../contracts/certops/deployment-destination.cjs");
+      const { enqueueOutboxEntry } = require("./outbox");
+      const domain = "1".repeat(64);
+      const adapter = {
+        validate: () => validation,
+        authorizeExecution: () => true,
+        prepareExecution: () => ({
+          validation: { ...validation, mutationDomainSha256: domain },
+          mutationDomainSha256: domain,
+          execute: () => assert.fail("native preflight must never invoke mutation"),
+        }),
+        dryRun: false,
+      };
+      const original = setup(adapter);
+      const job = signOwnedExecutionJob(domain);
+      assert(!resolveClaimSupportedActions(original.executionContext).includes(job.action));
+      assert.equal((await original.run(job)).status, "blocked");
+      assert.equal(original.client.calls.reportResult[0].errorMessage, "destination_execution_ownership_held");
+
+      const holdDirectory = path.join(workDir, "deployment-destination-ownership");
+      const [filename] = fs.readdirSync(holdDirectory);
+      const holdPath = path.join(holdDirectory, filename);
+      const held = fs.readFileSync(holdPath, "utf8");
+
+      // The native path stops at the hold. This separate marker and both
+      // outcomes are synthetic, with no appliance callback or receiver.
+      const intent = createDeploymentDestinationExecutionIntent(job);
+      assert.equal(intent.version, 1);
+      assert.equal(createDeploymentDestinationExecutionIntent(signExecutionJob()), null);
+      const intentPath = path.join(workDir, "fixture-effect-intent.json");
+      const intentFd = fs.openSync(intentPath, "wx", 0o600);
+      try {
+        fs.writeFileSync(intentFd, JSON.stringify(intent));
+        fs.fsyncSync(intentFd);
+      } finally {
+        fs.closeSync(intentFd);
+      }
+      const stateFd = fs.openSync(workDir, "r");
+      try {
+        fs.fsyncSync(stateFd);
+      } finally {
+        fs.closeSync(stateFd);
+      }
+      assert.equal(fs.statSync(intentPath).mode & 0o777, 0o600);
+      const recorded = JSON.parse(fs.readFileSync(intentPath, "utf8"));
+      assert.deepEqual(recorded, intent);
+
+      const confirmed = {
+        state: "confirmed",
+        verifiedFingerprintSha256: destination.fingerprintSha256,
+        verifiedServiceRefs: validation.affectedServiceRefs,
+        verificationSha256: "8".repeat(64),
+      };
+      const unknown = { state: "unknown" };
+      for (const overridden of [
+        { verifiedFingerprintSha256: "9".repeat(64) },
+        { verifiedServiceRefs: ["different-service"] },
+        { verificationSha256: () => "8".repeat(64) },
+      ]) {
+        assert.equal(bindDeploymentDestinationExecutionReceipt(job, recorded, { ...confirmed, ...overridden }), null);
+      }
+      let fingerprintReads = 0;
+      const projected = bindDeploymentDestinationExecutionReceipt(job, recorded, {
+        ...confirmed,
+        get verifiedFingerprintSha256() {
+          fingerprintReads += 1;
+          return fingerprintReads === 1 ? confirmed.verifiedFingerprintSha256 : "9".repeat(64);
+        },
+      });
+      assert.equal(fingerprintReads, 1);
+      assert.deepEqual(projected.outcome, confirmed);
+      assert.equal(hasMatchingDeploymentDestinationExecutionReceipt(job, recorded, projected), true);
+      const changedOwner = {
+        ...job, claimId: "changed-claim", attemptId: "changed-claim",
+        deploymentDestinationOperation: {
+          ...job.deploymentDestinationOperation, ownerClaimId: "changed-claim",
+        },
+      };
+      const changedNonce = { ...job, nonce: "changed-execution-nonce-001" };
+      for (const changed of [changedOwner, changedNonce]) {
+        changed.signature = signJobPayload({ job: changed, privateKeyPem: signingKey.privateKeyPem });
+      }
+
+      const outcome = state === "confirmed" ? confirmed : unknown;
+      const status = state === "confirmed" ? "succeeded" : "orphaned_unknown_effect";
+      const receipt = bindDeploymentDestinationExecutionReceipt(job, recorded, outcome);
+      assert.equal(receipt.version, 1);
+      assert.match(receipt.intendedEffectSha256, /^[a-f0-9]{64}$/);
+      assert.match(receipt.bindingSha256, /^[a-f0-9]{64}$/);
+      assert.deepEqual(receipt.outcome, outcome);
+      assert.equal(hasMatchingDeploymentDestinationExecutionReceipt(job, recorded, receipt), true);
+      assert.equal(hasMatchingDeploymentDestinationExecutionReceipt(changedNonce, recorded, receipt), false);
+      assert.equal(hasMatchingDeploymentDestinationExecutionReceipt(changedOwner, recorded, receipt), false);
+      assert.equal(hasMatchingDeploymentDestinationExecutionReceipt(job, {
+        ...recorded, operationId: "9".repeat(64),
+      }, receipt), false);
+      assert.equal(hasMatchingDeploymentDestinationExecutionReceipt(job, recorded, {
+        ...receipt, outcome: { ...outcome, verificationSha256: "9".repeat(64) },
+      }), false);
+
+      const result = {
+        jobId: job.jobId, attemptId: job.attemptId, claimId: job.claimId, nonce: job.nonce,
+        status, deploymentDestinationExecutionReceipt: receipt,
+      };
+      enqueueOutboxEntry(original.outboxDir, { result });
+      assert.deepEqual(listOutboxEntries(original.outboxDir).map((entry) => entry.result), [result]);
+      const restarted = setup(adapter);
+      await drainOutbox(restarted.outboxDir, restarted.client);
+      assert.deepEqual(restarted.client.calls.reportResult, [result]);
+      assert.deepEqual(listOutboxEntries(restarted.outboxDir), []);
+      assert.equal(fs.readFileSync(holdPath, "utf8"), held);
+      assert.deepEqual(JSON.parse(fs.readFileSync(intentPath, "utf8")), recorded);
+    });
+  }
+
   const historicalFacts = {
     state: "observed", observedStateSha256: "6".repeat(64), affectedServiceRefs: ["portal-https"],
   };

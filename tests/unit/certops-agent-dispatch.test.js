@@ -3383,6 +3383,18 @@ describe("agentDispatch.ingestResult", () => {
       row = { ...liveClaim, status, completed_at: new Date(), lease_live: false };
       await assert.rejects(report({ status }), { code: INVALID_RECEIPT });
     }
+    const confirmed = {
+      state: "confirmed", verifiedFingerprintSha256: deploymentDestination.fingerprintSha256,
+      verifiedServiceRefs: validation.affectedServiceRefs, verificationSha256: "1".repeat(64),
+    };
+    for (const [status, outcome] of [["succeeded", confirmed], ["orphaned_unknown_effect", { state: "unknown" }]]) {
+      const executionReceipt = { version: 1, intendedEffectSha256: "2".repeat(64), outcome, bindingSha256: "3".repeat(64) };
+      for (const candidate of [liveClaim, { ...liveClaim, status, completed_at: new Date(), lease_live: false },
+        { ...liveClaim, operation: "renew" }]) {
+        row = candidate;
+        await assert.rejects(report({ status, deploymentDestinationExecutionReceipt: executionReceipt }), { code: UNAVAILABLE });
+      }
+    }
     row = { ...liveClaim, lease_live: false };
     await assert.rejects(report(preflight), { code: INVALID_RECEIPT });
     row = liveClaim;

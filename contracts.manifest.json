@@ -71,14 +71,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "4eb1eb9ac43212125b05a1c6c84abd98f717b1582b6e841949208edf58107d3f"
+          "sha256": "aa0a7ed3cc4573ee877dc0dd1917261ae49be4683ec3eaffa76cf75221595b24"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "4eb1eb9ac43212125b05a1c6c84abd98f717b1582b6e841949208edf58107d3f"
+          "sha256": "aa0a7ed3cc4573ee877dc0dd1917261ae49be4683ec3eaffa76cf75221595b24"
         },
         {
           "id": "auth-route-compat-contract",
@@ -253,14 +253,14 @@
           "kind": "schema",
           "path": "packages/contracts/certops/agent-protocol.schema.json",
           "status": "existing",
-          "sha256": "cfe15db98bccc0c17faeb097514e030ea07eda6e55ccc80aee0b91ee13313426"
+          "sha256": "f7eef964e789cfd384cdd86ce13b10cb8887d2202070a55e12636b42f66663c7"
         },
         {
           "id": "certops-deployment-destination-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/deployment-destination.schema.json",
           "status": "existing",
-          "sha256": "97ad3c3a17fe6a2bbfa7944178c3f0b217de4e13b7a266cb2c388e2a71e11a3f"
+          "sha256": "ae05de41767e49776d484aeb9cbbfaf3a2461df98ecfb9b1d31b4e713919ba76"
         },
         {
           "id": "certops-deployment-destination-job-payload-schema",
@@ -274,7 +274,7 @@
           "kind": "schema",
           "path": "packages/contracts/certops/deployment-destination.cjs",
           "status": "existing",
-          "sha256": "55a06d903659989ab0ee90c49e66f155eb6661e55cbcd989681032d94ee5ba66"
+          "sha256": "3f45474580fed538312641daa8166aee6c0d82bd914b4afa568715d347661a6d"
         },
         {
           "id": "certops-trust-job-payload-schema",

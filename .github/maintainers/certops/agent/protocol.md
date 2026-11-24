@@ -321,6 +321,8 @@ An edition may explicitly compose read-only validation and execution preflight. 
 
 Use one authoritative controller per writer domain, including all aliases and restored copies. The controller keeps the domain reserved across workspace reassignment and deletion. Result delivery, lease expiry, and restart leave both holds intact. Historical observation requires fresh read-only authority, the same provisioned domain, and the original authenticated hold. Its signed scope carries no material references. Native mutation remains disabled. See the [canonical contract](../../../../packages/contracts/certops/deployment-destination.schema.json).
 
+Preview execution receipts bind a verified confirmation or an unknown outcome to the signed owner and a separate durable intended-effect record. Core rejects these receipts before consuming a nonce.
+
 ## Related
 
 [Agent overview](../../../../docs/certops/agent.md) · [Configuration](../../../../docs/certops/agent/configuration.md) · [Operations](../../../../docs/certops/agent/operations.md)
