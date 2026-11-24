@@ -563,8 +563,10 @@ async function createAutomaticAdcsRenewal({
   }
   const open = await findOpenEnrollment(dbPool, certificate.workspace_id, certificate.id);
   if (open) {
-    const retry = await retryDryRunBlockedRenewal({ client: dbPool, workspaceId: certificate.workspace_id,
-      enrollmentId: open.id, eligibleAgentIds: (explicitIp ? [agent] : eligibleAgents).map(candidate => String(candidate.id)), env });
+    const retry = mode === "real" ? await retryDryRunBlockedRenewal({
+      client: dbPool, workspaceId: certificate.workspace_id, enrollmentId: open.id,
+      eligibleAgentIds: (explicitIp ? [agent] : eligibleAgents).map(candidate => String(candidate.id)), env,
+    }) : null;
     return { job: retry || { id: null, operation: "renew" }, created: Boolean(retry) };
   }
 
@@ -974,13 +976,17 @@ async function runRenewalSchedulerSweep({
       }
     }
 
-    // Reconcile once per issuer after committed admissions, including open
-    // incidents whose last certificate was stopped, renewed or removed.
-    try {
-      await require("./adcsPreflightIncidents").reconcilePendingPreflightIncidents({db:dbPool,env,certificates:dueCertificates});
-    } catch(error) {
-      summary.errors.push({error:"AD CS preflight incident reconciliation failed"});
-      logger?.warn?.("certops-preflight-incidents-failed",{code:error.code || "incident_projection_failed"});
+    if (mode === "real") {
+      // Reconcile live incidents after committed admissions, including issuers
+      // whose last certificate was stopped, renewed or removed.
+      try {
+        await require("./adcsPreflightIncidents").reconcilePendingPreflightIncidents({
+          db: dbPool, env, certificates: dueCertificates,
+        });
+      } catch (error) {
+        summary.errors.push({ error: "AD CS preflight incident reconciliation failed" });
+        logger?.warn?.("certops-preflight-incidents-failed", { code: error.code || "incident_projection_failed" });
+      }
     }
     return summary;
   } finally {

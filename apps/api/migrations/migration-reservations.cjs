@@ -51,6 +51,7 @@ const reservations = Object.freeze({
   126: "certops_adcs_receipt_deadline",
   127: "auto_sync_creation_expiration",
   128: "shared_sso_schema",
+  129: "certops_acme_store_cancelled",
 });
 
 function validateMigrationReservations(migrations) {

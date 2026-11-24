@@ -144,7 +144,8 @@ test("internal ACME store first issue atomically binds owner, enrollment and rep
   const renew = require("../../apps/api/services/certops/jobs").manualRenewalJobCreator({ certificateId: first.job.subjectId });
   const renewalOptions = { workspaceId, subjectId: first.job.subjectId, assignedAgentId: agentId, idempotencyKey: randomUUID(),
     operation: "renew", source: "api", mode: "real", requestedByUserId: user, transactionOwned: true, payload: {} };
-  const runRenewal = async (changes = {}) => { const client = await pool.connect(); try { await client.query("BEGIN"); const result = await renew({ ...renewalOptions, ...changes, client }); await client.query("COMMIT"); return result; } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); } };
+  const tx = async fn => { const client = await pool.connect(); try { await client.query("BEGIN"); const result = await fn(client); await client.query("COMMIT"); return result; } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); } };
+  const runRenewal = (changes = {}) => tx(client => renew({ ...renewalOptions, ...changes, client }));
   await assert.rejects(runRenewal({ assignedAgentId: randomUUID() }), /owned by the selected agent/);
   await assert.rejects(runRenewal({ idempotencyKey: undefined }), {
     code: "CERTOPS_ACME_STORE_INVALID",
@@ -160,6 +161,38 @@ test("internal ACME store first issue atomically binds owner, enrollment and rep
     code: "CERTOPS_ACME_STORE_ORDER_UNCERTAIN",
     message: /already open or uncertain/,
   });
+
+  const { cancelCertificateJob } = require("../../apps/api/services/certops/jobCancellation");
+  const { rejectJob } = require("../../apps/api/services/certops/jobApprovals");
+  const cancelled = await tx(client => cancelCertificateJob({
+    client, workspaceId, jobId: renewed.job.id, actorUserId: user,
+  }));
+  assert.equal(cancelled.status, "cancelled");
+  const replayCancelled = await runRenewal();
+  assert.equal(replayCancelled.created, false);
+  assert.equal(replayCancelled.job.status, "cancelled");
+  assert.equal((await pool.query("SELECT state FROM certops_acme_store_enrollments WHERE original_job_id=$1", [renewed.job.id])).rows[0].state, "cancelled_no_effect");
+
+  await pool.query("UPDATE certops_agents SET capabilities_updated_at=NOW() WHERE id=$1", [agentId]);
+  const replacement = await runRenewal({ idempotencyKey: randomUUID(), requiresApproval: true });
+  assert.equal(replacement.created, true);
+  assert.equal(replacement.job.status, "pending_approval");
+  await rejectJob({ workspaceId, jobId: replacement.job.id, approverUserId: approver });
+  assert.equal((await pool.query("SELECT state FROM certops_acme_store_enrollments WHERE original_job_id=$1", [replacement.job.id])).rows[0].state, "cancelled_no_effect");
+
+  const running = await runRenewal({ idempotencyKey: randomUUID() });
+  const claimId = randomUUID();
+  await pool.query(`UPDATE certificate_jobs SET status='running', claimed_by_agent_id=$2,
+    claim_id=$3, lease_renewed_at=NOW(), lease_expires_at=NOW()+INTERVAL '5 minutes', attempt_count=1
+    WHERE id=$1`, [running.job.id, agentId, claimId]);
+  const orphaned = await tx(client => cancelCertificateJob({
+    client, workspaceId, jobId: running.job.id, actorUserId: user,
+  }));
+  assert.equal(orphaned.status, "orphaned_unknown_effect");
+  const recovery = await persistence.lookupAcmeStoreRecoveryByJob({ client: pool, workspaceId, jobId: running.job.id });
+  assert.equal(recovery.recoveryAvailable, true);
+  assert.equal(recovery.state, "keygen_intent");
+  await assert.rejects(runRenewal({ idempotencyKey: randomUUID() }), { code: "CERTOPS_ACME_STORE_ORDER_UNCERTAIN" });
 });
 
 

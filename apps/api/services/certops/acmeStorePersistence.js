@@ -33,7 +33,7 @@ async function createAcmeStoreEnrollmentTx({ client, enrollmentId, request }) {
     fail("certificate owner or predecessor does not match frozen ACME enrollment");
   }
   const open = await client.query(`SELECT id,state FROM certops_acme_store_enrollments
-    WHERE workspace_id=$1::uuid AND certificate_id=$2::uuid AND state <> 'installed' FOR UPDATE`, [r.workspaceId, r.certificateId]);
+    WHERE workspace_id=$1::uuid AND certificate_id=$2::uuid AND state NOT IN ('installed', 'cancelled_no_effect') FOR UPDATE`, [r.workspaceId, r.certificateId]);
   if (open.rows.length) {
     const error = new Error("An earlier ACME order may still have effects; reconcile it before issuing again");
     error.code = "CERTOPS_ACME_STORE_ORDER_UNCERTAIN";
@@ -63,6 +63,38 @@ async function createAcmeStoreEnrollmentTx({ client, enrollmentId, request }) {
   [enrollmentId, r.workspaceId, r.certificateId, r.agentId, r.jobId, containerForJob(r.jobId), frozen.requestBytes, frozen.requestSha256]);
   if (inserted.rows.length !== 1) fail("could not persist ACME enrollment");
   return { enrollmentId, requestSha256: frozen.requestSha256 };
+}
+
+function isAcmeStoreEnrollmentJob(job) {
+  return !job.enrollmentId && job.payload?.target?.type === "windows-cert-store" &&
+    ["issue", "renew", "continue-enrollment"].includes(job.operation);
+}
+
+// The caller owns the job row and has recorded a pre-execution terminal
+// decision. Keep the frozen request for idempotent replay and audit history.
+async function cancelUnstartedAcmeStoreEnrollmentTx({ client, workspaceId, jobId }) {
+  transaction(client);
+  const result = await client.query(`WITH unstarted AS (
+    SELECT e.id FROM certops_acme_store_enrollments e
+    JOIN certificate_jobs j ON j.workspace_id=e.workspace_id AND j.id=e.original_job_id
+    WHERE e.workspace_id=$1::uuid AND e.current_job_id=$2::uuid
+      AND e.current_job_id=e.original_job_id AND e.state='keygen_intent'
+      AND j.operation IN ('issue','renew') AND j.enrollment_id IS NULL AND j.mode='real'
+      AND j.payload->'target'->>'type'='windows-cert-store'
+      AND j.subject_type='managed_certificate' AND j.subject_id=e.certificate_id::text
+      AND j.assigned_agent_id=e.agent_id AND j.status IN ('cancelled','rejected')
+      AND j.lease_renewed_at IS NULL AND j.needs_operator_reconciliation IS NOT TRUE
+      AND e.csr_sha256 IS NULL AND e.csr_spki_sha256 IS NULL
+      AND e.fingerprint_sha256 IS NULL AND e.order_reference_sha256 IS NULL
+      AND NOT EXISTS (SELECT 1 FROM certificate_evidence ev
+        WHERE (ev.workspace_id,ev.job_id)=(j.workspace_id,j.id))
+      AND NOT EXISTS (SELECT 1 FROM certops_acme_store_receipts r
+        WHERE (r.workspace_id,r.enrollment_id)=(e.workspace_id,e.id))
+    FOR UPDATE OF e SKIP LOCKED
+  )
+  UPDATE certops_acme_store_enrollments e SET state='cancelled_no_effect',updated_at=NOW()
+  FROM unstarted WHERE e.id=unstarted.id`, [workspaceId, jobId]);
+  return result.rowCount === 1;
 }
 
 async function applyAcmeStoreReceiptTx({ client, workspaceId, enrollmentId, authenticatedAgentRowId, claimId, receiptId, evidence }) {
@@ -128,7 +160,7 @@ async function loadAcmeStoreBindingTx({ client, workspaceId, jobId, agentId }) {
     JOIN certops_agents a ON a.workspace_id=e.workspace_id AND a.id=e.agent_id
     JOIN certificate_jobs j ON j.workspace_id=e.workspace_id AND j.id=e.current_job_id
     JOIN certificate_jobs original ON original.workspace_id=e.workspace_id AND original.id=e.original_job_id
-    WHERE e.workspace_id=$1::uuid AND e.current_job_id=$2::uuid FOR UPDATE OF e,j,a`, [workspaceId, jobId])).rows[0];
+    WHERE e.workspace_id=$1::uuid AND e.current_job_id=$2::uuid AND e.state<>'cancelled_no_effect' FOR UPDATE OF e,j,a`, [workspaceId, jobId])).rows[0];
   if (!row || String(row.agent_id) !== agentId || String(row.assigned_agent_id) !== agentId || row.agent_status !== "active" ||
       row.subject_type !== "managed_certificate" ||
       (String(row.original_job_id) === jobId ? !["issue", "renew"].includes(row.operation) :
@@ -272,4 +304,4 @@ async function reconcileAcmeStoreRecoveryTx({ client, workspaceId, jobId, agentI
     metadata: { enrollmentId: rows[0].enrollment_id, originalJobId: rows[0].original_job_id, reconciliationJobId: jobId } });
 }
 
-module.exports = { createAcmeStoreEnrollmentTx, applyAcmeStoreReceiptTx, loadAcmeStoreBindingTx, lookupAcmeStoreRecoveryByJob, continueAcmeStoreEnrollmentTx, reconcileAcmeStoreRecoveryTx };
+module.exports = { createAcmeStoreEnrollmentTx, isAcmeStoreEnrollmentJob, cancelUnstartedAcmeStoreEnrollmentTx, applyAcmeStoreReceiptTx, loadAcmeStoreBindingTx, lookupAcmeStoreRecoveryByJob, continueAcmeStoreEnrollmentTx, reconcileAcmeStoreRecoveryTx };
