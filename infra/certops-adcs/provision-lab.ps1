@@ -23,6 +23,9 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [ValidateSet('root','subordinate')][string]$HierarchyRole='root',
   [ValidateSet('all','issuance','renewals','pending-and-ca','templates-and-uncertain','uncertain-recovery')][string]$Shard='all',
   [ValidateSet('0','1')][string]$BundledWindowsRuntime='0',
+  [ValidateSet('0','1')][string]$StoreNoIisPrepare='0',
+  [string]$StoreRegistrationReceipt,
+  [string]$StoreRegistrationSha256,
   [ValidateSet('Standard_D2s_v5','Standard_D2as_v5')][string]$VmSize = 'Standard_D2s_v5',
   [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]{1,49}$')][string]$Location)
 $ErrorActionPreference = 'Stop'
@@ -42,11 +45,29 @@ if($ResponseLossExperiment -ne '0' -and $JournalPhaseExperiment -ne 'none'){thro
 if($PendingElapsedQualification -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Elapsed pending qualification requires its isolated four-hour Server2022 en-US profile'}
 if($Retention24hPrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $Retention24hNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Retention24h requires explicit isolated four-hour Server2022 en-US preparation'}
 if($AdcsTtl24hPrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $AdcsTtl24hNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Default ADCS TTL requires explicit isolated four-hour Server2022 en-US preparation'}
+$storeRegistration = $null
+$storeMemberVmId = $null
+$storeGuestReceipt = $null
+$storeDeploymentScope = @()
+if($StoreNoIisPrepare -eq '1'){
+  if($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or
+    $QualificationScope -ne 'comprehensive' -or $HierarchyRole -ne 'root' -or $Shard -ne 'all' -or
+    $JournalPhaseExperiment -ne 'none' -or
+    '1' -in @($IssuerReassignment,$PendingElapsedQualification,$Retention24hPrepare,$AdcsTtl24hPrepare,
+      $RetentionCadencePrepare,$ResponseLossExperiment,$BundledWindowsRuntime,$DebugMode)){
+    throw 'Store preparation requires the isolated four-hour Server 2022 en-US profile'
+  }
+  . (Join-Path $PSScriptRoot 'store-noiis-prepare-guard.ps1')
+  $storeRegistration = Read-CertOpsStoreRegistration -Path $StoreRegistrationReceipt -ExpectedSha256 $StoreRegistrationSha256 -ResourceGroup $ResourceGroup -Location $Location
+  $storeDeploymentScope = @('--subscription',$env:AZURE_SUBSCRIPTION_ID)
+} elseif($PSBoundParameters.ContainsKey('StoreRegistrationReceipt') -or $PSBoundParameters.ContainsKey('StoreRegistrationSha256')){
+  throw 'Store registration is only accepted for explicit no-IIS preparation'
+}
 & (Join-Path $PSScriptRoot 'assert-lab-capacity.ps1') -Location $Location -VmSize $VmSize
 $password = 'Tt!' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)) + 'a1'
 Write-Output "::add-mask::$password"
 $createdAt = [DateTimeOffset]::UtcNow
-$expiresAt = $createdAt.AddHours($Hours).ToString('o')
+$expiresAt = if($storeRegistration){$storeRegistration.expiresAt}else{$createdAt.AddHours($Hours).ToString('o')}
 $parameterPath = Join-Path $env:RUNNER_TEMP 'certops-adcs-parameters.json'
 $candidateSha = $env:GITHUB_SHA
 if ($candidateSha -notmatch '^[a-f0-9]{40}$') { throw 'Qualification candidate must be a Git commit SHA' }
@@ -105,7 +126,7 @@ function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [strin
     if($verifyDiagnostic.Success){Write-Output $verifyDiagnostic.Value.Trim()}
     throw "Expected stage receipt $Marker absent for $Machine ($([IO.Path]::GetFileName($Script)))"
   }
-  foreach($field in @('CERTOPS_ROOT_CERT','CERTOPS_SUBORDINATE_REQUEST','CERTOPS_SUBORDINATE_CERT')){
+  foreach($field in @('CERTOPS_ROOT_CERT','CERTOPS_SUBORDINATE_REQUEST','CERTOPS_SUBORDINATE_CERT','CERTOPS_STORE_NOIIS_RECEIPT')){
     $match=[regex]::Match($message,"(?m)^$field=([A-Za-z0-9+/=]+)\s*$")
     if($match.Success){$publicStageData[$field]=$match.Groups[1].Value}
   }
@@ -167,20 +188,28 @@ function Start-ControlPlane() {
   $receipts.Add('CERTOPS_STAGE=private-https-control-plane-running')
 }
 try {
-  $existing = az group exists --name $ResourceGroup
-  if ($LASTEXITCODE -ne 0 -or $existing -ne 'false') { throw 'Qualification resource group must not already exist' }
-  $initialTags=@('purpose=certops-adcs-qualification',"expiresAt=$expiresAt","createdAt=$($createdAt.ToString('o'))","candidateSha=$candidateSha")
-  if($Retention24hPrepare -eq '1'){
-    # Initial ownership permits only exact failed-prepare cleanup. It does not
-    # grant the extended lease; that requires independent artifact/task readback.
-    $initialTags+=@('retentionPrepareKind=certops-native-retention24h',"retentionPrepareNonce=$Retention24hNonce","retentionPrepareRunId=$env:GITHUB_RUN_ID","retentionPrepareRunAttempt=$env:GITHUB_RUN_ATTEMPT")
+  if(-not $storeRegistration){
+    $existing = az group exists --name $ResourceGroup
+    if ($LASTEXITCODE -ne 0 -or $existing -ne 'false') { throw 'Qualification resource group must not already exist' }
+    $initialTags=@('purpose=certops-adcs-qualification',"expiresAt=$expiresAt","createdAt=$($createdAt.ToString('o'))","candidateSha=$candidateSha")
+    if($Retention24hPrepare -eq '1'){
+      # Initial ownership permits only exact failed-prepare cleanup. It does not
+      # grant the extended lease; that requires independent artifact/task readback.
+      $initialTags+=@('retentionPrepareKind=certops-native-retention24h',"retentionPrepareNonce=$Retention24hNonce","retentionPrepareRunId=$env:GITHUB_RUN_ID","retentionPrepareRunAttempt=$env:GITHUB_RUN_ATTEMPT")
+    }
+    if($AdcsTtl24hPrepare -eq '1'){$initialTags+=@('ttl24hPrepareKind=certops-native-adcs-ttl24h',"ttl24hPrepareNonce=$AdcsTtl24hNonce","ttl24hPrepareRunId=$env:GITHUB_RUN_ID","ttl24hPrepareRunAttempt=$env:GITHUB_RUN_ATTEMPT")}
+    if($RetentionCadencePrepare -eq '1'){$initialTags+=@('cadencePrepareKind=certops-native-installed-retention-cadence',"cadencePrepareNonce=$RetentionCadenceNonce","cadencePrepareRunId=$env:GITHUB_RUN_ID","cadencePrepareRunAttempt=$env:GITHUB_RUN_ATTEMPT")}
+    az group create --name $ResourceGroup --location $Location --tags $initialTags -o none
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create isolated lab group' }
   }
-  if($AdcsTtl24hPrepare -eq '1'){$initialTags+=@('ttl24hPrepareKind=certops-native-adcs-ttl24h',"ttl24hPrepareNonce=$AdcsTtl24hNonce","ttl24hPrepareRunId=$env:GITHUB_RUN_ID","ttl24hPrepareRunAttempt=$env:GITHUB_RUN_ATTEMPT")}
-  if($RetentionCadencePrepare -eq '1'){$initialTags+=@('cadencePrepareKind=certops-native-installed-retention-cadence',"cadencePrepareNonce=$RetentionCadenceNonce","cadencePrepareRunId=$env:GITHUB_RUN_ID","cadencePrepareRunAttempt=$env:GITHUB_RUN_ATTEMPT")}
-  az group create --name $ResourceGroup --location $Location --tags $initialTags -o none
-  if ($LASTEXITCODE -ne 0) { throw 'Could not create isolated lab group' }
   @{ vmSize=@{value=$VmSize}; expiresAt=@{value=$expiresAt}; candidateSha=@{value=$candidateSha}; windowsVersion=@{value=$WindowsVersion}; hierarchy=@{value=($HierarchyRole -eq 'subordinate')}; issuerSwitch=@{value=($IssuerReassignment -eq '1')}; adminPassword=@{value=$password} } | ConvertTo-Json -Depth 5 | Set-Content $parameterPath
-  az deployment group create -g $ResourceGroup --name qualification --template-file (Join-Path $PSScriptRoot 'main.bicep') --parameters "@$parameterPath" --no-wait -o none
+  if($storeRegistration){
+    Assert-CertOpsStoreRegistrationScope -Registration $storeRegistration
+    $receipts.Add('CERTOPS_STAGE=protected-store-registration-and-expiry-read-back')
+    if([string]::IsNullOrWhiteSpace($env:GITHUB_OUTPUT)){throw 'Protected preparation step output is required'}
+    Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "cleanup_activation=$StoreRegistrationSha256"
+  }
+  az deployment group create -g $ResourceGroup --name qualification --template-file (Join-Path $PSScriptRoot 'main.bicep') --parameters "@$parameterPath" --no-wait -o none @storeDeploymentScope
   if ($LASTEXITCODE -ne 0) { throw 'Private lab deployment failed' }
   Wait-LabDeployment
   if($Language -ne 'en-US'){
@@ -201,6 +230,18 @@ try {
     if(-not $publicStageData.CERTOPS_SUBORDINATE_CERT){throw 'Signed subordinate public certificate missing'}
     Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'hierarchy-subordinate.ps1') 'CERTOPS_STAGE=enterprise-subordinate-service-running' @("DomainPassword=$password","RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)","SubordinateCertificateBase64=$($publicStageData.CERTOPS_SUBORDINATE_CERT)")
   }else{Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'domain-ca.ps1') 'CERTOPS_STAGE=enterprise-ca-service-running' @("DomainPassword=$password")}
+  if($storeRegistration){
+    $originalVmId = Read-CertOpsStoreMemberVmId -Registration $storeRegistration
+    Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'domain-member.ps1') 'CERTOPS_STAGE=member-joined-reboot-required' @("DomainPassword=$password",'IisMode=absent')
+    Restart-LabMachine 'windows-agent'
+    Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'store-noiis-clean-member.ps1') 'CERTOPS_STAGE=store-noiis-clean-member-ready'
+    $preparedVmId = Read-CertOpsStoreMemberVmId -Registration $storeRegistration
+    if($preparedVmId -cne $originalVmId){throw 'Prepared Store member was replaced during guest readiness readback'}
+    $storeGuestReceipt = Read-CertOpsStoreGuestReceipt -Encoded $publicStageData.CERTOPS_STORE_NOIIS_RECEIPT
+    $storeMemberVmId = $preparedVmId
+    $reportStatus = 'store-noiis-infrastructure-prepared'
+    return
+  }
   $templateStagePath=Join-Path $env:RUNNER_TEMP ("certops-templates-{0}.ps1" -f [Guid]::NewGuid().ToString('N'))
   try {
     New-TemplateStageScript (Join-Path $PSScriptRoot 'templates.ps1') (Join-Path $PSScriptRoot 'safety-cases.json') $templateStagePath
@@ -288,7 +329,17 @@ try {
   New-Item -ItemType Directory -Force 'qualification-results' | Out-Null
   $scenarioReport=if($IssuerReassignment -eq '1'){'native-issuer-reassignment.json'}elseif($RetentionCadencePrepare -eq '1'){'retention-cadence-prepare-public.json'}elseif($AdcsTtl24hPrepare -eq '1'){'adcs-ttl24h-prepare-public.json'}elseif($Retention24hPrepare -eq '1'){'retention24h-prepare-public.json'}elseif($PendingElapsedQualification -eq '1'){'enterprise-adcs-elapsed-pending-real.json'}elseif($HierarchyRole -eq 'subordinate'){'enterprise-adcs-hierarchy-real.json'}else{'enterprise-adcs-real.json'}
   if($QualificationScope -eq 'operator-acceptance'){$scenarioReport='enterprise-adcs-package-acceptance.json'}
-  @{ candidateSha=$candidateSha; scope='disposable-enterprise-adcs-infrastructure'; qualificationScope=$QualificationScope; status=$reportStatus; resourceGroup=$ResourceGroup; expiresAt=$expiresAt; scenarioReport=$scenarioReport; hierarchyRole=$HierarchyRole; noncoverage=@('CMC renewal','Additional uncertainty fault variants','Retention and adoption'); stages=@($receipts) } | ConvertTo-Json -Depth 6 | Set-Content 'qualification-results/enterprise-adcs-infrastructure.json'
+  if($storeRegistration){
+    if($storeGuestReceipt){[IO.File]::WriteAllBytes((Join-Path (Resolve-Path 'qualification-results') 'store-noiis-member.json'),$storeGuestReceipt.bytes)}
+    @{scope='store-noiis-infrastructure-preparation';status=$reportStatus;resourceGroup=$ResourceGroup;
+      memberName='windows-agent';memberVmId=$storeMemberVmId;memberReadinessSha256=$storeGuestReceipt.sha256;
+      workflowCommit=$candidateSha;sourceCommit=$storeRegistration.mediaSourceCommit;
+      mediaReceiptSha256=$storeRegistration.mediaReceiptSha256;registrationSha256=$StoreRegistrationSha256;
+      expiresAt=$expiresAt;qualificationPassed=$false;agentInstalledByPreparation=$false;stages=@($receipts)} |
+      ConvertTo-Json -Depth 5 | Set-Content 'qualification-results/store-noiis-infrastructure.json'
+  } else {
+    @{ candidateSha=$candidateSha; scope='disposable-enterprise-adcs-infrastructure'; qualificationScope=$QualificationScope; status=$reportStatus; resourceGroup=$ResourceGroup; expiresAt=$expiresAt; scenarioReport=$scenarioReport; hierarchyRole=$HierarchyRole; noncoverage=@('CMC renewal','Additional uncertainty fault variants','Retention and adoption'); stages=@($receipts) } | ConvertTo-Json -Depth 6 | Set-Content 'qualification-results/enterprise-adcs-infrastructure.json'
+  }
   Remove-Item -LiteralPath $parameterPath -Force -ErrorAction SilentlyContinue
   $password = $null
 }

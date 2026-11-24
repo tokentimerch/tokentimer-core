@@ -1,0 +1,171 @@
+name: "CertOps / Prepare isolated no-IIS AD CS member"
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_workflow_sha:
+        description: Exact verified Core main commit reviewed for this preparation
+        type: string
+        required: true
+      media_source_sha:
+        description: Exact verified signed media source commit
+        type: string
+        required: true
+      media_receipt_sha256:
+        description: Approved sealed media custody receipt SHA-256
+        type: string
+        required: true
+      location:
+        description: Azure location for the approved isolated campaign
+        type: string
+        required: true
+concurrency:
+  group: certops-adcs-store-prepare-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+env:
+  STORE_GROUP: tt-certops-${{ github.run_id }}-${{ github.run_attempt }}
+jobs:
+  register:
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    environment: certops-adcs-lab
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      registration: ${{ steps.register.outputs.registration }}
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      GH_TOKEN: ${{ github.token }}
+      STORE_EXPECTED_SHA: ${{ inputs.reviewed_workflow_sha }}
+      STORE_MEDIA_SOURCE: ${{ inputs.media_source_sha }}
+      STORE_MEDIA_RECEIPT_SHA: ${{ inputs.media_receipt_sha256 }}
+      STORE_LOCATION: ${{ inputs.location }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - shell: pwsh
+        run: ./infra/certops-adcs/login-oidc.ps1
+      - name: Register only the empty four-hour owned resource group
+        id: register
+        shell: pwsh
+        run: ./infra/certops-adcs/store-noiis-registration.ps1 -Mode register
+  verify:
+    needs: register
+    runs-on: ubuntu-24.04
+    environment: certops-adcs-cleanup
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    outputs:
+      receipt: ${{ steps.verify.outputs.receipt }}
+      receipt_sha256: ${{ steps.verify.outputs.receipt_sha256 }}
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      GH_TOKEN: ${{ github.token }}
+      STORE_REGISTRATION: ${{ needs.register.outputs.registration }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - shell: pwsh
+        run: ./infra/certops-adcs/login-oidc.ps1
+      - name: Independently read the owned group and verify expiry cleanup
+        id: verify
+        shell: pwsh
+        run: ./infra/certops-adcs/store-noiis-registration.ps1 -Mode verify
+      - name: Preserve immutable registration and independent expiry readback
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: disposable-store-registration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            qualification-results/store-noiis-registration.json
+            qualification-results/store-noiis-registration.sha256
+          if-no-files-found: error
+          retention-days: 1
+  prepare:
+    needs: [register, verify]
+    runs-on: ubuntu-24.04
+    environment: certops-adcs-lab
+    timeout-minutes: 180
+    outputs:
+      cleanup_activation: ${{ steps.prepare.outputs.cleanup_activation }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      STORE_LOCATION: ${{ inputs.location }}
+      STORE_REGISTRATION_RECEIPT: ${{ needs.verify.outputs.receipt }}
+      STORE_REGISTRATION_SHA256: ${{ needs.verify.outputs.receipt_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - shell: pwsh
+        run: ./infra/certops-adcs/login-oidc.ps1
+      - name: Prepare and verify the clean no-IIS member without an installed agent
+        id: prepare
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'store-registration.json'
+          try {
+            [IO.File]::WriteAllText($path,$env:STORE_REGISTRATION_RECEIPT,[Text.UTF8Encoding]::new($false))
+            ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:STORE_GROUP -Hours 4 -WindowsVersion 2022 -Language en-US -Location $env:STORE_LOCATION -StoreNoIisPrepare 1 -StoreRegistrationReceipt $path -StoreRegistrationSha256 $env:STORE_REGISTRATION_SHA256
+          } finally {
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+          }
+      - name: Publish only the sanitized preparation result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: disposable-store-noiis-preparation-${{ github.run_attempt }}
+          path: |
+            qualification-results/store-noiis-infrastructure.json
+            qualification-results/store-noiis-member.json
+          if-no-files-found: ignore
+          retention-days: 1
+  cleanup-failed:
+    needs: [register, verify, prepare]
+    if: always() && needs.verify.result == 'success' && needs.prepare.result != 'success' && needs.prepare.outputs.cleanup_activation != ''
+    runs-on: ubuntu-24.04
+    environment: certops-adcs-cleanup
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      STORE_REGISTRATION: ${{ needs.register.outputs.registration }}
+      STORE_CLEANUP_ACTIVATION_SHA256: ${{ needs.prepare.outputs.cleanup_activation }}
+      STORE_REGISTRATION_SHA256: ${{ needs.verify.outputs.receipt_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - shell: pwsh
+        run: ./infra/certops-adcs/login-oidc.ps1
+      - name: Destroy only the exact owned group after incomplete preparation
+        shell: pwsh
+        run: ./infra/certops-adcs/store-noiis-registration.ps1 -Mode remove
+      - name: Preserve owned cleanup receipt
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: disposable-store-noiis-cleanup-${{ github.run_attempt }}
+          path: qualification-results/enterprise-adcs-cleanup.json
+          if-no-files-found: ignore
+          retention-days: 1
