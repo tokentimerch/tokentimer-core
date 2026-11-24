@@ -184,6 +184,54 @@ test("named Store interruption requires a bound external loss observer and an un
   assert.throws(() => verifyNamedPostAcceptWindow(fault, binding, { ...receipt, jobId: "another-job" }));
 });
 
+test("named Store arming drains a returned observer before reporting an invalid interface", async () => {
+  const { NAMED_STORE_SCOPE } = require("./certops-adcs-store-named-observation");
+  const { armStoreAcceptObserver } = require("./certops-adcs-store-native-driver");
+  const calls = [];
+  const observer = {
+    async stopAndDrain() { calls.push("drain"); },
+    hasLiveChild() { calls.push("verify"); return false; },
+  };
+  const context = { observationScope: NAMED_STORE_SCOPE,
+    createNamedStoreAcceptObserver: () => observer, async readNamedStorePhaseEvidence() {} };
+  await assert.rejects(armStoreAcceptObserver(context, {}), (error) => {
+    assert.equal(error.code, "ERR_ASSERTION");
+    assert.match(error.message, /Independent observer readiness is required/);
+    return true;
+  });
+  assert.deepEqual(calls, ["drain", "verify"]);
+});
+
+test("named Store arming retains validation and unproven startup drainage failures", async () => {
+  const { NAMED_STORE_SCOPE } = require("./certops-adcs-store-named-observation");
+  const { armStoreAcceptObserver } = require("./certops-adcs-store-native-driver");
+  const drainError = new Error("independent observer stop failed");
+  let drainWithoutLivenessCalls = 0;
+  const cases = [
+    [{ async stopAndDrain() { throw drainError; } }, drainError],
+    [{ async stopAndDrain() {}, hasLiveChild() { return true; } }, /observer drainage was not proven/],
+    [{ async stopAndDrain() { drainWithoutLivenessCalls++; } }, /cannot prove liveness after drainage/],
+    [{}, /Independent observer cannot be drained/],
+  ];
+  for (const [observer, expectedError] of cases) {
+    const context = { observationScope: NAMED_STORE_SCOPE,
+      createNamedStoreAcceptObserver: () => observer, async readNamedStorePhaseEvidence() {} };
+    await assert.rejects(armStoreAcceptObserver(context, {}), (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.match(error.message, /preserve live capture and CA observation/);
+      assert.equal(error.errors.length, 2);
+      assert.match(error.errors[0].message, /Independent observer readiness is required/);
+      if (expectedError instanceof Error) {
+        assert.equal(error.errors[1], expectedError);
+      } else {
+        assert.match(error.errors[1].message, expectedError);
+      }
+      return true;
+    });
+  }
+  assert.equal(drainWithoutLivenessCalls, 1);
+});
+
 test("named Store phase readback binds the exact certreq lifetime, input and enrolled target", () => {
   const { createHash } = require("node:crypto");
   const { MAX_PHASE_EVIDENCE_BYTES, verifyNamedStorePhaseEvidence } = require("./certops-adcs-store-phase-evidence");

@@ -384,6 +384,8 @@ async function verifyRecoveryCheckpoint({ readNativeOperationCounts, readIndepen
 function requireActiveObservationInterruption() {
   throw new Error("Native AD CS qualification is blocked: active observation-loss interruption is not implemented");
 }
+class ObserverStartupDrainageError extends AggregateError {}
+
 async function armStoreAcceptObserver(context, binding) {
   const { workDir, configDir, root, captureId, observationRunId, serviceProcess } = binding;
   if (context.observationScope !== NAMED_STORE_SCOPE) {
@@ -396,10 +398,25 @@ async function armStoreAcceptObserver(context, binding) {
     launcherSha256: context.expectedLauncherSha256,
     captureId, observationRunId, serviceProcess,
   });
-  assert.equal(typeof observer?.ready?.then, "function", "Independent observer readiness is required");
-  assert.equal(typeof observer.result?.then, "function", "Independent post-accept receipt is required");
-  for (const name of ["bindTarget", "readDrainage", "stopAndDrain", "hasLiveChild"]) {
-    assert.equal(typeof observer[name], "function", "Independent observer must bind the target and support drainage");
+  try {
+    assert.equal(typeof observer?.ready?.then, "function", "Independent observer readiness is required");
+    assert.equal(typeof observer.result?.then, "function", "Independent post-accept receipt is required");
+    for (const name of ["bindTarget", "readDrainage", "stopAndDrain", "hasLiveChild"]) {
+      assert.equal(typeof observer[name], "function", "Independent observer must bind the target and support drainage");
+    }
+  } catch (error) {
+    if (observer) {
+      try {
+        assert.equal(typeof observer.stopAndDrain, "function", "Independent observer cannot be drained");
+        await observer.stopAndDrain();
+        assert.equal(typeof observer.hasLiveChild, "function", "Independent observer cannot prove liveness after drainage");
+        assert.equal(observer.hasLiveChild(), false, "Preserve native state: observer drainage was not proven");
+      } catch (drainError) {
+        throw new ObserverStartupDrainageError([error, drainError],
+          "Independent observer startup drainage failed; preserve live capture and CA observation for operator intervention");
+      }
+    }
+    throw error;
   }
   return observer;
 }
@@ -439,6 +456,7 @@ async function qualifyNativeStoreRecovery(context) {
   const receipt = path.join(workDir, "store-accept-target.json");
   const query = (sql, args = []) => fixture.pool.query(sql, args);
   let observer, jobId, certificateId, enrollmentId, initial, recoveryJobId, beforeCounts, capture, caObservation, lastCounts, lastWindow, primaryError;
+  let observerStartupDrainageFailed = false;
   let result, drained, serviceDrainageSha256;
   let stage = "initializing";
   try {
@@ -604,6 +622,7 @@ async function qualifyNativeStoreRecovery(context) {
       },
     });
   } catch (error) {
+    observerStartupDrainageFailed = error instanceof ObserverStartupDrainageError;
     primaryError = error;
     try {
       await recordEvidence("failure", { candidateSha256: context.candidateArchiveSha256, stage, code: "QUALIFICATION_FAILED" });
@@ -619,14 +638,20 @@ async function qualifyNativeStoreRecovery(context) {
           captureId: capture?.captureId ?? null, serviceProcess,
         });
       }
-      drained = await drainQualificationResources({ observer, caObservation, capture, lastWindow, lastCounts, primaryError });
+      // Leave independent evidence sources live when the startup drain cannot be verified.
+      if (!observerStartupDrainageFailed) {
+        drained = await drainQualificationResources({ observer, caObservation, capture, lastWindow, lastCounts, primaryError });
+      }
     } catch (drainError) {
+      const failure = observerStartupDrainageFailed
+        ? new AggregateError([primaryError, drainError], "Observer startup and owned service drainage failed")
+        : drainError;
       try {
         await recordEvidence("failure", { candidateSha256: context.candidateArchiveSha256, stage: "drainage", code: "QUALIFICATION_FAILED" });
       } catch (evidenceError) {
-        throw new AggregateError([drainError, evidenceError], "Drainage failed and public failure evidence was not durable");
+        throw new AggregateError([failure, evidenceError], "Drainage failed and public failure evidence was not durable");
       }
-      throw drainError;
+      throw failure;
     }
     // Keep the owned target receipt for evidence; a later run needs a fresh directory.
   }
