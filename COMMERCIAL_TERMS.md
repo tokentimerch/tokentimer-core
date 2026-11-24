@@ -50,10 +50,16 @@ remain proprietary, paid offerings alongside the open-source core.
 TokenTimer Enterprise includes additional features and is available under a
 separate commercial license. Contact sales@tokentimer.ch for details.
 
+Core includes single sign-on (SSO) with one active identity provider per
+installation, either OIDC or SAML. Both Core and Enterprise support
+group-to-role mapping. LDAP or Active Directory users can sign in through
+a federated identity provider in either edition.
+
 Enterprise features include:
 
 - Advanced integrations and auto-sync (AWS, Azure, GCP, HashiCorp Vault, GitHub, GitLab)
-- Single sign-on (OIDC, SAML) with group-to-role mapping, including LDAP or Active Directory users federated through an identity provider
+- Multiple active SSO providers on the same installation, each with its own
+  sign-in option and group-to-role mappings
 - Air-gapped deployment support
 - High availability coordination
 - Priority support
