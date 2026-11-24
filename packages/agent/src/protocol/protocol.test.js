@@ -2,6 +2,12 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+const { hashDeploymentDestinationValidation } = require("../../../contracts/certops/deployment-destination.cjs");
+const { drainOutbox, enqueueOutboxEntry, listOutboxEntries } = require("../outbox");
 
 const {
   ROUTES,
@@ -663,6 +669,296 @@ test("reportResult: validates status and scope for synthetic destination executi
     await assert.rejects(client.reportResult(invalid), { code: AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE });
   }
   assert.equal(calls.length, 2);
+});
+
+function destinationValidationFixture() {
+  const dispatch = {
+    agentId: "agent-1",
+    jobId: "destination-validation-job",
+    claimId: "destination-validation-claim",
+    workspaceId: "11111111-2222-4333-8444-555555555555",
+    deploymentDestination: {
+      version: 1,
+      zoneRef: "zone-1",
+      destinationKind: "test-appliance",
+      destinationRef: "portal-1",
+      materialRef: "material-1",
+      materialRevision: "revision-2",
+      fingerprintSha256: "a".repeat(64),
+    },
+  };
+  const validation = {
+    configurationSha256: "b".repeat(64),
+    trustSha256: "c".repeat(64),
+    observedStateSha256: "d".repeat(64),
+    planSha256: "e".repeat(64),
+    affectedServiceRefs: ["portal-https"],
+    permittedEffects: ["replace-certificate"],
+  };
+  const nonce = "destination-validation-nonce-001";
+  const result = {
+    jobId: dispatch.jobId,
+    claimId: dispatch.claimId,
+    attemptId: dispatch.claimId,
+    nonce,
+    status: "succeeded",
+    deploymentDestinationValidation: {
+      version: 1, validation, bindingSha256: hashDeploymentDestinationValidation(dispatch, validation),
+    },
+  };
+  // The composed caller uses independently retained, verified dispatch context.
+  const verifiesReceipt = (context) => context.agentId === dispatch.agentId &&
+    context.jobId === dispatch.jobId && context.claimId === dispatch.claimId &&
+    context.attemptId === dispatch.claimId && context.nonce === nonce && context.status === "succeeded" &&
+    context.receipt.bindingSha256 === hashDeploymentDestinationValidation(dispatch, context.receipt.validation);
+  return { result, verifiesReceipt };
+}
+
+const destinationProtocolOptions = {
+  serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0",
+  getCredential: () => CREDENTIAL,
+};
+const ordinaryResult = { jobId: "ordinary-job", attemptId: "ordinary-attempt", status: "succeeded" };
+const destinationValidationDenied = () => ({
+  code: AGENT_PROTOCOL_ERROR_CODES.DESTINATION_VALIDATION_RECEIPT_UNAUTHORIZED,
+});
+
+test("destination validation receipt: checks authority after the preceding fetch settles", async () => {
+  const { result, verifiesReceipt } = destinationValidationFixture();
+  const predecessorStarted = Promise.withResolvers();
+  const releasePredecessor = Promise.withResolvers();
+  const receiptCredentialRead = Promise.withResolvers();
+  const calls = [];
+  let credentialReads = 0;
+  let guardCalls = 0;
+  let sequence = 0;
+  let authorized = true;
+  const client = createProtocolClient({
+    ...destinationProtocolOptions,
+    getCredential: () => {
+      if (++credentialReads === 2) receiptCredentialRead.resolve();
+      return CREDENTIAL;
+    },
+    sequenceAllocator: { next: () => ++sequence },
+    fetchImpl: async (url, init) => {
+      calls.push({ route: new URL(url).pathname, sequence: JSON.parse(init.body).sequence });
+      if (calls.length === 1) {
+        predecessorStarted.resolve();
+        await releasePredecessor.promise;
+      }
+      return Response.json({});
+    },
+    authorizeDestinationValidationReceipt: (context) => {
+      guardCalls += 1;
+      return authorized && verifiesReceipt(context);
+    },
+  });
+  const heartbeat = client.heartbeat({ agentVersion: "0.1.0" });
+  await predecessorStarted.promise;
+  const denied = assert.rejects(client.reportResult(result), destinationValidationDenied());
+  await receiptCredentialRead.promise;
+  await new Promise(setImmediate);
+  try {
+    assert.equal(guardCalls, 0);
+    assert.equal(sequence, 1);
+  } finally {
+    authorized = false;
+    releasePredecessor.resolve();
+    await Promise.all([heartbeat, denied]);
+  }
+  assert.equal(guardCalls, 1);
+  assert.equal(sequence, 1);
+  assert.deepEqual(calls, [{ route: ROUTES.HEARTBEAT, sequence: 1 }]);
+
+  await client.heartbeat({ agentVersion: "0.1.0" });
+  await client.reportResult(ordinaryResult);
+  assert.equal(guardCalls, 1);
+  assert.deepEqual(calls.slice(1), [
+    { route: ROUTES.HEARTBEAT, sequence: 2 },
+    { route: ROUTES.RESULTS, sequence: 3 },
+  ]);
+});
+
+test("destination validation receipt: checks authority after a pending credential read", async () => {
+  const { result, verifiesReceipt } = destinationValidationFixture();
+  const credentialRead = Promise.withResolvers();
+  const credential = Promise.withResolvers();
+  const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
+  let authorized = true;
+  let guardCalls = 0;
+  let sequence = 0;
+  const client = createProtocolClient({
+    ...destinationProtocolOptions,
+    getCredential: () => {
+      credentialRead.resolve();
+      return credential.promise;
+    },
+    sequenceAllocator: { next: () => ++sequence },
+    authorizeDestinationValidationReceipt: (context) => {
+      guardCalls += 1;
+      return authorized && verifiesReceipt(context);
+    },
+  });
+  const denied = assert.rejects(client.reportResult(result), destinationValidationDenied());
+  await credentialRead.promise;
+  try {
+    assert.equal(guardCalls, 0);
+    assert.equal(sequence, 0);
+    assert.equal(calls.length, 0);
+  } finally {
+    authorized = false;
+    credential.resolve(CREDENTIAL);
+    await denied;
+  }
+  assert.equal(guardCalls, 1);
+  assert.equal(sequence, 0);
+  assert.equal(calls.length, 0);
+});
+
+test("destination validation receipt: authorizes the exact frozen snapshot and claim", async () => {
+  const { result, verifiesReceipt } = destinationValidationFixture();
+  const expected = structuredClone(result);
+  const credentialRead = Promise.withResolvers();
+  const credential = Promise.withResolvers();
+  const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
+  const contexts = [];
+  const abort = new AbortController();
+  const options = {
+    ...destinationProtocolOptions,
+    signal: abort.signal,
+    getCredential: () => {
+      credentialRead.resolve();
+      return credential.promise;
+    },
+  };
+  const client = createProtocolClient({
+    ...options,
+    authorizeDestinationValidationReceipt: (context) => {
+      contexts.push(context);
+      return verifiesReceipt(context);
+    },
+  });
+  const accepted = client.reportResult(result);
+  await credentialRead.promise;
+  result.deploymentDestinationValidation.validation.planSha256 = "f".repeat(64);
+  result.deploymentDestinationValidation.validation.affectedServiceRefs.push("another-service");
+  credential.resolve(CREDENTIAL);
+  assert.deepEqual(await accepted, { accepted: true });
+
+  const [context] = contexts;
+  assert.deepEqual(Object.keys(context).sort(), [
+    "agentId", "attemptId", "claimId", "jobId", "nonce", "receipt", "signal", "status",
+  ]);
+  assert(Object.isFrozen(context));
+  assert(Object.isFrozen(context.receipt));
+  assert(Object.isFrozen(context.receipt.validation));
+  assert(Object.isFrozen(context.receipt.validation.affectedServiceRefs));
+  assert(context.signal instanceof AbortSignal);
+  assert.equal(context.signal.aborted, false);
+  assert.deepEqual(context.receipt, expected.deploymentDestinationValidation);
+  assert.deepEqual(calls[0].parsedBody.body.deploymentDestinationValidation, context.receipt);
+  assert.equal(calls[0].parsedBody.body.claimId, expected.claimId);
+  assert.equal(calls[0].parsedBody.body.nonce, expected.nonce);
+  assert.equal(calls[0].init.headers.authorization, "Bearer " + CREDENTIAL);
+
+  await assert.rejects(client.reportResult({ ...expected, attemptId: "another-attempt" }), destinationValidationDenied());
+  assert.equal(contexts.length, 1);
+  for (const invalid of [
+    { ...expected, attemptId: "another-claim", claimId: "another-claim" },
+    { ...expected, nonce: "destination-validation-nonce-002" },
+    { ...expected, deploymentDestinationValidation: {
+      ...expected.deploymentDestinationValidation, bindingSha256: "f".repeat(64),
+    } },
+  ]) {
+    await assert.rejects(client.reportResult(invalid), destinationValidationDenied());
+  }
+  assert.equal(calls.length, 1);
+  assert.equal(contexts.length, 4);
+
+  const stockClient = createProtocolClient(options);
+  await stockClient.reportResult(expected);
+  await stockClient.reportResult(ordinaryResult);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[1].parsedBody.sequence, 1);
+  assert.deepEqual(calls[1].parsedBody.body.deploymentDestinationValidation, expected.deploymentDestinationValidation);
+  assert.equal(calls[2].parsedBody.sequence, 2);
+  assert.equal(Object.hasOwn(calls[2].parsedBody.body, "deploymentDestinationValidation"), false);
+  assert.equal(contexts.length, 4);
+});
+
+test("destination validation receipt: aborts a stalled guard before allocating a sequence", async () => {
+  const { result } = destinationValidationFixture();
+  const guardStarted = Promise.withResolvers();
+  const guardDecision = Promise.withResolvers();
+  const abort = new AbortController();
+  const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
+  let sequence = 0;
+  const client = createProtocolClient({
+    ...destinationProtocolOptions,
+    signal: abort.signal,
+    sequenceAllocator: { next: () => ++sequence },
+    authorizeDestinationValidationReceipt: ({ signal }) => {
+      guardStarted.resolve(signal);
+      return guardDecision.promise;
+    },
+  });
+  const denied = assert.rejects(client.reportResult(result), destinationValidationDenied());
+  const guardSignal = await guardStarted.promise;
+  assert.equal(guardSignal.aborted, false);
+  abort.abort();
+  await denied;
+  assert.equal(guardSignal.aborted, true);
+  guardDecision.resolve(true);
+  await new Promise(setImmediate);
+  assert.equal(sequence, 0);
+  assert.equal(calls.length, 0);
+});
+
+test("destination validation receipt: reauthorizes each due outbox retry", async (t) => {
+  const { result, verifiesReceipt } = destinationValidationFixture();
+  const outboxDir = fs.mkdtempSync(path.join(os.tmpdir(), "destination-receipt-outbox-"));
+  t.after(() => fs.rmSync(outboxDir, { recursive: true, force: true }));
+  const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
+  const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+  enqueueOutboxEntry(outboxDir, { result, createdAt: new Date(nowMs).toISOString() });
+  const guardReceipts = [];
+  const errors = [];
+  let authorized = false;
+  let sequence = 0;
+  const client = createProtocolClient({
+    ...destinationProtocolOptions,
+    sequenceAllocator: { next: () => ++sequence },
+    authorizeDestinationValidationReceipt: (context) => {
+      guardReceipts.push(context.receipt);
+      return authorized && verifiesReceipt(context);
+    },
+  });
+
+  const first = await drainOutbox(outboxDir, client, { now: () => nowMs, onError: (error) => errors.push(error) });
+  assert.deepEqual(first, { transmitted: 0, deferred: 0, quarantined: 0, remaining: 1 });
+  assert.equal(errors[0]?.code, destinationValidationDenied().code);
+  assert.equal(guardReceipts.length, 1);
+  assert.equal(sequence, 0);
+  assert.equal(calls.length, 0);
+
+  const [pending] = listOutboxEntries(outboxDir);
+  assert.deepEqual(pending.result, result);
+  assert.equal(pending.attempts, 1);
+  const retryAt = Date.parse(pending.nextRetryAt);
+  assert(retryAt > nowMs);
+  authorized = true;
+  const deferred = await drainOutbox(outboxDir, client, { now: () => retryAt - 1 });
+  assert.equal(deferred.deferred, 1);
+  assert.equal(guardReceipts.length, 1);
+
+  const replay = await drainOutbox(outboxDir, client, { now: () => retryAt });
+  assert.deepEqual(replay, { transmitted: 1, deferred: 0, quarantined: 0, remaining: 0 });
+  assert.deepEqual(guardReceipts, [result.deploymentDestinationValidation, result.deploymentDestinationValidation]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].parsedBody.sequence, 1);
+  assert.equal(calls[0].parsedBody.body.nonce, result.nonce);
+  assert.deepEqual(calls[0].parsedBody.body.deploymentDestinationValidation, result.deploymentDestinationValidation);
+  assert.deepEqual(listOutboxEntries(outboxDir), []);
 });
 
 test("reportResult: forwards claimId and nonce in the body when provided", async () => {

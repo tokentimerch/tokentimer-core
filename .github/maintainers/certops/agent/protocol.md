@@ -323,6 +323,8 @@ Use one authoritative controller per writer domain, including all aliases and re
 
 Preview execution receipts bind a verified confirmation or an unknown outcome to the signed owner and a separate durable intended-effect record. Core rejects these receipts before consuming a nonce.
 
+An explicitly composed client can use `authorizeDestinationValidationReceipt` to verify the exact receipt against its original authenticated dispatch and current policy. The hook runs after credential and queue waits, before sequence allocation. Replay uses the same explicit composition and isolated outbox. Denial leaves the entry pending under normal retry policy.
+
 ## Related
 
 [Agent overview](../../../../docs/certops/agent.md) · [Configuration](../../../../docs/certops/agent/configuration.md) · [Operations](../../../../docs/certops/agent/operations.md)
