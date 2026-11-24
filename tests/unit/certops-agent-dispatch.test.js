@@ -3276,10 +3276,10 @@ describe("agentDispatch.ingestResult", () => {
     assert.equal(policyChecks, 3);
   });
 
-  it("accepts only fail-closed destination execution preflight results, on first delivery and replay", async () => {
-    const { EXECUTE, INVALID_RECEIPT, persistSignedDestinationDispatch } =
+  it("accepts only fail-closed preflight results with durable execution ownership, on first delivery and replay", async () => {
+    const { EXECUTE, INVALID_RECEIPT, UNAVAILABLE, persistSignedDestinationDispatch } =
       require("../../apps/api/services/certops/deploymentDestinations");
-    const { hashDeploymentDestinationValidation } =
+    const { createDeploymentDestinationOperation, hashDeploymentDestinationValidation } =
       require("../../packages/contracts/certops/deployment-destination.cjs");
     const { preflightDeploymentDestinationExecution, registerDeploymentDestinations } =
       require("../../packages/agent/src/deployment-destinations");
@@ -3290,9 +3290,11 @@ describe("agentDispatch.ingestResult", () => {
       version: 1, zoneRef: "zone-1", destinationKind: "test-appliance", destinationRef: "portal-1",
       materialRef: "certificate-local", materialRevision: "revision-2", fingerprintSha256: "a".repeat(64),
     };
+    const domain = "f".repeat(64);
     const validation = {
       configurationSha256: "b".repeat(64), trustSha256: "c".repeat(64), observedStateSha256: "d".repeat(64),
       planSha256: "e".repeat(64), affectedServiceRefs: ["admin-portal"], permittedEffects: ["replace-cert"],
+      mutationDomainSha256: domain,
     };
     const validationJobId = "prior-validation";
     const validationClaimId = "prior-claim";
@@ -3328,11 +3330,19 @@ describe("agentDispatch.ingestResult", () => {
     });
     assert.deepEqual(preflight, { status: "blocked", errorMessage: "destination_execution_protection_unavailable" });
 
+    const operation = createDeploymentDestinationOperation(job, domain);
+    const owner = [agent.workspaceId, domain, operation.operationId, job.jobId, job.claimId, agent.id];
+    const signedJob = { ...job, deploymentDestinationOperation: operation };
     let dispatch;
-    await persistSignedDestinationDispatch({ signedJob: job, nonce, client: { query(_sql, params) {
+    await persistSignedDestinationDispatch({ signedJob, nonce, agentRowId: agent.id, client: { query(sql, params) {
+      if (sql.includes("FROM certops_deployment_destination_operations")) {
+        assert.deepEqual(params, owner);
+        return { rows: [{ operation_id: operation.operationId }] };
+      }
       dispatch = JSON.parse(params[3]);
       return { rows: [{ id: job.jobId }] };
     } } });
+    assert.deepEqual(dispatch.operation, operation);
     const liveClaim = lockedJobRow({
       operation: EXECUTE, mode: "real", status: "running", lease_live: true, assigned_agent_id: agent.id,
       payload: { deploymentDestination, deploymentDestinationExecution: job.deploymentDestinationExecution },
@@ -3341,8 +3351,14 @@ describe("agentDispatch.ingestResult", () => {
     let row = liveClaim;
     let consumes = 0;
     let writes = 0;
+    let holdExists = true;
     const dbPool = createMockPool((sql, params) => {
       if (sql.includes("FOR UPDATE")) return { rows: [row] };
+      if (sql.includes("FROM certops_deployment_destination_operations")) {
+        assert.match(sql, /FOR SHARE/);
+        assert.deepEqual(params.map(String), owner);
+        return { rows: holdExists ? [{ operation_id: operation.operationId }] : [] };
+      }
       if (sql.includes("UPDATE certificate_jobs")) {
         writes += 1;
         row = { ...row, status: params[1], completed_at: new Date(), result_metadata: JSON.parse(params[6]) };
@@ -3369,17 +3385,27 @@ describe("agentDispatch.ingestResult", () => {
     }
     row = { ...liveClaim, lease_live: false };
     await assert.rejects(report(preflight), { code: INVALID_RECEIPT });
+    row = liveClaim;
+    holdExists = false;
+    await assert.rejects(report(preflight), { code: UNAVAILABLE });
+    holdExists = true;
     assert.equal(consumes, 0);
     assert.equal(writes, 0);
 
     for (const outcome of [preflight, { status: "failed" }, { status: "rejected" }]) {
       row = liveClaim;
       assert.equal((await report(outcome)).status, outcome.status);
+      assert.deepEqual(row.result_metadata.deploymentDestinationDispatch.operation, operation);
       assert.equal((await report(outcome)).duplicate, true);
       await assert.rejects(report({ status: "succeeded" }), { code: INVALID_RECEIPT });
+      holdExists = false;
+      await assert.rejects(report(outcome), { code: UNAVAILABLE });
+      holdExists = true;
     }
     assert.equal(consumes, 6);
     assert.equal(writes, 3);
+    assert.equal(dbPool.state.jobLogs.length, 3);
+    assert.equal(dbPool.state.queries.filter(({ text }) => /^(?:INSERT INTO|UPDATE|DELETE FROM) certops_deployment_destination_operations/.test(text.trim())).length, 0);
   });
 
   it("refuses deployment destination receipts on live and terminal claims before nonce replay", async () => {

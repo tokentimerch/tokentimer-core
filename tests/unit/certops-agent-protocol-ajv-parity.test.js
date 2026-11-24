@@ -96,6 +96,25 @@ describe("CertOps agent-protocol AJV parity (agent vs API)", () => {
     }
   });
 
+  it("keeps destination execution off the public claim and receipt surfaces", () => {
+    const claim = FIXTURES.find(({ id }) => id === "claim-valid").message;
+    const result = FIXTURES.find(({ id }) => id === "result-succeeded-valid").message;
+    for (const validate of [validateAgentSide, validateApiSide]) {
+      assert.equal(validate({ ...claim, body: { ...claim.body,
+        supportedActions: [...claim.body.supportedActions, "validate-deployment-destination", "observe-deployment-destination"],
+      } }).valid, true);
+      assert.equal(validate({ ...claim, body: { ...claim.body,
+        supportedActions: [...claim.body.supportedActions, "execute-deployment-destination"],
+      } }).valid, false);
+      for (const [status, state] of [["succeeded", "confirmed"], ["orphaned_unknown_effect", "unknown"]]) {
+        assert.equal(validate({ ...result, body: { ...result.body, status,
+          claimId: "claim-1", nonce: "destination-execution-nonce-1",
+          deploymentDestinationExecutionReceipt: { version: 1, state },
+        } }).valid, false);
+      }
+    }
+  });
+
   for (const fixture of FIXTURES) {
     it(`agrees on ${fixture.id} (expectValid=${fixture.expectValid})`, () => {
       const agent = validateAgentSide(fixture.message);

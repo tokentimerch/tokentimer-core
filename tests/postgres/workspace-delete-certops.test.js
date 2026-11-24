@@ -11,6 +11,8 @@ assert.equal(process.env.NODE_ENV, "test");
 const request = require("supertest");
 const express = require("../../apps/api/node_modules/express");
 const { pool } = require("../../apps/api/db/database");
+const { EXECUTE, reserveDestinationOperation } = require("../../apps/api/services/certops/deploymentDestinations");
+const { hashDeploymentDestinationValidation } = require("../../packages/contracts/certops/deployment-destination.cjs");
 
 const sha = (char) => char.repeat(64);
 const hex = (bytes) => crypto.randomBytes(bytes).toString("hex");
@@ -35,9 +37,10 @@ async function buildWorkspace() {
     "INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'admin')",
     [ws, userId],
   );
+  const wireAgentId = `agent-${crypto.randomUUID()}`;
   const agent = await insert("certops_agents", {
     workspace_id: ws,
-    agent_id: `agent-${crypto.randomUUID()}`,
+    agent_id: wireAgentId,
     agent_version: "1.0.0",
     protocol_version: "1.0.0",
     credential_prefix: `ttagent_${hex(8)}`,
@@ -147,7 +150,42 @@ async function buildWorkspace() {
       [userId, ws],
     )
     .catch(() => {});
-  return { ws, group, version };
+  return { ws, group, version, agent, wireAgentId };
+}
+
+function destinationCandidate(workspace, destinationRef, domain) {
+  const agent = { workspaceId: workspace.ws, id: workspace.agent, agentId: workspace.wireAgentId };
+  const deploymentDestination = {
+    version: 1, zoneRef: "fixture-zone", destinationKind: "test-appliance", destinationRef,
+    materialRef: "fixture-certificate", materialRevision: "fixture-revision", fingerprintSha256: sha("a"),
+  };
+  const validation = {
+    configurationSha256: sha("b"), trustSha256: sha("c"), observedStateSha256: sha("d"), planSha256: sha("e"),
+    affectedServiceRefs: ["https-portal"], permittedEffects: ["replace-certificate"], mutationDomainSha256: domain,
+  };
+  const validationJobId = crypto.randomUUID();
+  const validationClaimId = crypto.randomUUID();
+  const receipt = {
+    version: 1, validation, bindingSha256: hashDeploymentDestinationValidation({
+      jobId: validationJobId, claimId: validationClaimId, workspaceId: agent.workspaceId,
+      agentId: agent.agentId, deploymentDestination,
+    }, validation),
+  };
+  const job = {
+    id: crypto.randomUUID(), operation: EXECUTE, status: "pending", attempt_count: 0, assigned_agent_id: agent.id,
+    approved_payload_hash: sha("1"), approved_canonical_intent_hash: sha("2"),
+    payload: {
+      deploymentDestination,
+      deploymentDestinationExecution: { version: 1, validationJobId, validationClaimId, receipt },
+    },
+  };
+  return {
+    agent, job, claimId: crypto.randomUUID(),
+    policy: { resolveMutationDomain({ scope }) {
+      assert.equal(scope.destinationRef, destinationRef);
+      return domain;
+    } },
+  };
 }
 
 describe(
@@ -241,6 +279,45 @@ describe(
         [domain],
       );
       assert.deepEqual(hold.rows, [{ workspace_id: owner.ws }]);
+    });
+
+    it("fences concurrent offers for one physical writer until rollback or committed ownership", async () => {
+      const firstWorkspace = await buildWorkspace();
+      const secondWorkspace = await buildWorkspace();
+      const domain = hex(32);
+      const first = destinationCandidate(firstWorkspace, "first-alias", domain);
+      const contender = destinationCandidate(secondWorkspace, "second-alias", domain);
+      const separate = destinationCandidate(secondWorkspace, "separate-device", hex(32));
+      const [left, right] = await Promise.all([pool.connect(), pool.connect()]);
+      try {
+        await left.query("BEGIN");
+        await right.query("BEGIN; SET LOCAL statement_timeout = '1500ms'");
+        assert.equal((await reserveDestinationOperation({ client: left, ...first })).ownerClaimId, first.claimId);
+        assert.equal(await reserveDestinationOperation({ client: right, ...contender }), null);
+        assert.equal((await reserveDestinationOperation({ client: right, ...separate })).ownerClaimId, separate.claimId);
+
+        // The first offer failed before dispatch committed. Only then can the contender take ownership.
+        await left.query("ROLLBACK");
+        const committed = await reserveDestinationOperation({ client: right, ...contender });
+        assert.equal(committed.ownerClaimId, contender.claimId);
+        await right.query("COMMIT");
+
+        // Loss of the response after commit must not grant a new owner.
+        await left.query("BEGIN; SET LOCAL statement_timeout = '1500ms'");
+        assert.equal(await reserveDestinationOperation({ client: left, ...first }), null);
+        assert.equal(await reserveDestinationOperation({ client: left, ...contender }), null);
+        const { rows } = await left.query(
+          `SELECT workspace_id, owner_job_id, owner_claim_id, operation_id
+             FROM certops_deployment_destination_operations WHERE mutation_domain_sha256 = $1`,
+          [domain],
+        );
+        assert.deepEqual(rows, [{ workspace_id: secondWorkspace.ws, owner_job_id: contender.job.id,
+          owner_claim_id: contender.claimId, operation_id: committed.operationId }]);
+      } finally {
+        await Promise.all([left, right].map(async (client) => {
+          try { await client.query("ROLLBACK"); } finally { client.release(); }
+        }));
+      }
     });
   },
 );

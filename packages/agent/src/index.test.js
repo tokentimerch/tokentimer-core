@@ -7463,41 +7463,54 @@ describe("signed deployment destination lifecycle", () => {
     skip: process.platform !== "linux",
   }, async () => {
     const domain = "1".repeat(64);
+    let preflights = 0;
     const adapter = {
       validate: () => validation,
       authorizeExecution: () => true,
-      prepareExecution: () => ({
-        validation: { ...validation, mutationDomainSha256: domain }, mutationDomainSha256: domain,
-        execute: () => assert.fail("owned preflight must not invoke mutation"),
-      }),
+      prepareExecution: () => {
+        preflights += 1;
+        return {
+          validation: { ...validation, mutationDomainSha256: domain }, mutationDomainSha256: domain,
+          execute: () => assert.fail("owned preflight must not invoke mutation"),
+        };
+      },
       dryRun: false,
     };
     const first = setup(adapter);
     const job = signOwnedExecutionJob(domain);
     assert(!resolveClaimSupportedActions(first.executionContext).includes(job.action));
-    const reportResult = first.client.reportResult;
-    first.client.reportResult = async () => { throw new Error("delivery unavailable"); };
+    const directory = path.join(workDir, "deployment-destination-ownership");
+    let markerAtFirstDelivery;
+    first.client.reportResult = async () => {
+      const [filename] = fs.readdirSync(directory);
+      markerAtFirstDelivery = fs.readFileSync(path.join(directory, filename), "utf8");
+      throw new Error("delivery unavailable");
+    };
     assert.equal((await first.run(job)).status, "blocked");
     const [pending] = listOutboxEntries(first.outboxDir);
     assert.equal(pending.result.errorMessage, "destination_execution_ownership_held");
-    first.client.reportResult = reportResult;
-    await drainOutbox(first.outboxDir, first.client);
-    assert.deepEqual(listOutboxEntries(first.outboxDir), []);
-    const directory = path.join(workDir, "deployment-destination-ownership");
     const [filename] = fs.readdirSync(directory);
     const marker = path.join(directory, filename);
-    const original = fs.readFileSync(marker, "utf8");
-    assert.equal(JSON.parse(original).jobId, job.jobId);
+    assert.deepEqual(JSON.parse(markerAtFirstDelivery), {
+      version: 1, workspaceId: job.workspaceId, jobId: job.jobId, ownerClaimId: job.claimId,
+      operationId: job.deploymentDestinationOperation.operationId, mutationDomainSha256: domain,
+    });
 
     const next = setup(adapter);
+    await drainOutbox(next.outboxDir, next.client);
+    assert.deepEqual(next.client.calls.reportResult, [pending.result]);
+    assert.deepEqual(listOutboxEntries(next.outboxDir), []);
+    assert.equal(preflights, 1);
+    assert.equal(fs.readFileSync(marker, "utf8"), markerAtFirstDelivery);
+
     const retry = signOwnedExecutionJob(domain, {
       jobId: "after-restart", claimId: "new-claim", attemptId: "new-claim", nonce: "ownership-mismatch-nonce-003",
     });
     assert.equal((await next.run(retry)).status, "blocked");
-    assert.equal(next.client.calls.reportResult[0].errorMessage, "destination_execution_ownership_conflict");
+    assert.equal(next.client.calls.reportResult[1].errorMessage, "destination_execution_ownership_conflict");
     const readOnly = signValidationJob({ nonce: "ownership-read-only-nonce-001" });
     assert.equal((await next.run(readOnly)).status, "succeeded");
-    assert.equal(fs.readFileSync(marker, "utf8"), original);
+    assert.equal(fs.readFileSync(marker, "utf8"), markerAtFirstDelivery);
   });
 
   const historicalFacts = {
