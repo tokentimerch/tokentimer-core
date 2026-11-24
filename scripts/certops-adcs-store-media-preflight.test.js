@@ -2,8 +2,12 @@
 
 const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
-const { verifyMediaPreflight } = require("./certops-adcs-store-media-preflight");
+const { verifyMediaPreflight, verifyStagedMedia } = require("./certops-adcs-store-media-preflight");
 
 const candidate = "a".repeat(40);
 const workflow = "b".repeat(40);
@@ -128,5 +132,96 @@ test("refuses partial, ambiguous or independently unapproved workflow commits", 
   assert.throws(() => verify(reviewed), /either a shared workflow commit or separate/);
   delete receipt.workflowCommit;
   delete receipt.launcherWorkflowCommit;
-  assert.throws(() => verify(reviewed), /launcher signing workflow differs/);
+  assert.throws(() => verify(reviewed), /launcher signing workflow must be an exact commit/);
+});
+
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+
+function stagedFixture(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "store-staging-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const { receipt } = fixture({ launcherWorkflow: newerWorkflow });
+  const packageStage = path.join(dir, "package");
+  const launcherStage = path.join(dir, "launcher");
+  fs.mkdirSync(packageStage);
+  fs.mkdirSync(launcherStage);
+  const packageReceiptPath = path.join(packageStage, "receipt.json");
+  const launcherReceiptPath = path.join(launcherStage, "receipt.json");
+  const stem = "tokentimer-agent-0.20.0-windows-amd64";
+  const archive = stem + ".tgz";
+  const launcher = "tokentimer-agent-launcher.exe";
+  const launcherPath = path.join(launcherStage, launcher);
+  const cms = path.join(packageStage, stem + ".inventory.json.p7");
+  const sbom = path.join(packageStage, stem + ".cdx.json");
+  const policyPath = path.join(packageStage, "launcher-policy.json");
+  const create = (file, contents) => {
+    fs.writeFileSync(file, contents);
+    return sha256(contents);
+  };
+  receipt.packageSha256 = create(path.join(packageStage, archive), "fixture archive");
+  receipt.launcherSha256 = create(launcherPath, "fixture launcher");
+  receipt.policySha256 = create(policyPath, "fixture policy");
+  const pkg = {
+    sourceCommit: candidate, workflowCommit: workflow, runId: receipt.packageRun, runAttempt: receipt.packageAttempt,
+    architecture: "amd64", disposition: "lab-only", launcherRequiredBeforeInstallation: true, archive,
+    archiveSha256: receipt.packageSha256, launcherPolicySha256: receipt.policySha256,
+    cmsSha256: create(cms, "fixture cms"), sbomSha256: create(sbom, "fixture sbom"), encryptedHandoffSha256: "4".repeat(64),
+  };
+  const signedLauncher = {
+    sourceCommit: candidate, workflowCommit: newerWorkflow, runId: receipt.launcherRun, runAttempt: receipt.launcherAttempt,
+    architecture: "amd64", disposition: "lab-only", launcher, signedLauncherSha256: receipt.launcherSha256,
+    packageWorkflowCommit: workflow, packageRunId: receipt.packageRun, packageRunAttempt: receipt.packageAttempt,
+    packageArtifactId: receipt.packageArtifactId, launcherPolicySha256: receipt.policySha256, encryptedHandoffSha256: "5".repeat(64),
+  };
+  const custody = path.join(dir, "approved.json");
+  const pins = { packageReceiptPath, launcherReceiptPath, packageStage, launcherPath };
+  function pinReceipts() {
+    receipt.packageReceiptSha256 = create(packageReceiptPath, JSON.stringify(pkg));
+    receipt.launcherReceiptSha256 = create(launcherReceiptPath, JSON.stringify(signedLauncher));
+    const bytes = Buffer.from(JSON.stringify(receipt));
+    fs.writeFileSync(custody, bytes);
+    return bytes;
+  }
+  const verify = (bytes = fs.readFileSync(custody), options) => verifyStagedMedia(bytes, { receiptSha256: sha256(bytes), ...pins, now, ...options });
+  pinReceipts();
+  return { custody, pins, receipt, pkg, signedLauncher, pinReceipts, verify, cms, sbom, policyPath };
+}
+
+test("staged mode locally checks exact signed producer receipts and launcher input hashes", (t) => {
+  const { custody, pins, receipt, verify } = stagedFixture(t);
+  const output = verify();
+  assert.equal(output.scope, "adcs-named-store-staged-bytes");
+  assert.equal(output.packageSha256, receipt.packageSha256);
+  assert.equal(output.launcherSha256, receipt.launcherSha256);
+  assert.equal(output.qualified, undefined);
+  const cli = spawnSync(process.execPath, [
+    path.resolve(__dirname, "certops-adcs-store-media-preflight.js"), "--staged", custody, output.custodyReceiptSha256,
+    pins.packageReceiptPath, pins.launcherReceiptPath, pins.packageStage, pins.launcherPath,
+  ], { env: { PATH: "" }, encoding: "utf8", timeout: 10000, windowsHide: true });
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.deepEqual(JSON.parse(cli.stdout), output);
+});
+
+test("staged mode refuses another package and unapproved official receipt bytes", (t) => {
+  const f = stagedFixture(t);
+  const approved = fs.readFileSync(f.custody);
+  assert.throws(() => f.verify(approved, { receiptSha256: "0".repeat(64) }), /Custody receipt digest mismatch/);
+  f.signedLauncher.packageArtifactId = "301";
+  assert.throws(() => f.verify(f.pinReceipts()), /does not bind the approved exact package/);
+  assert.throws(() => f.verify(approved), /Launcher receipt digest mismatch/);
+  f.signedLauncher.packageArtifactId = f.receipt.packageArtifactId;
+  f.pkg.archive = "other.tgz";
+  assert.throws(() => f.verify(f.pinReceipts()), /differs from the approved signed package/);
+});
+
+test("staged mode refuses changed launcher inputs, package policy and an unbounded receipt", (t) => {
+  const f = stagedFixture(t);
+  for (const file of [f.cms, f.sbom, f.policyPath, f.pins.launcherPath]) {
+    const original = fs.readFileSync(file);
+    fs.writeFileSync(file, "changed");
+    assert.throws(() => f.verify(), /Staged digest mismatch/);
+    fs.writeFileSync(file, original);
+  }
+  fs.writeFileSync(f.pins.packageReceiptPath, Buffer.alloc(16385));
+  assert.throws(() => f.verify(), /bounded regular staged file/);
 });
