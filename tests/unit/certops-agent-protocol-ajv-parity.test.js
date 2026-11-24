@@ -71,6 +71,31 @@ describe("CertOps agent-protocol AJV parity (agent vs API)", () => {
     }
   });
 
+  it("requires an authenticated claim and closed read-only facts for historical observation results", () => {
+    const result = structuredClone(FIXTURES.find(({ id }) => id === "result-succeeded-valid").message);
+    Object.assign(result.body, {
+      claimId: "claim-2", nonce: "destination-observation-nonce-1",
+      deploymentDestinationObservationReceipt: {
+        version: 1, bindingSha256: "e".repeat(64),
+        observation: { state: "observed", observedStateSha256: "f".repeat(64), affectedServiceRefs: ["service-1"] },
+      },
+    });
+    for (const validate of [validateAgentSide, validateApiSide]) {
+      assert.equal(validate(result).valid, true);
+      assert.equal(validate({ ...result, body: { ...result.body, claimId: null } }).valid, false);
+      assert.equal(validate({ ...result, body: { ...result.body, status: "blocked" } }).valid, false);
+      const receipt = result.body.deploymentDestinationObservationReceipt;
+      for (const observation of [
+        { ...receipt.observation, state: "deployed" },
+        { ...receipt.observation, observedStateSha256: null },
+        { ...receipt.observation, materialRef: "private-ref" },
+      ]) {
+        const unsafeResult = { ...result, body: { ...result.body, deploymentDestinationObservationReceipt: { ...receipt, observation } } };
+        assert.equal(validate(unsafeResult).valid, false);
+      }
+    }
+  });
+
   for (const fixture of FIXTURES) {
     it(`agrees on ${fixture.id} (expectValid=${fixture.expectValid})`, () => {
       const agent = validateAgentSide(fixture.message);

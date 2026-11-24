@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const {
-  _test: { jobSummary, jobDetail, redactClaimIdForNonAdmins },
+  _test: { jobSummary, jobDetail, jobLogEntry, redactClaimIdForNonAdmins },
 } = require(path.resolve(__dirname, "../../apps/api/routes/certops.js"));
 
 const CLAIM_ID = "22222222-2222-4222-8222-222222222222";
@@ -85,6 +85,22 @@ describe("CertOps job-detail claimId visibility", () => {
       if (key === "claimId") continue;
       assert.equal(projection[key], value, `${key} must be unchanged`);
     }
+  });
+
+  it("applies the same claim visibility to agent result metadata in the timeline", () => {
+    const entry = { metadata: {
+      claimId: CLAIM_ID,
+      deploymentDestinationValidation: { claimId: CLAIM_ID, version: 1 },
+      deploymentDestinationDispatch: { operation: { ownerClaimId: CLAIM_ID, operationId: "operation-1" } },
+      deploymentDestinationObservation: { claimId: CLAIM_ID, receipt: { version: 1 } },
+    } };
+    const viewer = jobLogEntry({ authz: { workspaceRole: "viewer" } }, entry);
+    const admin = jobLogEntry({ authz: { workspaceRole: "admin" } }, entry);
+    assert.ok(!JSON.stringify(viewer.metadata).includes(CLAIM_ID));
+    assert.equal(viewer.metadata.deploymentDestinationDispatch.operation.operationId, "operation-1");
+    assert.deepEqual(viewer.metadata.deploymentDestinationObservation.receipt, { version: 1 });
+    assert.equal(admin.metadata, entry.metadata);
+    assert.equal(entry.metadata.deploymentDestinationObservation.claimId, CLAIM_ID);
   });
 });
 
@@ -229,4 +245,17 @@ it("hides the destination owner claim on live and terminal job views below admin
     assert.equal(admin.resultMetadata.deploymentDestinationDispatch.operation.ownerClaimId, CLAIM_ID);
     assert.equal(admin, detail);
   }
+});
+
+it("conceals historical observation claim IDs on viewer job details", () => {
+  const detail = {
+    payload: { deploymentDestinationObservation: { ownerClaimId: "source-claim", operationId: "source-operation" } },
+    resultMetadata: { deploymentDestinationObservation: { claimId: "fresh-claim", receipt: { version: 1 } } },
+  };
+  const view = redactClaimIdForNonAdmins({ authz: { workspaceRole: "viewer" } }, detail);
+  assert.equal(view.payload.deploymentDestinationObservation.ownerClaimId, undefined);
+  assert.equal(view.resultMetadata.deploymentDestinationObservation.claimId, undefined);
+  assert.equal(view.payload.deploymentDestinationObservation.operationId, "source-operation");
+  assert.equal(detail.payload.deploymentDestinationObservation.ownerClaimId, "source-claim");
+  assert.equal(redactClaimIdForNonAdmins({ authz: { workspaceRole: "admin" } }, detail), detail);
 });

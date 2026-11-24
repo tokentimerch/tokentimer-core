@@ -7063,8 +7063,46 @@ describe("signed deployment destination lifecycle", () => {
     return job;
   }
 
+  function signObservationJob(owner, { history = {}, ...overrides } = {}) {
+    const operation = owner.deploymentDestinationOperation;
+    const job = signValidationJob({
+      action: "observe-deployment-destination",
+      jobId: "observation-job-1",
+      claimId: "observation-claim-1",
+      attemptId: "observation-claim-1",
+      nonce: "observation-test-nonce-001",
+      deploymentDestinationObservation: {
+        version: 1,
+        operationId: operation.operationId,
+        mutationDomainSha256: operation.mutationDomainSha256,
+        ownerJobId: owner.jobId,
+        ownerClaimId: operation.ownerClaimId,
+        validationJobId: owner.deploymentDestinationExecution.validationJobId,
+        zoneRef: destination.zoneRef,
+        destinationKind: destination.destinationKind,
+        destinationRef: destination.destinationRef,
+        ...history,
+      },
+      ...overrides,
+    });
+    delete job.deploymentDestination;
+    job.signature = signJobPayload({ job, privateKeyPem: signingKey.privateKeyPem });
+    return job;
+  }
+
+  function seedHistoricalOwner(owner) {
+    const { holdDestinationOwnership } = require("./deployment-destinations/ownership");
+    assert.equal(holdDestinationOwnership({
+      stateDir: workDir, workspaceId: owner.workspaceId, jobId: owner.jobId,
+      operation: owner.deploymentDestinationOperation,
+    }), true);
+    const holdDirectory = path.join(workDir, "deployment-destination-ownership");
+    const [filename] = fs.readdirSync(holdDirectory);
+    return path.join(holdDirectory, filename);
+  }
+
   function setup({
-    validate, authorizeExecution, prepareExecution, dryRun = true,
+    validate, authorizeExecution, prepareExecution, authorizeObservation, observe, dryRun = true,
     targetSelectors = ["portal-1"], client = createRecordingClient(),
   } = {}) {
     const outboxDir = path.join(workDir, "outbox");
@@ -7085,7 +7123,10 @@ describe("signed deployment destination lifecycle", () => {
       config,
       deploymentDestinationStateDir: workDir,
       deploymentDestinations: validate
-        ? [{ version: 1, destinationKind: "test-appliance", validate, authorizeExecution, prepareExecution }]
+        ? [{
+          version: 1, destinationKind: "test-appliance", validate, authorizeExecution, prepareExecution,
+          authorizeObservation, observe,
+        }]
         : [],
     });
     return {
@@ -7456,6 +7497,146 @@ describe("signed deployment destination lifecycle", () => {
     assert.equal(next.client.calls.reportResult[0].errorMessage, "destination_execution_ownership_conflict");
     const readOnly = signValidationJob({ nonce: "ownership-read-only-nonce-001" });
     assert.equal((await next.run(readOnly)).status, "succeeded");
+    assert.equal(fs.readFileSync(marker, "utf8"), original);
+  });
+
+  const historicalFacts = {
+    state: "observed", observedStateSha256: "6".repeat(64), affectedServiceRefs: ["portal-https"],
+  };
+
+  it("announces historical observation only with a registered independent observer", async () => {
+    const job = signObservationJob(signOwnedExecutionJob("5".repeat(64)));
+    const { run, client, executionContext } = setup({ validate: () => validation });
+    assert(!resolveClaimSupportedActions(executionContext).includes(job.action));
+    assert.equal((await run(job)).status, "blocked");
+    assert.equal(client.calls.reportResult[0].errorMessage, "destination_observation_adapter_unavailable");
+    assert.throws(() => setup({ validate: () => validation, observe: () => historicalFacts }), /independent local authorization/);
+  });
+
+  it("requires the exact historical claim and domain in a protected marker before observer access", {
+    skip: process.platform !== "linux",
+  }, async () => {
+    const domain = "5".repeat(64);
+    const owner = signOwnedExecutionJob(domain);
+    const { run, client } = setup({
+      validate: () => validation,
+      authorizeObservation: () => assert.fail("unproved owner must not reach local authorization"),
+      observe: () => assert.fail("unproved owner must not reach observer"),
+    });
+    assert.equal((await run(signObservationJob(owner, { agentId: "wrong-agent" }))).status, "failed");
+    const alias = signObservationJob(owner, { history: { ownerClaimId: "observation-claim-1" } });
+    assert.equal((await run(alias)).status, "blocked");
+    assert.equal(client.calls.reportResult[0].errorMessage, "destination_observation_scope_invalid");
+    assert.equal(client.calls.renewLease.length, 0);
+
+    const missing = signObservationJob(owner, { nonce: "observation-missing-marker-001" });
+    assert.equal((await run(missing)).status, "blocked");
+    assert.equal(client.calls.reportResult[1].errorMessage, "destination_observation_ownership_unavailable");
+    assert(!fs.existsSync(path.join(workDir, "deployment-destination-ownership")));
+
+    const marker = seedHistoricalOwner(owner);
+    const original = fs.readFileSync(marker, "utf8");
+    const scenarios = [
+      { ownerClaimId: "different-owner-claim" },
+      { operationId: "4".repeat(64) },
+      { mutationDomainSha256: "3".repeat(64) },
+    ];
+    for (const [index, history] of scenarios.entries()) {
+      const job = signObservationJob(owner, { history, nonce: "observation-wrong-marker-" + index });
+      assert.equal((await run(job)).status, "blocked");
+      assert.equal(client.calls.reportResult.at(-1).errorMessage, "destination_observation_ownership_unavailable");
+      assert.equal(fs.readFileSync(marker, "utf8"), original);
+    }
+
+    fs.writeFileSync(marker, "{");
+    const corrupt = signObservationJob(owner, { nonce: "observation-corrupt-marker-001" });
+    assert.equal((await run(corrupt)).status, "blocked");
+    assert.equal(client.calls.reportResult.at(-1).errorMessage, "destination_observation_ownership_unavailable");
+    assert.equal(fs.readFileSync(marker, "utf8"), "{");
+  });
+
+  it("transmits claim-bound observations without material, preserves the hold, and replays only delivery", {
+    skip: process.platform !== "linux",
+  }, async () => {
+    const { hashDeploymentDestinationObservation } = require("../../contracts/certops/deployment-destination.cjs");
+    const domain = "5".repeat(64);
+    const owner = signOwnedExecutionJob(domain);
+    const marker = seedHistoricalOwner(owner);
+    const original = fs.readFileSync(marker, "utf8");
+    const job = signObservationJob(owner);
+    let reads = 0;
+    let authorized = 0;
+    const { run, client, outboxDir, executionContext } = setup({
+      validate: () => assert.fail("observation does not validate material"),
+      authorizeExecution: () => assert.fail("observation does not require material-export authority"),
+      prepareExecution: () => assert.fail("observation does not prepare mutation"),
+      authorizeObservation: ({ scope }) => {
+        authorized += 1;
+        assert.equal(scope.mutationDomainSha256, undefined);
+        assert.equal(scope.validationJobId, owner.deploymentDestinationExecution.validationJobId);
+        assert.equal(scope.materialRef, undefined);
+        return domain;
+      },
+      observe: async ({ scope, checkLease, signal }) => {
+        reads += 1;
+        assert.deepEqual(scope, {
+          ...job.deploymentDestinationObservation, workspaceId: owner.workspaceId, agentId: owner.agentId,
+        });
+        assert(Object.isFrozen(scope));
+        assert.equal(signal.aborted, false);
+        await checkLease();
+        return historicalFacts;
+      },
+    });
+    assert(resolveClaimSupportedActions(executionContext).includes(job.action));
+    const reportResult = client.reportResult;
+    client.reportResult = async () => { throw new Error("delivery unavailable"); };
+    assert.equal((await run(job)).status, "succeeded");
+    const [pending] = listOutboxEntries(outboxDir);
+    assert.deepEqual(pending.result.deploymentDestinationObservationReceipt, {
+      version: 1,
+      observation: historicalFacts,
+      bindingSha256: hashDeploymentDestinationObservation(job, historicalFacts),
+    });
+    client.reportResult = reportResult;
+    await drainOutbox(outboxDir, client);
+    assert.deepEqual(client.calls.reportResult[0].deploymentDestinationObservationReceipt,
+      pending.result.deploymentDestinationObservationReceipt);
+    assert.deepEqual(listOutboxEntries(outboxDir), []);
+    assert.equal(reads, 1);
+    assert.equal(authorized, 2);
+    assert.equal(fs.readFileSync(marker, "utf8"), original);
+  });
+
+  it("blocks observation on local authorization revocation or cancellation without modifying the hold", {
+    skip: process.platform !== "linux",
+  }, async () => {
+    const domain = "5".repeat(64);
+    const owner = signOwnedExecutionJob(domain);
+    const marker = seedHistoricalOwner(owner);
+    const original = fs.readFileSync(marker, "utf8");
+    let reads = 0;
+    let checks = 0;
+    const controller = new AbortController();
+    const ordinary = {
+      validate: () => validation,
+      observe: () => { reads += 1; return historicalFacts; },
+    };
+    const revoked = setup({ ...ordinary, authorizeObservation: () => ++checks === 1 ? domain : null });
+    assert.equal((await revoked.run(signObservationJob(owner))).status, "blocked");
+    assert.equal(revoked.client.calls.reportResult[0].errorMessage, "destination_observation_local_authorization_required");
+    assert.equal(revoked.client.calls.reportResult[0].deploymentDestinationObservationReceipt, undefined);
+    const stale = setup({ ...ordinary, authorizeObservation: () => "4".repeat(64) });
+    assert.equal((await stale.run(signObservationJob(owner, { nonce: "observation-stale-policy-001" }))).status, "blocked");
+    assert.equal(stale.client.calls.reportResult[0].errorMessage, "destination_observation_local_authorization_required");
+    const stopped = setup({ ...ordinary, authorizeObservation: async () => {
+      controller.abort();
+      return domain;
+    } });
+    const cancelled = signObservationJob(owner, { nonce: "observation-cancel-nonce-001" });
+    assert.equal((await stopped.run(cancelled, { shutdownSignal: controller.signal })).status, "blocked");
+    assert.equal(stopped.client.calls.reportResult[0].errorMessage, "destination_observation_aborted");
+    assert.equal(reads, 1);
     assert.equal(fs.readFileSync(marker, "utf8"), original);
   });
 });

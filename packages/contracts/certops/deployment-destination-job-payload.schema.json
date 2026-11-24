@@ -19,8 +19,7 @@
     "attemptId",
     "leaseExpiresAt",
     "action",
-    "mode",
-    "deploymentDestination"
+    "mode"
   ],
   "properties": {
     "schemaVersion": {
@@ -65,7 +64,8 @@
     "action": {
       "enum": [
         "validate-deployment-destination",
-        "execute-deployment-destination"
+        "execute-deployment-destination",
+        "observe-deployment-destination"
       ]
     },
     "mode": {
@@ -85,40 +85,112 @@
     },
     "deploymentDestinationOperation": {
       "$ref": "https://tokentimer.io/contracts/certops/deployment-destination.schema.json#/definitions/operation"
+    },
+    "deploymentDestinationObservation": {
+      "$ref": "https://tokentimer.io/contracts/certops/deployment-destination.schema.json#/definitions/observationScope"
     }
   },
-  "if": {
-    "properties": {
-      "action": {
-        "const": "execute-deployment-destination"
-      }
-    }
-  },
-  "then": {
-    "required": [
-      "deploymentDestinationExecution",
-      "deploymentDestinationApproval"
-    ]
-  },
-  "else": {
-    "not": {
-      "anyOf": [
-        {
-          "required": [
-            "deploymentDestinationExecution"
-          ]
-        },
-        {
-          "required": [
-            "deploymentDestinationApproval"
-          ]
-        },
-        {
-          "required": [
-            "deploymentDestinationOperation"
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "execute-deployment-destination"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "deploymentDestination",
+          "deploymentDestinationExecution",
+          "deploymentDestinationApproval"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "deploymentDestinationObservation"
+              ]
+            }
           ]
         }
-      ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "validate-deployment-destination"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "deploymentDestination"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "deploymentDestinationExecution"
+              ]
+            },
+            {
+              "required": [
+                "deploymentDestinationApproval"
+              ]
+            },
+            {
+              "required": [
+                "deploymentDestinationOperation"
+              ]
+            },
+            {
+              "required": [
+                "deploymentDestinationObservation"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "observe-deployment-destination"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "deploymentDestinationObservation"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "deploymentDestination"
+              ]
+            },
+            {
+              "required": [
+                "deploymentDestinationExecution"
+              ]
+            },
+            {
+              "required": [
+                "deploymentDestinationApproval"
+              ]
+            },
+            {
+              "required": [
+                "deploymentDestinationOperation"
+              ]
+            }
+          ]
+        }
+      }
     }
-  }
+  ]
 }

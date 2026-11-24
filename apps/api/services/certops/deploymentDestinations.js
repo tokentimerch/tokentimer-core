@@ -5,6 +5,8 @@ const { canonicalizeJobPayload } = require("../../../../packages/contracts/certo
 const {
   VALIDATE_DEPLOYMENT_DESTINATION: VALIDATE,
   EXECUTE_DEPLOYMENT_DESTINATION: EXECUTE,
+  OBSERVE_DEPLOYMENT_DESTINATION: OBSERVE,
+  hashDeploymentDestinationObservation,
   isDeploymentDestinationAction: isDestinationOperation,
   hashDeploymentDestinationValidation,
   createDeploymentDestinationOperation,
@@ -14,6 +16,8 @@ const {
   validateDeploymentDestinationScope: validScope,
   validateDeploymentDestinationReceipt: validReceipt,
   validateDeploymentDestinationExecution: validExecution,
+  validateDeploymentDestinationObservationScope: validObservationScope,
+  validateDeploymentDestinationObservationReceipt: validObservationReceipt,
 } = require("../../../../packages/contracts/certops/validate-signed-job.cjs");
 const { containsPrivateKeyMaterial, containsGenericSecretMaterial } = require("../../utils/secretMaterial");
 
@@ -27,6 +31,14 @@ function destinationError(code = UNAVAILABLE) {
   return Object.assign(new Error(code === INVALID_RECEIPT
     ? "Deployment destination validation receipt is invalid"
     : "Deployment destination operation is unavailable"), { code });
+}
+
+function destinationScope(payload, operation) {
+  return operation === OBSERVE ? payload?.deploymentDestinationObservation : payload?.deploymentDestination;
+}
+
+function validDestinationScope(scope, operation) {
+  return operation === OBSERVE ? validObservationScope(scope) : validScope(scope);
 }
 
 function containsSecret(value) {
@@ -65,9 +77,15 @@ function deploymentOperationJob(agent, job, claimId = String(job.claim_id)) {
 
 async function resolveMutationDomain({ client, agent, job, policy }) {
   if (typeof policy?.resolveMutationDomain !== "function") return null;
+  // Resolve the controller-wide physical identity from active provisioning in
+  // this transaction. The signed scope is a constraint, not the source of the
+  // identity being compared.
+  const scope = structuredClone(destinationScope(job.payload, job.operation));
+  if (job.operation === OBSERVE) delete scope.mutationDomainSha256;
   const domain = await policy.resolveMutationDomain({
     client, workspaceId: agent.workspaceId, agentRowId: agent.id, agentId: agent.agentId,
-    jobId: String(job.id), scope: Object.freeze(structuredClone(job.payload.deploymentDestination)),
+    jobId: job.id == null ? null : String(job.id),
+    scope: Object.freeze(scope),
   });
   return typeof domain === "string" && SHA256_PATTERN.test(domain) ? domain : null;
 }
@@ -84,7 +102,7 @@ async function reserveDestinationOperation({ client, agent, job, policy, claimId
   const operation = createDeploymentDestinationOperation(deploymentOperationJob(agent, job, claimId), domain);
   const lock = await client.query(
     "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0)) AS locked",
-    [`certops-destination-domain-v1:${agent.workspaceId}:${domain}`],
+    [`certops-destination-domain-v1:${domain}`],
   );
   if (lock.rows[0]?.locked !== true) return null;
   const result = await client.query(
@@ -121,13 +139,14 @@ async function assertDestinationOperationLease({ client, agent, job, policy }) {
 }
 
 async function persistSignedDestinationDispatch({ client, signedJob, nonce, agentRowId }) {
+  const scope = destinationScope(signedJob, signedJob.action);
   const bindingSha256 = claimBinding({
     jobId: signedJob.jobId,
     workspaceId: signedJob.workspaceId,
     agentId: signedJob.agentId,
     claimId: signedJob.claimId,
     operation: signedJob.action,
-    scope: signedJob.deploymentDestination,
+    scope,
     nonce,
   });
   const dispatch = { bindingSha256 };
@@ -147,19 +166,20 @@ async function persistSignedDestinationDispatch({ client, signedJob, nonce, agen
     `UPDATE certificate_jobs
         SET result_metadata = jsonb_set(result_metadata, '{deploymentDestinationDispatch}', $4::jsonb, true)
       WHERE id = $1 AND workspace_id = $2 AND claim_id = $3 AND status = 'claimed'
-        AND operation = $5 AND payload->'deploymentDestination' = $6::jsonb
+        AND operation = $5 AND payload->($7::text) = $6::jsonb
       RETURNING id`,
     [signedJob.jobId, signedJob.workspaceId, signedJob.claimId, JSON.stringify(dispatch),
-      signedJob.action, JSON.stringify(signedJob.deploymentDestination)],
+      signedJob.action, JSON.stringify(scope),
+      signedJob.action === OBSERVE ? "deploymentDestinationObservation" : "deploymentDestination"],
   );
   if (!result.rows[0]) throw destinationError();
 }
 
 async function requireDestinationPolicy({ client, policy, phase, workspaceId, agent, job }) {
-  const scope = job.payload?.deploymentDestination;
+  const scope = destinationScope(job.payload, job.operation);
   if (typeof policy?.authorize !== "function" || !isDestinationOperation(job.operation) ||
       job.mode !== "real" || String(job.assigned_agent_id ?? "") !== String(agent.id) ||
-      !agent.agentId || !validScope(scope) || job.required_target_selector !== scope.destinationRef ||
+      !agent.agentId || !validDestinationScope(scope, job.operation) || job.required_target_selector !== scope.destinationRef ||
       containsSecret(scope)) throw destinationError();
   const allowed = await policy.authorize({
     client,
@@ -184,58 +204,116 @@ function verifyReceipt({ jobId, claimId, workspaceId, agentId, scope, receipt })
 }
 
 async function checkDestinationResult({ client, policy, agent, job, body, jobStatus }) {
+  const validationReceipt = body.deploymentDestinationValidation ?? null;
+  const observationReceipt = body.deploymentDestinationObservationReceipt ?? null;
   if (!isDestinationOperation(job.operation)) {
-    if (body.deploymentDestinationValidation != null) throw destinationError();
+    if (validationReceipt || observationReceipt) throw destinationError();
     return null;
   }
   if (typeof policy?.authorize !== "function") throw destinationError();
-  const scope = job.payload?.deploymentDestination;
-  const receipt = body.deploymentDestinationValidation ?? null;
+  const observing = job.operation === OBSERVE;
+  const scope = destinationScope(job.payload, job.operation);
+  const receipt = observing ? observationReceipt : validationReceipt;
+  const receiptField = observing ? "deploymentDestinationObservation" : "deploymentDestinationValidation";
   const active = job.status === "claimed" || job.status === "running";
-  const expectsReceipt = job.operation === VALIDATE && jobStatus === "succeeded";
-  // Execution is preflight-only until native mutation and its verified result
-  // contract are enabled. A terminal claim replay must obey the same limit.
+  const expectsReceipt = job.operation !== EXECUTE && jobStatus === "succeeded";
+  // Execution is preflight-only. Neither a mutation nor an unknown effect is
+  // reportable through the read-only result contract.
   const allowedStatus = expectsReceipt || ["failed", "blocked", "rejected"].includes(jobStatus);
-  const mixedOutput = ["trustResult", "enrollmentResult", "preflightResult", "publicationReceipt",
-    "publicationCertificatePem", "deploymentReceipt", "cleanupReceipt", "reconciliationReceipt",
-    "keyRotated"].some((field) => body[field] != null);
+  const mixedOutput = (observing ? validationReceipt !== null : observationReceipt !== null) ||
+    ["trustResult", "enrollmentResult", "preflightResult", "publicationReceipt",
+      "publicationCertificatePem", "deploymentReceipt", "cleanupReceipt", "reconciliationReceipt",
+      "keyRotated"].some((field) => body[field] != null);
 
-  if (job.mode !== "real" || !agent.agentId || !validScope(scope) ||
+  if (job.mode !== "real" || !agent.agentId || !validDestinationScope(scope, job.operation) ||
       (active && job.lease_live !== true) || mixedOutput || (receipt !== null) !== expectsReceipt ||
       !allowedStatus || typeof body.nonce !== "string") throw destinationError(INVALID_RECEIPT);
 
   const dispatch = job.result_metadata?.deploymentDestinationDispatch;
+  const claim = { jobId: String(job.id), workspaceId: agent.workspaceId, agentId: agent.agentId, claimId: String(job.claim_id) };
   if (dispatch?.bindingSha256 !== claimBinding({
-    jobId: String(job.id), workspaceId: agent.workspaceId, agentId: agent.agentId,
-    claimId: String(job.claim_id), operation: job.operation, scope, nonce: body.nonce,
+    ...claim, operation: job.operation, scope, nonce: body.nonce,
   })) throw destinationError(INVALID_RECEIPT);
 
   if (job.operation === EXECUTE && dispatch.operation) {
     await assertRecordedDestinationOperation({ client, agent, job, operation: dispatch.operation });
   }
+  if (receipt && observing) {
+    if (!validObservationReceipt(receipt) || containsSecret(receipt) ||
+        receipt.bindingSha256 !== hashDeploymentDestinationObservation({
+          ...claim, deploymentDestinationObservation: scope,
+        }, receipt.observation)) throw destinationError(INVALID_RECEIPT);
+  } else if (receipt) {
+    verifyReceipt({ ...claim, scope, receipt });
+  }
 
-  if (receipt) verifyReceipt({
-    jobId: String(job.id), claimId: String(job.claim_id),
-    workspaceId: agent.workspaceId, agentId: agent.agentId, scope, receipt,
-  });
-  if (active && job.operation === VALIDATE) {
+  if (active && job.operation !== EXECUTE) {
     await requireDestinationPolicy({ client, policy, phase: "result", workspaceId: agent.workspaceId, agent, job });
-    const observedDomain = receipt?.validation.mutationDomainSha256;
-    if (observedDomain !== undefined &&
-        observedDomain !== await resolveMutationDomain({ client, agent, job, policy })) {
-      throw destinationError(INVALID_RECEIPT);
+    if (observing) {
+      await assertDestinationObservationSource({ client, agent, job, policy });
+    } else {
+      const observedDomain = receipt?.validation.mutationDomainSha256;
+      if (observedDomain !== undefined &&
+          observedDomain !== await resolveMutationDomain({ client, agent, job, policy })) {
+        throw destinationError(INVALID_RECEIPT);
+      }
     }
-  } else if (!active &&
-      hashPublic({ receipt }) !== hashPublic({ receipt: job.result_metadata?.deploymentDestinationValidation?.receipt ?? null })) {
+  } else if (!active && hashPublic({ receipt }) !==
+      hashPublic({ receipt: job.result_metadata?.[receiptField]?.receipt ?? null })) {
     throw destinationError(INVALID_RECEIPT);
   }
 
   return {
     deploymentDestinationDispatch: dispatch,
-    ...(receipt ? { deploymentDestinationValidation: {
-      version: 1, agentId: agent.agentId, claimId: String(job.claim_id), receipt: structuredClone(receipt),
+    ...(receipt ? { [receiptField]: {
+      version: 1, agentId: agent.agentId, claimId: claim.claimId, receipt: structuredClone(receipt),
     } } : {}),
   };
+}
+
+async function loadDestinationObservation({ client, agent, operationId }) {
+  if (typeof operationId !== "string" || !SHA256_PATTERN.test(operationId)) throw destinationError();
+  const original = (await client.query(
+    `SELECT h.operation_id, h.owner_job_id, h.owner_claim_id, h.mutation_domain_sha256,
+            j.payload, j.result_metadata, j.approved_payload_hash, j.approved_canonical_intent_hash
+       FROM certops_deployment_destination_operations h
+       JOIN certificate_jobs j ON j.workspace_id = h.workspace_id AND j.id = h.owner_job_id
+      WHERE h.workspace_id = $1 AND h.operation_id = $2 AND h.owner_agent_id = $3
+        AND j.operation = 'execute-deployment-destination' AND j.mode = 'real'
+      FOR SHARE OF h, j`,
+    [agent.workspaceId, operationId, agent.id],
+  )).rows[0];
+  if (!original || original.operation_id !== operationId || !validScope(original.payload?.deploymentDestination) ||
+      !validExecution(original.payload?.deploymentDestinationExecution)) throw destinationError();
+
+  const stamp = original.result_metadata?.deploymentDestinationDispatch?.operation;
+  const ownerClaimId = String(original.owner_claim_id);
+  if (stamp?.operationId !== operationId || stamp.ownerClaimId !== ownerClaimId ||
+      stamp.mutationDomainSha256 !== original.mutation_domain_sha256 ||
+      !hasMatchingDeploymentDestinationOperation({
+        ...deploymentOperationJob(agent, { ...original, id: original.owner_job_id }, ownerClaimId),
+        deploymentDestinationOperation: stamp,
+      })) throw destinationError();
+
+  const scope = original.payload.deploymentDestination;
+  return {
+    version: 1, operationId, mutationDomainSha256: stamp.mutationDomainSha256,
+    ownerJobId: String(original.owner_job_id), ownerClaimId,
+    validationJobId: original.payload.deploymentDestinationExecution.validationJobId,
+    zoneRef: scope.zoneRef, destinationKind: scope.destinationKind, destinationRef: scope.destinationRef,
+  };
+}
+
+async function assertDestinationObservationSource({ client, agent, job, policy }) {
+  const scope = destinationScope(job.payload, job.operation);
+  if (!validObservationScope(scope) || [scope.ownerJobId, scope.validationJobId].includes(String(job.id))) {
+    throw destinationError();
+  }
+  const original = await loadDestinationObservation({ client, agent, operationId: scope.operationId });
+  if (hashPublic(scope) !== hashPublic(original) ||
+      await resolveMutationDomain({ client, agent, job, policy }) !== scope.mutationDomainSha256) {
+    throw destinationError();
+  }
 }
 
 async function loadDestinationValidation({ client, workspaceId, validationJobId, assignedAgentId }) {
@@ -292,6 +370,11 @@ async function prepareDestinationJob(options, workspaceId, operation) {
   if (operation === VALIDATE) {
     if (Object.keys(options.payload ?? {}).some((key) => key !== "deploymentDestination")) throw destinationError();
     payload.deploymentDestination = options.payload?.deploymentDestination;
+  } else if (operation === OBSERVE) {
+    if (options.payload != null) throw destinationError();
+    payload.deploymentDestinationObservation = await loadDestinationObservation({
+      client, agent: { ...agent, workspaceId }, operationId: options.destinationObservationOperationId,
+    });
   } else {
     if (options.payload != null || !UUID_PATTERN.test(options.destinationValidationJobId ?? "")) throw destinationError();
     const accepted = await loadDestinationValidation({
@@ -303,16 +386,18 @@ async function prepareDestinationJob(options, workspaceId, operation) {
     payload.deploymentDestination = accepted.scope;
     payload.deploymentDestinationExecution = accepted.execution;
   }
-  await requireDestinationPolicy({
-    client, policy, phase: "queue", workspaceId, agent,
-    job: {
-      operation, mode: "real", assigned_agent_id: assignedAgentId, requested_by_user_id: requestedByUserId, payload,
-      required_target_selector: payload.deploymentDestination?.destinationRef,
-    },
-  });
+  const targetSelector = destinationScope(payload, operation)?.destinationRef;
+  const draft = {
+    operation, mode: "real", assigned_agent_id: assignedAgentId, requested_by_user_id: requestedByUserId,
+    payload, required_target_selector: targetSelector,
+  };
+  await requireDestinationPolicy({ client, policy, phase: "queue", workspaceId, agent, job: draft });
+  if (operation === OBSERVE && await resolveMutationDomain({
+    client, agent: { ...agent, workspaceId }, job: draft, policy,
+  }) !== payload.deploymentDestinationObservation.mutationDomainSha256) throw destinationError();
   return {
     ...options, payload, mode: "real", executorKind: "agent", source: "api",
-    requiredTargetSelector: payload.deploymentDestination.destinationRef,
+    requiredTargetSelector: targetSelector,
     requiredDnsProvider: null, requiredCommandProfile: null,
   };
 }
@@ -329,8 +414,9 @@ async function assertDestinationExecutionSource({ client, workspaceId, jobId, as
 }
 
 module.exports = {
-  VALIDATE, EXECUTE, UNAVAILABLE, INVALID_RECEIPT, isDestinationOperation,
+  VALIDATE, EXECUTE, OBSERVE, UNAVAILABLE, INVALID_RECEIPT, isDestinationOperation,
   persistSignedDestinationDispatch, requireDestinationPolicy, checkDestinationResult,
   prepareDestinationJob, loadDestinationValidation, assertDestinationExecutionSource,
   assertSignedDestinationAuthority, reserveDestinationOperation, assertDestinationOperationLease,
+  assertDestinationObservationSource,
 };

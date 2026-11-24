@@ -98,9 +98,12 @@ function main() {
   }
   const observationSchemaId = destination.$id + "#/definitions/validation";
   destinationAjv.getSchema(observationSchemaId);
+  const historicalObservationSchemaId = destination.$id + "#/definitions/historicalObservation";
+  destinationAjv.getSchema(historicalObservationSchemaId);
   const destinationOutput = standaloneCode(destinationAjv, {
     validateJob: destinationJob.$id,
     validateObservation: observationSchemaId,
+    validateHistoricalObservation: historicalObservationSchemaId,
   }).replace(UCS2LENGTH_REQUIRE_RE, UCS2LENGTH_RELATIVE_REQUIRE);
   if (/require\(["'](?!\.\.\/ajv-runtime\/ucs2length)/.test(destinationOutput)) {
     throw new Error("Generated deployment destination validator depends on an external package");

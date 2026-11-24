@@ -71,14 +71,14 @@
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "d0adab34198cbc807b204d507264f3c202af26ae09a8478dfbcb206b427010bd"
+          "sha256": "4eb1eb9ac43212125b05a1c6c84abd98f717b1582b6e841949208edf58107d3f"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
           "status": "existing",
-          "sha256": "d0adab34198cbc807b204d507264f3c202af26ae09a8478dfbcb206b427010bd"
+          "sha256": "4eb1eb9ac43212125b05a1c6c84abd98f717b1582b6e841949208edf58107d3f"
         },
         {
           "id": "auth-route-compat-contract",
@@ -222,7 +222,7 @@
           "kind": "module",
           "path": "packages/contracts/certops/validate-signed-job.cjs",
           "status": "existing",
-          "sha256": "29aae40ee287ddd714386db587a7d518898a90903bc371bef436d2cd17aba68c"
+          "sha256": "db3d9549708f43ac70c6749023936078d54fd5d5c966eaa2fdca7f9eec591b73"
         },
         {
           "id": "certops-evidence-schema",
@@ -253,28 +253,28 @@
           "kind": "schema",
           "path": "packages/contracts/certops/agent-protocol.schema.json",
           "status": "existing",
-          "sha256": "a667a71fa18144fb2decb4e8a1da5f4ede9f3905ef1fab3da06be29412826f7a"
+          "sha256": "cfe15db98bccc0c17faeb097514e030ea07eda6e55ccc80aee0b91ee13313426"
         },
         {
           "id": "certops-deployment-destination-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/deployment-destination.schema.json",
           "status": "existing",
-          "sha256": "628194ba2ec216e1915cfab6b857a75785b7dd21f23a9c0c02970450c54ee8bb"
+          "sha256": "97ad3c3a17fe6a2bbfa7944178c3f0b217de4e13b7a266cb2c388e2a71e11a3f"
         },
         {
           "id": "certops-deployment-destination-job-payload-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/deployment-destination-job-payload.schema.json",
           "status": "existing",
-          "sha256": "e9364cd04ebbf2a764dfc7c67563c383d7abab04c2c0fa131ef50c8ca4881add"
+          "sha256": "039b042c6d8dcee2e6dfb1e913cac8870eba99fc83f06b9ffb171633a6e1b26f"
         },
         {
           "id": "certops-deployment-destination-binding",
           "kind": "schema",
           "path": "packages/contracts/certops/deployment-destination.cjs",
           "status": "existing",
-          "sha256": "0cd62d9687b26ae99308e4f581bebe0fb74207e30b067c419277f87e794032aa"
+          "sha256": "55a06d903659989ab0ee90c49e66f155eb6661e55cbcd989681032d94ee5ba66"
         },
         {
           "id": "certops-trust-job-payload-schema",

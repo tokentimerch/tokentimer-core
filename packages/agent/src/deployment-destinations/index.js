@@ -5,6 +5,8 @@ const { containsPrivateKeyMaterial, redactGenericSecrets } = require("../evidenc
 const {
   VALIDATE_DEPLOYMENT_DESTINATION,
   EXECUTE_DEPLOYMENT_DESTINATION,
+  OBSERVE_DEPLOYMENT_DESTINATION,
+  hashDeploymentDestinationObservation,
   hashDeploymentDestinationValidation,
   hasMatchingDeploymentDestinationReceipt,
   hasMatchingDeploymentDestinationOperation,
@@ -12,10 +14,11 @@ const {
 const {
   validateJob,
   validateObservation,
+  validateHistoricalObservation,
 } = require("../../vendor/contracts/deployment-destination-validator.generated.js");
 
 const { canonicalizeJobPayload } = require("../../vendor/contracts/canonical-json.cjs");
-const { holdDestinationOwnership } = require("./ownership");
+const { holdDestinationOwnership, hasDestinationOwnership } = require("./ownership");
 
 const PREFLIGHT_TIMEOUT_MS = 30_000;
 const READ_LEASE_REUSE_MS = 1000;
@@ -66,7 +69,9 @@ function createReadLeaseChecks(signal, renewLease, clockOffsetMs) {
 function registerDeploymentDestinations(adapters) {
   const validators = new Map();
   const executionPreparers = new Map();
-  for (const { version, destinationKind, validate, authorizeExecution, prepareExecution } of adapters) {
+  const observers = new Map();
+  for (const adapter of adapters) {
+    const { version, destinationKind, validate, authorizeExecution, prepareExecution, authorizeObservation, observe } = adapter;
     if (version !== 1 || typeof destinationKind !== "string" ||
         !/^[a-z][a-z0-9-]{0,63}$/.test(destinationKind) ||
         typeof validate !== "function" || validators.has(destinationKind)) {
@@ -79,11 +84,19 @@ function registerDeploymentDestinations(adapters) {
       }
       executionPreparers.set(destinationKind, Object.freeze({ authorizeExecution, prepareExecution }));
     }
+    if (authorizeObservation !== undefined || observe !== undefined) {
+      if (typeof authorizeObservation !== "function" || typeof observe !== "function") {
+        throw new Error("Deployment destination observation requires independent local authorization");
+      }
+      observers.set(destinationKind, Object.freeze({ authorizeObservation, observe }));
+    }
   }
   return Object.freeze({
     hasValidators: validators.size > 0,
+    hasObservers: observers.size > 0,
     resolveValidator: (kind) => validators.get(kind),
     resolveExecutionPreparer: (kind) => executionPreparers.get(kind),
+    resolveObserver: (kind) => observers.get(kind),
   });
 }
 
@@ -108,11 +121,18 @@ function isDeploymentDestinationExecutionJob(job) {
     (!Object.hasOwn(job, "deploymentDestinationOperation") || hasMatchingDeploymentDestinationOperation(job));
 }
 
-function clonePublicValidation(observed) {
-  const validation = structuredClone(observed);
-  if (!validateObservation(validation) || containsPrivateKeyMaterial(validation) ||
-      JSON.stringify(redactGenericSecrets(validation)) !== JSON.stringify(validation)) return null;
-  return validation;
+function isDeploymentDestinationObservationJob(job) {
+  if (job?.action !== OBSERVE_DEPLOYMENT_DESTINATION || !validateJob(job) || job.claimId !== job.attemptId) return false;
+  const { ownerJobId, ownerClaimId, validationJobId } = job.deploymentDestinationObservation;
+  return ownerJobId !== job.jobId && ownerClaimId !== job.claimId &&
+    validationJobId !== job.jobId && validationJobId !== ownerJobId;
+}
+
+function clonePublicFacts(observed, validate) {
+  const facts = structuredClone(observed);
+  if (!validate(facts) || containsPrivateKeyMaterial(facts) ||
+      JSON.stringify(redactGenericSecrets(facts)) !== JSON.stringify(facts)) return null;
+  return facts;
 }
 
 function destinationScope(job) {
@@ -150,7 +170,7 @@ async function validateDeploymentDestination({ job, jobId, claimId, attemptId, r
     const receipt = await waitForDestinationWork(async () => {
       await lease.refresh();
       const observed = await validate({ scope, jobId, signal: validationSignal, checkLease: lease.check });
-      const validation = clonePublicValidation(observed);
+      const validation = clonePublicFacts(observed, validateObservation);
       if (!validation) return null;
       await lease.refresh();
       return {
@@ -188,7 +208,7 @@ async function preflightDeploymentDestinationExecution({
   try {
     return await waitForDestinationWork(async () => {
       const { validationJobId, validationClaimId, receipt } = job.deploymentDestinationExecution;
-      const validation = clonePublicValidation(receipt.validation);
+      const validation = clonePublicFacts(receipt.validation, validateObservation);
       if (!validation) return { status: "blocked", errorMessage: "destination_execution_evidence_invalid" };
       Object.freeze(validation.affectedServiceRefs);
       Object.freeze(validation.permittedEffects);
@@ -202,7 +222,7 @@ async function preflightDeploymentDestinationExecution({
       }
       await lease.refresh();
       const prepared = await adapter.prepareExecution(request);
-      const observed = clonePublicValidation(prepared?.validation);
+      const observed = clonePublicFacts(prepared?.validation, validateObservation);
       if (!observed || canonicalizeJobPayload(observed) !== canonicalizeJobPayload(validation)) {
         return { status: "blocked", errorMessage: "destination_execution_validation_changed" };
       }
@@ -234,7 +254,69 @@ async function preflightDeploymentDestinationExecution({
   }
 }
 
+async function observeDeploymentDestination({
+  job, jobId, claimId, attemptId, registry, signal, checkLease, clockOffsetMs, stateDir,
+}) {
+  if (!isDeploymentDestinationObservationJob(job) || job.jobId !== jobId ||
+      job.claimId !== claimId || job.attemptId !== attemptId) {
+    return { status: "blocked", errorMessage: "destination_observation_scope_invalid" };
+  }
+
+  const history = job.deploymentDestinationObservation;
+  const adapter = registry?.resolveObserver(history.destinationKind);
+  if (!adapter) return { status: "blocked", errorMessage: "destination_observation_adapter_unavailable" };
+
+  const observationSignal = destinationLifetime(job, signal, clockOffsetMs);
+  if (!observationSignal) return { status: "blocked", errorMessage: "destination_observation_expired" };
+
+  const lease = createReadLeaseChecks(observationSignal, checkLease, clockOffsetMs);
+  const scope = Object.freeze({ ...history, workspaceId: job.workspaceId, agentId: job.agentId });
+  const request = Object.freeze({ scope, jobId, signal: observationSignal, checkLease: lease.check });
+  // The authorizer resolves the writer domain from current local policy; it
+  // cannot inadvertently copy the dispatched digest from this request.
+  const { mutationDomainSha256, ...locator } = scope;
+  const authorityRequest = Object.freeze({ ...request, scope: Object.freeze(locator) });
+  const ownership = { stateDir, workspaceId: job.workspaceId, observation: history };
+
+  const blockedOwnership = { status: "blocked", errorMessage: "destination_observation_ownership_unavailable" };
+  const blockedAuthority = { status: "blocked", errorMessage: "destination_observation_local_authorization_required" };
+
+  try {
+    return await waitForDestinationWork(async () => {
+      if (!hasDestinationOwnership(ownership)) return blockedOwnership;
+      await lease.refresh();
+      if (await adapter.authorizeObservation(authorityRequest) !== mutationDomainSha256) return blockedAuthority;
+      await lease.refresh();
+      if (!hasDestinationOwnership(ownership)) return blockedOwnership;
+
+      const observation = clonePublicFacts(await adapter.observe(request), validateHistoricalObservation);
+      if (!observation) return { status: "blocked", errorMessage: "destination_observation_evidence_invalid" };
+
+      await lease.refresh();
+      if (await adapter.authorizeObservation(authorityRequest) !== mutationDomainSha256) return blockedAuthority;
+      await lease.refresh();
+      if (!hasDestinationOwnership(ownership)) return blockedOwnership;
+
+      return {
+        status: "succeeded",
+        deploymentDestinationObservationReceipt: {
+          version: 1,
+          observation,
+          bindingSha256: hashDeploymentDestinationObservation(job, observation),
+        },
+      };
+    }, observationSignal);
+  } catch {
+    return {
+      status: "blocked",
+      errorMessage: observationSignal.aborted ? "destination_observation_aborted" : "destination_observation_failed",
+    };
+  }
+}
+
 module.exports = {
+  isDeploymentDestinationObservationJob,
+  observeDeploymentDestination,
   isDeploymentDestinationValidationJob,
   isDeploymentDestinationExecutionJob,
   preflightDeploymentDestinationExecution,

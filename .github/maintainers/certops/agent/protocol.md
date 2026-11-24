@@ -319,7 +319,7 @@ Current behavior:
 
 An edition may explicitly compose read-only validation and execution preflight. A receipt expires for approval and dispatch after 15 minutes. Both the controller and the local adapter must resolve the canonical mutation domain independently. Validation receipts must bind that domain before reserving an execution claim. The local hold requires an owner-only Linux state directory and durable directory sync.
 
-Use one authoritative controller and workspace per writer domain, including all aliases and restored copies. Report delivery, lease expiry, and restart leave both holds intact. Native mutation remains disabled. See the [canonical contract](../../../../packages/contracts/certops/deployment-destination.schema.json).
+Use one authoritative controller per writer domain, including all aliases and restored copies. The controller keeps the domain reserved across workspace reassignment and deletion. Result delivery, lease expiry, and restart leave both holds intact. Historical observation requires fresh read-only authority, the same provisioned domain, and the original authenticated hold. Its signed scope carries no material references. Native mutation remains disabled. See the [canonical contract](../../../../packages/contracts/certops/deployment-destination.schema.json).
 
 ## Related
 

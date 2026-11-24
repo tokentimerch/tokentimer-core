@@ -207,6 +207,7 @@ const JOB_OPERATIONS = Object.freeze([
   "adcs-installation-proof",
   "validate-deployment-destination",
   "execute-deployment-destination",
+  "observe-deployment-destination",
 ]);
 const JOB_OPERATION_SET = new Set(JOB_OPERATIONS);
 
@@ -1968,7 +1969,7 @@ async function createCertificateJob(options) {
     CERTOPS_JOB_OPERATION_INVALID,
     "operation",
   );
-  if (operation === "validate-deployment-destination" || operation === "execute-deployment-destination") {
+  if (["validate-deployment-destination", "execute-deployment-destination", "observe-deployment-destination"].includes(operation)) {
     options = await require("./deploymentDestinations").prepareDestinationJob(options, workspaceId, operation);
   }
   if(operation==="reconcile-from-store" && options.allowMaterialReconciliation!==true) throw serviceError("Material reconciliation can only be requested through its dedicated service",CERTOPS_JOB_OPERATION_INVALID);

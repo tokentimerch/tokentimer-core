@@ -331,42 +331,47 @@ function redactIdentityLocationsForViewers(req, items) {
  * reusable proof of lease ownership for as long as the lease is open, so a
  * manager who can create jobs still isn't the right audience for it.
  */
-function redactClaimIdForNonAdmins(req, jobDetailProjection) {
-  if (!jobDetailProjection || req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "admin")) {
-    return jobDetailProjection;
+function canViewClaimId(req) {
+  return req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "admin");
+}
+
+function redactJobMetadataClaimIds(req, metadata) {
+  if (!metadata || canViewClaimId(req)) return metadata;
+  const { deploymentDestinationDispatch: dispatch, deploymentDestinationValidation: validation,
+    deploymentDestinationObservation: observation } = metadata;
+  if (!metadata.claimId && !dispatch?.operation?.ownerClaimId && !validation?.claimId && !observation?.claimId) {
+    return metadata;
   }
-  const dispatch = jobDetailProjection.resultMetadata?.deploymentDestinationDispatch;
-  if (!jobDetailProjection.claimId && !jobDetailProjection.payload?.deploymentDestinationExecution &&
-      !jobDetailProjection.resultMetadata?.deploymentDestinationValidation &&
-      !dispatch?.operation?.ownerClaimId) return jobDetailProjection;
+  const projected = { ...metadata };
+  if (projected.claimId) projected.claimId = undefined;
+  if (validation?.claimId) projected.deploymentDestinationValidation = { ...validation, claimId: undefined };
+  if (observation?.claimId) projected.deploymentDestinationObservation = { ...observation, claimId: undefined };
+  if (dispatch?.operation?.ownerClaimId) {
+    projected.deploymentDestinationDispatch = {
+      ...dispatch,
+      operation: { ...dispatch.operation, ownerClaimId: undefined },
+    };
+  }
+  return projected;
+}
+
+function redactClaimIdForNonAdmins(req, jobDetailProjection) {
+  if (!jobDetailProjection || canViewClaimId(req)) return jobDetailProjection;
+  const { deploymentDestinationExecution: execution, deploymentDestinationObservation: observation } =
+    jobDetailProjection.payload ?? {};
+  const resultMetadata = redactJobMetadataClaimIds(req, jobDetailProjection.resultMetadata);
+  if (!jobDetailProjection.claimId && !execution?.validationClaimId && !observation?.ownerClaimId &&
+      resultMetadata === jobDetailProjection.resultMetadata) return jobDetailProjection;
   const projected = { ...jobDetailProjection };
   if (projected.claimId) projected.claimId = undefined;
-  if (projected.payload?.deploymentDestinationExecution) {
-    projected.payload = {
-      ...projected.payload,
-      deploymentDestinationExecution: {
-        ...projected.payload.deploymentDestinationExecution,
-        validationClaimId: undefined,
-      },
-    };
+  if (resultMetadata !== projected.resultMetadata) projected.resultMetadata = resultMetadata;
+  if (execution?.validationClaimId) {
+    projected.payload = { ...projected.payload,
+      deploymentDestinationExecution: { ...execution, validationClaimId: undefined } };
   }
-  if (projected.resultMetadata?.deploymentDestinationValidation) {
-    projected.resultMetadata = {
-      ...projected.resultMetadata,
-      deploymentDestinationValidation: {
-        ...projected.resultMetadata.deploymentDestinationValidation,
-        claimId: undefined,
-      },
-    };
-  }
-  if (dispatch?.operation?.ownerClaimId) {
-    projected.resultMetadata = {
-      ...projected.resultMetadata,
-      deploymentDestinationDispatch: {
-        ...dispatch,
-        operation: { ...dispatch.operation, ownerClaimId: undefined },
-      },
-    };
+  if (observation?.ownerClaimId) {
+    projected.payload = { ...projected.payload,
+      deploymentDestinationObservation: { ...observation, ownerClaimId: undefined } };
   }
   return projected;
 }
@@ -1630,7 +1635,7 @@ function jobDetail(job, workspaceRole) {
   };
 }
 
-function jobLogEntry(entry) {
+function jobLogEntry(req, entry) {
   return {
     id: entry.id,
     workspaceId: entry.workspaceId,
@@ -1638,7 +1643,7 @@ function jobLogEntry(entry) {
     eventType: entry.eventType,
     status: entry.status,
     message: entry.message,
-    metadata: entry.metadata || {},
+    metadata: redactJobMetadataClaimIds(req, entry.metadata) || {},
     createdByUserId: entry.createdByUserId,
     createdByDisplayName: entry.createdByDisplayName ?? null,
     createdByApiTokenId: entry.createdByApiTokenId,
@@ -3008,7 +3013,7 @@ router.get(
         offset: req.query.offset,
       });
       return res.json({
-        items: result.items.map(jobLogEntry),
+        items: result.items.map((entry) => jobLogEntry(req, entry)),
         pagination: result.pagination,
       });
     } catch (err) {
@@ -4806,4 +4811,5 @@ module.exports._test = {
   jobSummary,
   jobDetail,
   redactClaimIdForNonAdmins,
+  jobLogEntry,
 };

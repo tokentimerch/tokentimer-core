@@ -241,11 +241,14 @@ const { readProtectedFile, resolveStore } = require("./material-store");
 const {
   VALIDATE_DEPLOYMENT_DESTINATION,
   EXECUTE_DEPLOYMENT_DESTINATION,
+  OBSERVE_DEPLOYMENT_DESTINATION,
   isDeploymentDestinationAction,
 } = require("../vendor/contracts/deployment-destination.cjs");
 const {
   isDeploymentDestinationValidationJob,
   isDeploymentDestinationExecutionJob,
+  isDeploymentDestinationObservationJob,
+  observeDeploymentDestination,
   preflightDeploymentDestinationExecution,
   registerDeploymentDestinations,
   validateDeploymentDestination,
@@ -254,7 +257,9 @@ const {
 function buildSignedJobPolicyDescriptor(job) {
   const descriptor = {};
   if (isDeploymentDestinationAction(job?.action)) {
-    descriptor.targetSelector = job.deploymentDestination?.destinationRef;
+    descriptor.targetSelector = job.action === OBSERVE_DEPLOYMENT_DESTINATION
+      ? job.deploymentDestinationObservation?.destinationRef
+      : job.deploymentDestination?.destinationRef;
   }
   if (job?.target?.reference !== undefined) {
     descriptor.targetSelector = job.target.reference;
@@ -532,9 +537,13 @@ function resolveClaimSupportedActions(executionContext) {
     const actions = AGENT_DECLARED_CAPABILITIES.includes("adcs-store-proof-only-v1")
       ? Object.freeze([...EXECUTABLE_JOB_ACTIONS, "adcs-installation-proof"])
       : EXECUTABLE_JOB_ACTIONS;
-    return executionContext.deploymentDestinationRegistry?.hasValidators
-      ? Object.freeze([...actions, VALIDATE_DEPLOYMENT_DESTINATION])
-      : actions;
+    const { deploymentDestinationRegistry: destinations } = executionContext;
+    if (!destinations?.hasValidators && !destinations?.hasObservers) return actions;
+    return Object.freeze([
+      ...actions,
+      ...(destinations.hasValidators ? [VALIDATE_DEPLOYMENT_DESTINATION] : []),
+      ...(destinations.hasObservers ? [OBSERVE_DEPLOYMENT_DESTINATION] : []),
+    ]);
   }
   return OBSERVE_ONLY_CLAIM_ACTIONS;
 }
@@ -2093,13 +2102,17 @@ async function handleSignedJob({
     job.action === VALIDATE_DEPLOYMENT_DESTINATION && !isDeploymentDestinationValidationJob(job);
   const invalidDestinationExecution =
     job.action === EXECUTE_DEPLOYMENT_DESTINATION && !isDeploymentDestinationExecutionJob(job);
-  if (invalidDestinationValidation || invalidDestinationExecution) {
+  const invalidDestinationObservation =
+    job.action === OBSERVE_DEPLOYMENT_DESTINATION && !isDeploymentDestinationObservationJob(job);
+  if (invalidDestinationValidation || invalidDestinationExecution || invalidDestinationObservation) {
+    const errorMessage = invalidDestinationObservation ? "destination_observation_scope_invalid"
+      : invalidDestinationExecution ? "destination_execution_scope_invalid" : "destination_validation_scope_invalid";
     return persistAndTransmitOutcome({
       outboxDir: resolvedOutboxDir,
       client,
       result: {
         jobId, attemptId, claimId, nonce, status: "blocked",
-        errorMessage: invalidDestinationExecution ? "destination_execution_scope_invalid" : "destination_validation_scope_invalid",
+        errorMessage,
       },
       log,
     });
@@ -2299,6 +2312,9 @@ async function handleSignedJob({
         ...(outcome.reconciliationReceipt?{reconciliationReceipt:outcome.reconciliationReceipt}:{}),
         ...(outcome.deploymentDestinationValidation
           ? { deploymentDestinationValidation: outcome.deploymentDestinationValidation }
+          : {}),
+        ...(outcome.deploymentDestinationObservationReceipt
+          ? { deploymentDestinationObservationReceipt: outcome.deploymentDestinationObservationReceipt }
           : {}),
         // ADR-0014: awaiting_issuer (and other AD CS outcomes) carry enrollment
         // state; required by agent-protocol when status is awaiting_issuer.
@@ -2542,6 +2558,7 @@ async function executeJob({
     const destinationJob = {
       job, jobId, claimId, attemptId, signal,
       registry: executionContext.deploymentDestinationRegistry,
+      stateDir: executionContext.deploymentDestinationStateDir,
       clockOffsetMs: executionContext.clockEstimator?.getOffsetMs(),
       checkLease: async () => {
         const gate = await renewJobLeaseOrAbort({ ...leaseOpts, required: true });
@@ -2549,11 +2566,9 @@ async function executeJob({
         return Date.parse(gate.response?.leaseExpiresAt);
       },
     };
-    return action === VALIDATE_DEPLOYMENT_DESTINATION
-      ? validateDeploymentDestination(destinationJob)
-      : preflightDeploymentDestinationExecution({
-        ...destinationJob, dryRun: execution.dryRun, stateDir: executionContext.deploymentDestinationStateDir,
-      });
+    if (action === VALIDATE_DEPLOYMENT_DESTINATION) return validateDeploymentDestination(destinationJob);
+    if (action === OBSERVE_DEPLOYMENT_DESTINATION) return observeDeploymentDestination(destinationJob);
+    return preflightDeploymentDestinationExecution({ ...destinationJob, dryRun: execution.dryRun });
   }
 
   if (action === "adcs-preflight") {

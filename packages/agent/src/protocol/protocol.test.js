@@ -586,6 +586,33 @@ for (const method of ["vault-kv2-soft-delete", "openbao-kv2-soft-delete"]) {
   });
 }
 
+test("reportResult: sends only closed, claim-bound historical destination receipts", async () => {
+  const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
+  const client = createProtocolClient({
+    serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+  const observation = { state: "inconclusive", observedStateSha256: null, affectedServiceRefs: [] };
+  const receipt = { version: 1, observation, bindingSha256: "a".repeat(64) };
+  const result = {
+    jobId: "job-1", attemptId: "claim-1", claimId: "claim-1", nonce: "nonce-0123456789abcdef",
+    status: "succeeded", deploymentDestinationObservationReceipt: receipt,
+  };
+  await client.reportResult(result);
+  assert.deepEqual(calls[0].parsedBody.body.deploymentDestinationObservationReceipt, receipt);
+  assert.equal(calls[0].parsedBody.body.claimId, result.claimId);
+  for (const invalid of [
+    { ...result, claimId: null },
+    { ...result, status: "blocked" },
+    { ...result, deploymentDestinationObservationReceipt: {
+      ...receipt, observation: { ...observation, state: "observed" },
+    } },
+  ]) {
+    await assert.rejects(client.reportResult(invalid), { code: AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE });
+  }
+  assert.equal(calls.length, 1);
+});
+
 test("reportResult: forwards claimId and nonce in the body when provided", async () => {
   const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
 

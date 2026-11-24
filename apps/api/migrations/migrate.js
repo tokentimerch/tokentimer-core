@@ -5477,6 +5477,18 @@ migrations.push({
   sql: fs.readFileSync(require("path").join(__dirname, "131-certops-deployment-destination-ownership.sql"), "utf8"),
 });
 
+migrations.push({
+  version: 132,
+  name: "certops_deployment_destination_observation",
+  sql: fs.readFileSync(require("path").join(__dirname, "132-certops-deployment-destination-observation.sql"), "utf8"),
+});
+
+migrations.push({
+  version: 133,
+  name: "certops_controller_destination_domain_fence",
+  sql: fs.readFileSync(require("path").join(__dirname, "133-certops-controller-destination-domain-fence.sql"), "utf8"),
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);

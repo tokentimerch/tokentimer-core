@@ -225,7 +225,17 @@ function validateDeploymentDestinationExecution(value) {
   return validateDeploymentDestinationDefinition("execution", value);
 }
 
+function validateDeploymentDestinationObservationScope(value) {
+  return validateDeploymentDestinationDefinition("observationScope", value);
+}
+
+function validateDeploymentDestinationObservationReceipt(value) {
+  return validateDeploymentDestinationDefinition("observationReceipt", value);
+}
+
 module.exports = {
+  validateDeploymentDestinationObservationScope,
+  validateDeploymentDestinationObservationReceipt,
   CERTIFICATE_ACTIONS,
   PROTOCOL_SMOKE_ACTION,
   TRUST_ANCHOR_ACTIONS,

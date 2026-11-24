@@ -53,6 +53,8 @@ const reservations = Object.freeze({
   128: "shared_sso_schema",
   130: "certops_deployment_destination_operations",
   131: "certops_deployment_destination_ownership",
+  132: "certops_deployment_destination_observation",
+  133: "certops_controller_destination_domain_fence",
 });
 
 function validateMigrationReservations(migrations) {

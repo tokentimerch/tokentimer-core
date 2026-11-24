@@ -642,7 +642,7 @@ async function signJobForDispatch(options = {}) {
   };
   delete signedJob.signature;
 
-  if (signedJob.action === "validate-deployment-destination" || signedJob.action === "execute-deployment-destination") {
+  if (["validate-deployment-destination", "execute-deployment-destination", "observe-deployment-destination"].includes(signedJob.action)) {
     const destinations = require("./deploymentDestinations");
     const { validateSignedJob } = require("../../../../packages/contracts/certops/validate-signed-job.cjs");
     if (!options.client || signedJob.workspaceId !== workspaceId || !agentId ||

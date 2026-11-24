@@ -16,7 +16,7 @@ const CERTOPS_JOB_CANCELLATION_UNAVAILABLE = "CERTOPS_JOB_CANCELLATION_UNAVAILAB
 const CERTOPS_JOB_CANCELLATION_UNSUPPORTED = "CERTOPS_JOB_CANCELLATION_UNSUPPORTED";
 const CERTOPS_JOB_CANCELLATION_FORBIDDEN = "CERTOPS_JOB_CANCELLATION_FORBIDDEN";
 const UNKNOWN_EFFECT_REASON = "operator_cancelled_after_execution_started";
-const READ_ONLY_OPERATIONS = new Set(["noop", "adcs-preflight", "validate-deployment-destination"]);
+const READ_ONLY_OPERATIONS = new Set(["noop", "adcs-preflight", "validate-deployment-destination", "observe-deployment-destination"]);
 
 const MATERIAL_JOB_FIELDS = [
   "publication", "materialDeployment", "materialCleanup", "materialReconciliation",

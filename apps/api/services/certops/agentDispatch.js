@@ -15,6 +15,8 @@ const { pool } = require("../../db/database");
 const { assertCurrentAgentCredential } = require("./agentCredentialFence");
 const {
   EXECUTE: EXECUTE_DESTINATION,
+  OBSERVE: OBSERVE_DESTINATION,
+  assertDestinationObservationSource,
   UNAVAILABLE: DESTINATION_UNAVAILABLE,
   isDestinationOperation,
   requireDestinationPolicy,
@@ -136,6 +138,16 @@ const CERTOPS_AGENT_LEASE_INVALID = "CERTOPS_AGENT_LEASE_INVALID";
 const CERTOPS_AGENT_CERTIFICATE_REVOKED = "CERTOPS_AGENT_CERTIFICATE_REVOKED";
 const CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE =
   "CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE";
+const DESTINATION_OBSERVATION_ERROR_MESSAGES = new Set([
+  "destination_observation_scope_invalid",
+  "destination_observation_adapter_unavailable",
+  "destination_observation_expired",
+  "destination_observation_ownership_unavailable",
+  "destination_observation_local_authorization_required",
+  "destination_observation_evidence_invalid",
+  "destination_observation_aborted",
+  "destination_observation_failed",
+]);
 
 // RegistrationId → credential replay window (H1). Short crash-retry window;
 // override via CERTOPS_REGISTRATION_REPLAY_TTL_MS (milliseconds).
@@ -2021,6 +2033,10 @@ function safeParseJson(value) {
  */
 async function assertDestinationDispatchAllowed(client, agent, job, policy, phase) {
   await requireDestinationPolicy({ client, policy, phase, workspaceId: agent.workspaceId, agent, job });
+  if (job.operation === OBSERVE_DESTINATION) {
+    await assertDestinationObservationSource({ client, agent, job, policy });
+    return;
+  }
   if (job.operation !== EXECUTE_DESTINATION) return;
 
   const approval = {
@@ -2966,6 +2982,7 @@ async function ingestResult({
     const destinationResult = await checkDestinationResult({
       client, policy: deps.deploymentDestinationPolicy, agent, job, body, jobStatus,
     });
+    const destinationObservation = job.operation === OBSERVE_DESTINATION;
 
     // A store installation is reconciled only from a live claim. Once the
     // lease expires, recovery must obtain its own claim and re-prove the same
@@ -3037,6 +3054,9 @@ async function ingestResult({
         job.status === jobStatus &&
         job.completed_at
       ) {
+        // The exact committed observation receipt was verified above. An
+        // outbox retry acknowledges delivery without returning job history.
+        if (destinationObservation) return { ok: true, duplicate: true };
         if(job.payload?.materialCleanup && jobStatus==="succeeded"){
           await require("./materialCleanup").assertCommittedCleanupReceipt({client,workspaceId:agent.workspaceId,job,receipt:body.cleanupReceipt});
         }
@@ -3134,20 +3154,22 @@ async function ingestResult({
       jobStatus !== "dry_run_complete" &&
       jobStatus !== "awaiting_issuer";
     // Terminal renew failures must persist error_code for the alerts stage.
+    const rejectionReason = destinationObservation ? null : body.rejectionReason;
     const errorCode = isFailure
-      ? body.rejectionReason ||
+      ? rejectionReason ||
         (job.payload?.materialDeployment && body.errorMessage === "material_drift_detected"
           ? "CERTOPS_MATERIAL_DRIFT_DETECTED"
           : `AGENT_RESULT_${jobStatus.toUpperCase()}`)
       : null;
     // Agent-provided error text is untrusted: scrub private-key material
     // and generic secrets before it is stored, logged, audited or alerted.
-    const errorMessage =
-      isFailure && typeof body.errorMessage === "string"
-        ? redactGenericSecrets(
-            redactPrivateKeyMaterial(body.errorMessage),
-          ).slice(0, 1024)
-        : null;
+    let errorMessage = null;
+    if (isFailure && destinationObservation) {
+      errorMessage = DESTINATION_OBSERVATION_ERROR_MESSAGES.has(body.errorMessage)
+        ? body.errorMessage : "destination_observation_failed";
+    } else if (isFailure && typeof body.errorMessage === "string") {
+      errorMessage = redactGenericSecrets(redactPrivateKeyMaterial(body.errorMessage)).slice(0, 1024);
+    }
 
     // A material retry is an explicit operator action. A validated publication
     // or current deployment receipt resolves that job's earlier uncertain
@@ -3185,8 +3207,8 @@ async function ingestResult({
       ...(job.operation === "adcs-preflight" && job.result_metadata?.preflightContext
         ? { preflightContext: job.result_metadata.preflightContext } : {}),
       ...(body.reconciliationReceipt ? {reconciliationReceiptHash:require("./materialDistribution").hashIntent(body.reconciliationReceipt)} : {}),
-      ...(body.rejectionReason != null
-        ? { rejectionReason: body.rejectionReason }
+      ...(rejectionReason != null
+        ? { rejectionReason }
         : {}),
       ...(body.keyRotated != null ? { keyRotated: body.keyRotated } : {}),
       ...(enrollmentResult ? { enrollmentResult } : {}),

@@ -81,12 +81,7 @@ function confirmHold({ stateDir, rootFd, holdDirectoryFd, holdFd, filename, cont
   }
 }
 
-/**
- * Acquires a durable hold on the actual local writer domain. Any existing
- * marker, including a partial or unreadable one, fences acquisition. A job
- * result, lease loss, process restart, or read-only operation cannot remove it.
- */
-function holdDestinationOwnership({ stateDir, workspaceId, jobId, operation }) {
+function destinationHoldIdentity({ stateDir, workspaceId, jobId, operation }) {
   if (process.platform !== "linux" || typeof stateDir !== "string" ||
       stateDir === "/" || path.resolve(stateDir) !== stateDir ||
       typeof workspaceId !== "string" || !WORKSPACE_ID.test(workspaceId) ||
@@ -109,9 +104,20 @@ function holdDestinationOwnership({ stateDir, workspaceId, jobId, operation }) {
   const domainKey = createHash("sha256").update(JSON.stringify([
     record.workspaceId, record.mutationDomainSha256,
   ])).digest("hex");
-  const filename = domainKey + ".json";
-  const contents = Buffer.from(JSON.stringify(record) + "\n", "utf8");
+  return {
+    filename: domainKey + ".json",
+    contents: Buffer.from(JSON.stringify(record) + "\n", "utf8"),
+  };
+}
 
+/**
+ * Acquires a durable hold on the actual local writer domain. Any existing
+ * marker, including a partial or unreadable one, fences acquisition. A job
+ * result, lease loss, process restart, or read-only operation cannot remove it.
+ */
+function holdDestinationOwnership(input) {
+  const { stateDir } = input;
+  const { filename, contents } = destinationHoldIdentity(input);
   const rootFd = openStateRoot(stateDir);
   try {
     const directory = throughDirectory(rootFd, HOLD_DIRECTORY);
@@ -158,4 +164,34 @@ function holdDestinationOwnership({ stateDir, workspaceId, jobId, operation }) {
   }
 }
 
-module.exports = { holdDestinationOwnership };
+function hasDestinationOwnership({ stateDir, workspaceId, observation }) {
+  try {
+    const { filename, contents } = destinationHoldIdentity({
+      stateDir, workspaceId, jobId: observation.ownerJobId, operation: observation,
+    });
+    const rootFd = openStateRoot(stateDir);
+    try {
+      const holdDirectoryFd = fs.openSync(
+        throughDirectory(rootFd, HOLD_DIRECTORY), O_RDONLY | O_DIRECTORY | O_NOFOLLOW,
+      );
+      try {
+        privateDirectory(holdDirectoryFd);
+        const holdFd = fs.openSync(throughDirectory(holdDirectoryFd, filename), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+        try {
+          confirmHold({ stateDir, rootFd, holdDirectoryFd, holdFd, filename, contents });
+          return true;
+        } finally {
+          fs.closeSync(holdFd);
+        }
+      } finally {
+        fs.closeSync(holdDirectoryFd);
+      }
+    } finally {
+      fs.closeSync(rootFd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+module.exports = { holdDestinationOwnership, hasDestinationOwnership };

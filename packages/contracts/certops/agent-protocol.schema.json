@@ -440,7 +440,8 @@
               "deploy-from-store",
               "cleanup-from-store",
               "reconcile-from-store",
-              "validate-deployment-destination"
+              "validate-deployment-destination",
+              "observe-deployment-destination"
             ]
           },
           "description": "Subset of job-payload.schema.json actions this agent build can execute, plus protocol_smoke for diagnostic-kind agents (ADR-0012 decision 7): a diagnostic agent must declare supportedActions: [\"protocol_smoke\"] to ever match a protocol_smoke job, since the claim query joins this array against certificate_jobs.operation directly. distribute-trust/revoke-trust are the two trust-anchor actions (ADR-0012 decisions 17/20i). adcs-preflight is the read-only AD CS issuer validation job (adcs-preflight-payload.schema.json, ADR-0014 decision 5)."
@@ -591,6 +592,9 @@
         },
         "deploymentDestinationValidation": {
           "$ref": "#/definitions/deploymentDestination_validationReceipt"
+        },
+        "deploymentDestinationObservationReceipt": {
+          "$ref": "#/definitions/deploymentDestination_observationReceipt"
         }
       },
       "allOf": [
@@ -627,6 +631,35 @@
               "claimId",
               "nonce"
             ],
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              },
+              "claimId": {
+                "type": "string"
+              },
+              "nonce": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "deploymentDestinationObservationReceipt"
+            ]
+          },
+          "then": {
+            "required": [
+              "claimId",
+              "nonce"
+            ],
+            "not": {
+              "required": [
+                "deploymentDestinationValidation"
+              ]
+            },
             "properties": {
               "status": {
                 "const": "succeeded"
@@ -1876,6 +1909,77 @@
         },
         "validation": {
           "$ref": "#/definitions/deploymentDestination_validation"
+        },
+        "bindingSha256": {
+          "$ref": "#/definitions/deploymentDestination_sha256"
+        }
+      }
+    },
+    "deploymentDestination_historicalObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "observedStateSha256",
+        "affectedServiceRefs"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "observed",
+            "inconclusive"
+          ]
+        },
+        "observedStateSha256": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/deploymentDestination_sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "affectedServiceRefs": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/deploymentDestination_opaqueRef",
+            "type": "string"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "state": {
+            "const": "observed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "observedStateSha256": {
+            "$ref": "#/definitions/deploymentDestination_sha256"
+          }
+        }
+      }
+    },
+    "deploymentDestination_observationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "observation",
+        "bindingSha256"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "observation": {
+          "$ref": "#/definitions/deploymentDestination_historicalObservation"
         },
         "bindingSha256": {
           "$ref": "#/definitions/deploymentDestination_sha256"

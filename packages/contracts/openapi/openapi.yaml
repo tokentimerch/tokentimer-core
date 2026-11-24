@@ -10066,7 +10066,7 @@ paths:
           name: operation
           schema:
             type: string
-            enum: [issue, renew, deploy, deploy-from-store, cleanup-from-store, reconcile-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight, adcs-installation-proof, validate-deployment-destination, execute-deployment-destination]
+            enum: [issue, renew, deploy, deploy-from-store, cleanup-from-store, reconcile-from-store, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight, adcs-installation-proof, validate-deployment-destination, execute-deployment-destination, observe-deployment-destination]
         - in: query
           name: source
           schema:
@@ -12640,7 +12640,7 @@ paths:
               $ref: "#/components/schemas/CertOpsAgentResultRequest"
       responses:
         "200":
-          description: Result acknowledged (jobId/status/errorCode/completedAt), evidence appended (ok/evidenceCount), or IIS proofs processed (ok/proofCount/duplicateCount)
+          description: Result or prior delivery acknowledged, evidence appended, or IIS proofs processed.
           content:
             application/json:
               schema:
@@ -17241,7 +17241,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reconcile-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight, adcs-installation-proof, validate-deployment-destination, execute-deployment-destination]
+          enum: [renew, deploy, deploy-from-store, cleanup-from-store, reconcile-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight, adcs-installation-proof, validate-deployment-destination, execute-deployment-destination, observe-deployment-destination]
         status:
           type: string
           enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled, dry_run_complete, orphaned_unknown_effect, awaiting_issuer]
@@ -20043,7 +20043,7 @@ components:
                   maxItems: 16
                   items:
                     type: string
-                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, adcs-installation-proof, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store, cleanup-from-store, reconcile-from-store, validate-deployment-destination]
+                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, adcs-installation-proof, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store, cleanup-from-store, reconcile-from-store, validate-deployment-destination, observe-deployment-destination]
     CertOpsAgentClaimResponse:
       type: object
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.
@@ -20403,6 +20403,20 @@ components:
                   type: object
                   nullable: true
                   description: Result messages for an adcs-preflight job. Shape defined by packages/contracts/certops/adcs-preflight-result-contract.schema.json.
+                deploymentDestinationObservationReceipt:
+                  type: object
+                  additionalProperties: false
+                  required: [version, observation, bindingSha256]
+                  description: Claim-bound, read-only historical observation. Bounded facts are defined by packages/contracts/certops/deployment-destination.schema.json.
+                  properties:
+                    version:
+                      type: integer
+                      enum: [1]
+                    observation:
+                      type: object
+                    bindingSha256:
+                      type: string
+                      pattern: '^[a-f0-9]{64}$'
                 deploymentDestinationValidation:
                   type: object
                   additionalProperties: false
@@ -20485,6 +20499,9 @@ components:
       properties:
         ok:
           type: boolean
+        duplicate:
+          type: boolean
+          description: An identical committed result was acknowledged. A historical destination observation retry returns only ok and duplicate.
         jobId:
           type: string
           description: Result messages only.

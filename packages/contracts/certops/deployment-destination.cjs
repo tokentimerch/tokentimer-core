@@ -5,9 +5,11 @@ const { canonicalizeJobPayload } = require("./canonical-json.cjs");
 
 const VALIDATE_DEPLOYMENT_DESTINATION = "validate-deployment-destination";
 const EXECUTE_DEPLOYMENT_DESTINATION = "execute-deployment-destination";
+const OBSERVE_DEPLOYMENT_DESTINATION = "observe-deployment-destination";
 
 function isDeploymentDestinationAction(action) {
-  return action === VALIDATE_DEPLOYMENT_DESTINATION || action === EXECUTE_DEPLOYMENT_DESTINATION;
+  return action === VALIDATE_DEPLOYMENT_DESTINATION || action === EXECUTE_DEPLOYMENT_DESTINATION ||
+    action === OBSERVE_DEPLOYMENT_DESTINATION;
 }
 
 /**
@@ -61,7 +63,21 @@ function hasMatchingDeploymentDestinationOperation(job) {
     operation.operationId === createDeploymentDestinationOperation(job, operation.mutationDomainSha256).operationId;
 }
 
+function hashDeploymentDestinationObservation(job, observation) {
+  return createHash("sha256").update(canonicalizeJobPayload({
+    action: OBSERVE_DEPLOYMENT_DESTINATION,
+    jobId: job.jobId,
+    claimId: job.claimId,
+    workspaceId: job.workspaceId,
+    agentId: job.agentId,
+    scope: job.deploymentDestinationObservation,
+    observation,
+  })).digest("hex");
+}
+
 module.exports = {
+  OBSERVE_DEPLOYMENT_DESTINATION,
+  hashDeploymentDestinationObservation,
   createDeploymentDestinationOperation,
   hasMatchingDeploymentDestinationOperation,
   VALIDATE_DEPLOYMENT_DESTINATION,
