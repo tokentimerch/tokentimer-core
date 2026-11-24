@@ -4,6 +4,11 @@ const { createHash } = require("node:crypto");
 const { canonicalizeJobPayload } = require("./canonical-json.cjs");
 
 const VALIDATE_DEPLOYMENT_DESTINATION = "validate-deployment-destination";
+const EXECUTE_DEPLOYMENT_DESTINATION = "execute-deployment-destination";
+
+function isDeploymentDestinationAction(action) {
+  return action === VALIDATE_DEPLOYMENT_DESTINATION || action === EXECUTE_DEPLOYMENT_DESTINATION;
+}
 
 /**
  * Binds the public observation to the verified validation job and its claim.
@@ -21,4 +26,23 @@ function hashDeploymentDestinationValidation(job, validation) {
   })).digest("hex");
 }
 
-module.exports = { VALIDATE_DEPLOYMENT_DESTINATION, hashDeploymentDestinationValidation };
+function hasMatchingDeploymentDestinationReceipt(job) {
+  const execution = job.deploymentDestinationExecution;
+  if (execution.validationJobId === job.jobId) return false;
+
+  return hashDeploymentDestinationValidation({
+    jobId: execution.validationJobId,
+    claimId: execution.validationClaimId,
+    workspaceId: job.workspaceId,
+    agentId: job.agentId,
+    deploymentDestination: job.deploymentDestination,
+  }, execution.receipt.validation) === execution.receipt.bindingSha256;
+}
+
+module.exports = {
+  VALIDATE_DEPLOYMENT_DESTINATION,
+  EXECUTE_DEPLOYMENT_DESTINATION,
+  isDeploymentDestinationAction,
+  hashDeploymentDestinationValidation,
+  hasMatchingDeploymentDestinationReceipt,
+};

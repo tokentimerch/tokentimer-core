@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/deployment-destination.schema.json",
   "title": "CertOps Deployment Destination v1",
-  "description": "Closed scopes and public validation results for locally provisioned certificate deployment destinations. References are opaque identifiers.",
+  "description": "Closed scopes, validation evidence and approved execution authority for locally provisioned certificate deployment destinations. References are opaque identifiers.",
   "definitions": {
     "opaqueRef": {
       "type": "string",
@@ -113,6 +113,47 @@
           "$ref": "#/definitions/sha256"
         }
       }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "validationJobId",
+        "validationClaimId",
+        "receipt"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "validationJobId": {
+          "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/jobId"
+        },
+        "validationClaimId": {
+          "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/claimId"
+        },
+        "receipt": {
+          "$ref": "#/definitions/validationReceipt"
+        }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "payloadSha256",
+        "intentSha256"
+      ],
+      "properties": {
+        "payloadSha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "intentSha256": {
+          "$ref": "#/definitions/sha256"
+        }
+      },
+      "description": "The controller signs both hashes from the native approval decision after rechecking its current authority. These hashes do not authorize a request outside its signed dispatch."
     }
   }
 }

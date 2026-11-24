@@ -439,6 +439,7 @@ function handleAgentRouteError(res, error) {
         error: "Result status is invalid",
         code: CERTOPS_AGENT_RESULT_STATUS_INVALID,
       });
+    case "CERTOPS_DESTINATION_VALIDATION_RECEIPT_INVALID":
     case "CERTOPS_DESTINATION_VALIDATION_UNAVAILABLE":
       return res.status(422).json({ error: error.message, code: error.code });
     case "CERTOPS_MATERIAL_CONTRACT_INVALID":
@@ -547,7 +548,9 @@ async function claimHandler(req, res, options = {}) {
       envelope,
       body,
       env: options.env,
-      deps: options.claimDeps,
+      deps: options.deploymentDestinationPolicy
+        ? { ...options.claimDeps, deploymentDestinationPolicy: options.deploymentDestinationPolicy }
+        : options.claimDeps,
     });
     // { jobs: [...] } where each job is the signed dispatch payload the
     // agent client passes to verifyJobSignature (job fields + nonce,
@@ -577,7 +580,9 @@ async function leaseHandler(req, res, options = {}) {
       claimId: body.claimId,
       envelope: { sequence: body.sequence },
       env: options.env,
-      deps: options.leaseDeps,
+      deps: options.deploymentDestinationPolicy
+        ? { ...options.leaseDeps, deploymentDestinationPolicy: options.deploymentDestinationPolicy }
+        : options.leaseDeps,
     });
     return res.status(200).json(result);
   } catch (error) {
@@ -677,7 +682,9 @@ async function resultsHandler(req, res, options = {}) {
       agent: req.certopsAgent,
       envelope,
       body: { ...body, claimId: body.claimId ?? body.attemptId },
-      deps: options.resultDeps,
+      deps: options.deploymentDestinationPolicy
+        ? { ...options.resultDeps, deploymentDestinationPolicy: options.deploymentDestinationPolicy }
+        : options.resultDeps,
     });
     return res.status(200).json(result);
   } catch (error) {

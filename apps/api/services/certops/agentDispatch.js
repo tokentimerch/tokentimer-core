@@ -13,6 +13,15 @@
 
 const { pool } = require("../../db/database");
 const { assertCurrentAgentCredential } = require("./agentCredentialFence");
+const {
+  EXECUTE: EXECUTE_DESTINATION,
+  UNAVAILABLE: DESTINATION_UNAVAILABLE,
+  isDestinationOperation,
+  requireDestinationPolicy,
+  assertDestinationExecutionSource,
+  assertSignedDestinationAuthority,
+  checkDestinationResult,
+} = require("./deploymentDestinations");
 const crypto = require("node:crypto");
 const {
   consumeBootstrapToken,
@@ -1011,7 +1020,8 @@ async function claimJobs({
       ? body.maxJobs
       : 1;
   const supportedActions = Array.isArray(body.supportedActions)
-    ? body.supportedActions.filter((action) => typeof action === "string")
+    ? body.supportedActions.filter((action) => typeof action === "string" &&
+      (!isDestinationOperation(action) || typeof deps.deploymentDestinationPolicy?.authorize === "function"))
     : [];
   const supportedDnsProviders = normalizeStringList(
     body.supportedDnsProviders,
@@ -1189,7 +1199,7 @@ async function claimJobs({
               created_at::text AS dispatch_cursor_created_at,
               management_period_id, certificate_identity_id, requested_by_connection_id, requested_by_user_id, payload,
               source, attempt_count,
-              approved_at, approved_payload_hash, approved_canonical_intent_hash,
+              approved_at, approved_by_user_id, approved_payload_hash, approved_canonical_intent_hash,
               mode, executor_kind,
               assigned_agent_id, required_target_selector,
               required_dns_provider, required_command_profile, enrollment_id,
@@ -1404,6 +1414,16 @@ async function claimJobs({
       agentKind,
     };
     for (const row of selected.rows) {
+      if (isDestinationOperation(row.operation)) {
+        try {
+          if (row.operation === EXECUTE_DESTINATION &&
+              (row.status !== "pending" || Number(row.attempt_count) !== 0)) continue;
+          await assertDestinationDispatchAllowed(client, agent, row, deps.deploymentDestinationPolicy, "claim");
+        } catch (error) {
+          if (error.code !== DESTINATION_UNAVAILABLE) throw error;
+          continue;
+        }
+      }
       // Reclaims are already authorized work. Only a fresh dispatch must
       // revalidate the originating connection and requester membership.
       if (row.status === "pending" && !await require("../operator/jobAuthority").lockOperatorJobAuthority({
@@ -1890,6 +1910,12 @@ async function claimJobs({
         }
       }
 
+      if (job.operation === EXECUTE_DESTINATION) {
+        basePayload.deploymentDestinationApproval = {
+          payloadSha256: row.approved_payload_hash,
+          intentSha256: row.approved_canonical_intent_hash,
+        };
+      }
       const signedJob = await signJob({
         client,
         job: basePayload,
@@ -1977,6 +2003,34 @@ function safeParseJson(value) {
  * extends the still-open dispatch nonce so late results remain reportable
  * for the full renewable lease + hard-grace window.
  */
+async function assertDestinationDispatchAllowed(client, agent, job, policy, phase) {
+  await requireDestinationPolicy({ client, policy, phase, workspaceId: agent.workspaceId, agent, job });
+  if (job.operation !== EXECUTE_DESTINATION) return;
+
+  const approval = {
+    operation: job.operation,
+    subjectType: job.subject_type,
+    subjectId: job.subject_id,
+    assignedAgentId: job.assigned_agent_id,
+    requestedByConnectionId: job.requested_by_connection_id,
+    requiredTargetSelector: job.required_target_selector,
+    requiredDnsProvider: job.required_dns_provider,
+    requiredCommandProfile: job.required_command_profile,
+    payload: job.payload,
+  };
+  if (!job.approved_at || !job.approved_by_user_id || !job.requested_by_user_id ||
+      String(job.approved_by_user_id) === String(job.requested_by_user_id) ||
+      job.approved_payload_hash !== computeJobPayloadApprovalHash(job.payload) ||
+      job.approved_canonical_intent_hash !== computeCanonicalIntentHash(approval)) {
+    throw Object.assign(new Error("Destination execution requires current independent approval"), { code: DESTINATION_UNAVAILABLE });
+  }
+  await assertDestinationExecutionSource({
+    client, workspaceId: agent.workspaceId, jobId: job.id, assignedAgentId: job.assigned_agent_id,
+    agentId: agent.agentId, payload: job.payload,
+  });
+  if (phase === "lease") assertSignedDestinationAuthority(job);
+}
+
 async function renewJobLease({
   dbPool = pool,
   agent,
@@ -2003,7 +2057,12 @@ async function renewJobLease({
     await enforceSequence({ client, agentRowId: agent.id, envelope });
 
     const locked = await client.query(
-      `SELECT id, workspace_id, operation, subject_id, payload, assigned_agent_id, status, claimed_by_agent_id, claim_id, lease_expires_at
+      `SELECT id, workspace_id, operation, subject_id, payload, assigned_agent_id, status, claimed_by_agent_id,
+              claim_id, lease_expires_at, subject_type, mode, approved_at,
+              approved_by_user_id, approved_payload_hash, approved_canonical_intent_hash,
+              requested_by_user_id, requested_by_connection_id, required_target_selector,
+              required_dns_provider, required_command_profile, result_metadata,
+              (lease_expires_at > clock_timestamp()) AS lease_live
          FROM certificate_jobs
         WHERE id = $1
           AND workspace_id = $2
@@ -2036,6 +2095,11 @@ async function renewJobLease({
           ? CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH
           : CERTOPS_AGENT_LEASE_INVALID,
       );
+    }
+
+    if (isDestinationOperation(job.operation)) {
+      if (job.lease_live !== true) throw serviceError("Destination claim expired", CERTOPS_AGENT_LEASE_INVALID);
+      await assertDestinationDispatchAllowed(client, agent, job, deps.deploymentDestinationPolicy, "lease");
     }
 
     if (job.operation === "distribute-trust" && typeof job.payload?.fingerprintSha256 === "string" &&
@@ -2851,7 +2915,7 @@ async function ingestResult({
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
               subject_type, subject_id, error_code, completed_at, mode, result_metadata,
               source, payload, assigned_agent_id, management_period_id, certificate_identity_id,
-              enrollment_id, attempt_count,
+              required_target_selector, requested_by_user_id, approved_by_user_id, enrollment_id, attempt_count,
               (lease_expires_at > clock_timestamp()) AS lease_live
          FROM certificate_jobs
         WHERE id = $1
@@ -2878,9 +2942,9 @@ async function ingestResult({
       );
     }
 
-    if (body.deploymentDestinationValidation) {
-      throw serviceError("Deployment destination validation is unavailable", "CERTOPS_DESTINATION_VALIDATION_UNAVAILABLE");
-    }
+    const destinationResult = await checkDestinationResult({
+      client, policy: deps.deploymentDestinationPolicy, agent, job, body, jobStatus,
+    });
 
     // A store installation is reconciled only from a live claim. Once the
     // lease expires, recovery must obtain its own claim and re-prove the same
@@ -3093,6 +3157,7 @@ async function ingestResult({
     const trustResult = body?.trustResult || null;
     const enrollmentResult = body?.enrollmentResult || null;
     const resultMetadata = {
+      ...destinationResult,
       // Server-owned dispatch context cannot be supplied or replaced by an
       // agent report. Retain it so an old-version result never qualifies a
       // newly confirmed issuer, even if transaction timestamps overlap.

@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/deployment-destination-job-payload.schema.json",
-  "title": "CertOps Deployment Destination Validation Job",
-  "description": "Read-only validation through the native signed agent path.",
+  "title": "CertOps Deployment Destination Job",
+  "description": "Closed signed native jobs for read-only destination validation and independently approved execution.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -63,7 +63,10 @@
       "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/attemptCount"
     },
     "action": {
-      "const": "validate-deployment-destination"
+      "enum": [
+        "validate-deployment-destination",
+        "execute-deployment-destination"
+      ]
     },
     "mode": {
       "const": "real"
@@ -73,6 +76,41 @@
     },
     "signature": {
       "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-wire-v1.schema.json#/properties/signature"
+    },
+    "deploymentDestinationExecution": {
+      "$ref": "https://tokentimer.io/contracts/certops/deployment-destination.schema.json#/definitions/execution"
+    },
+    "deploymentDestinationApproval": {
+      "$ref": "https://tokentimer.io/contracts/certops/deployment-destination.schema.json#/definitions/approval"
+    }
+  },
+  "if": {
+    "properties": {
+      "action": {
+        "const": "execute-deployment-destination"
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "deploymentDestinationExecution",
+      "deploymentDestinationApproval"
+    ]
+  },
+  "else": {
+    "not": {
+      "anyOf": [
+        {
+          "required": [
+            "deploymentDestinationExecution"
+          ]
+        },
+        {
+          "required": [
+            "deploymentDestinationApproval"
+          ]
+        }
+      ]
     }
   }
 }

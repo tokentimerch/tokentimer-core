@@ -642,6 +642,16 @@ async function signJobForDispatch(options = {}) {
   };
   delete signedJob.signature;
 
+  if (signedJob.action === "validate-deployment-destination" || signedJob.action === "execute-deployment-destination") {
+    const destinations = require("./deploymentDestinations");
+    const { validateSignedJob } = require("../../../../packages/contracts/certops/validate-signed-job.cjs");
+    if (!options.client || signedJob.workspaceId !== workspaceId || !agentId ||
+        signedJob.claimId !== signedJob.attemptId || !validateSignedJob(signedJob).valid) {
+      throw serviceError("Invalid deployment destination dispatch", CERTOPS_SIGNING_PAYLOAD_INVALID);
+    }
+    await destinations.persistSignedDestinationDispatch({ client: db, signedJob, nonce });
+  }
+
   await db.query(
     `INSERT INTO certops_consumed_nonces (
        nonce, job_id, workspace_id, issued_to_agent_id, expires_at

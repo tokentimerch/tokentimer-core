@@ -181,3 +181,17 @@ describe("CertOps job projection approval attribution", () => {
     assert.equal(detail.approvedAt, null);
   });
 });
+
+it("redacts nested destination claim identity on unclaimed job views", () => {
+  const detail = {
+    claimId: null,
+    payload: { deploymentDestinationExecution: { validationClaimId: "source-claim", validationJobId: "source-job" } },
+    resultMetadata: { deploymentDestinationValidation: { claimId: "result-claim", receipt: { version: 1 } } },
+  };
+  const view = redactClaimIdForNonAdmins({ authz: { workspaceRole: "viewer" } }, detail);
+  assert.equal(view.payload.deploymentDestinationExecution.validationClaimId, undefined);
+  assert.equal(view.resultMetadata.deploymentDestinationValidation.claimId, undefined);
+  assert.equal(view.payload.deploymentDestinationExecution.validationJobId, "source-job");
+  assert.equal(detail.payload.deploymentDestinationExecution.validationClaimId, "source-claim");
+  assert.equal(detail.resultMetadata.deploymentDestinationValidation.claimId, "result-claim");
+});

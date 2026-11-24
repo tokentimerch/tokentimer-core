@@ -5465,6 +5465,12 @@ migrations.push({
   sql: SHARED_SSO_SCHEMA_SQL,
 });
 
+migrations.push({
+  version: 130,
+  name: "certops_deployment_destination_operations",
+  sql: fs.readFileSync(require("path").join(__dirname, "130-certops-deployment-destination-operations.sql"), "utf8"),
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);

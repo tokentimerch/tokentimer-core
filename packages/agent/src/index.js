@@ -238,16 +238,22 @@ function buildJobPolicyDescriptor(job) {
  */
 const { publicationSession, executePinnedDeployment, reconcilePinnedDeployment, resolveBindingPolicy, withMaterialLock } = require("./material-store/lifecycle");
 const { readProtectedFile, resolveStore } = require("./material-store");
-const { VALIDATE_DEPLOYMENT_DESTINATION } = require("../vendor/contracts/deployment-destination.cjs");
+const {
+  VALIDATE_DEPLOYMENT_DESTINATION,
+  EXECUTE_DEPLOYMENT_DESTINATION,
+  isDeploymentDestinationAction,
+} = require("../vendor/contracts/deployment-destination.cjs");
 const {
   isDeploymentDestinationValidationJob,
+  isDeploymentDestinationExecutionJob,
+  preflightDeploymentDestinationExecution,
   registerDeploymentDestinations,
   validateDeploymentDestination,
 } = require("./deployment-destinations");
 
 function buildSignedJobPolicyDescriptor(job) {
   const descriptor = {};
-  if (job?.action === VALIDATE_DEPLOYMENT_DESTINATION) {
+  if (isDeploymentDestinationAction(job?.action)) {
     descriptor.targetSelector = job.deploymentDestination?.destinationRef;
   }
   if (job?.target?.reference !== undefined) {
@@ -2083,11 +2089,18 @@ async function handleSignedJob({
     return reportJobRejection({ ...rejectionArgs, verdict: windowVerdict });
   }
 
-  if (job.action === VALIDATE_DEPLOYMENT_DESTINATION && !isDeploymentDestinationValidationJob(job)) {
+  const invalidDestinationValidation =
+    job.action === VALIDATE_DEPLOYMENT_DESTINATION && !isDeploymentDestinationValidationJob(job);
+  const invalidDestinationExecution =
+    job.action === EXECUTE_DEPLOYMENT_DESTINATION && !isDeploymentDestinationExecutionJob(job);
+  if (invalidDestinationValidation || invalidDestinationExecution) {
     return persistAndTransmitOutcome({
       outboxDir: resolvedOutboxDir,
       client,
-      result: { jobId, attemptId, claimId, nonce, status: "blocked", errorMessage: "destination_validation_scope_invalid" },
+      result: {
+        jobId, attemptId, claimId, nonce, status: "blocked",
+        errorMessage: invalidDestinationExecution ? "destination_execution_scope_invalid" : "destination_validation_scope_invalid",
+      },
       log,
     });
   }
@@ -2214,7 +2227,7 @@ async function handleSignedJob({
         leaseClient: client,
         leaseState,
         executionContext: materialRecoveryOnly ? { ...executionContext, materialRecoveryOnly: true } : executionContext,
-        signal: job.action === VALIDATE_DEPLOYMENT_DESTINATION && shutdownSignal
+        signal: isDeploymentDestinationAction(job.action) && shutdownSignal
           ? AbortSignal.any([leaseHeartbeat.signal, shutdownSignal])
           : leaseHeartbeat.signal,
         log,
@@ -2525,16 +2538,20 @@ async function executeJob({
     return { status: "succeeded", keyRotated: null };
   }
 
-  if (action === VALIDATE_DEPLOYMENT_DESTINATION) {
-    return validateDeploymentDestination({
+  if (isDeploymentDestinationAction(action)) {
+    const destinationJob = {
       job, jobId, claimId, attemptId, signal,
       registry: executionContext.deploymentDestinationRegistry,
       clockOffsetMs: executionContext.clockEstimator?.getOffsetMs(),
       checkLease: async () => {
         const gate = await renewJobLeaseOrAbort({ ...leaseOpts, required: true });
-        if (!gate.ok) throw new Error("destination_validation_lease_unavailable");
+        if (!gate.ok) throw new Error("destination_job_lease_unavailable");
+        return Date.parse(gate.response?.leaseExpiresAt);
       },
-    });
+    };
+    return action === VALIDATE_DEPLOYMENT_DESTINATION
+      ? validateDeploymentDestination(destinationJob)
+      : preflightDeploymentDestinationExecution({ ...destinationJob, dryRun: execution.dryRun });
   }
 
   if (action === "adcs-preflight") {
