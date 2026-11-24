@@ -159,7 +159,12 @@ export default function CertificateObservationHistory({
       .catch(err => {
         if (controller.signal.aborted) return;
         const status = err?.response?.status;
-        if (status === 401 || status === 403) {
+        const code = err?.response?.data?.code;
+        if (
+          status === 401 ||
+          status === 403 ||
+          (status === 402 && code === 'PLAN_FEATURE_REQUIRED')
+        ) {
           setHasHistory(false);
           setIsOpen(false);
           return;

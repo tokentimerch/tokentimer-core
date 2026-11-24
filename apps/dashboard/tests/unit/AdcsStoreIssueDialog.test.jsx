@@ -190,6 +190,7 @@ it('reuses the idempotency key when a request fails and is retried unchanged', a
 
 it.each([
   [400, 'CERTOPS_JOB_INVALID', 'Invalid DNS name'],
+  [402, 'PLAN_FEATURE_REQUIRED', 'CertOps requires a different plan'],
   [403, 'INSUFFICIENT_ROLE', 'Forbidden: insufficient role'],
   [409, 'CERTOPS_WORKSPACE_PAUSED', 'CertOps is paused for this workspace'],
   [

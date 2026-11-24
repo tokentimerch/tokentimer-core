@@ -57,8 +57,11 @@ it('shows only existing fingerprint-scoped history and clears it for another cer
   );
   expect(screen.queryByRole('dialog')).toBeNull();
 });
-it('hides the action when access is denied', async () => {
-  apiClient.get.mockRejectedValueOnce({ response: { status: 403 } });
+it.each([
+  [403, undefined],
+  [402, 'PLAN_FEATURE_REQUIRED'],
+])('hides the action when access is denied (%s)', async (status, code) => {
+  apiClient.get.mockRejectedValueOnce({ response: { status, data: { code } } });
   render(view());
   await waitFor(() => expect(apiClient.get).toHaveBeenCalled());
   expect(
