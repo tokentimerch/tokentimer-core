@@ -88,23 +88,28 @@ function resolveSecretEnvs(secretsMap) {
 function applyPublicCertFromEnv(entry) {
   const config = { ...(entry.config || {}) };
   const secrets = { ...(entry.secrets || {}) };
-  if (secrets.cert_env) {
-    const pem = process.env[String(secrets.cert_env).trim()];
-    if (pem && String(pem).trim()) {
-      config.cert = String(pem).trim();
+  const errors = [];
+  if (Object.hasOwn(secrets, "cert_env")) {
+    const envKey = String(secrets.cert_env ?? "").trim();
+    const pem = envKey && process.env[envKey]?.trim();
+    if (pem) {
+      config.cert = pem;
+    } else {
+      errors.push(`missing_env:${envKey || "cert_env"}`);
     }
     delete secrets.cert_env;
   }
-  return { config, secrets };
+  return { config, secrets, errors };
 }
 
 async function upsertManifestProvider(pool, entry, meta = {}, txOpts = {}) {
   const slug = entry.slug;
   const existing = await getProvider(txOpts.dbClient || pool, slug);
-  const { config, secrets: secretsMap } = applyPublicCertFromEnv(entry);
+  const { config, secrets: secretsMap, errors: certErrors } = applyPublicCertFromEnv(entry);
   const { resolved: secrets, errors: secretErrors } = resolveSecretEnvs(secretsMap);
-  if (secretErrors.length > 0) {
-    const err = new Error(secretErrors.join(","));
+  const missingEnvs = [...certErrors, ...secretErrors];
+  if (missingEnvs.length > 0) {
+    const err = new Error(missingEnvs.join(","));
     err.code = "bootstrap_secret_missing";
     throw err;
   }

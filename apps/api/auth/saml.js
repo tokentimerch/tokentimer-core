@@ -10,6 +10,7 @@
 "use strict";
 
 const { sanitizeNextPath } = require("../sso/login-redirect.js");
+const { markSsoCallbackFailure } = require("../sso/sso-rate-limit.js");
 
 const { createHash, randomBytes } = require("node:crypto");
 // Match the pinned node-saml POST form's onload handler.
@@ -660,6 +661,7 @@ function samlRoutes(passport, express) {
       const slug = String(req.params.provider || "").trim();
       const runtime = getSamlRuntime(slug);
       if (!runtime || !runtime.enabled || !isSamlRuntimeReady(passport)) {
+        markSsoCallbackFailure(res);
         return res.redirect(`${APP_URL}/login?error=provider_disabled`);
       }
       bindBrowser(req, res, runtime, false);
@@ -696,6 +698,7 @@ function samlRoutes(passport, express) {
           }
           const errorCode =
             reason === "provider_disabled" ? "provider_disabled" : "saml_failed";
+          markSsoCallbackFailure(res);
           return res.redirect(`${APP_URL}/login?error=${errorCode}`);
         }
         req.logIn(user, async (loginErr) => {
@@ -714,6 +717,7 @@ function samlRoutes(passport, express) {
                 reason: "session_login_error",
               },
             });
+            markSsoCallbackFailure(res);
             return res.redirect(`${APP_URL}/login?error=saml_failed`);
           }
           if (req.session && !req.session.sso) {
