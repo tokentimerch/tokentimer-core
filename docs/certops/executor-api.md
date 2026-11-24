@@ -343,7 +343,10 @@ audit log. A real job that may already have changed the host returns `orphaned_u
 `needsOperatorReconciliation: true`. The agent may already have made changes,
 so verify the affected host before retrying. Other eligible jobs return
 `cancelled`. A retained late report is marked **Late report** in the timeline
-and the job status stays final. Terminal jobs return HTTP 409.
+and the job status stays final. Terminal jobs return HTTP 409. Cancelling or
+rejecting an unstarted Windows ACME Store job releases its enrollment for a
+new request. If work may have started, use the [ACME Store recovery
+procedure](agent/operations.md#9-troubleshooting) before requesting another renewal.
 Controller, external executor, AD CS enrollment and material distribution jobs
 return HTTP 409 here. Use the enrollment and distribution lifecycle controls
 to manage those workflows.

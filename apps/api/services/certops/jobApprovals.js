@@ -54,6 +54,7 @@ const {
   validateRenewalProfileOnPayload,
 } = require("./jobs");
 const { onTrustJobTerminalTransition } = require("./trustAnchors");
+const { isAcmeStoreEnrollmentJob, cancelUnstartedAcmeStoreEnrollmentTx } = require("./acmeStorePersistence");
 
 // --- Frozen error codes ---
 // 403-shaped: the requester may not approve their own job.
@@ -217,7 +218,7 @@ async function loadStoreApprovalBinding(db, job) {
   if (job.payload?.target?.type !== "windows-cert-store") return null;
   if (!job.enrollmentId && job.id && job.assignedAgentId && job.subjectType === "managed_certificate") {
     const sql = `SELECT e.id,e.agent_id,e.certificate_id,e.request_bytes,e.request_sha256 FROM certops_acme_store_enrollments e
-      WHERE e.workspace_id=$1::uuid AND e.current_job_id=$2::uuid AND e.agent_id=$3::uuid AND e.certificate_id::text=$4`;
+      WHERE e.workspace_id=$1::uuid AND e.current_job_id=$2::uuid AND e.agent_id=$3::uuid AND e.certificate_id::text=$4 AND e.state<>'cancelled_no_effect'`;
     const params = [job.workspaceId, job.id, job.assignedAgentId, job.subjectId];
     const result = await db.query(`${sql} FOR SHARE OF e SKIP LOCKED`, params);
     const row = result.rows[0];
@@ -641,6 +642,12 @@ async function rejectJob(options) {
       "Certificate job is not awaiting approval",
       CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
     );
+  }
+
+  if (isAcmeStoreEnrollmentJob(job) &&
+      !await cancelUnstartedAcmeStoreEnrollmentTx({ client: db, workspaceId, jobId })) {
+    throw serviceError("ACME Store enrollment has ongoing or uncertain work; reconcile it before retrying",
+      CERTOPS_APPROVAL_STORE_ENROLLMENT_UNAVAILABLE);
   }
 
   // ADR-0012 decision 20b: an approval denial is a terminal-negative

@@ -646,6 +646,19 @@ test(
   },
   { timeout: 180000 },
 );
+test("preview sweeps leave existing live incidents for the next real sweep", async () => {
+  const f = await fixture();
+  assert.ok(await f.row());
+  await pool.query("UPDATE certops_management_periods SET automation_enabled=FALSE WHERE workspace_id=$1", [f.workspaceId]);
+  const { runRenewalSchedulerSweep } = require("../../apps/api/services/certops/renewalScheduler");
+  const preview = await runRenewalSchedulerSweep({ dbPool: pool, mode: "dry_run" });
+  assert.deepEqual(preview.errors, []);
+  assert.ok(await f.row(), "preview must not resolve the live incident");
+  const actual = await runRenewalSchedulerSweep({ dbPool: pool, mode: "real" });
+  assert.deepEqual(actual.errors, []);
+  assert.equal(await f.row(), undefined);
+});
+
 test("large shared issuer counts every due certificate without unbounded incident metadata", async () => {
   const f = await fixture(),
     started = performance.now();

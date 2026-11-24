@@ -69,9 +69,9 @@ function manual(f, overrides = {}) {
     certificateId: f.certificate.id, agentId: f.agentId, target: TARGET, authorizedDnsNames: [TARGET.reference],
     keyAlgorithm: "rsa", keySize: 2048, actorUserId: f.actor, audit: async () => {}, ...overrides });
 }
-function automatic(f, dbPool = pool) {
+function automatic(f, dbPool = pool, mode = "real") {
   return scheduler.createAutomaticAdcsRenewal({ dbPool, certificate: { ...f.certificate,
-    profile_issuer_id: f.issuerId, profile_public_metadata: f.publicMetadata }, mode: "real",
+    profile_issuer_id: f.issuerId, profile_public_metadata: f.publicMetadata }, mode,
     env: { CERTOPS_ENABLED: "true" }, auditWriter: async () => {} });
 }
 async function duplicateObservation(f) {
@@ -327,6 +327,10 @@ test("automatic renewal retries a dry-run refusal on the same unsubmitted enroll
   const jobId = first.job.id;
   const refusal = 'refusing mode:"real" job because local execution.dryRun is true; set execution.dryRun to false to perform real side effects, or ask the control plane for a mode:"dry_run" job';
   await pool.query("UPDATE certificate_jobs SET status='blocked', error_code='AGENT_RESULT_BLOCKED', error_message=$2, updated_at=NOW()-interval '20 minutes' WHERE id=$1", [jobId, refusal]);
+  const preview = await automatic(f, pool, "dry_run");
+  assert.equal(preview.created, false);
+  const afterPreview = (await pool.query("SELECT id,mode,status FROM certificate_jobs WHERE workspace_id=$1 AND operation='renew'", [f.workspaceId])).rows;
+  assert.deepEqual(afterPreview, [{ id: jobId, mode: "real", status: "blocked" }]);
   const results = await Promise.all([automatic(f), automatic(f)]);
   assert.equal(results.filter(result => result.created).length, 1);
   assert.equal(await count(f), 1);

@@ -277,6 +277,7 @@ test("installations at migrations 72, 80 and pre-summary cleanup upgrade with pr
   {"version":126,"name":"certops_adcs_receipt_deadline"},
   {"version":127,"name":"auto_sync_creation_expiration"},
   {"version":128,"name":"shared_sso_schema"},
+  {"version":129,"name":"certops_acme_store_cancelled"},
 ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition

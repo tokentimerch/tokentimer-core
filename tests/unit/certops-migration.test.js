@@ -19,7 +19,7 @@ it("preserves the Store-only provider preview through its receipt deadline", () 
     94, 95, 96, 97, 98, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 126];
   const preview = previewVersions.map((version, index) => ({ version: 78 + index, name: names.get(version) }));
   const recorded = [...base, ...preview];
-  const added = [118, 119, 120, 121, 122, 123, 124, 125, 127, 128].map((version, index) => ({ version: 119 + index, name: names.get(version) }));
+  const added = [118, 119, 120, 121, 122, 123, 124, 125, 127, 128, 129].map((version, index) => ({ version: 119 + index, name: names.get(version) }));
   const expected = [...recorded, ...added];
   validateMigrationHistory(recorded);
   assert.deepEqual(identities(composeMigrations(migrations, recorded)), expected);
@@ -59,7 +59,7 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 74).name, "certops_material_distribution");
     assert.equal(migrations.find((entry) => entry.version === 75).name, "certops_distribution_review");
     assert.equal(migrations.find((entry) => entry.version === 76).name, "certops_distribution_transfer");
-    assert.equal(migrations.at(-1).version, 128);
+    assert.equal(migrations.at(-1).version, 129);
     assert.equal(migrations.find((entry) => entry.version === 114).name, "distribution_pagerduty_recovery");
     assert.equal(migrations.find((entry) => entry.version === 115).name, "store_issuance_explicit_renewal_consent");
     assert.equal(migrations.find((entry) => entry.version === 116).name, "certops_acme_store_enrollment_identity");
@@ -93,7 +93,8 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 126).name, "certops_adcs_receipt_deadline");
     assert.equal(migrations.find(entry => entry.version === 122).name, "certops_observed_revocation");
     assert.equal(migrations.find((entry) => entry.version === 127).name, "auto_sync_creation_expiration");
-    assert.equal(migrations.at(-1).name, "shared_sso_schema");
+    assert.equal(migrations.find((entry) => entry.version === 128).name, "shared_sso_schema");
+    assert.equal(migrations.at(-1).name, "certops_acme_store_cancelled");
     assert.equal(migrations.find(entry => entry.version === 95).name, "remove_pagerduty_rest_lookup");
     assert.throws(() => validateMigrationHistory([
       ...migrations.filter(entry => entry.version <= 78).map(({version, name}) => ({version, name})),
@@ -103,7 +104,7 @@ describe("operational notifications migration", () => {
     assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 128 }, (_, index) => index + 1),
+      Array.from({ length: 129 }, (_, index) => index + 1),
     );
     assert.equal(migrations.find(entry => entry.version === 73).name, "certops_job_alert_context");
     assert.match(migrations.find(entry => entry.version === 72).sql, /ON DELETE SET NULL \(issuer_id\)/);
@@ -1950,7 +1951,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
       .filter((version) => (notificationCount === 4 || !notificationVersions.includes(version)));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 128);
+    assert.equal(sorted[sorted.length - 1], 129);
   });
 });
 

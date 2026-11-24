@@ -117,6 +117,7 @@ test("upgrades a real main database with PagerDuty recovery at migration 114 and
       [126, "certops_adcs_receipt_deadline"],
       [127, "auto_sync_creation_expiration"],
       [128, "shared_sso_schema"],
+      [129, "certops_acme_store_cancelled"],
     ]);
     const preserved = await client.query("SELECT version,name,executed_at FROM migrations WHERE version <= 114 ORDER BY version");
     assert.deepEqual(preserved.rows, before);
@@ -162,7 +163,7 @@ const iis = ["certops_windows_iis_consent", "certops_material_adcs_operation_uni
   "certops_iis_absence_proofs", "certops_enrollment_jobs_index"];
 const rotationsAndPreflight = ["agent_credential_rotations", "agent_credential_rotation_ack",
   "certops_adcs_preflight_lookup_index"];
-const tail = ["auto_sync_creation_expiration", "shared_sso_schema"];
+const tail = ["auto_sync_creation_expiration", "shared_sso_schema", "certops_acme_store_cancelled"];
 
 for (const [history, applied, remaining] of [
   ["recovery-first", [recovery], [...store, ...iis, observedRevocation, ...rotationsAndPreflight, receiptDeadline, ...tail]],
@@ -194,3 +195,46 @@ for (const [history, applied, remaining] of [
     });
   }, { timeout: 180000 });
 }
+
+test("settles only provably unstarted historical ACME Store cancellation", async () => {
+  await withAppliedHistory(migrations.migrations.filter(({ version }) => version < 129), async (client, database) => {
+    const before = await readLedger(client);
+    const email = randomUUID() + "@example.test";
+    const user = (await client.query(`INSERT INTO users(email,email_original,display_name,password_hash,auth_method,email_verified)
+      VALUES($1::text,$1::text,'ACME Store upgrade','placeholder','local',true) RETURNING id`, [email])).rows[0].id;
+    const workspaceId = randomUUID();
+    await client.query("INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'ACME Store upgrade',$2,'oss')", [workspaceId, user]);
+    const agentId = (await client.query(`INSERT INTO certops_agents(workspace_id,agent_id,name,agent_version,protocol_version,credential_prefix,credential_hash,status)
+      VALUES($1,$2,'ACME Store','1','1.0.0',$3,$4,'active') RETURNING id`,
+    [workspaceId, randomUUID(), "ttagent_" + randomUUID().replaceAll("-", "").slice(0, 16), "f".repeat(64)])).rows[0].id;
+    const scenarios = [
+      { status: "cancelled", attempts: 0, state: "keygen_intent", expected: "cancelled_no_effect" },
+      { status: "rejected", attempts: 0, state: "keygen_intent", expected: "cancelled_no_effect" },
+      { status: "cancelled", attempts: 1, state: "keygen_intent", expected: "keygen_intent" },
+      { status: "cancelled", attempts: 0, state: "uncertain", expected: "uncertain" },
+      { status: "orphaned_unknown_effect", attempts: 1, state: "keygen_intent", expected: "keygen_intent" },
+    ];
+    for (const scenario of scenarios) {
+      const certificateId = (await client.query(`INSERT INTO managed_certificates(workspace_id,common_name)
+        VALUES($1,'app.example.test') RETURNING id`, [workspaceId])).rows[0].id;
+      const jobId = (await client.query(`INSERT INTO certificate_jobs
+        (workspace_id,subject_type,subject_id,operation,status,assigned_agent_id,attempt_count,payload)
+        VALUES($1,'managed_certificate',$2,'renew',$3,$4,$5,'{"target":{"type":"windows-cert-store"}}') RETURNING id`,
+      [workspaceId, certificateId, scenario.status, agentId, scenario.attempts])).rows[0].id;
+      scenario.id = (await client.query(`INSERT INTO certops_acme_store_enrollments
+        (id,workspace_id,certificate_id,agent_id,original_job_id,current_job_id,container_name,request_bytes,request_sha256,state)
+        VALUES(gen_random_uuid(),$1,$2,$3,$4,$4,$5,$6,$7,$8) RETURNING id`,
+      [workspaceId, certificateId, agentId, jobId, "tokentimer-enr-" + randomUUID(),
+        Buffer.from("{}"), "a".repeat(64), scenario.state])).rows[0].id;
+    }
+    migrate(database);
+    for (const scenario of scenarios) {
+      const result = await client.query("SELECT state FROM certops_acme_store_enrollments WHERE id=$1", [scenario.id]);
+      assert.equal(result.rows[0].state, scenario.expected);
+    }
+    const upgraded = await readLedger(client);
+    assert.deepEqual(upgraded.slice(0, before.length), before);
+    migrate(database);
+    assert.deepEqual(await readLedger(client), upgraded);
+  });
+}, { timeout: 180000 });
