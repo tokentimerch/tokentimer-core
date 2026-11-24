@@ -1,5 +1,9 @@
 # Install Core with Docker Compose
 
+## Recover a single VM after host failure
+
+Install the standard Compose stack on one VM. Configure the hypervisor to restart that VM on another host with access to its disks, including the PostgreSQL volume, and preserve its network identity and public URL. Enable Docker at boot. TokenTimer is unavailable while the VM and services restart. Rehearse host loss and confirm you can sign in through the same URL and see your existing records. If you use CertOps, also check for a fresh agent heartbeat.
+
 ## Step 1 - Clone and configure
 
 Install Git as well as Docker and Docker Compose. The commands below use Bash; on Windows, run them in Git Bash.
@@ -35,13 +39,11 @@ ADMIN_NAME=Administrator
 APP_URL=https://tokentimer.example.com
 API_URL=https://tokentimer.example.com
 
-# Required only if you plan to connect a CertOps agent. Compose enables CertOps
-# by default (CERTOPS_ENABLED:-true); without these two keys the CertOps UI
-# appears but agent registration and job dispatch fail closed.
-# Generate each with: openssl rand -hex 32
-# CERTOPS_SIGNING_ENCRYPTION_KEY=
-# CERTOPS_REGISTRATION_ENCRYPTION_KEY=
-# Or set CERTOPS_ENABLED=false if you do not use CertOps at all.
+# Production API startup requires both keys when CertOps is enabled (the default).
+# Generate each separately with openssl rand -hex 32 and keep them with your backups.
+CERTOPS_SIGNING_ENCRYPTION_KEY=replace_with_first_generated_key
+CERTOPS_REGISTRATION_ENCRYPTION_KEY=replace_with_second_generated_key
+# To run without CertOps, set CERTOPS_ENABLED=false and omit both keys.
 ```
 
 Optional but common additions: SMTP sender identity (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `FROM_EMAIL`, `FROM_EMAIL_NAME`) and host port remaps (`API_PORT`, `DASHBOARD_PORT`; keep `APP_URL`/`API_URL` in sync if you remap).
