@@ -144,15 +144,18 @@ function createPublicEvidenceRecorder({ candidateArchiveSha256, expectedLauncher
     }
     const json = JSON.stringify({ schema: 1, phase, ...entry });
     const sha256 = createHash("sha256").update(json, "utf8").digest("hex");
-    const written = await writeEvidence({ json, sha256 });
-    assert.equal(written?.flushCompleted, true, "Evidence flush was not confirmed");
-    assert.match(written.receiptId, /^[a-f0-9]{32,64}$/);
-    assert.ok(!seen.has(written.receiptId), "Evidence receipt was replayed");
-    const readback = await readEvidence({ receiptId: written.receiptId });
+    const { receiptId, flushCompleted } = (await writeEvidence({ json, sha256 })) ?? {};
+    assert.equal(flushCompleted, true, "Evidence flush was not confirmed");
+    assert.match(receiptId, /^[a-f0-9]{32,64}$/);
+    assert.ok(!seen.has(receiptId), "Evidence receipt was replayed");
+    const maxBytes = Buffer.byteLength(json, "utf8");
+    const readback = await readEvidence({ receiptId, maxBytes });
     assert.equal(typeof readback, "string");
+    assert.ok(readback.length <= maxBytes && Buffer.byteLength(readback, "utf8") === maxBytes,
+      "Evidence readback byte count differs from the written receipt");
     assert.equal(createHash("sha256").update(readback, "utf8").digest("hex"), sha256, "Evidence readback mismatch");
     assert.equal(readback, json);
-    const inspected = await inspectEvidenceDurability({ receiptId: written.receiptId, sha256 });
+    const inspected = await inspectEvidenceDurability({ receiptId, sha256 });
     assert.equal(inspected?.independentReader, true);
     assert.equal(inspected.flushVerified, true);
     assert.equal(inspected.persistentStore, true);
@@ -161,8 +164,8 @@ function createPublicEvidenceRecorder({ candidateArchiveSha256, expectedLauncher
     if (storeId !== null) assert.equal(inspected.storeId, storeId, "Evidence store identity changed");
     storeId = inspected.storeId;
     assert.equal(failed, false, "Evidence recorder was permanently invalidated");
-    seen.add(written.receiptId);
-    return { receiptId: written.receiptId, sha256 };
+    seen.add(receiptId);
+    return { receiptId, sha256 };
     } catch (error) { failed = true; throw error; } finally { busy = false; }
   };
 }

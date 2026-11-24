@@ -541,6 +541,49 @@ test("public evidence requires independent readback and stable verified durabili
 });
 
 
+test("public evidence readback bounds the payload and keeps the original receipt identity", async () => {
+  const hooks = makeEvidenceHooks();
+  const receiptId = "a".repeat(32);
+  const written = { receiptId, flushCompleted: true };
+  let payload;
+  const record = createPublicEvidenceRecorder({
+    ...hooks,
+    async writeEvidence(value) { payload = value; return written; },
+    async readEvidence(args) {
+      assert.deepEqual(args, { receiptId, maxBytes: Buffer.byteLength(payload.json, "utf8") });
+      written.receiptId = "b".repeat(32);
+      return payload.json;
+    },
+    async inspectEvidenceDurability(args) {
+      assert.deepEqual(args, { receiptId, sha256: payload.sha256 });
+      return hooks.inspectEvidenceDurability(args);
+    },
+  });
+  const result = await record("baseline", { candidateSha256: hooks.candidateArchiveSha256 });
+  assert.deepEqual(result, { receiptId, sha256: payload.sha256 });
+});
+
+test("oversized public evidence readback invalidates the run before inspecting durability", async () => {
+  for (const expand of [(json) => json + " ", (json) => "\u00e9" + json.slice(1)]) {
+    const hooks = makeEvidenceHooks();
+    const { candidateArchiveSha256: candidateSha256 } = hooks;
+    let receiptJson;
+    let durabilityInspected = false;
+    const record = createPublicEvidenceRecorder({
+      ...hooks,
+      async writeEvidence(value) { receiptJson = value.json; return hooks.writeEvidence(value); },
+      async readEvidence() { return expand(receiptJson); },
+      async inspectEvidenceDurability() {
+        durabilityInspected = true;
+        return hooks.inspectEvidenceDurability();
+      },
+    });
+    await assert.rejects(record("baseline", { candidateSha256 }), /Evidence readback byte count differs/);
+    assert.equal(durabilityInspected, false);
+    await assert.rejects(record("baseline", { candidateSha256 }), /permanently invalidated/);
+  }
+});
+
 function makeCandidateHooks() {
   const candidateArchiveSha256 = require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(__filename)).digest("hex");
   const expectedRuntimeSha256 = "e".repeat(64);
