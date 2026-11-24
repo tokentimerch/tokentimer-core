@@ -26,7 +26,7 @@ const iisPreviewMigrations = [
   "certops_enrollment_jobs_index",
 ];
 const storeAndIisFeatures = new Set([
-  ...storePreviewMigrations, ...iisPreviewMigrations, ADCS_PREFLIGHT_INDEX,
+  ...storePreviewMigrations, ...iisPreviewMigrations, ADCS_PREFLIGHT_INDEX, "certops_acme_store_cancelled",
 ]);
 // Exact version/name pairs from the integrated Windows Store/IIS preview.
 const legacyCombinedTail = [OBSERVED_REVOCATION, ...storePreviewMigrations.slice(0, 3), ...iisPreviewMigrations];
