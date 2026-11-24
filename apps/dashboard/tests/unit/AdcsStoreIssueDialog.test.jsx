@@ -188,29 +188,36 @@ it('reuses the idempotency key when a request fails and is retried unchanged', a
   expect(Object.isFrozen(original.payload.sans)).toBe(true);
 });
 
-it('lets the operator correct a first explicit validation rejection', async () => {
-  createJobMock
-    .mockRejectedValueOnce({
-      response: {
-        status: 400,
-        data: { code: 'CERTOPS_JOB_INVALID', error: 'Invalid DNS name' },
-      },
-    })
-    .mockResolvedValueOnce({ job: { id: 'job-1' } });
-  mount();
-  await fillForm();
-  fireEvent.click(screen.getByRole('button', { name: 'Issue certificate' }));
-  await screen.findByText('Invalid DNS name');
-  fireEvent.change(screen.getByLabelText('Certificate DNS name'), {
-    target: { value: 'updated.example.com' },
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Issue certificate' }));
-  await screen.findByText(/Issuance requested/);
-  expect(createJobMock).toHaveBeenCalledTimes(2);
-  expect(createJobMock.mock.calls[1][1].idempotencyKey).not.toBe(
-    createJobMock.mock.calls[0][1].idempotencyKey
-  );
-});
+it.each([
+  [400, 'CERTOPS_JOB_INVALID', 'Invalid DNS name'],
+  [403, 'INSUFFICIENT_ROLE', 'Forbidden: insufficient role'],
+  [409, 'CERTOPS_WORKSPACE_PAUSED', 'CertOps is paused for this workspace'],
+  [
+    503,
+    'CERTOPS_WORKSPACE_STATE_UNAVAILABLE',
+    'Workspace state is unavailable',
+  ],
+])(
+  'lets the operator edit after a definitive first rejection (%s %s)',
+  async (status, code, error) => {
+    createJobMock
+      .mockRejectedValueOnce({ response: { status, data: { code, error } } })
+      .mockResolvedValueOnce({ job: { id: 'job-1' } });
+    mount();
+    await fillForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Issue certificate' }));
+    await screen.findByText(error);
+    fireEvent.change(screen.getByLabelText('Certificate DNS name'), {
+      target: { value: 'updated.example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Issue certificate' }));
+    await screen.findByText(/Issuance requested/);
+    expect(createJobMock).toHaveBeenCalledTimes(2);
+    expect(createJobMock.mock.calls[1][1].idempotencyKey).not.toBe(
+      createJobMock.mock.calls[0][1].idempotencyKey
+    );
+  }
+);
 
 it('separates workspace views and ignores callbacks from a stale view', async () => {
   let finishFirst;

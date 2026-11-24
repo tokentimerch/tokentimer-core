@@ -66,6 +66,26 @@ it('hides the action when access is denied', async () => {
   ).toBeNull();
 });
 
+it.each([
+  [500, 'Could not load observation history.'],
+  [409, 'Certificate changed. Reload its details.'],
+])('recovers from an initial history failure (%s)', async (status, message) => {
+  const onAvailabilityChange = vi.fn();
+  apiClient.get
+    .mockRejectedValueOnce({ response: { status } })
+    .mockResolvedValueOnce({ data: { items: [{ id: '1', metadata: {} }] } });
+  render(view({ onAvailabilityChange }));
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Observation history' })
+  );
+  expect(screen.getByRole('alert')).toHaveTextContent(message);
+  expect(onAvailabilityChange).toHaveBeenLastCalledWith(true);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  expect(apiClient.get).toHaveBeenCalledTimes(2);
+});
+
 it('hides the action for empty history', async () => {
   apiClient.get.mockResolvedValueOnce({ data: { items: [] } });
   render(view());

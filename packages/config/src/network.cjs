@@ -81,7 +81,19 @@ function proxyForUrl(url, mode) {
     ? (http.globalAgent.options.proxyEnv ?? https.globalAgent.options.proxyEnv ??
       (nativeFetchProxyEnabled() ? process.env : null))
     : agentEnv;
-  if (!env) return mode === "axios" ? getProxyForUrl(url) : "";
+  if (!env) {
+    if (mode !== "axios") return "";
+    const proxy = getProxyForUrl(url);
+    if (!proxy) return "";
+    // Axios additionally supports NO_PROXY CIDRs for literal IP destinations.
+    // Native proxy-aware agents make their own exclusion decision above.
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    const exclusions = (process.env.no_proxy || process.env.NO_PROXY || "").split(/[\s,]+/);
+    const bypass = exclusions.some((entry) =>
+      /^.+\/(0|[1-9]\d{0,2})$/.test(entry) && isInCIDR(host, entry)
+    );
+    return bypass ? "" : proxy;
+  }
 
   const port = url.port || (secure ? "443" : "80");
   const fetchMode = mode === "fetch";

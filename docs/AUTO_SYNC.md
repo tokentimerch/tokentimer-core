@@ -98,7 +98,7 @@ no single asset owner. These metrics retain their low-cardinality labels.
 
 ### Optional configuration and asset labels
 
-- Apply migrations through 115 with matching API/dashboard code; aggregate counters stay unchanged.
+- Apply the target release’s full migration set, including migration 127, with matching API, worker, and dashboard code. Aggregate counters stay unchanged.
 - System Settings → Auto-sync independently overrides metrics/labels and monitoring group, locking integration controls. Otherwise, integrations retain their choices.
 - Environment wins: `AUTO_SYNC_METRICS_ENABLED=true/false`, optional `AUTO_SYNC_METRICS_LABELS` (CSV or `none`), and independent `AUTO_SYNC_METRICS_MONITORING_GROUP`. Empty restores saved values; `AUTO_SYNC_METRICS_EXTRA_LABELS` optionally restricts asset labels.
 - Helm: `monitoring.metrics.autoSyncEnabled`, `autoSyncLabels`, `autoSyncMonitoringGroup` (under `tokentimer` in Enterprise). Available labels are listed beside these settings.

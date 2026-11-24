@@ -211,7 +211,7 @@ test("webhook delivery requires its configured proxy host to be allowed", async 
   );
 });
 
-test("GitHub integration honors the outbound proxy policy and explicit no-proxy host", async (t) => {
+test("GitHub integration honors the outbound proxy policy and no-proxy host or CIDR", async (t) => {
   setPolicy(t, { allowlist: "127.0.0.1" });
   for (const name of ["HTTP_PROXY", "NO_PROXY", "NODE_ENV"]) {
     const value = process.env[name];
@@ -243,6 +243,13 @@ test("GitHub integration honors the outbound proxy policy and explicit no-proxy 
   process.env.NO_PROXY = "127.0.0.1";
   assert.deepEqual(await request(), { login: "fixture" });
   assert.equal(hits, 1);
+  process.env.NO_PROXY = "127.0.0.0/8";
+  assert.deepEqual(await request(), { login: "fixture" });
+  assert.equal(hits, 2);
+
+  process.env.NO_PROXY = "127.0.0.0/08";
+  await assert.rejects(request, { code: OUTBOUND_POLICY_DENIED });
+  assert.equal(hits, 2);
 });
 
 test("an unapproved environment SMTP relay leaves an approved DB relay usable", async (t) => {

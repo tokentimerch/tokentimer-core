@@ -35,6 +35,13 @@ const REQUIRED_CAPABILITIES = [
   'evidence-claim-binding-v1',
 ];
 
+const DEFINITIVE_ISSUANCE_REJECTIONS = new Map([
+  [400, 'CERTOPS_JOB_INVALID'],
+  [403, 'INSUFFICIENT_ROLE'],
+  [409, 'CERTOPS_WORKSPACE_PAUSED'],
+  [503, 'CERTOPS_WORKSPACE_STATE_UNAVAILABLE'],
+]);
+
 export default function AdcsStoreIssueDialog(props) {
   const state = useAdcsStoreIssueAttempts(props.workspaceId);
   return (
@@ -171,7 +178,11 @@ function WorkspaceStoreIssueDialog({
       if (!result?.job?.id) throw new Error('The server returned no job.');
     } catch (err) {
       const { status, data } = err?.response ?? {};
-      if (!previous && status === 400 && data?.code === 'CERTOPS_JOB_INVALID') {
+      if (
+        !previous &&
+        data?.code &&
+        DEFINITIVE_ISSUANCE_REJECTIONS.get(status) === data.code
+      ) {
         attempts.set(workspaceId, null);
         if (view.current === submittedView) {
           setError(data.error || 'Check the request and try again.');
