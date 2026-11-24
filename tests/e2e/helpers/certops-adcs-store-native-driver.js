@@ -258,14 +258,23 @@ function validateCaptureStart(capture, candidateArchiveSha256, expectedScope) {
 
 async function stopNativeCapture(capture, lastCounts = null) {
   assert.equal(typeof capture?.stop, "function", "Native capture cannot be drained");
+  const namedBaseline = capture.baseline?.scope === NAMED_STORE_SCOPE ? capture.baseline : null;
+  const previous = lastCounts ?? namedBaseline;
   const stopped = await capture.stop();
   assert.equal(stopped?.drained, true, "Native capture drainage was not proven");
   assert.equal(stopped.captureId, capture.captureId, "Drained capture identity changed");
-  if (!lastCounts && stopped.finalCounts === undefined) return;
-  const finalCounts = validateNativeCounts(stopped.finalCounts, lastCounts);
+  if (previous?.scope === NAMED_STORE_SCOPE) {
+    assert.equal(stopped.finalCounts?.scope, NAMED_STORE_SCOPE, "Drained named Store capture requires a final evidence checkpoint");
+  }
+  if (!previous && stopped.finalCounts === undefined) return;
+  const finalCounts = validateNativeCounts(stopped.finalCounts, previous);
   assert.equal(finalCounts.captureId, capture.captureId, "Final counts belong to another capture");
   if (lastCounts) {
     for (const name of ["submissions", "keygens", "accepts"]) assert.equal(finalCounts[name], lastCounts[name], "Native operation occurred after the final read");
+  }
+  if (finalCounts.scope === NAMED_STORE_SCOPE) {
+    const exits = finalCounts.namedEvidence.events.filter((event) => event.kind === "certreq-accept-exit").length;
+    assert.equal(exits, finalCounts.accepts, "Drained named Store capture must prove every observed certreq exit");
   }
   return finalCounts;
 }

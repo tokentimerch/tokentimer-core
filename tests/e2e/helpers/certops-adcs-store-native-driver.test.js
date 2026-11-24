@@ -381,6 +381,26 @@ test("capture baseline is complete, empty, bound and has verified drainage", asy
   await assert.rejects(stopNativeCapture({ ...valid, async stop() { return { captureId: "b".repeat(32), drained: true }; } }));
 });
 
+test("draining named Store capture requires a bound final checkpoint and every certreq exit", async () => {
+  const { NAMED_STORE_SCOPE } = require("./certops-adcs-store-named-observation");
+  const captureId = "a".repeat(32);
+  const baseline = { scope: NAMED_STORE_SCOPE, captureId, submissions: 0, keygens: 0, accepts: 0,
+    namedEvidence: { captureId, candidateSha256: CANDIDATE_SHA256, calibrationSha256: "b".repeat(64),
+      sourceLoss: { ca: 0, key: 0, process: 0 }, events: [] } };
+  const started = { sequence: 1, kind: "certreq-accept-start", recordId: "1", pid: 100, createdFileTime: "0000000000000001" };
+  const exited = { ...started, sequence: 2, kind: "certreq-accept-exit", recordId: "2", exitCode: 0 };
+  const active = { ...baseline, accepts: 1, namedEvidence: { ...baseline.namedEvidence, events: [started] } };
+  const closed = { ...active, namedEvidence: { ...active.namedEvidence, events: [started, exited] } };
+  const capture = (finalCounts) => ({ captureId, baseline, async stop() { return { drained: true, captureId, finalCounts }; } });
+
+  await assert.rejects(stopNativeCapture(capture(undefined)), /requires a final evidence checkpoint/);
+  await assert.rejects(stopNativeCapture(capture(active), active), /prove every observed certreq exit/);
+  await assert.rejects(stopNativeCapture(capture({ ...closed, namedEvidence: {
+    ...closed.namedEvidence, calibrationSha256: "c".repeat(64),
+  } })), /calibration changed during capture/);
+  assert.deepEqual(await stopNativeCapture(capture(closed), active), closed);
+  assert.deepEqual(await stopNativeCapture(capture(closed)), closed);
+});
 
 test("CA baseline and full window reject gaps, purge, restore, duplicate requests and changed identities", async () => {
   const id = "a".repeat(32), key = "b".repeat(64), fingerprint = "c".repeat(64);
