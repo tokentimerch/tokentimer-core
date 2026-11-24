@@ -4,7 +4,8 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { createCertificateJob } = require("../../apps/api/services/certops/jobs");
 const { EXECUTE, VALIDATE, prepareDestinationJob, assertDestinationExecutionSource,
-  assertDestinationOperationLease, reserveDestinationOperation, persistSignedDestinationDispatch, checkDestinationResult } =
+  assertDestinationOperationLease, reserveDestinationOperation, persistSignedDestinationDispatch,
+  checkDestinationResult, loadDestinationValidation } =
   require("../../apps/api/services/certops/deploymentDestinations");
 const { hashDeploymentDestinationValidation, hasMatchingDeploymentDestinationOperation } = require("../../packages/contracts/certops/deployment-destination.cjs");
 
@@ -25,13 +26,15 @@ const validation = {
 };
 const unavailable = { code: "CERTOPS_DESTINATION_VALIDATION_UNAVAILABLE" };
 
-function fixtures() {
+function fixtures({ includeMutationDomain = true } = {}) {
   const claimId = "validation-claim-1";
+  const observed = { ...validation };
+  if (!includeMutationDomain) delete observed.mutationDomainSha256;
   const receipt = {
-    version: 1, validation,
+    version: 1, validation: observed,
     bindingSha256: hashDeploymentDestinationValidation({
       jobId: validationJobId, claimId, agentId: wireAgentId, workspaceId, deploymentDestination: scope,
-    }, validation),
+    }, observed),
   };
   const committed = {
     id: validationJobId, claim_id: claimId, validation_fresh: true, payload: { deploymentDestination: scope },
@@ -95,6 +98,32 @@ test("execution ignores no authority fields and refuses token callers, caller su
     { status: "pending" },
     { deploymentDestinationPolicy: { authorize: () => false } },
   ]) await assert.rejects(prepareDestinationJob({ ...options, ...override }, workspaceId, EXECUTE), unavailable);
+});
+
+
+test("legacy validation is readable but requires revalidation before execution queue or approval", async () => {
+  const { options, receipt, committed, checks } = fixtures({ includeMutationDomain: false });
+  const accepted = await loadDestinationValidation({
+    client: options.client, workspaceId, assignedAgentId, validationJobId,
+  });
+  assert.deepEqual(accepted.execution.receipt, receipt);
+  assert.equal(accepted.execution.receipt.validation.mutationDomainSha256, undefined);
+
+  const revalidation = {
+    code: "CERTOPS_DESTINATION_VALIDATION_UNAVAILABLE",
+    message: "Validate the destination again to bind its mutation domain before executing",
+  };
+  await assert.rejects(prepareDestinationJob(options, workspaceId, EXECUTE), revalidation);
+  await assert.rejects(assertDestinationExecutionSource({
+    client: options.client, workspaceId, assignedAgentId, agentId: wireAgentId, jobId: executeJobId,
+    payload: {
+      deploymentDestination: scope,
+      deploymentDestinationExecution: {
+        version: 1, validationJobId, validationClaimId: committed.claim_id, receipt,
+      },
+    },
+  }), revalidation);
+  assert.deepEqual(checks, []);
 });
 
 test("reserves one canonical mutation domain across jobs, claims, aliases and agents", async () => {

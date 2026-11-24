@@ -335,8 +335,10 @@ function redactClaimIdForNonAdmins(req, jobDetailProjection) {
   if (!jobDetailProjection || req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "admin")) {
     return jobDetailProjection;
   }
+  const dispatch = jobDetailProjection.resultMetadata?.deploymentDestinationDispatch;
   if (!jobDetailProjection.claimId && !jobDetailProjection.payload?.deploymentDestinationExecution &&
-      !jobDetailProjection.resultMetadata?.deploymentDestinationValidation) return jobDetailProjection;
+      !jobDetailProjection.resultMetadata?.deploymentDestinationValidation &&
+      !dispatch?.operation?.ownerClaimId) return jobDetailProjection;
   const projected = { ...jobDetailProjection };
   if (projected.claimId) projected.claimId = undefined;
   if (projected.payload?.deploymentDestinationExecution) {
@@ -354,6 +356,15 @@ function redactClaimIdForNonAdmins(req, jobDetailProjection) {
       deploymentDestinationValidation: {
         ...projected.resultMetadata.deploymentDestinationValidation,
         claimId: undefined,
+      },
+    };
+  }
+  if (dispatch?.operation?.ownerClaimId) {
+    projected.resultMetadata = {
+      ...projected.resultMetadata,
+      deploymentDestinationDispatch: {
+        ...dispatch,
+        operation: { ...dispatch.operation, ownerClaimId: undefined },
       },
     };
   }

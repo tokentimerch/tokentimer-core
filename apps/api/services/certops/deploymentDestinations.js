@@ -263,6 +263,14 @@ async function loadDestinationValidation({ client, workspaceId, validationJobId,
   } };
 }
 
+function requireValidatedMutationDomain(accepted) {
+  if (!accepted.execution.receipt.validation.mutationDomainSha256) {
+    throw Object.assign(new Error("Validate the destination again to bind its mutation domain before executing"), {
+      code: UNAVAILABLE,
+    });
+  }
+}
+
 async function prepareDestinationJob(options, workspaceId, operation) {
   const { client, deploymentDestinationPolicy: policy, assignedAgentId, requestedByUserId } = options;
   if (!client || options.transactionOwned !== true || typeof policy?.authorize !== "function" ||
@@ -289,7 +297,9 @@ async function prepareDestinationJob(options, workspaceId, operation) {
     const accepted = await loadDestinationValidation({
       client, workspaceId, assignedAgentId, validationJobId: options.destinationValidationJobId,
     });
-    if (accepted.agentId !== agent.agentId || accepted.execution.receipt.validation.permittedEffects.length === 0) throw destinationError();
+    if (accepted.agentId !== agent.agentId) throw destinationError();
+    requireValidatedMutationDomain(accepted);
+    if (accepted.execution.receipt.validation.permittedEffects.length === 0) throw destinationError();
     payload.deploymentDestination = accepted.scope;
     payload.deploymentDestinationExecution = accepted.execution;
   }
@@ -315,6 +325,7 @@ async function assertDestinationExecutionSource({ client, workspaceId, jobId, as
   if ((agentId != null && agentId !== accepted.agentId) ||
       hashPublic(execution) !== hashPublic(accepted.execution) ||
       hashPublic(payload.deploymentDestination) !== hashPublic(accepted.scope)) throw destinationError();
+  requireValidatedMutationDomain(accepted);
 }
 
 module.exports = {

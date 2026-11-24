@@ -195,3 +195,38 @@ it("redacts nested destination claim identity on unclaimed job views", () => {
   assert.equal(detail.payload.deploymentDestinationExecution.validationClaimId, "source-claim");
   assert.equal(detail.resultMetadata.deploymentDestinationValidation.claimId, "result-claim");
 });
+
+it("hides the destination owner claim on live and terminal job views below admin", () => {
+  const operation = {
+    version: 1,
+    operationId: "a".repeat(64),
+    mutationDomainSha256: "b".repeat(64),
+    ownerClaimId: CLAIM_ID,
+  };
+  const dispatch = { bindingSha256: "c".repeat(64), operation };
+  for (const [status, claimId] of [["running", CLAIM_ID], ["blocked", null]]) {
+    const detail = jobDetail(claimedJob({
+      status, claimId, operation: "execute-deployment-destination",
+      resultMetadata: { deploymentDestinationDispatch: dispatch, otherEvidence: { version: 1 } },
+    }));
+    for (const workspaceRole of ["viewer", "workspace_manager"]) {
+      const view = redactClaimIdForNonAdmins({ authz: { workspaceRole } }, detail);
+      assert.equal(view.claimId, status === "running" ? undefined : null);
+      assert.deepEqual(JSON.parse(JSON.stringify(view.resultMetadata)), {
+        deploymentDestinationDispatch: {
+          bindingSha256: dispatch.bindingSha256,
+          operation: {
+            version: operation.version,
+            operationId: operation.operationId,
+            mutationDomainSha256: operation.mutationDomainSha256,
+          },
+        },
+        otherEvidence: { version: 1 },
+      });
+      assert.equal(detail.resultMetadata.deploymentDestinationDispatch.operation.ownerClaimId, CLAIM_ID);
+    }
+    const admin = redactClaimIdForNonAdmins({ authz: { workspaceRole: "admin" } }, detail);
+    assert.equal(admin.resultMetadata.deploymentDestinationDispatch.operation.ownerClaimId, CLAIM_ID);
+    assert.equal(admin, detail);
+  }
+});
