@@ -207,6 +207,12 @@ function buildCanonicalExecutionIntent(job) {
     } } : {}),
     payload,
     ...(job.adcsApprovalBinding ? { adcsEnrollment: job.adcsApprovalBinding } : {}),
+    ...(job.operation === "execute-deployment-destination" ? {
+      destinationRouting: {
+        assignedAgentId: job.assignedAgentId ?? null,
+        requiredTargetSelector: job.requiredTargetSelector ?? null,
+      },
+    } : {}),
   };
 }
 
@@ -482,6 +488,15 @@ async function approveJob(options) {
     );
   }
   assertNonRequester(job, approverUserId);
+  if (job.operation === "execute-deployment-destination") {
+    const { assertDestinationExecutionSource, UNAVAILABLE } = require("./deploymentDestinations");
+    if (!job.requestedByUserId || !job.assignedAgentId || job.mode !== "real") {
+      throw serviceError("Destination execution needs a named requester and agent", UNAVAILABLE);
+    }
+    await assertDestinationExecutionSource({
+      client: db, workspaceId, jobId, assignedAgentId: job.assignedAgentId, payload: job.payload,
+    });
+  }
   await assertOperatorRequestStillApprovable(db, job);
     if (job.requestedByConnectionId) {
       const { buildAssistantApprovalReview, REVIEW_REQUIRED, STALE } = require("../operator/approvalReview");

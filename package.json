@@ -70,7 +70,7 @@
     "test:full:local": "node scripts/run-local-full.js",
     "test:local:full": "node scripts/run-local-full.js",
     "// --- CI / contract checks ---": "",
-    "check:contracts": "node scripts/check-contracts-manifest.js && node scripts/check-openapi-runtime-coverage.js",
+    "check:contracts": "node scripts/sync-deployment-destination-contracts.cjs --check && node scripts/check-contracts-manifest.js && node scripts/check-openapi-runtime-coverage.js",
     "check:contracts:integrity": "node scripts/check-contracts-integrity.js",
     "check:openapi:coverage": "node scripts/check-openapi-runtime-coverage.js",
     "check:lockfile-overrides": "node scripts/check-lockfile-overrides.js",

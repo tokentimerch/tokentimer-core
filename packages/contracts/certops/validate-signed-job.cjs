@@ -47,6 +47,9 @@
  */
 
 const JOB_PAYLOAD_SCHEMA = require("./job-payload.schema.json");
+const DEPLOYMENT_DESTINATION_SCHEMA = require("./deployment-destination.schema.json");
+const DEPLOYMENT_DESTINATION_JOB_SCHEMA = require("./deployment-destination-job-payload.schema.json");
+const { isDeploymentDestinationAction } = require("./deployment-destination.cjs");
 const PROTOCOL_SMOKE_PAYLOAD_SCHEMA = require("./protocol-smoke-payload.schema.json");
 const TRUST_JOB_PAYLOAD_SCHEMA = require("./trust-job-payload.schema.json");
 const ADCS_PREFLIGHT_PAYLOAD_SCHEMA = require("./adcs-preflight-payload.schema.json");
@@ -107,6 +110,8 @@ function getAjv() {
   ajv.addSchema(SIGNED_DISPATCH_WIRE_V1_SCHEMA);
   ajv.addSchema(SIGNED_DISPATCH_WIRE_V2_SCHEMA);
   ajv.addSchema(JOB_PAYLOAD_SCHEMA);
+  ajv.addSchema(DEPLOYMENT_DESTINATION_SCHEMA);
+  ajv.addSchema(DEPLOYMENT_DESTINATION_JOB_SCHEMA);
   ajv.addSchema(PROTOCOL_SMOKE_PAYLOAD_SCHEMA);
   ajv.addSchema(TRUST_JOB_PAYLOAD_SCHEMA);
   ajv.addSchema(ENROLLMENT_SNAPSHOT_SCHEMA);
@@ -126,6 +131,9 @@ function getAjv() {
  */
 function selectSchemaForAction(action) {
   if (typeof action !== "string") return null;
+  if (isDeploymentDestinationAction(action)) {
+    return { schema: DEPLOYMENT_DESTINATION_JOB_SCHEMA, schemaId: DEPLOYMENT_DESTINATION_JOB_SCHEMA.$id };
+  }
   if (action === PROTOCOL_SMOKE_ACTION) {
     return {
       schema: PROTOCOL_SMOKE_PAYLOAD_SCHEMA,
@@ -201,6 +209,22 @@ function validateSignedJob(job) {
   };
 }
 
+function validateDeploymentDestinationDefinition(name, value) {
+  return getAjv().getSchema(DEPLOYMENT_DESTINATION_SCHEMA.$id + "#/definitions/" + name)(value);
+}
+
+function validateDeploymentDestinationScope(value) {
+  return validateDeploymentDestinationDefinition("scope", value);
+}
+
+function validateDeploymentDestinationReceipt(value) {
+  return validateDeploymentDestinationDefinition("validationReceipt", value);
+}
+
+function validateDeploymentDestinationExecution(value) {
+  return validateDeploymentDestinationDefinition("execution", value);
+}
+
 module.exports = {
   CERTIFICATE_ACTIONS,
   PROTOCOL_SMOKE_ACTION,
@@ -208,6 +232,9 @@ module.exports = {
   ADCS_PREFLIGHT_ACTION,
   selectSchemaForAction,
   validateSignedJob,
+  validateDeploymentDestinationScope,
+  validateDeploymentDestinationReceipt,
+  validateDeploymentDestinationExecution,
   _test: {
     getAjv,
     JOB_PAYLOAD_SCHEMA,

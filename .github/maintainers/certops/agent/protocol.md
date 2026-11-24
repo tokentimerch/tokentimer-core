@@ -315,6 +315,10 @@ Current behavior:
 - Ed25519 CSR generation is not supported: `generateCsr` throws a clear
   error for ed25519 keys (use `ec-p256` or `rsa-*` when a CSR is needed).
 
+## Deployment destination extension
+
+The v1 validation candidate at `ef2ebce70c89` passed 260 focused Core tests and a signed, synthetic HTTPS validation with zero destination writes. The native lifecycle accepts bounded public receipts only through current, authenticated claims with explicit edition policy. Validation expires 15 minutes after acceptance for execution approval and dispatch. Execution requires independent approval of the exact validated scope and local preflight. Destination admission defaults to disabled. The edition policy must check current entitlement, workspace and target routing, and requester and approver authority in the supplied transaction. Read-only adapter checks can reuse the controller confirmation for at most one second within the lease and signed deadline. The agent renews at preflight boundaries. Mutation, observation, recovery, and real destination qualification remain gated. See the [canonical contract](../../../../packages/contracts/certops/deployment-destination.schema.json).
+
 ## Related
 
 [Agent overview](../../../../docs/certops/agent.md) · [Configuration](../../../../docs/certops/agent/configuration.md) · [Operations](../../../../docs/certops/agent/operations.md)

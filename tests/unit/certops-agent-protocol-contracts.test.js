@@ -499,6 +499,7 @@ describe("CertOps agent protocol contracts", () => {
       "distribute-trust",
       "revoke-trust",
       "adcs-preflight",
+      require("../../packages/contracts/certops/deployment-destination.cjs").VALIDATE_DEPLOYMENT_DESTINATION,
     ];
     assert.deepEqual(
       supportedActionsEnum.filter((action) => !ownSchemaActions.includes(action)),

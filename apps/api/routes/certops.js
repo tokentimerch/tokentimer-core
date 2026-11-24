@@ -332,13 +332,32 @@ function redactIdentityLocationsForViewers(req, items) {
  * manager who can create jobs still isn't the right audience for it.
  */
 function redactClaimIdForNonAdmins(req, jobDetailProjection) {
-  if (!jobDetailProjection || !jobDetailProjection.claimId) {
+  if (!jobDetailProjection || req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "admin")) {
     return jobDetailProjection;
   }
-  if (req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "admin")) {
-    return jobDetailProjection;
+  if (!jobDetailProjection.claimId && !jobDetailProjection.payload?.deploymentDestinationExecution &&
+      !jobDetailProjection.resultMetadata?.deploymentDestinationValidation) return jobDetailProjection;
+  const projected = { ...jobDetailProjection };
+  if (projected.claimId) projected.claimId = undefined;
+  if (projected.payload?.deploymentDestinationExecution) {
+    projected.payload = {
+      ...projected.payload,
+      deploymentDestinationExecution: {
+        ...projected.payload.deploymentDestinationExecution,
+        validationClaimId: undefined,
+      },
+    };
   }
-  return { ...jobDetailProjection, claimId: undefined };
+  if (projected.resultMetadata?.deploymentDestinationValidation) {
+    projected.resultMetadata = {
+      ...projected.resultMetadata,
+      deploymentDestinationValidation: {
+        ...projected.resultMetadata.deploymentDestinationValidation,
+        claimId: undefined,
+      },
+    };
+  }
+  return projected;
 }
 
 function requireCertOpsTokenManager(req, res, next) {
@@ -718,6 +737,9 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (err?.code === "CERTOPS_DESTINATION_VALIDATION_UNAVAILABLE") {
+    return res.status(409).json({ error: err.message, code: err.code });
+  }
   if (err?.code === CERTOPS_APPROVAL_STORE_ENROLLMENT_UNAVAILABLE) {
     return res.status(409).json({ error: err.message, code: err.code });
   }

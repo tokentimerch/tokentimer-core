@@ -548,6 +548,25 @@ describe("certops maintenance worker", () => {
     assert.strictEqual(client.queries.at(-1).sql, "ROLLBACK");
   });
 
+  it("does not orphan read-only destination validation or retry an offered execution", async () => {
+    const worker = await import(workerUrl);
+    const common = {
+      workspace_id: "ws-1", claim_id: REAPER_CLAIM_ID, attempt_count: 1, max_attempts: 3,
+      agent_alive: false, past_hard_grace: true,
+    };
+    const client = createReaperClient([
+      { ...common, id: "validation", operation: "validate-deployment-destination", status: "running",
+        lease_renewed_at: new Date() },
+      { ...common, id: "execution", operation: "execute-deployment-destination", status: "claimed",
+        lease_renewed_at: null },
+    ]);
+    const result = await worker.reapExpiredLeases({ client, log: silentLogger });
+    assert.deepEqual(result, { scanned: 2, requeued: 0, failed: 2, deferred: 0 });
+    const terminal = client.queries.filter((q) =>
+      q.sql.startsWith("UPDATE certificate_jobs SET status = 'failed'"));
+    assert.deepEqual(terminal.map((q) => q.params[0]), ["validation", "execution"]);
+  });
+
   it("never requeues running jobs; marks them orphaned_unknown_effect instead", async () => {
     const worker = await import(workerUrl);
     const client = createReaperClient([

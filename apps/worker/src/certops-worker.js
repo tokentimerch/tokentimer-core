@@ -718,11 +718,12 @@ export async function reapExpiredLeases({
     for (const row of expired.rows) {
       const attemptCount = row.attempt_count ?? 0;
       const maxAttempts = row.max_attempts ?? 3;
-      const sideEffectsPossible =
-        row.status === "running" || row.lease_renewed_at != null;
+      const sideEffectsPossible = row.operation !== "validate-deployment-destination" &&
+        (row.status === "running" || row.lease_renewed_at != null);
       const hasRetryBudget =
         !sideEffectsPossible &&
         row.status === "claimed" &&
+        row.operation !== "execute-deployment-destination" &&
         attemptCount < maxAttempts;
 
       if (row.agent_alive && !row.past_hard_grace) {

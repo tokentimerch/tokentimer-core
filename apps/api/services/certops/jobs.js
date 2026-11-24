@@ -205,6 +205,8 @@ const JOB_OPERATIONS = Object.freeze([
   // Read-only AD CS issuer validation. Created only by the issuer service.
   "adcs-preflight",
   "adcs-installation-proof",
+  "validate-deployment-destination",
+  "execute-deployment-destination",
 ]);
 const JOB_OPERATION_SET = new Set(JOB_OPERATIONS);
 
@@ -1966,6 +1968,9 @@ async function createCertificateJob(options) {
     CERTOPS_JOB_OPERATION_INVALID,
     "operation",
   );
+  if (operation === "validate-deployment-destination" || operation === "execute-deployment-destination") {
+    options = await require("./deploymentDestinations").prepareDestinationJob(options, workspaceId, operation);
+  }
   if(operation==="reconcile-from-store" && options.allowMaterialReconciliation!==true) throw serviceError("Material reconciliation can only be requested through its dedicated service",CERTOPS_JOB_OPERATION_INVALID);
   // protocol_smoke is diagnostic-only and must never enter through the
   // general-purpose job-creation path: allowing it here would let a
@@ -2028,7 +2033,8 @@ async function createCertificateJob(options) {
   // services/certops/jobApprovals.approveJob. The flag only chooses the
   // default initial status; an explicit conflicting status is rejected so a
   // caller cannot both request a gate and bypass it.
-  const perJobRequiresApproval = options.requiresApproval === true || operation==="cleanup-from-store" || operation==="reconcile-from-store";
+  const perJobRequiresApproval = options.requiresApproval === true ||
+    ["cleanup-from-store", "reconcile-from-store", "execute-deployment-destination"].includes(operation);
   // Workspace-wide override (certops_require_approval_always) is read here,
   // not trusted from the caller alone: omitting workspaceRequiresApprovalAlways
   // must not bypass a policy that is on. Callers that already hold the
