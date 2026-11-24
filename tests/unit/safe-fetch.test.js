@@ -181,6 +181,30 @@ describe("safe-fetch", () => {
     assert.strictEqual(strategy.jwksURL, issuer + "/protocol/openid-connect/certs");
   });
 
+  it("bounds streamed IdP responses and reports an invalid redirect", async (t) => {
+    const http = require("node:http");
+    const server = http.createServer((req, res) => {
+      if (req.url === "/redirect") {
+        res.writeHead(302, { Location: "http://[" });
+        return res.end();
+      }
+      const chunk = Buffer.alloc(1024 * 1024);
+      res.write(chunk);
+      res.write(chunk);
+      res.end(Buffer.from("beyond the response limit"));
+    });
+    await new Promise((done) => server.listen(0, "127.0.0.1", done));
+    t.after(() => new Promise((done) => server.close(done)));
+
+    const origin = "http://127.0.0.1:" + server.address().port;
+    assert.deepStrictEqual(await safeFetch(origin + "/metadata"), {
+      ok: false, reason: "response_too_large",
+    });
+    assert.deepStrictEqual(await safeFetch(origin + "/redirect"), {
+      ok: false, reason: "invalid_url",
+    });
+  });
+
   it("pickPreferredAddress prefers IPv4 when both A and AAAA exist", () => {
     const chosen = pickPreferredAddress([
       { address: "2001:db8::1", family: 6 },

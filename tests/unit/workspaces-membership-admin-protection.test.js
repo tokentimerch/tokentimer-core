@@ -58,7 +58,7 @@ function fixture({
         const rows = state.role ? [{ role: state.role }] : [];
         return { rowCount: rows.length, rows };
       }
-      if (sql.startsWith("UPDATE workspace_memberships SET role")) {
+      if (/^UPDATE workspace_memberships\s+SET role\s*=/.test(sql)) {
         state.role = args[0];
         return { rowCount: 1, rows: [] };
       }
@@ -276,6 +276,20 @@ test("role changes audit the locked prior role before commit", async () => {
   await value.run();
   assert.equal(value.response.statusCode, 200);
   assert.equal(value.state.role, "viewer");
+  const lockIndex = value.state.queries.findIndex(({ sql }) =>
+    sql.startsWith("SELECT role FROM workspace_memberships"),
+  );
+  const updateIndex = value.state.queries.findIndex(({ sql }) =>
+    sql.startsWith("UPDATE workspace_memberships"),
+  );
+  assert.ok(lockIndex >= 0 && updateIndex > lockIndex);
+  assert.ok(updateIndex < value.state.auditQueryCounts[0]);
+  const update = value.state.queries[updateIndex];
+  assert.match(
+    update.sql,
+    /SET role = \$1, source = 'manual', source_provider_slug = NULL\s+WHERE user_id = \$2 AND workspace_id = \$3/,
+  );
+  assert.deepEqual(update.args, ["viewer", "2", "11111111-1111-1111-1111-111111111111"]);
   const [audit] = value.state.audits;
   assert.equal(audit.action, "MEMBER_ROLE_CHANGED");
   assert.deepEqual(audit.metadata, { role: "viewer", previous_role: "workspace_manager" });

@@ -69,7 +69,8 @@ async function acceptPendingInvitations(db, userId, userEmail, options, onAccept
        SELECT $1, w.id, claimed.role, NULL FROM claimed
          JOIN workspaces w ON w.id = claimed.workspace_id
         WHERE w.created_by IS DISTINCT FROM $1
-       ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = EXCLUDED.role
+       ON CONFLICT (user_id, workspace_id) DO UPDATE
+         SET role = EXCLUDED.role, source = 'manual', source_provider_slug = NULL
        WHERE workspace_memberships.role <> 'admin'
        RETURNING workspace_id, role`,
       [userId, id, email],

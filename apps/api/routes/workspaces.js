@@ -692,7 +692,8 @@ router.post(
         targetUserId = existingUser.id;
         const membership = await memberClient.query(
           `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by) VALUES ($1,$2,$3,$4)
-         ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = EXCLUDED.role
+         ON CONFLICT (user_id, workspace_id) DO UPDATE
+           SET role = EXCLUDED.role, source = 'manual', source_provider_slug = NULL
          WHERE workspace_memberships.role <> 'admin'
          RETURNING user_id`,
           [targetUserId, ws.id, role, userId],
@@ -888,7 +889,9 @@ router.patch(
           if (currentRole === nextRole) return "unchanged";
 
           const updated = await client.query(
-            "UPDATE workspace_memberships SET role=$1 WHERE user_id=$2 AND workspace_id=$3",
+            `UPDATE workspace_memberships
+                SET role = $1, source = 'manual', source_provider_slug = NULL
+              WHERE user_id = $2 AND workspace_id = $3`,
             [nextRole, targetUserId, ws.id],
           );
           if (updated.rowCount === 0) return "missing";

@@ -88,8 +88,16 @@ function makeSessionApp(router) {
     const sessionState = sessions.get(sid);
     req.session = sessionState;
     req.session.save = (cb) => {
+      if (sessionState.failSsoSave && sessionState.sso) {
+        return cb(new Error("Session store failed"));
+      }
       sessions.set(sid, sessionState);
       if (cb) cb();
+    };
+    req.session.destroy = (cb) => {
+      sessions.delete(sid);
+      delete req.session;
+      cb();
     };
     req.logIn = (user, cb) => {
       sessionState.user = user;
@@ -361,6 +369,32 @@ describe("OIDC callback route", () => {
     assert.ok(loggedIn?.user, "req.logIn should persist the user on the session");
     assert.strictEqual(loggedIn.user.email, "route-user@example.com");
     assert.strictEqual(pool._state.users[0].recipient_verified_email, "route-user@example.com");
+  });
+
+  it("discards the authenticated session if persisting OIDC metadata fails", async () => {
+    const sid = crypto.randomBytes(8).toString("hex");
+    sessions.set(sid, {
+      failSsoSave: true,
+      oidcAuth: { "state-save": {
+        providerSlug: PROVIDER_SLUG,
+        state: "state-save",
+        nonce: "nonce-save",
+        codeVerifier: "verifier-save",
+      } },
+    });
+
+    const response = await fetch(
+      `${baseUrl}/auth/oidc/${PROVIDER_SLUG}/callback?code=abc&state=state-save`,
+      { redirect: "manual", headers: { cookie: `tt_sid=${sid}` } },
+    );
+
+    assert.equal(response.status, 302);
+    assert.equal(new URL(response.headers.get("location")).searchParams.get("error"), "oidc_failed");
+    assert.equal(response.headers.get("set-cookie"), null);
+    assert.equal(sessions.has(sid), false);
+    const failures = callbackAudit.filter((event) => event.action === "LOGIN_FAILED");
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0].metadata.reason, "session_login_error");
   });
 
   it("records only the callback pathname and failure reason for a missing transaction", async () => {

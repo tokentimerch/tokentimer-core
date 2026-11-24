@@ -42,6 +42,7 @@ const {
   sanitizeNextPath,
 } = require("../sso/login-redirect.js");
 const { normalizeBaseUrl } = require("../sso/callback-urls.js");
+const { markSsoCallbackFailure } = require("../sso/sso-rate-limit.js");
 
 /** @type {Map<string, object>} slug -> runtime */
 const oidcRuntimes = new Map();
@@ -692,6 +693,7 @@ function oidcRoutes(_passport, express) {
     const landingPath = sanitizeNextPath(stashed) || "/dashboard";
 
     const failRedirect = async (reason, callbackPhase = null, loginAuditRecorded = false) => {
+      markSsoCallbackFailure(res);
       if (returnedState && req.session) {
         try {
           await deleteOidcTxAndSave(req, returnedState);
@@ -832,14 +834,7 @@ function oidcRoutes(_passport, express) {
             userinfo_sub: userinfoCheck.userinfo_sub,
           },
         });
-        await deleteOidcTxAndSave(req, returnedState);
-        return res.redirect(
-          buildLoginFailureRedirect(APP_URL, {
-            error: "oidc_failed",
-            provider: providerSlug,
-            reason: "userinfo_sub_mismatch",
-          }),
-        );
+        return failRedirect("userinfo_sub_mismatch", callbackPhase, true);
       }
 
       trustedUserinfo = userinfoCheck.trusted === true;
@@ -862,24 +857,11 @@ function oidcRoutes(_passport, express) {
 
       await deleteOidcTxAndSave(req, returnedState);
 
-      return req.logIn(user, async (loginErr) => {
-        if (loginErr) {
-          await safeAuditRoute({
-            actorUserId: null,
-            subjectUserId: user?.id || null,
-            action: "LOGIN_FAILED",
-            targetType: "auth",
-            targetId: null,
-            channel: "web",
-            workspaceId: null,
-            metadata: {
-              method: "oidc",
-              provider_slug: providerSlug,
-              reason: "session_login_error",
-            },
-          });
-          return failRedirect("session_login_error");
-        }
+      try {
+        // Passport does not await a promise returned by its completion callback.
+        await new Promise((resolve, reject) => {
+          req.logIn(user, (error) => (error ? reject(error) : resolve()));
+        });
         req.session.sso = {
           providerSlug,
           protocol: "oidc",
@@ -889,8 +871,37 @@ function oidcRoutes(_passport, express) {
           idToken: tokenSet?.id_token || null,
         };
         await saveSession(req);
-        return res.redirect(`${APP_URL}${landingPath}`);
-      });
+      } catch {
+        req.user = null;
+        if (req.session) {
+          try {
+            await new Promise((resolve, reject) => {
+              req.session.destroy((error) => (error ? reject(error) : resolve()));
+            });
+          } catch {
+            routeAuditLogger?.warn?.("Failed to discard partial OIDC session", { providerSlug });
+          } finally {
+            // Suppress automatic persistence or a new session cookie on failure.
+            delete req.session;
+          }
+        }
+        await safeAuditRoute({
+          actorUserId: null,
+          subjectUserId: user?.id || null,
+          action: "LOGIN_FAILED",
+          targetType: "auth",
+          targetId: null,
+          channel: "web",
+          workspaceId: null,
+          metadata: {
+            method: "oidc",
+            provider_slug: providerSlug,
+            reason: "session_login_error",
+          },
+        });
+        return failRedirect("session_login_error", callbackPhase, true);
+      }
+      return res.redirect(`${APP_URL}${landingPath}`);
     } catch (err) {
       let mappedReason = "callback_error";
       const msg = String(err?.message || "");
