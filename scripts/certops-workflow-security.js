@@ -74,7 +74,10 @@ function unsupportedArmNotice(workflow,name){
 function validateWorkflow(workflow,name="workflow"){
   if(unsupportedArmNotice(workflow,name))return [];
   const errors=[];const fail=message=>errors.push(`${name}: ${message}`);
-  for(const issue of require("./certops-azure-scope-policy").validate(name,workflow))fail(issue);
+  const azurePolicy=require("./certops-azure-scope-policy");
+  const azureIssues=azurePolicy.validate(name,workflow);
+  for(const issue of azureIssues)fail(issue);
+  const retainedStorePrepare=name===azurePolicy.STORE_PREPARE&&azureIssues.length===0;
   if(/^certops-.*\.yml$/.test(name)&&!workflow.name?.startsWith("CertOps / "))fail("qualification workflow display name must use the CertOps / prefix");
   const events=typeof workflow.on==="string"?[workflow.on]:Object.keys(workflow.on||{});
   if(!events.length||events.some(event=>!["push","workflow_dispatch","schedule"].includes(event)))fail("qualification may run only trusted push, manual or cleanup schedule events");
@@ -226,7 +229,7 @@ function validateWorkflow(workflow,name="workflow"){
       if(typeof step.run==="string"&&/\$\{\{\s*(inputs\.|github\.event\.inputs\.)/.test(step.run))fail(`${id} manual inputs must be passed through environment or typed arguments, not interpolated into shell code`);
     }
     for(const [creates,destroys,label] of [[/docker compose[^\n]*\bup\b/,/docker compose[^\n]*\bdown\b/,"Compose"],[/kind create cluster/,/kind delete cluster/,"kind"],[/provision-lab\.ps1/,/remove-owned-lab\.ps1/,"Azure lab"]]){
-      if(creates.test(runs)&&!(label==="Azure lab"&&(retainedDay||retainedAdcsTtl||retainedCadence))&&!steps.some(step=>step.if==="always()"&&destroys.test(step.run||"")))fail(`${id} ${label} requires independent always cleanup`);
+      if(creates.test(runs)&&!(label==="Azure lab"&&(retainedDay||retainedAdcsTtl||retainedCadence||(retainedStorePrepare&&id==="prepare")))&&!steps.some(step=>step.if==="always()"&&destroys.test(step.run||"")))fail(`${id} ${label} requires independent always cleanup`);
     }
   }
   return errors;

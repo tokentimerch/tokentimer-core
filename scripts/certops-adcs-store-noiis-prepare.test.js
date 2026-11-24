@@ -29,8 +29,18 @@ const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 const fixtureRoot = process.env.TT_STORE_TEST_TEMP_ROOT ?? os.tmpdir();
 const ps = (text, values = {}, cwd) => {
   const setup = cwd ? "Set-Location -LiteralPath $env:TT_FIXTURE_CWD\n" : "";
+  // Assert the exception text, which PowerShell's console renderer can truncate.
+  const script = `
+    $ErrorActionPreference = 'Stop'
+    try {
+      ${setup}${text}
+    } catch {
+      [Console]::Error.WriteLine($_.Exception.Message)
+      exit 1
+    }
+  `;
   return spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
-    Buffer.from("$ErrorActionPreference='Stop';\n" + setup + text, 'utf16le').toString('base64')],
+    Buffer.from(script, 'utf16le').toString('base64')],
   { env: { ...process.env, ...env, ...values, TT_FIXTURE_CWD: cwd }, encoding: 'utf8', timeout: 60000 });
 };
 
