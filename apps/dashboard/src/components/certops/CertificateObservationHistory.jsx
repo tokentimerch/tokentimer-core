@@ -81,6 +81,7 @@ export default function CertificateObservationHistory({
   const [hasHistory, setHasHistory] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const showHistory = enabled && (hasHistory || Boolean(error) || isOpen);
   const effectiveSortBy =
     !canSortTopology && ['source', 'location'].includes(sortBy) ? '' : sortBy;
 
@@ -91,6 +92,7 @@ export default function CertificateObservationHistory({
     setDraftFilters(EMPTY_FILTERS);
     setFilters(EMPTY_FILTERS);
     setFilterError('');
+    setError('');
     setHasHistory(false);
     setIsOpen(false);
   }, [workspaceId, certificateId, fingerprintSha256, enabled]);
@@ -111,8 +113,8 @@ export default function CertificateObservationHistory({
     }
   }, [canSortTopology]);
   useEffect(() => {
-    onAvailabilityChange?.(hasHistory);
-  }, [hasHistory, onAvailabilityChange]);
+    onAvailabilityChange?.(showHistory);
+  }, [showHistory, onAvailabilityChange]);
   useEffect(() => {
     if (!enabled || !workspaceId || !certificateId || !fingerprintSha256)
       return undefined;
@@ -155,12 +157,23 @@ export default function CertificateObservationHistory({
           setHasHistory(nextItems.length > 0);
       })
       .catch(err => {
-        if (!controller.signal.aborted)
-          setError(
-            err?.response?.status === 409
-              ? 'Certificate changed. Reload its details.'
-              : 'Could not load observation history.'
-          );
+        if (controller.signal.aborted) return;
+        const status = err?.response?.status;
+        const code = err?.response?.data?.code;
+        if (
+          status === 401 ||
+          status === 403 ||
+          (status === 402 && code === 'PLAN_FEATURE_REQUIRED')
+        ) {
+          setHasHistory(false);
+          setIsOpen(false);
+          return;
+        }
+        setError(
+          status === 409
+            ? 'Certificate changed. Reload its details.'
+            : 'Could not load observation history.'
+        );
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -233,7 +246,7 @@ export default function CertificateObservationHistory({
     );
   }
 
-  if (!hasHistory) return null;
+  if (!showHistory) return null;
   return (
     <>
       <Button {...outlineButtonProps} size='xs' onClick={() => setIsOpen(true)}>

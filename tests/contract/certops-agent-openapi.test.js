@@ -2,11 +2,11 @@
  * Contract Tests - CertOps agent routes vs OpenAPI / route-compat / agent-protocol
  *
  * Static assertions (no runtime API needed):
- *  1. The four /api/v1/certops/agent routes are documented in the static
+ *  1. The stable /api/v1/certops/agent routes are documented in the static
  *     OpenAPI spec with the auth split frozen in
  *     packages/contracts/api/certops-route-compat.contract.json.
  *  2. The route-compat contract carries the agent-runtime version/status and keeps all
- *     four agent routes in routeAuth and stableRoutes.
+ *     documented agent routes in routeAuth and stableRoutes.
  *  3. The OpenAPI request-body envelope mirrors
  *     packages/contracts/certops/agent-protocol.schema.json (required
  *     envelope fields and the messageType enum), and each operation pins the
@@ -50,6 +50,7 @@ const AGENT_ROUTES = {
   "/api/v1/certops/agent/heartbeat": "agentCredentialAuth",
   "/api/v1/certops/agent/jobs/claim": "agentCredentialAuth",
   "/api/v1/certops/agent/jobs/{jobId}/lease": "agentCredentialAuth",
+  "/api/v1/certops/agent/jobs/{jobId}/iis-consent": "agentCredentialAuth",
   "/api/v1/certops/agent/jobs/results": "agentCredentialAuth",
   "/api/v1/certops/agent/jobs/{jobId}/logs": "agentCredentialAuth",
 };
@@ -154,6 +155,16 @@ describe("CertOps agent routes OpenAPI contract", () => {
         success: '"200"',
         codes: [
           "CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH",
+          "CERTOPS_AGENT_RETIRED",
+          "PRIVATE_KEY_MATERIAL_REJECTED",
+        ],
+        statuses: ['"400"', '"401"', '"404"', '"409"', '"410"', '"422"', '"429"'],
+      },
+      "/api/v1/certops/agent/jobs/{jobId}/iis-consent": {
+        success: '"200"',
+        codes: [
+          "CERTOPS_AGENT_MESSAGE_INVALID",
+          "CERTOPS_AGENT_SEQUENCE_REGRESSION",
           "CERTOPS_AGENT_RETIRED",
           "PRIVATE_KEY_MATERIAL_REJECTED",
         ],
