@@ -12609,6 +12609,77 @@ paths:
           description: Agent log rate limit exceeded
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/certops/agent/jobs/{jobId}/iis-consent:
+    post:
+      tags: [CertOps Agent]
+      summary: Check current authorization for an IIS binding update
+      operationId: checkCertOpsAgentIisConsent
+      description: >-
+        Rechecks an agent's current claim and the selected consumer's authorization
+        revision before changing its IIS binding. If authorization is absent, changed,
+        or no longer current, allowed is false. The request advances the agent's
+        sequence and does not update the binding.
+      security:
+        - agentCredentialAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_.:-]{1,128}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [claimId, consumerId, authorizationRevision, sequence]
+              properties:
+                claimId:
+                  type: string
+                  pattern: '^[A-Za-z0-9_.:-]{1,128}$'
+                consumerId:
+                  type: string
+                  format: uuid
+                  pattern: '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
+                authorizationRevision:
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                sequence:
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+      responses:
+        "200":
+          description: Whether the claimed IIS operation remains authorized
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [allowed]
+                properties:
+                  allowed:
+                    type: boolean
+        "400":
+          description: Invalid request (CERTOPS_AGENT_MESSAGE_INVALID)
+        "401":
+          description: Per-agent credential missing, unknown, or revoked
+        "404":
+          description: CertOps disabled deployment-wide
+        "409":
+          description: Agent message sequence did not advance (CERTOPS_AGENT_SEQUENCE_REGRESSION)
+        "410":
+          description: Agent is retired (CERTOPS_AGENT_RETIRED)
+        "422":
+          description: Private key material was rejected (PRIVATE_KEY_MATERIAL_REJECTED)
+        "429":
+          description: Agent rate limit exceeded
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/certops/agent/jobs/results:
     post:
       tags: [CertOps Agent]

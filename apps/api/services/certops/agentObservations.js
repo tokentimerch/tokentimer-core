@@ -27,6 +27,7 @@ const {
   parseSubjectAltNames,
 } = require("./parser");
 const { normalizeObservedRevocation } = require("./observedRevocation");
+const { retainObservedRevocationOnUnverifiedGoodSql } = require("./certificateSecurity");
 const {
   upsertManagedCertificateByMonitorSource,
   upsertAgentFilesystemTarget,
@@ -977,6 +978,11 @@ async function retainUnmanagedObservation(client, observation) {
        observed_revocation = CASE
          WHEN EXCLUDED.observed_revocation IS NULL THEN certops_slot_observations.observed_revocation
          WHEN certops_slot_observations.observed_revocation IS NULL THEN EXCLUDED.observed_revocation
+         WHEN ${retainObservedRevocationOnUnverifiedGoodSql(
+           "certops_slot_observations.observed_revocation",
+           "EXCLUDED.observed_revocation",
+         )}
+           THEN certops_slot_observations.observed_revocation
          WHEN (
             ( certops_slot_observations.observed_revocation ? 'revision' AND EXCLUDED.observed_revocation ? 'revision'
               AND (certops_slot_observations.observed_revocation->>'revision')::numeric >= (EXCLUDED.observed_revocation->>'revision')::numeric
