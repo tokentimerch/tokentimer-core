@@ -69,3 +69,45 @@ describe("Core single-provider SSO routes", () => {
     await request(app).post("/api/login").expect(204);
   });
 });
+
+it("keeps SSO metadata audit failures generic while retaining fetch diagnostics", async (t) => {
+  const { pool } = require("../../apps/api/db/database");
+  const audit = require("../../apps/api/services/audit");
+  const rateLimit = require("../../apps/api/middleware/rateLimit");
+  const metadata = require("../../apps/api/sso/fetch-idp-metadata");
+  const outbound = require("../../apps/api/sso/safe-fetch");
+  const { logger } = require("../../apps/api/utils/logger");
+  const url = "https://idp.example.test/metadata";
+  const route = "/api/admin/sso/fetch-idp-metadata";
+  let transportUnavailable = false;
+  const writeAudit = t.mock.method(audit, "writeAudit", async () => {
+    throw new Error("synthetic audit storage details");
+  });
+  t.mock.method(pool, "query", async () => ({ rows: [{ is_admin: true }] }));
+  t.mock.method(rateLimit, "getApiLimiter", () => (_req, _res, next) => next());
+  t.mock.method(outbound, "validateOutboundUrl", async () => ({ ok: true, parsed: new URL(url) }));
+  t.mock.method(metadata, "fetchIdpMetadataXml", async () => {
+    if (transportUnavailable) throw new Error("HTTP 404");
+    return "<EntityDescriptor />";
+  });
+  t.mock.method(logger, "error", () => {});
+
+  const app = express();
+  app.use(express.json(), (req, _res, next) => {
+    req.user = { id: 1 };
+    req.isAuthenticated = () => true;
+    next();
+  });
+  const routerPath = require.resolve("../../apps/api/routes/sso-providers");
+  t.after(() => { delete require.cache[routerPath]; });
+  app.use(require(routerPath));
+
+  const failedAudit = await request(app).post(route).send({ url }).expect(502);
+  assert.deepEqual(failedAudit.body, { error: "Fetch failed", code: "fetch_failed" });
+  assert.equal(writeAudit.mock.callCount(), 1);
+
+  transportUnavailable = true;
+  const failedFetch = await request(app).post(route).send({ url }).expect(502);
+  assert.deepEqual(failedFetch.body, { error: "HTTP 404", code: "fetch_failed" });
+  assert.equal(writeAudit.mock.callCount(), 1);
+});
