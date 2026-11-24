@@ -74,6 +74,35 @@ function nativeFetchProxyEnabled() {
     (process.env.NODE_OPTIONS || "").split(/\s+/).includes("--use-env-proxy"));
 }
 
+function axiosAddress(address) {
+  const canonical = normalizeHostname(address);
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(canonical);
+  if (!mapped) return canonical;
+
+  const high = Number.parseInt(mapped[1], 16);
+  const low = Number.parseInt(mapped[2], 16);
+  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
+}
+
+function isAxiosCidrExclusion(host, entry) {
+  const match = /^(.+)\/(0|[1-9]\d{0,2})$/.exec(entry);
+  if (!match) return false;
+  const [, rawBase, rawPrefix] = match;
+  const bracketed = rawBase.startsWith("[") && rawBase.endsWith("]");
+  const base = bracketed ? rawBase.slice(1, -1) : rawBase;
+  const family = isIP(base);
+  if (!family || (bracketed && family !== 6)) return false;
+
+  const normalized = axiosAddress(base);
+  let prefix = Number(rawPrefix);
+  if (family === 6 && isIP(normalized) === 4) {
+    // Axios unmaps this subnet and accepts only prefixes within the IPv4 suffix.
+    if (prefix < 96) return false;
+    prefix -= 96;
+  }
+  return isInCIDR(host, `${normalized}/${prefix}`);
+}
+
 function proxyForUrl(url, mode) {
   const secure = url.protocol === "https:";
   const agentEnv = (secure ? https : http).globalAgent.options.proxyEnv;
@@ -85,14 +114,11 @@ function proxyForUrl(url, mode) {
     if (mode !== "axios") return "";
     const proxy = getProxyForUrl(url);
     if (!proxy) return "";
-    // Axios additionally supports NO_PROXY CIDRs for literal IP destinations.
-    // Native proxy-aware agents make their own exclusion decision above.
-    const host = url.hostname.replace(/^\[|\]$/g, "");
+    // Native proxy-aware agents use separate exclusion rules.
+    const host = axiosAddress(url.hostname);
+    if (!isIP(host)) return proxy;
     const exclusions = (process.env.no_proxy || process.env.NO_PROXY || "").split(/[\s,]+/);
-    const bypass = exclusions.some((entry) =>
-      /^.+\/(0|[1-9]\d{0,2})$/.test(entry) && isInCIDR(host, entry)
-    );
-    return bypass ? "" : proxy;
+    return exclusions.some((entry) => isAxiosCidrExclusion(host, entry)) ? "" : proxy;
   }
 
   const port = url.port || (secure ? "443" : "80");

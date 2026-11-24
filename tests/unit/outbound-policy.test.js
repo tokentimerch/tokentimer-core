@@ -252,6 +252,29 @@ test("GitHub integration honors the outbound proxy policy and no-proxy host or C
   assert.equal(hits, 2);
 });
 
+test("Axios CIDR exclusions use the IPv4 suffix of mapped addresses", (t) => {
+  const target = "http://[::ffff:127.0.0.1]";
+  setPolicy(t, { allowlist: "::ffff:7f00:1" });
+  for (const name of ["HTTP_PROXY", "NO_PROXY"]) {
+    const before = process.env[name];
+    t.after(() => {
+      if (before === undefined) delete process.env[name];
+      else process.env[name] = before;
+    });
+  }
+  process.env.HTTP_PROXY = "http://proxy.example";
+  const check = () => assertOutboundUrl(target, { proxyMode: "axios" });
+
+  for (const exclusion of ["127.0.0.0/8", "[::ffff:127.0.0.0]/104"]) {
+    process.env.NO_PROXY = exclusion;
+    assert.doesNotThrow(check);
+  }
+  for (const exclusion of ["[::ffff:0.0.0.0]/80", "::/0"]) {
+    process.env.NO_PROXY = exclusion;
+    assert.throws(check, { code: OUTBOUND_POLICY_DENIED });
+  }
+});
+
 test("an unapproved environment SMTP relay leaves an approved DB relay usable", async (t) => {
   setPolicy(t, { allowlist: "127.0.0.1" });
   for (const name of ["SMTP_HOST", "NODE_ENV"]) {
