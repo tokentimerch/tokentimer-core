@@ -3128,6 +3128,112 @@ describe("agentDispatch.ingestResult", () => {
     assert.equal(policyChecks, 1);
   });
 
+  it("accepts only fail-closed destination execution preflight results, on first delivery and replay", async () => {
+    const { EXECUTE, INVALID_RECEIPT, persistSignedDestinationDispatch } =
+      require("../../apps/api/services/certops/deploymentDestinations");
+    const { hashDeploymentDestinationValidation } =
+      require("../../packages/contracts/certops/deployment-destination.cjs");
+    const { preflightDeploymentDestinationExecution, registerDeploymentDestinations } =
+      require("../../packages/agent/src/deployment-destinations");
+    const agent = agentFixture({
+      id: "agent-row-1", agentId: "agent-wire-42", workspaceId: "00000000-0000-4000-8000-000000000001",
+    });
+    const deploymentDestination = {
+      version: 1, zoneRef: "zone-1", destinationKind: "test-appliance", destinationRef: "portal-1",
+      materialRef: "certificate-local", materialRevision: "revision-2", fingerprintSha256: "a".repeat(64),
+    };
+    const validation = {
+      configurationSha256: "b".repeat(64), trustSha256: "c".repeat(64), observedStateSha256: "d".repeat(64),
+      planSha256: "e".repeat(64), affectedServiceRefs: ["admin-portal"], permittedEffects: ["replace-cert"],
+    };
+    const validationJobId = "prior-validation";
+    const validationClaimId = "prior-claim";
+    const receipt = {
+      version: 1, validation,
+      bindingSha256: hashDeploymentDestinationValidation({
+        jobId: validationJobId, claimId: validationClaimId, workspaceId: agent.workspaceId,
+        agentId: agent.agentId, deploymentDestination,
+      }, validation),
+    };
+    const issuedAt = new Date().toISOString();
+    const leaseExpiresAt = new Date(Date.now() + 60_000).toISOString();
+    const nonce = "execution-claim-nonce-0001";
+    const job = {
+      schemaVersion: 1, action: EXECUTE, jobId: "42", claimId: "claim-uuid-1", attemptId: "claim-uuid-1",
+      workspaceId: agent.workspaceId, agentId: agent.agentId, mode: "real",
+      issuedAt, requestedAt: issuedAt, leaseExpiresAt, expiresAt: leaseExpiresAt,
+      nonce, signingKeyId: "key-1", deploymentDestination,
+      deploymentDestinationExecution: { version: 1, validationJobId, validationClaimId, receipt },
+      deploymentDestinationApproval: { payloadSha256: "a".repeat(64), intentSha256: "b".repeat(64) },
+    };
+    const preflight = await preflightDeploymentDestinationExecution({
+      job, jobId: job.jobId, claimId: job.claimId, attemptId: job.attemptId,
+      registry: registerDeploymentDestinations([{
+        version: 1, destinationKind: deploymentDestination.destinationKind,
+        validate: () => assert.fail("execution must use its own preflight"),
+        authorizeExecution: () => true,
+        prepareExecution: () => ({
+          validation, execute: () => assert.fail("preflight must leave mutation disabled"),
+        }),
+      }]),
+      checkLease: () => Date.parse(leaseExpiresAt), dryRun: false,
+    });
+    assert.deepEqual(preflight, { status: "blocked", errorMessage: "destination_execution_protection_unavailable" });
+
+    let dispatch;
+    await persistSignedDestinationDispatch({ signedJob: job, nonce, client: { query(_sql, params) {
+      dispatch = JSON.parse(params[3]);
+      return { rows: [{ id: job.jobId }] };
+    } } });
+    const liveClaim = lockedJobRow({
+      operation: EXECUTE, mode: "real", status: "running", lease_live: true, assigned_agent_id: agent.id,
+      payload: { deploymentDestination, deploymentDestinationExecution: job.deploymentDestinationExecution },
+      result_metadata: { deploymentDestinationDispatch: dispatch },
+    });
+    let row = liveClaim;
+    let consumes = 0;
+    let writes = 0;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("FOR UPDATE")) return { rows: [row] };
+      if (sql.includes("UPDATE certificate_jobs")) {
+        writes += 1;
+        row = { ...row, status: params[1], completed_at: new Date(), result_metadata: JSON.parse(params[6]) };
+        return { rows: [row] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const report = (result) => ingestResult({
+      dbPool, agent, body: resultBody({ nonce, errorMessage: null, ...result }),
+      deps: {
+        deploymentDestinationPolicy: { authorize: () => true },
+        consumeNonce() {
+          consumes += 1;
+          return row.completed_at ? { consumed: false, code: "CERTOPS_NONCE_REPLAYED" } : { consumed: true };
+        },
+      },
+    });
+
+    for (const status of ["succeeded", "dry_run_complete", "orphaned_unknown_effect", "awaiting_issuer"]) {
+      row = liveClaim;
+      await assert.rejects(report({ status }), { code: INVALID_RECEIPT });
+      row = { ...liveClaim, status, completed_at: new Date(), lease_live: false };
+      await assert.rejects(report({ status }), { code: INVALID_RECEIPT });
+    }
+    row = { ...liveClaim, lease_live: false };
+    await assert.rejects(report(preflight), { code: INVALID_RECEIPT });
+    assert.equal(consumes, 0);
+    assert.equal(writes, 0);
+
+    for (const outcome of [preflight, { status: "failed" }, { status: "rejected" }]) {
+      row = liveClaim;
+      assert.equal((await report(outcome)).status, outcome.status);
+      assert.equal((await report(outcome)).duplicate, true);
+      await assert.rejects(report({ status: "succeeded" }), { code: INVALID_RECEIPT });
+    }
+    assert.equal(consumes, 6);
+    assert.equal(writes, 3);
+  });
+
   it("refuses deployment destination receipts on live and terminal claims before nonce replay", async () => {
     for (const status of ["running", "succeeded"]) {
       const dbPool = createMockPool((sql) => {

@@ -114,14 +114,16 @@ async function checkDestinationResult({ client, policy, agent, job, body, jobSta
   const receipt = body.deploymentDestinationValidation ?? null;
   const active = job.status === "claimed" || job.status === "running";
   const expectsReceipt = job.operation === VALIDATE && jobStatus === "succeeded";
+  // Execution is preflight-only until native mutation and its verified result
+  // contract are enabled. A terminal claim replay must obey the same limit.
+  const allowedStatus = expectsReceipt || ["failed", "blocked", "rejected"].includes(jobStatus);
   const mixedOutput = ["trustResult", "enrollmentResult", "preflightResult", "publicationReceipt",
     "publicationCertificatePem", "deploymentReceipt", "cleanupReceipt", "reconciliationReceipt",
     "keyRotated"].some((field) => body[field] != null);
 
   if (job.mode !== "real" || !agent.agentId || !validScope(scope) ||
       (active && job.lease_live !== true) || mixedOutput || (receipt !== null) !== expectsReceipt ||
-      (job.operation === VALIDATE && !["succeeded", "failed", "blocked", "rejected"].includes(jobStatus)) ||
-      typeof body.nonce !== "string") throw destinationError(INVALID_RECEIPT);
+      !allowedStatus || typeof body.nonce !== "string") throw destinationError(INVALID_RECEIPT);
 
   const dispatch = job.result_metadata?.deploymentDestinationDispatch;
   if (dispatch?.bindingSha256 !== claimBinding({
