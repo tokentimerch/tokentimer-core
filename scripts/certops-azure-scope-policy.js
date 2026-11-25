@@ -728,9 +728,12 @@ function storePreparePolicy(workflow, errors) {
   const inputs = on?.workflow_dispatch?.inputs;
   const inputNames = ["reviewed_workflow_sha", "media_source_sha", "media_receipt_sha256", "location"];
   if (!keys(workflow, ["name", "on", "permissions", "concurrency", "env", "jobs"]) ||
-      !keys(on, ["workflow_dispatch"]) || !keys(on.workflow_dispatch, ["inputs"]) || !keys(inputs, inputNames) ||
+      !keys(on, ["workflow_dispatch"]) || !keys(on.workflow_dispatch, ["inputs"]) ||
+      !keys(inputs, [...inputNames, "manual_janitor_run_id"]) ||
       inputNames.some(input => !keys(inputs[input], ["description", "type", "required"]) ||
         inputs[input].type !== "string" || inputs[input].required !== true) ||
+      !keys(inputs.manual_janitor_run_id, ["description", "type", "required"]) ||
+      inputs.manual_janitor_run_id.type !== "string" || inputs.manual_janitor_run_id.required !== false ||
       !same(permissions, { contents: "read" }) ||
       !same(concurrency, { group: "certops-adcs-store-prepare-${{ github.run_id }}-${{ github.run_attempt }}", "cancel-in-progress": false }) ||
       !same(env, { STORE_GROUP }) || !keys(jobs, ["register", "verify", "prepare", "cleanup-failed"])) {
@@ -755,7 +758,8 @@ function storePreparePolicy(workflow, errors) {
     verify: {
       timeout: 10, needs: "register", cleanupIdentity: true, actionsRead: true,
       output: { receipt: "${{ steps.verify.outputs.receipt }}", receipt_sha256: "${{ steps.verify.outputs.receipt_sha256 }}" },
-      env: { GH_TOKEN: "${{ github.token }}", STORE_REGISTRATION: owner },
+      env: { GH_TOKEN: "${{ github.token }}", STORE_REGISTRATION: owner,
+        STORE_MANUAL_JANITOR_RUN_ID: "${{ inputs.manual_janitor_run_id }}" },
       command: "./infra/certops-adcs/store-noiis-registration.ps1 -Mode verify",
       stepId: "verify", artifact: "disposable-store-registration-${{ github.run_id }}-${{ github.run_attempt }}",
       paths: "qualification-results/store-noiis-registration.json\nqualification-results/store-noiis-registration.sha256\n",
