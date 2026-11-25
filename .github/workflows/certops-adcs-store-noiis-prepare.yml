@@ -14,6 +14,10 @@ on:
         description: Approved sealed media custody receipt SHA-256
         type: string
         required: true
+      manual_janitor_run_id:
+        description: Optional successful protected manual cleanup run on the exact reviewed main commit
+        type: string
+        required: false
       location:
         description: Azure location for the approved isolated campaign
         type: string
@@ -74,6 +78,7 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       GH_TOKEN: ${{ github.token }}
       STORE_REGISTRATION: ${{ needs.register.outputs.registration }}
+      STORE_MANUAL_JANITOR_RUN_ID: ${{ inputs.manual_janitor_run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

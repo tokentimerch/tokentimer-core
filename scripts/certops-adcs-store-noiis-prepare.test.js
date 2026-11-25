@@ -215,6 +215,19 @@ function simulateRegistration(mode, options = {}) {
   const { observedAt, cleanupClientSha256, workflowOwnedGroupVerified, independentExpiryVerified, janitorRunId, janitorCommit, ...registered } = receipt;
   const output = path.join(temp, 'outputs.txt');
   const trace = path.join(temp, 'trace.txt');
+  const manualRun = {
+    id: 9876, workflow_id: 46, path: '.github/workflows/certops-adcs-lab-janitor.yml',
+    event: 'workflow_dispatch', head_sha: env.GITHUB_SHA, head_branch: 'main',
+    head_repo: 'tokentimerch/tokentimer-core', status: 'completed', conclusion: 'success',
+    run_attempt: 2, ...options.manualRun,
+  };
+  const cleanupJob = {
+    name: 'cleanup', head_sha: env.GITHUB_SHA, status: 'completed', conclusion: 'success',
+    completed_at: new Date(Date.now() - 30000).toISOString(),
+    steps: ['Authenticate isolated lab subscription with OIDC', 'Remove only expired owned qualification groups']
+      .map((name) => ({ name, status: 'completed', conclusion: 'success' })),
+    ...options.cleanupJob,
+  };
   for (const file of [files[1], files[3]]) fs.copyFileSync(path.join(infra, file), path.join(temp, file));
   fs.writeFileSync(path.join(temp, 'assert-lab-capacity.ps1'), '');
   fs.writeFileSync(path.join(temp, 'arm-operation.ps1'), String.raw`
@@ -246,7 +259,11 @@ function simulateRegistration(mode, options = {}) {
           '/commits/[a-f0-9]{40}$' {
             return @{sha=($args[1] -split '/')[-1];verified=$true}|ConvertTo-Json -Compress
           }
-          '/actions/workflows/certops-adcs-lab-janitor\.yml$' { return $env:TT_JANITOR_STATE }
+          '/actions/workflows/certops-adcs-lab-janitor\.yml$' {
+            return @{id=46;state=$env:TT_JANITOR_STATE}|ConvertTo-Json -Compress
+          }
+          '/actions/runs/9876$' { return $env:TT_MANUAL_RUN }
+          '/actions/runs/9876/attempts/2/jobs$' { return $env:TT_MANUAL_ATTEMPT }
           '/runs\?' {
             return @{id=6789;head_sha=('f'*40);event='schedule';status='completed';conclusion='success';head_branch='main';
               updated_at=[DateTimeOffset]::UtcNow.AddMinutes(-5).ToString('o')}|ConvertTo-Json -Compress
@@ -274,6 +291,9 @@ function simulateRegistration(mode, options = {}) {
       TT_GROUP: JSON.stringify(group), TT_LOST_REPLY: String(options.lost ?? false),
       TT_ARM_STATUS: String(options.armStatus ?? 201), TT_MEMBERS: JSON.stringify(options.members ?? []),
       TT_JANITOR_STATE: options.janitor ?? 'active',
+      TT_MANUAL_RUN: JSON.stringify(manualRun),
+      TT_MANUAL_ATTEMPT: JSON.stringify({ total_count: 1, jobs: [cleanupJob] }),
+      STORE_MANUAL_JANITOR_RUN_ID: options.manualRunId ?? '',
       STORE_GROUP: receipt.resourceGroup, STORE_LOCATION: receipt.location,
       STORE_EXPECTED_SHA: env.GITHUB_SHA, STORE_MEDIA_SOURCE: receipt.mediaSourceCommit,
       STORE_MEDIA_RECEIPT_SHA: receipt.mediaReceiptSha256, STORE_REGISTRATION: JSON.stringify(registered),
@@ -331,6 +351,40 @@ test('independent cleanup identity reads only group expiry and pins the exact re
   assert.deepEqual(disabled.output, []);
 });
 
+test('the exact fresh manual janitor attempt yields the same independently pinned registration', () => {
+  const { result, trace, output } = simulateRegistration('verify', { manualRunId: '9876' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(trace, ['account show', 'group show']);
+  const encoded = output[0].slice('receipt='.length);
+  assert.equal(output[1], 'receipt_sha256=' + sha256(encoded));
+  const receipt = JSON.parse(encoded);
+  assert.equal(receipt.janitorRunId, '9876');
+  assert.equal(receipt.janitorCommit, env.GITHUB_SHA);
+  assert.equal(receipt.cleanupClientSha256, sha256(cleanup));
+});
+
+test('manual janitor proof fails closed for foreign, stale, skipped or malformed evidence', () => {
+  const cases = [
+    [{ manualRunId: '../9876' }, /exact manual expiry janitor run ID/],
+    [{ manualRun: { workflow_id: 47 } }, /exact reviewed main commit/],
+    [{ manualRun: { path: '.github/workflows/other.yml' } }, /exact reviewed main commit/],
+    [{ manualRun: { head_repo: 'other/tokentimer-core' } }, /exact reviewed main commit/],
+    [{ manualRun: { head_branch: 'dev' } }, /exact reviewed main commit/],
+    [{ manualRun: { head_sha: 'f'.repeat(40) } }, /exact reviewed main commit/],
+    [{ manualRun: { conclusion: 'failure' } }, /exact reviewed main commit/],
+    [{ cleanupJob: { conclusion: 'skipped' } }, /cleanup job did not succeed/],
+    [{ cleanupJob: { completed_at: new Date(Date.now() - 91 * 60000).toISOString() } }, /within the last 90 minutes/],
+    [{ cleanupJob: { steps: [] } }, /authentication or cleanup step did not succeed/],
+  ];
+  for (const [options, expected] of cases) {
+    const { result, trace, output } = simulateRegistration('verify', { manualRunId: '9876', ...options });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, expected);
+    assert.deepEqual(trace, ['account show']);
+    assert.deepEqual(output, []);
+  }
+});
+
 test('protected workflow requires independent proof before any VM path and keeps failed cleanup separate', () => {
   const wf = fs.readFileSync(path.join(__dirname,
     '../.github/workflows/certops-adcs-store-noiis-prepare.yml'), 'utf8');
@@ -341,6 +395,8 @@ test('protected workflow requires independent proof before any VM path and keeps
   assert.doesNotMatch(register, /provision-lab\.ps1/);
   assert.match(verify, /needs: register/);
   assert.match(verify, /environment: certops-adcs-cleanup/);
+  assert.match(verify, /STORE_MANUAL_JANITOR_RUN_ID: \$\{\{ inputs\.manual_janitor_run_id \}\}/);
+  assert.doesNotMatch(prepare, /STORE_MANUAL_JANITOR_RUN_ID/);
   assert.match(verify, /store-noiis-registration\.ps1 -Mode verify/);
   assert.doesNotMatch(verify, /provision-lab\.ps1/);
   assert.match(prepare, /needs: \[register, verify\]/);
