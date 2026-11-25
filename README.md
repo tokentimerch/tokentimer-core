@@ -58,10 +58,6 @@ Three complementary pillars organize the platform:
 - **Certificate Lifecycle Management:** discover certificates, automate supported ACME workflows, deploy and verify through outbound-only agents, enroll from Microsoft AD CS, share certificates through your own material store, and coordinate cert-manager or external executors with approvals and audit evidence.
 - **Integrations & Centralized Operations:** aggregate relevant metadata from Vault, AWS, Azure, GCP, GitHub, and GitLab. TokenTimer complements your existing systems; it does not replace their secret-storage responsibilities.
 
-Self-hosted Core supports **single sign-on (SSO)** with one active identity
-provider per installation, either OIDC or SAML. Keycloak is the reference
-integration. [Set up single sign-on](docs/AUTHENTICATION.md#single-sign-on).
-
 <p align="center">
   <img src="docs/assets/control-center.png" alt="TokenTimer control center: what needs attention, inventory snapshot, scoped credentials, auto-sync health, and managed certificates in one view" width="888" />
 </p>
@@ -174,6 +170,9 @@ Use `cert-manager` or connect an external executor with a machine token for supp
 
 - **Workspaces and role-based access** let you organize assets and control who
   can view or manage them.
+- **Single sign-on (SSO)** in self-hosted Core supports one active OIDC or SAML
+  identity provider per installation. Keycloak is the reference integration.
+  [Set up single sign-on](docs/AUTHENTICATION.md#single-sign-on).
 - **The [audit log](docs/audit-events.md)** records sign-ins, alert deliveries,
   integration scans, auto-sync failures, and workspace membership changes.
   Filter events and export them as JSON or CSV.
