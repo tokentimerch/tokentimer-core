@@ -600,11 +600,47 @@ function ConvertFrom-Stock5061OutcomeXml([string]$Xml) {
 }
 
 
+function Read-NamedStock5061Rows([long]$Floor,[string]$KeyName,[string]$Computer) {
+    if ($Floor -lt 0 -or $KeyName -cnotmatch '^tokentimer-audit-calibration-[a-f0-9]{32}$') {
+        throw 'Expected exact disposable Security name and original floor.'
+    }
+    $filter = "*[System[EventID=5061 and EventRecordID > $Floor and Provider[@Name='$securityProvider']] and EventData[Data[@Name='KeyName']='$KeyName']]"
+    $query = [Diagnostics.Eventing.Reader.EventLogQuery]::new('Security','LogName',$filter)
+    $reader = [Diagnostics.Eventing.Reader.EventLogReader]::new($query)
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $rows = @()
+    $last = $Floor
+    try {
+        while ($clock.ElapsedMilliseconds -lt 2500) {
+            $entry = $reader.ReadEvent([timespan]::FromMilliseconds(250))
+            if ($null -eq $entry) { return [pscustomobject]@{ available=$true; rows=$rows } }
+            try {
+                if ($rows.Count -ge 16 -or $entry.RecordId -le $last -or $entry.MachineName -ine $Computer -or $null -eq $entry.TimeCreated) {
+                    throw 'Exact named 5061 source, position or count changed.'
+                }
+                $last = [long]$entry.RecordId
+                $row = ConvertFrom-Stock5061OutcomeXml ($entry.ToXml())
+                if ($row.KeyName -cne $KeyName -or $row.Operation -notmatch '^%%[0-9]{3,6}$' -or
+                    $row.ReturnCode -notmatch '^0x[0-9a-f]{1,8}$') { throw 'Unexpected scoped 5061 fields.' }
+                $rows += [ordered]@{ recordId=[string]$last; eventUtc=([datetimeoffset]$entry.TimeCreated).ToUniversalTime().ToString('o')
+                    operation=$row.Operation; returnCode=$row.ReturnCode.ToLowerInvariant()
+                    softwareKsp=($row.ProviderName -ceq $softwareKsp); originalLocalSystem=($row.SubjectUserSid -ceq 'S-1-5-18')
+                    rsa=($row.AlgorithmName -ceq 'RSA'); machineKey=($row.KeyType -ceq '%%2499')
+                    auditSuccess=(([int64]$entry.Keywords -band [int64][Diagnostics.Eventing.Reader.StandardEventKeywords]::AuditSuccess) -ne 0)
+                    auditFailure=(([int64]$entry.Keywords -band [int64][Diagnostics.Eventing.Reader.StandardEventKeywords]::AuditFailure) -ne 0) }
+            } finally { $entry.Dispose() }
+        }
+    } finally { $reader.Dispose() }
+    throw 'Exact named Security snapshot did not drain.'
+}
+
+
 $stage = 'stock-standalone-member'
 $opBaseline = $null
 $opReceipt = [pscustomobject]@{ available=$false; reason='not-observed' }
 $shapeReceipt = [pscustomobject]@{ available=$false; reason='not-observed' }
 $nativeDuplicate = $false
+$namedReceipt = [pscustomobject]@{ available=$false; reason='not-read' }
 $originalKey = $null
 $ownedHandleDeleted = $false
 $absentBefore = $false
@@ -625,6 +661,8 @@ try {
     $auditIdentity = [Security.Principal.WindowsIdentity]::GetCurrent([Security.Principal.TokenAccessLevels]::Query)
     $auditBefore = Get-Stock5061Audit $auditIdentity
     if ($auditBefore -ne 3 -or !(Get-WinEvent -ListLog Security -ErrorAction Stop).IsEnabled) { throw 'Effective System Integrity Success and Failure required.' }
+    $stage = 'record-floor'
+    $floor = Get-Stock5061RecordFloor
     $stage = 'pre-absence'
     $absentBefore = Test-Stock5061KeyAbsent $keyName $keyProvider
     if (!$absentBefore) { throw 'Existing named key is outside this fixture.' }
@@ -635,7 +673,7 @@ try {
     } catch {
         $opReceipt = [pscustomobject]@{ available=$false; reason='operational-preflight-refused' }
     }
-    $floor = Get-Stock5061RecordFloor
+
     if ([datetimeoffset]::UtcNow.AddSeconds(45) -ge $expires) { throw 'Too little lease remains for calibration.' }
     $parameters = [Security.Cryptography.CngKeyCreationParameters]::new()
     $parameters.Provider = $keyProvider
@@ -693,12 +731,18 @@ try {
         throw 'Final key absence, effective audit or lease readback failed.'
     }
     $stage = 'bounded-5061-pair'
-    $events = @(Read-Stock5061Pair $floor $keyName $createFrom $createThrough $repeatFrom $repeatThrough)
+    try {
+        $events = @(Read-Stock5061Pair $floor $keyName $createFrom $createThrough $repeatFrom $repeatThrough)
+    } finally {
+        try { $namedReceipt = Read-NamedStock5061Rows $floor $keyName $physicalFqdn }
+        catch { $namedReceipt = [pscustomobject]@{ available=$false; reason='named-stock-read-refused'
+            errorType=$_.Exception.GetBaseException().GetType().Name; hresult=$_.Exception.GetBaseException().HResult } }
+    }
 } catch {
     $status = [ordered]@{
         scope = 'github-hosted-stock-cng-disposable-key-control'; status = 'refused'; run = $RunNonce; vmId = $vmId;
         stage = $stage; keyAbsentBefore = $absentBefore; keyAbsentAfterCleanup = $absentAfter; originalHandleDeleted = $ownedHandleDeleted;
-        auditBefore = $auditBefore; auditAfter = $auditAfter; continuityProven = $false; coverageComplete = $false; nativeDuplicateNteExists = $nativeDuplicate; operational = $opReceipt; securityShape = $shapeReceipt; nativeAdmission = $false
+        auditBefore = $auditBefore; auditAfter = $auditAfter; continuityProven = $false; coverageComplete = $false; nativeDuplicateNteExists = $nativeDuplicate; operational = $opReceipt; securityShape = $shapeReceipt; namedSecurity = $namedReceipt; nativeAdmission = $false
     }
     [IO.File]::WriteAllText($ResultPath, ($status | ConvertTo-Json -Depth 8 -Compress), [Text.UTF8Encoding]::new($false))
     throw 'Stock 5061 calibration refused. Review only the sanitized stage and cleanup readback.'
@@ -714,6 +758,6 @@ $receipt = [ordered]@{
     auditProofScope = 'bounded-enumeration-and-paired-system-snapshots'; directEffectiveTokenQueryProven = $false;
     keyAbsentBefore = $absentBefore; keyAbsentAfterCleanup = $absentAfter; originalHandleDeleted = $ownedHandleDeleted;
     startedUtc = $started.ToString('o'); completedUtc = (Get-Stock5061Utc).ToString('o');
-    continuityProven = $false; lossFree = $false; coverageComplete = $false; nativeDuplicateNteExists = $nativeDuplicate; operational = $opReceipt; securityShape = $shapeReceipt; nativeAdmission = $false
+    continuityProven = $false; lossFree = $false; coverageComplete = $false; nativeDuplicateNteExists = $nativeDuplicate; operational = $opReceipt; securityShape = $shapeReceipt; namedSecurity = $namedReceipt; nativeAdmission = $false
 }
 [IO.File]::WriteAllText($ResultPath, ($receipt | ConvertTo-Json -Depth 8 -Compress), [Text.UTF8Encoding]::new($false))
