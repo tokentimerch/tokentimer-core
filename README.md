@@ -170,6 +170,9 @@ Use `cert-manager` or connect an external executor with a machine token for supp
 
 - **Workspaces and role-based access** let you organize assets and control who
   can view or manage them.
+- **Single sign-on (SSO)** in self-hosted Core supports one active OIDC or SAML
+  identity provider per installation. Keycloak is the reference integration.
+  [Set up single sign-on](docs/AUTHENTICATION.md#single-sign-on).
 - **The [audit log](docs/audit-events.md)** records sign-ins, alert deliveries,
   integration scans, auto-sync failures, and workspace membership changes.
   Filter events and export them as JSON or CSV.
@@ -203,8 +206,6 @@ Use `cert-manager` or connect an external executor with a machine token for supp
 | [![Docker Compose](docs/assets/readme/docker-icon.svg)](QUICKSTART.md#option-1-docker-compose-fastest) | [![Kubernetes / Helm](docs/assets/readme/kubernetes-icon.svg)](QUICKSTART.md#option-3-kubernetes-helm) | [![Local Development](docs/assets/readme/local-dev-icon.svg)](QUICKSTART.md#option-2-local-development) |
 |:--:|:--:|:--:|
 
-Self-hosted Core supports one active SSO provider per installation, either OIDC or SAML. Keycloak is the reference integration. [Set up single sign-on](docs/AUTHENTICATION.md#single-sign-on).
-
 <br>
 
 # Documentation
@@ -228,6 +229,8 @@ New to TokenTimer? [Watch the guided product tour](https://www.youtube.com/watch
 | [Trust anchors and OS trust stores](docs/certops/agent/trust-and-key-rotation.md#establish-ca-trust-on-a-host) | Distribute and remove CA trust anchors on Linux and Windows · [Video](https://www.youtube.com/watch?v=nAY7Yx9Pd8Q) |
 | [docs/certops/executor-api.md](docs/certops/executor-api.md) | Machine API tokens and executor job API for external renewal tooling |
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | Auth model, admin bootstrap, invitations, RBAC |
+| [Single sign-on setup](docs/AUTHENTICATION.md#single-sign-on) | OIDC and SAML providers, Keycloak, and group mappings |
+| [Single sign-on deployment](docs/CONFIGURATION.md#single-sign-on) | Docker Compose and Helm settings, key rotation, and rollback |
 | [deploy/helm/README.md](deploy/helm/README.md) | Helm chart installation and configuration |
 | [apps/worker/queue-architecture.md](apps/worker/queue-architecture.md) | Alert queue and worker design |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes |
