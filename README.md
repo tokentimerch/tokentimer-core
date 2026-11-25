@@ -58,6 +58,10 @@ Three complementary pillars organize the platform:
 - **Certificate Lifecycle Management:** discover certificates, automate supported ACME workflows, deploy and verify through outbound-only agents, enroll from Microsoft AD CS, share certificates through your own material store, and coordinate cert-manager or external executors with approvals and audit evidence.
 - **Integrations & Centralized Operations:** aggregate relevant metadata from Vault, AWS, Azure, GCP, GitHub, and GitLab. TokenTimer complements your existing systems; it does not replace their secret-storage responsibilities.
 
+Self-hosted Core supports **single sign-on (SSO)** with one active identity
+provider per installation, either OIDC or SAML. Keycloak is the reference
+integration. [Set up single sign-on](docs/AUTHENTICATION.md#single-sign-on).
+
 <p align="center">
   <img src="docs/assets/control-center.png" alt="TokenTimer control center: what needs attention, inventory snapshot, scoped credentials, auto-sync health, and managed certificates in one view" width="888" />
 </p>
@@ -203,8 +207,6 @@ Use `cert-manager` or connect an external executor with a machine token for supp
 | [![Docker Compose](docs/assets/readme/docker-icon.svg)](QUICKSTART.md#option-1-docker-compose-fastest) | [![Kubernetes / Helm](docs/assets/readme/kubernetes-icon.svg)](QUICKSTART.md#option-3-kubernetes-helm) | [![Local Development](docs/assets/readme/local-dev-icon.svg)](QUICKSTART.md#option-2-local-development) |
 |:--:|:--:|:--:|
 
-Self-hosted Core supports one active SSO provider per installation, either OIDC or SAML. Keycloak is the reference integration. [Set up single sign-on](docs/AUTHENTICATION.md#single-sign-on).
-
 <br>
 
 # Documentation
@@ -228,6 +230,8 @@ New to TokenTimer? [Watch the guided product tour](https://www.youtube.com/watch
 | [Trust anchors and OS trust stores](docs/certops/agent/trust-and-key-rotation.md#establish-ca-trust-on-a-host) | Distribute and remove CA trust anchors on Linux and Windows · [Video](https://www.youtube.com/watch?v=nAY7Yx9Pd8Q) |
 | [docs/certops/executor-api.md](docs/certops/executor-api.md) | Machine API tokens and executor job API for external renewal tooling |
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | Auth model, admin bootstrap, invitations, RBAC |
+| [Single sign-on setup](docs/AUTHENTICATION.md#single-sign-on) | OIDC and SAML providers, Keycloak, and group mappings |
+| [Single sign-on deployment](docs/CONFIGURATION.md#single-sign-on) | Docker Compose and Helm settings, key rotation, and rollback |
 | [deploy/helm/README.md](deploy/helm/README.md) | Helm chart installation and configuration |
 | [apps/worker/queue-architecture.md](apps/worker/queue-architecture.md) | Alert queue and worker design |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes |
