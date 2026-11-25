@@ -38,7 +38,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Security
 
 - **Revoked certificate material.** Known revocation of a certificate or its issuing CA blocks certificate rollouts and CA trust distribution. Trust removal remains available. **Operator action:** upgrade agents and keep the control plane reachable for the final check before trust installation. See [trust and key rotation](docs/certops/agent/trust-and-key-rotation.md).
-- **Container runtimes.** Upgrade Core images to Node.js 22.23.5 and rebuild subfinder and the Linux revocation helpers with Go 1.26.11. [Node.js security release](https://nodejs.org/en/blog/release/v22.23.5) · [Go release history](https://go.dev/doc/devel/release)
+- **Container runtimes.** Upgrade Core images to Node.js 22.23.5 and rebuild subfinder and the Linux revocation helpers with Go 1.26.11. Core images require Alpine OpenSSL runtime libraries at version 3.5.9-r1 or newer. [Node.js security release](https://nodejs.org/en/blog/release/v22.23.5) · [Go release history](https://go.dev/doc/devel/release)
 
 ## [0.20.0] - 2026-11-19
 
