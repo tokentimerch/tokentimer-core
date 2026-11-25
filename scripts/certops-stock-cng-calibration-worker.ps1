@@ -522,58 +522,63 @@ function Read-ProtectedNCryptDuplicateDiagnostic {
     }
 }
 
-# Optional schema diagnostic for the already approved stock duplicate create.
-# Only counts candidate events. It does not qualify or replace the exact pair.
-function Read-ProtectedStock5061FailureShape {
-    param(
-        [Parameter(Mandatory)][long]$Floor,
-        [Parameter(Mandatory)][ValidatePattern('^tokentimer-audit-calibration-[a-f0-9]{32}$')][string]$KeyName,
-        [Parameter(Mandatory)][string]$Computer,
-        [Parameter(Mandatory)][datetimeoffset]$RepeatFrom,
-        [Parameter(Mandatory)][datetimeoffset]$RepeatThrough
-    )
-    if ($Floor -lt 0 -or [string]::IsNullOrWhiteSpace($Computer) -or $RepeatThrough -lt $RepeatFrom -or
-        ($RepeatThrough - $RepeatFrom).TotalSeconds -gt 5) { throw 'Original bounded stock duplicate required.' }
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    try {
-        if ($identity.User.Value -cne 'S-1-5-18' -or [int]$identity.ImpersonationLevel -ne 0) {
-            throw [UnauthorizedAccessException]::new('Unimpersonated LocalSystem required.')
-        }
-    } finally { $identity.Dispose() }
-    $filter = "*[System[EventID=5061 and EventRecordID > $Floor and Provider[@Name='Microsoft-Windows-Security-Auditing']] and EventData[Data[@Name='ReturnCode']='0x8009000f' and Data[@Name='SubjectUserSid']='S-1-5-18' and Data[@Name='ProviderName']='Microsoft Software Key Storage Provider' and Data[@Name='Operation']='%%2481']]"
+function Read-Stock5061Outcome {
+    param([long]$Floor,[string]$KeyName,[string]$Computer,[datetimeoffset]$WindowFrom,
+        [datetimeoffset]$WindowThrough,[datetimeoffset]$RepeatFrom,[datetimeoffset]$RepeatThrough)
+    if ($Floor -lt 0 -or $KeyName -cnotmatch '^tokentimer-audit-calibration-[a-f0-9]{32}$' -or
+        $WindowThrough -lt $WindowFrom -or ($WindowThrough - $WindowFrom).TotalSeconds -gt 45 -or
+        $RepeatFrom -lt $WindowFrom -or $RepeatThrough -lt $RepeatFrom -or $RepeatThrough -gt $WindowThrough) {
+        throw 'Invalid bounded Security outcome window.'
+    }
+    $filter = "*[System[EventID=5061 and EventRecordID > $Floor and Provider[@Name='$securityProvider']]]"
     $query = [Diagnostics.Eventing.Reader.EventLogQuery]::new('Security','LogName',$filter)
     $reader = [Diagnostics.Eventing.Reader.EventLogReader]::new($query)
-    $limits = [Diagnostics.Stopwatch]::StartNew()
-    $report = [ordered]@{ scope = 'stock-5061-duplicate-shape-diagnostic'
-        exactName = 0; absentName = 0; otherName = 0
-        security5061FailureProven = $false; nativeAdmission = $false }
-    $count = 0
-    $previous = $Floor
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $report = [ordered]@{ scope='stock-5061-outcome'; namedCreateSuccess=0; namedFailures=@()
+        duplicateExactName=0; duplicateAbsentName=0; duplicateOtherName=0
+        nativeAdmission=$false }
+    $seen = 0
+    $last = $Floor
     try {
-        while ($limits.ElapsedMilliseconds -lt 2500) {
-            $entry = $reader.ReadEvent([timespan]::FromMilliseconds(200))
+        while ($clock.ElapsedMilliseconds -lt 3500) {
+            $entry = $reader.ReadEvent([timespan]::FromMilliseconds(250))
             if ($null -eq $entry) { return [pscustomobject]$report }
             try {
-                if ((++$count) -gt 16 -or $entry.RecordId -le $previous -or $entry.MachineName -ine $Computer) {
-                    throw 'Bounded Security shape read failed.'
+                if ((++$seen) -gt 128 -or $entry.RecordId -le $last -or $entry.MachineName -ine $Computer) {
+                    throw 'Scoped 5061 record count, ordering or host changed.'
                 }
-                $previous = [long]$entry.RecordId
-                if ($null -eq $entry.TimeCreated) { throw 'Security timestamp unavailable.' }
-                $when = [datetimeoffset]$entry.TimeCreated
-                if ($when -lt $RepeatFrom -or $when -gt $RepeatThrough) { continue }
-                $failure = [int64][Diagnostics.Eventing.Reader.StandardEventKeywords]::AuditFailure
-                $success = [int64][Diagnostics.Eventing.Reader.StandardEventKeywords]::AuditSuccess
-                if (($entry.Keywords -band $failure) -eq 0 -or ($entry.Keywords -band $success) -ne 0) { continue }
-                $shape = Get-ProtectedStock5061NameShape ($entry.ToXml()) $KeyName
-                $report[$shape]++
+                $last = [long]$entry.RecordId
+                if ($null -eq $entry.TimeCreated) { throw 'Scoped 5061 timestamp unavailable.' }
+                $time = [datetimeoffset]$entry.TimeCreated
+                if ($time -lt $WindowFrom -or $time -gt $WindowThrough) { continue }
+                $row = ConvertFrom-Stock5061OutcomeXml ($entry.ToXml())
+                if ($row.ProviderName -cne $softwareKsp -or $row.SubjectUserSid -cne 'S-1-5-18' -or
+                    $row.KeyType -cne '%%2499') { continue }
+                $failed = (([int64]$entry.Keywords -band [int64][Diagnostics.Eventing.Reader.StandardEventKeywords]::AuditFailure) -ne 0)
+                $succeeded = (([int64]$entry.Keywords -band [int64][Diagnostics.Eventing.Reader.StandardEventKeywords]::AuditSuccess) -ne 0)
+                $same = ($row.KeyName -ceq $KeyName)
+                if ($same -and $succeeded -and !$failed -and $row.Operation -ceq '%%2481' -and $row.ReturnCode -ieq '0x0' -and $row.AlgorithmName -ceq 'RSA') {
+                    $report.namedCreateSuccess++
+                }
+                if ($same -and $failed -and !$succeeded -and $row.Operation -match '^%%[0-9]{3,6}$' -and $row.ReturnCode -match '^0x[0-9a-f]{1,8}$') {
+                    if ($report.namedFailures.Count -ge 16) { throw 'Too many failures for the exact disposable name.' }
+                    $report.namedFailures += [ordered]@{ recordId=[string]$last; operation=$row.Operation
+                        returnCode=$row.ReturnCode.ToLowerInvariant(); eventUtc=$time.ToUniversalTime().ToString('o') }
+                }
+                if ($failed -and !$succeeded -and $row.Operation -ceq '%%2481' -and
+                    $row.ReturnCode -ieq '0x8009000f' -and $time -ge $RepeatFrom -and $time -le $RepeatThrough) {
+                    if ($same) { $report.duplicateExactName++ }
+                    elseif ([string]::IsNullOrWhiteSpace($row.KeyName)) { $report.duplicateAbsentName++ }
+                    else { $report.duplicateOtherName++ }
+                }
             } finally { $entry.Dispose() }
         }
     } finally { $reader.Dispose() }
-    throw 'Scoped Security shape snapshot did not drain.'
+    throw 'Bounded Security outcome snapshot did not drain.'
 }
 
-function Get-ProtectedStock5061NameShape([string]$Xml,[string]$KeyName) {
-    if (!$Xml -or $Xml.Length -gt 32768) { throw 'Malformed Security shape record.' }
+function ConvertFrom-Stock5061OutcomeXml([string]$Xml) {
+    if (!$Xml -or $Xml.Length -gt 32768) { throw 'Malformed Security outcome XML.' }
     $settings = [Xml.XmlReaderSettings]::new()
     $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
     $settings.XmlResolver = $null
@@ -585,12 +590,15 @@ function Get-ProtectedStock5061NameShape([string]$Xml,[string]$KeyName) {
     try { $doc.Load($input) } finally { $input.Dispose(); $text.Dispose() }
     $ns = [Xml.XmlNamespaceManager]::new($doc.NameTable)
     $ns.AddNamespace('e','http://schemas.microsoft.com/win/2004/08/events/event')
-    $fields = $doc.SelectNodes('/e:Event/e:EventData/e:Data[@Name="KeyName"]',$ns)
-    if ($fields.Count -gt 1) { throw 'Ambiguous Security key name.' }
-    if ($fields.Count -eq 0 -or [string]::IsNullOrWhiteSpace($fields[0].InnerText)) { return 'absentName' }
-    if ($fields[0].InnerText -ceq $KeyName) { return 'exactName' }
-    return 'otherName'
+    $fields = @{}
+    foreach ($field in $doc.SelectNodes('/e:Event/e:EventData/e:Data',$ns)) {
+        $name = $field.GetAttribute('Name')
+        if (!$name -or $fields.ContainsKey($name) -or $fields.Count -ge 32) { throw 'Ambiguous Security outcome field.' }
+        $fields[$name] = $field.InnerText
+    }
+    $fields
 }
+
 
 $stage = 'stock-standalone-member'
 $opBaseline = $null
@@ -676,16 +684,16 @@ try {
         try { $opReceipt = Read-ProtectedNCryptDuplicateDiagnostic $opBaseline $repeatFrom $repeatThrough }
         catch { $opReceipt = [pscustomobject]@{ available=$false; reason='operational-observation-refused' } }
     }
-    try { $shapeReceipt = Read-ProtectedStock5061FailureShape $floor $keyName $physicalFqdn $repeatFrom $repeatThrough }
-    catch { $shapeReceipt = [pscustomobject]@{ available=$false; reason='security-shape-read-refused' } }
-    $stage = 'bounded-5061-pair'
-    $events = @(Read-Stock5061Pair $floor $keyName $createFrom $createThrough $repeatFrom $repeatThrough)
+    try { $shapeReceipt = Read-Stock5061Outcome $floor $keyName $physicalFqdn $started (Get-Stock5061Utc) $repeatFrom $repeatThrough }
+    catch { $shapeReceipt = [pscustomobject]@{ available=$false; reason='security-outcome-read-refused'; errorType=$_.Exception.GetBaseException().GetType().Name; hresult=$_.Exception.GetBaseException().HResult } }
     $stage = 'final-readbacks'
     $auditAfter = Get-Stock5061Audit $auditIdentity
     if ($auditAfter -ne $auditBefore -or !(Get-WinEvent -ListLog Security -ErrorAction Stop).IsEnabled -or
         !(Test-Stock5061KeyAbsent $keyName $keyProvider) -or [datetimeoffset]::UtcNow -ge $expires) {
         throw 'Final key absence, effective audit or lease readback failed.'
     }
+    $stage = 'bounded-5061-pair'
+    $events = @(Read-Stock5061Pair $floor $keyName $createFrom $createThrough $repeatFrom $repeatThrough)
 } catch {
     $status = [ordered]@{
         scope = 'github-hosted-stock-cng-disposable-key-control'; status = 'refused'; run = $RunNonce; vmId = $vmId;
