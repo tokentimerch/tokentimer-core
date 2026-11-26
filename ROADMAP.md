@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-11-23 (Core 0.20.0, main 9c506c09).
+Last reviewed: 2026-11-23 (Core 0.20.0, main 21996c14).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -54,11 +54,8 @@ called stable while they are open.
   CA-backed revocation, step-ca and webhook connectors remain open.
 - **Operational diagnostics**
   ([#232](https://github.com/tokentimerch/tokentimer-core/issues/232)).
-  Correlation identifiers across API and workers; production error
-  reporting with secret scrubbing.
-  API request logs now share a generated `correlationId`, returned as
-  `X-Request-Id`, which dashboard API errors display as a request reference.
-  Worker propagation and production error-boundary reporting remain open.
+  Extend request correlation beyond certificate distribution to other worker
+  paths and give operators clearer next actions for more kinds of failure.
 
 ---
 
@@ -113,6 +110,8 @@ does not promise a version or add a v1.0.0 gate.
   ([#504](https://github.com/tokentimerch/tokentimer-core/issues/504)):
   service discovery, typed connectors, controlled activation and fleet
   operations build on shipped Windows/IIS and AD CS support.
+  AD CS recovery and ACME issuance, renewal and recovery without IIS
+  still require native qualification on the exact signed Windows package.
   Distribution provides consumer discovery and lifecycle groundwork. Other
   service connectors and unsupported activation methods remain separate work.
 - **Windows agent with a bundled runtime**

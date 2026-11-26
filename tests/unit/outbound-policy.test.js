@@ -211,7 +211,7 @@ test("webhook delivery requires its configured proxy host to be allowed", async 
   );
 });
 
-test("GitHub integration honors the outbound proxy policy and explicit no-proxy host", async (t) => {
+test("GitHub integration honors the outbound proxy policy and no-proxy host or CIDR", async (t) => {
   setPolicy(t, { allowlist: "127.0.0.1" });
   for (const name of ["HTTP_PROXY", "NO_PROXY", "NODE_ENV"]) {
     const value = process.env[name];
@@ -243,6 +243,36 @@ test("GitHub integration honors the outbound proxy policy and explicit no-proxy 
   process.env.NO_PROXY = "127.0.0.1";
   assert.deepEqual(await request(), { login: "fixture" });
   assert.equal(hits, 1);
+  process.env.NO_PROXY = "127.0.0.0/8";
+  assert.deepEqual(await request(), { login: "fixture" });
+  assert.equal(hits, 2);
+
+  process.env.NO_PROXY = "127.0.0.0/08";
+  await assert.rejects(request, { code: OUTBOUND_POLICY_DENIED });
+  assert.equal(hits, 2);
+});
+
+test("Axios CIDR exclusions use the IPv4 suffix of mapped addresses", (t) => {
+  const target = "http://[::ffff:127.0.0.1]";
+  setPolicy(t, { allowlist: "::ffff:7f00:1" });
+  for (const name of ["HTTP_PROXY", "NO_PROXY"]) {
+    const before = process.env[name];
+    t.after(() => {
+      if (before === undefined) delete process.env[name];
+      else process.env[name] = before;
+    });
+  }
+  process.env.HTTP_PROXY = "http://proxy.example";
+  const check = () => assertOutboundUrl(target, { proxyMode: "axios" });
+
+  for (const exclusion of ["127.0.0.0/8", "[::ffff:127.0.0.0]/104"]) {
+    process.env.NO_PROXY = exclusion;
+    assert.doesNotThrow(check);
+  }
+  for (const exclusion of ["[::ffff:0.0.0.0]/80", "::/0"]) {
+    process.env.NO_PROXY = exclusion;
+    assert.throws(check, { code: OUTBOUND_POLICY_DENIED });
+  }
 });
 
 test("an unapproved environment SMTP relay leaves an approved DB relay usable", async (t) => {

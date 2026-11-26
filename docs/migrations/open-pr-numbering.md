@@ -58,6 +58,7 @@ are reservations, not no-op migrations. They do not install another feature.
 | 126 | certops_adcs_receipt_deadline | Immutable AD CS receipt admission deadline |
 | 127 | auto_sync_creation_expiration | Auto-sync creation metric expiration (#780) |
 | 128 | shared_sso_schema | Shared OIDC and SAML sign-in (#779) |
+| 129 | certops_acme_store_cancelled | Release unused ACME Store enrollment reservations |
 
 A ledger based on the released numbering that records `agent_credential_rotations` or `agent_credential_rotation_ack` at version 109 or 110 is ambiguous and is rejected before migration SQL. Preserve the database and arrange a separately reviewed recovery; do not edit or relabel its ledger.
 
@@ -77,6 +78,8 @@ version 115 on a standard preview database. New installs use version 127.
 Canonical installs use version 125 for the AD CS preflight index. A recognized retirement preview keeps its applied index at 122 and appends any missing recovery and credential migrations.
 
 The integrated Windows Store and IIS preview previously used 115 for observed revocation and 116–122 for Store and IIS. The runner preserves those recorded pairs and appends only missing definitions.
+
+For a recognized retirement preview with `certops_retirement_dossiers` at 109, the runner preserves supported orders of PagerDuty recovery, Windows Store and observed revocation and appends only missing definitions. The runner rejects Store migrations recorded at 109–111 before DDL. Preserve that ledger for reviewed recovery.
 
 ## Applied history and supported previews
 

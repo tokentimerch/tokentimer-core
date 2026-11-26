@@ -2,8 +2,12 @@
 
 const { describe, it, beforeEach } = require("node:test");
 const assert = require("node:assert");
+const { EventEmitter } = require("node:events");
 const {
   consumeToken,
+  createSsoRateLimitMiddleware,
+  getLimits,
+  markSsoCallbackFailure,
   extractProviderSlug,
   clientIp,
   _resetBucketsForTests,
@@ -41,6 +45,33 @@ describe("sso-rate-limit", () => {
       }),
       "192.168.1.20",
     );
+  });
+
+  it("charges rejected callback redirects more than successful redirects", (t) => {
+    t.mock.timers.enable({ apis: ["Date"] });
+    const names = ["SSO_RATE_LIMIT_CALLBACK_BURST", "SSO_RATE_LIMIT_CALLBACK_FAILURE_WEIGHT"];
+    const previous = names.map((name) => process.env[name]);
+    process.env[names[0]] = "3";
+    process.env[names[1]] = "2";
+    t.after(() => names.forEach((name, i) => {
+      if (previous[i] === undefined) delete process.env[name];
+      else process.env[name] = previous[i];
+    }));
+
+    function redirect(slug, rejected) {
+      const req = { ip: "127.0.0.1", path: `/auth/oidc/${slug}/callback` };
+      const res = Object.assign(new EventEmitter(), { statusCode: 302, setHeader() {} });
+      createSsoRateLimitMiddleware({ phase: "callback" })(req, res, () => {
+        if (rejected) markSsoCallbackFailure(res);
+        res.emit("finish");
+      });
+    }
+
+    const limits = getLimits("callback");
+    redirect("success", false);
+    redirect("rejected", true);
+    assert.equal(consumeToken("127.0.0.1:success:callback", limits).remaining, 1);
+    assert.equal(consumeToken("127.0.0.1:rejected:callback", limits).remaining, 0);
   });
 
   it("allows burst then rejects with retry-after", () => {

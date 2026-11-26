@@ -2809,6 +2809,48 @@ paths:
                 properties:
                   csrfToken:
                     type: string
+  /api/diagnostics/dashboard:
+    post:
+      tags: [Session]
+      summary: Report a dashboard error
+      operationId: reportDashboardError
+      description: Records the dashboard error category and area in the installation logs.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CsrfTokenHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [kind, area]
+              properties:
+                kind:
+                  type: string
+                  enum: [render, chunk-load]
+                area:
+                  type: string
+                  enum: [account, authentication, certops, dashboard, onboarding, other, settings, workspaces]
+      responses:
+        "204":
+          description: Report accepted
+          headers:
+            X-Request-Id:
+              description: Reference to the logged report.
+              schema:
+                type: string
+                format: uuid
+        "400":
+          description: Invalid report
+        "401":
+          description: Sign-in required
+        "403":
+          description: CSRF check failed or access denied
+        "429":
+          description: Rate limit exceeded
   /auth/login:
     post:
       tags: [Auth]
@@ -9875,7 +9917,7 @@ paths:
                 required: [enrollmentId, state, outcomeUncertain, recoveryAvailable]
                 properties:
                   enrollmentId: { type: string, format: uuid }
-                  state: { type: string, enum: [keygen_intent, prepared, submitting, issued, installing, installed, uncertain] }
+                  state: { type: string, enum: [keygen_intent, prepared, submitting, issued, installing, installed, uncertain, cancelled_no_effect] }
                   outcomeUncertain: { type: boolean }
                   recoveryAvailable: { type: boolean }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -12565,6 +12607,77 @@ paths:
                 code: CERTOPS_AGENT_LOG_PRIVATE_MATERIAL
         "429":
           description: Agent log rate limit exceeded
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/certops/agent/jobs/{jobId}/iis-consent:
+    post:
+      tags: [CertOps Agent]
+      summary: Check current authorization for an IIS binding update
+      operationId: checkCertOpsAgentIisConsent
+      description: >-
+        Rechecks an agent's current claim and the selected consumer's authorization
+        revision before changing its IIS binding. If authorization is absent, changed,
+        or no longer current, allowed is false. The request advances the agent's
+        sequence and does not update the binding.
+      security:
+        - agentCredentialAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_.:-]{1,128}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [claimId, consumerId, authorizationRevision, sequence]
+              properties:
+                claimId:
+                  type: string
+                  pattern: '^[A-Za-z0-9_.:-]{1,128}$'
+                consumerId:
+                  type: string
+                  format: uuid
+                  pattern: '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
+                authorizationRevision:
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                sequence:
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+      responses:
+        "200":
+          description: Whether the claimed IIS operation remains authorized
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [allowed]
+                properties:
+                  allowed:
+                    type: boolean
+        "400":
+          description: Invalid request (CERTOPS_AGENT_MESSAGE_INVALID)
+        "401":
+          description: Per-agent credential missing, unknown, or revoked
+        "404":
+          description: CertOps disabled deployment-wide
+        "409":
+          description: Agent message sequence did not advance (CERTOPS_AGENT_SEQUENCE_REGRESSION)
+        "410":
+          description: Agent is retired (CERTOPS_AGENT_RETIRED)
+        "422":
+          description: Private key material was rejected (PRIVATE_KEY_MATERIAL_REJECTED)
+        "429":
+          description: Agent rate limit exceeded
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/certops/agent/jobs/results:

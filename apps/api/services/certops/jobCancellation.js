@@ -11,6 +11,7 @@ const {
   serviceError,
 } = require("./jobs");
 const { onTrustJobTerminalTransition } = require("./trustAnchors");
+const { isAcmeStoreEnrollmentJob, cancelUnstartedAcmeStoreEnrollmentTx } = require("./acmeStorePersistence");
 
 const CERTOPS_JOB_CANCELLATION_UNAVAILABLE = "CERTOPS_JOB_CANCELLATION_UNAVAILABLE";
 const CERTOPS_JOB_CANCELLATION_UNSUPPORTED = "CERTOPS_JOB_CANCELLATION_UNSUPPORTED";
@@ -105,6 +106,11 @@ async function cancelCertificateJob({ client, workspaceId, jobId, actorUserId, c
   }
   await closeClaimStreamSafely(client, { workspaceId, jobId, claimId: job.claimId });
   if (!needsOperatorReconciliation) {
+    if (isAcmeStoreEnrollmentJob(job) &&
+        !await cancelUnstartedAcmeStoreEnrollmentTx({ client, workspaceId, jobId })) {
+      throw serviceError("ACME Store enrollment has ongoing or uncertain work; reconcile it before retrying",
+        CERTOPS_JOB_CANCELLATION_UNAVAILABLE);
+    }
     await onTrustJobTerminalTransition({ client, job: { ...job, workspaceId, status } });
   }
   const metadata = { previousStatus: job.status, needsOperatorReconciliation };

@@ -148,7 +148,8 @@ function workflows() {
 }
 test("all reviewed Azure workflows opt in and only manual workflows can provision", () => {
   const files = workflows();
-  assert.equal(azure.PROVISION.length + azure.LIFECYCLE.length, 20);
+  assert.equal(azure.PROVISION.length + azure.LIFECYCLE.length, 21);
+  assert.ok(azure.PROVISION.includes(azure.STORE_PREPARE));
   assert.ok(azure.PROVISION.includes("certops-azure-imds-qualification.yml"));
   assert.ok(azure.PROVISION.includes(azure.OPERATOR));
   assert.ok(azure.PROVISION.includes("certops-native-issuer-reassignment.yml"));

@@ -311,19 +311,27 @@ router.post(
   requireSsoAdmin,
   getApiLimiter(),
   async (req, res) => {
+    let outbound;
+    let xml;
     try {
       const url = String(req.body?.url || "").trim();
       if (!url) {
         return res.status(400).json({ error: "Metadata URL is required", code: "invalid_url" });
       }
-      const outbound = await validateOutboundUrl(url);
+      outbound = await validateOutboundUrl(url);
       if (!outbound.ok) {
         return res.status(400).json({
           error: formatFetchReason(outbound.reason || "invalid_url"),
           code: "invalid_url",
         });
       }
-      const xml = await fetchIdpMetadataXml(url);
+      xml = await fetchIdpMetadataXml(url);
+    } catch (err) {
+      logger.error("POST /api/admin/sso/fetch-idp-metadata failed", { error: err.message });
+      return res.status(502).json({ error: err.message || "Fetch failed", code: "fetch_failed" });
+    }
+
+    try {
       await writeAudit({
         actorUserId: req.user.id,
         subjectUserId: null,
@@ -334,11 +342,11 @@ router.post(
         workspaceId: null,
         metadata: { url_host: outbound.parsed?.hostname || null },
       });
-      res.json({ xml });
     } catch (err) {
-      logger.error("POST /api/admin/sso/fetch-idp-metadata failed", { error: err.message });
-      res.status(502).json({ error: err.message || "Fetch failed", code: "fetch_failed" });
+      logger.error("Could not audit SSO metadata fetch", { error: err.message });
+      return res.status(502).json({ error: "Fetch failed", code: "fetch_failed" });
     }
+    res.json({ xml });
   },
 );
 

@@ -76,8 +76,11 @@ const {
   TRANSITION_ORIGINS,
   classifyTerminalTransition,
 } = require("../../api/services/certops/renewalAlertPolicy.js");
-const { enqueueOutboxEvent } = require(
+const { enqueueOutboxEvent, readOutboxCorrelationId } = require(
   "../../api/services/certops/outbox.js",
+);
+const { runWithRequestCorrelation } = require(
+  "../../api/utils/request-context.js",
 );
 const { ensureDerivedRenewalProfile } = require(
   "../../api/services/certops/renewalProfileDerivation.js",
@@ -1438,11 +1441,15 @@ export async function drainCertOpsOutbox({
   for (const row of claimed.rows) {
     const payload =
       row.payload && typeof row.payload === "object" ? row.payload : {};
+    const correlationId = readOutboxCorrelationId(row);
+    let disposition = "error";
     try {
       let outcome = { queued: false, reason: "unsupported_event_type" };
 
       if (["material_published","distribution_approval_granted","distribution_rollout_requested"].includes(row.event_type)) {
-        outcome = await distributionResolver({ dbPool,row,claimId,payload });
+        outcome = await runWithRequestCorrelation(correlationId, () =>
+          distributionResolver({ dbPool, row, claimId, payload }),
+        );
       } else if (row.event_type === "renewal_alert_requested") {
         outcome = await alertResolver({
           client: dbPool,
@@ -1461,9 +1468,21 @@ export async function drainCertOpsOutbox({
         });
       }
 
+      if (outcome?.reason === "outbox_claim_lost") {
+        // The lease can expire before another worker updates claim_id.
+        // The resolver refused execution, so leave the pending row claimable.
+        disposition = "claim_lost";
+        continue;
+      }
+
       if (outcome?.deferred) {
-        await deferOutboxRow(dbPool, row.id, claimId, outcome.retryInMs);
+        const deferred = await deferOutboxRow(dbPool, row.id, claimId, outcome.retryInMs);
+        if (deferred.rowCount === 0) {
+          disposition = "claim_lost";
+          continue;
+        }
         summary.deferred += 1;
+        disposition = "deferred";
         log.debug?.("certops-outbox-event-deferred", {
           outboxId: String(row.id),
           eventType: row.event_type,
@@ -1475,13 +1494,13 @@ export async function drainCertOpsOutbox({
       if (outcome?.completed) {
         // The handler already wrote the terminal status inside its own
         // transaction; a second write here could only contradict it.
-        if (outcome.terminalStatus === "succeeded") summary.succeeded += 1;
-        else summary.skipped += 1;
+        disposition = outcome.terminalStatus === "succeeded" ? "succeeded" : "skipped";
+        summary[disposition] += 1;
         continue;
       }
 
       const terminalStatus = outcome?.queued ? "succeeded" : "skipped";
-      await dbPool.query(
+      const completed = await dbPool.query(
         `UPDATE certops_outbox
             SET status = $1,
                 outcome_reason = $2,
@@ -1491,11 +1510,16 @@ export async function drainCertOpsOutbox({
           WHERE id = $3 AND claim_id = $4::uuid`,
         [terminalStatus, outcome?.reason || null, row.id, claimId],
       );
+      if (completed.rowCount === 0) {
+        disposition = "claim_lost";
+        continue;
+      }
+      disposition = terminalStatus;
       if (terminalStatus === "succeeded") summary.succeeded += 1;
       else summary.skipped += 1;
     } catch (error) {
       const exhausted = row.attempt_count >= row.max_attempts;
-      await dbPool.query(
+      const rescheduled = await dbPool.query(
         `UPDATE certops_outbox
             SET status = CASE WHEN $1 THEN 'failed' ELSE 'pending' END,
                 last_error = $2,
@@ -1512,8 +1536,13 @@ export async function drainCertOpsOutbox({
           claimId,
         ],
       );
+      if (rescheduled.rowCount === 0) {
+        disposition = "claim_lost";
+        continue;
+      }
       if (exhausted) {
         summary.failed += 1;
+        disposition = "failed";
         log.error?.("certops-outbox-event-exhausted", {
           outboxId: String(row.id),
           eventType: row.event_type,
@@ -1523,11 +1552,21 @@ export async function drainCertOpsOutbox({
         });
       } else {
         summary.retried += 1;
+        disposition = "retried";
         log.warn?.("certops-outbox-event-retry", {
           outboxId: String(row.id),
           eventType: row.event_type,
           attemptCount: row.attempt_count,
           error: error?.message,
+        });
+      }
+    } finally {
+      if (correlationId) {
+        log.info?.("CertOps distribution outbox attempt", {
+          correlationId,
+          outboxId: String(row.id),
+          eventType: row.event_type,
+          disposition,
         });
       }
     }
@@ -1546,12 +1585,12 @@ export async function drainCertOpsOutbox({
  * budget and eventually be parked as failed for never having failed at
  * anything.
  */
-async function deferOutboxRow(dbPool, id, claimId, retryInMs) {
+function deferOutboxRow(dbPool, id, claimId, retryInMs) {
   const delayMs =
     Number.isSafeInteger(retryInMs) && retryInMs > 0
       ? retryInMs
       : DEFAULT_OUTBOX_DEFER_MS;
-  await dbPool.query(
+  return dbPool.query(
     `UPDATE certops_outbox
         SET claim_id = NULL,
             claimed_until = NULL,

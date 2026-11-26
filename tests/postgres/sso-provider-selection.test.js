@@ -178,6 +178,39 @@ it("reconciles the one-provider bootstrap policy and shares the API transaction 
   await registry.updateProvider(pool, active.slug, { enabled: false });
 });
 
+it("retains the previous SAML certificate and locks when the replacement env is empty", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "sso-cert-env-test-"));
+  const manifestPath = join(dir, "providers.json");
+  const envName = "TT_TEST_SAML_SIGNING_CERT";
+  const previous = process.env.SSO_PROVIDERS_BOOTSTRAP_FILE;
+  const previousCert = process.env[envName];
+  process.env.SSO_PROVIDERS_BOOTSTRAP_FILE = manifestPath;
+  process.env[envName] = "previous-signing-certificate";
+  t.after(async () => {
+    if (previous === undefined) delete process.env.SSO_PROVIDERS_BOOTSTRAP_FILE;
+    else process.env.SSO_PROVIDERS_BOOTSTRAP_FILE = previous;
+    if (previousCert === undefined) delete process.env[envName];
+    else process.env[envName] = previousCert;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const slug = "saml-cert-env";
+  await writeFile(manifestPath, JSON.stringify({ providers: [{
+    slug, type: "saml", config: { issuer: saml.issuer, entry_point: saml.entry_point },
+    secrets: { cert_env: envName },
+  }] }));
+  await reconcileSsoProvidersFromEnv(pool, { logger: {} });
+  const before = await registry.getProvider(pool, slug);
+  assert.equal(before.config.cert, "previous-signing-certificate");
+  assert.ok(before.locked_fields.includes("config.cert"));
+
+  process.env[envName] = " ";
+  await assert.rejects(reconcileSsoProvidersFromEnv(pool, { logger: {} }), { code: "bootstrap_secret_missing" });
+  const after = await registry.getProvider(pool, slug);
+  assert.deepEqual(after.config, before.config);
+  assert.deepEqual(after.locked_fields, before.locked_fields);
+});
+
 it("keeps linked OIDC subjects bound to the original issuer", async () => {
   await assert.rejects(
     registry.updateProvider(pool, "openid", { config: { issuer: oidc.issuer + "/" } }),
@@ -277,6 +310,37 @@ it("consumes each pending SSO invitation once and honors changes before acceptan
     };
     const accepted = await acceptPendingInvitations(changed, 2, email, options);
     assert.deepEqual(accepted, replacementRole ? [{ workspace_id: workspace, role: replacementRole }] : []);
+  }
+});
+
+it("keeps an accepted explicit invitation after IdP group access is removed", async () => {
+  const { acceptPendingInvitations } = require("../../apps/api/services/workspace.js");
+  const { applyResolution } = require("../../apps/api/sso/group-resolver.js");
+  const workspace = randomUUID();
+  const userId = 20;
+  const email = "mapped-and-invited@example.test";
+  await pool.query("INSERT INTO workspaces VALUES($1, 1)", [workspace]);
+  await pool.query("INSERT INTO users(id) VALUES($1)", [userId]);
+  await registry.updateProvider(pool, "openid", { enabled: true });
+  try {
+    await applyResolution({
+      pool, userId, providerSlug: "openid",
+      resolution: { workspaceGrants: [{ workspace_id: workspace, role: "viewer" }], revoked: [] },
+    });
+    await pool.query("INSERT INTO workspace_invitations VALUES($1,$2,'workspace_manager',$3,NULL)",
+      [randomUUID(), workspace, email]);
+    await acceptPendingInvitations(pool, userId, email, { sso: true, verifiedEmail: email });
+    await applyResolution({
+      pool, userId, providerSlug: "openid",
+      resolution: { workspaceGrants: [], revoked: [{ workspace_id: workspace }] },
+    });
+
+    assert.deepEqual((await pool.query(
+      "SELECT role, source, source_provider_slug FROM workspace_memberships WHERE user_id=$1 AND workspace_id=$2",
+      [userId, workspace],
+    )).rows, [{ role: "workspace_manager", source: "manual", source_provider_slug: null }]);
+  } finally {
+    await registry.updateProvider(pool, "openid", { enabled: false });
   }
 });
 

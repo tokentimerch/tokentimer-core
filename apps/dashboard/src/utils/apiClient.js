@@ -70,29 +70,50 @@ const apiClient = axios.create({
 
 // CSRF token management
 let csrfToken = null;
+const diagnosticsTransport = {
+  adapter: 'fetch',
+  fetchOptions: { referrerPolicy: 'no-referrer', redirect: 'error' },
+  timeout: 5000,
+  _suppressLog: true,
+  _dashboardDiagnostics: true,
+};
+let diagnosticsCsrfRequest = null;
 
 export const resetCsrfToken = () => {
   csrfToken = null;
 };
 
 // Function to get CSRF token
-const getCsrfToken = async (forceRefresh = false) => {
+const getCsrfToken = async (forceRefresh = false, transport = {}) => {
   if (forceRefresh) {
     csrfToken = null;
   }
   if (!csrfToken) {
     try {
       const response = await apiClient.get('/api/csrf-token', {
+        ...transport,
         _suppressLog: true,
       });
       const { csrfToken: token } = response.data;
       csrfToken = token;
     } catch (error) {
-      logger.warn('Failed to get CSRF token:', error);
+      if (!transport._suppressLog) {
+        logger.warn('Failed to get CSRF token:', error);
+      }
     }
   }
   return csrfToken;
 };
+
+function getDiagnosticsCsrfToken(forceRefresh = false) {
+  diagnosticsCsrfRequest ??= getCsrfToken(
+    forceRefresh,
+    diagnosticsTransport
+  ).finally(() => {
+    diagnosticsCsrfRequest = null;
+  });
+  return diagnosticsCsrfRequest;
+}
 // Keyed by message string to avoid spamming users with repeated identical errors
 const recentlyShownErrorToasts = new Map(); // message -> timestamp
 const ERROR_TOAST_DEDUP_WINDOW_MS = 4000;
@@ -133,7 +154,9 @@ apiClient.interceptors.request.use(
     if (
       ['post', 'put', 'delete', 'patch'].includes(config.method?.toLowerCase())
     ) {
-      const token = await getCsrfToken();
+      const token = config._dashboardDiagnostics
+        ? await getDiagnosticsCsrfToken()
+        : await getCsrfToken();
       if (token) {
         config.headers['X-CSRF-Token'] = token;
       }
@@ -201,6 +224,9 @@ apiClient.interceptors.response.use(
     // the cancellation so they can ignore stale results, but it is not an API
     // failure and must not be logged or turned into a user-facing error.
     if (isCanceledRequest(error)) {
+      return Promise.reject(error);
+    }
+    if (error.config?._dashboardDiagnostics) {
       return Promise.reject(error);
     }
     // Log error in development/staging (based on domain since env vars are not available at runtime)
@@ -321,6 +347,80 @@ const invalidateCache = urlPrefix => {
     /* noop */
   }
 };
+
+function getRequestReference(headers) {
+  const requestId =
+    typeof headers?.get === 'function'
+      ? headers.get('x-request-id')
+      : Object.entries(headers || {}).find(
+          ([name]) => name.toLowerCase() === 'x-request-id'
+        )?.[1];
+  return typeof requestId === 'string' &&
+    requestId.length === 36 &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      requestId
+    )
+    ? requestId
+    : null;
+}
+
+const errorAreaByPage = new Map([
+  ['account', 'account'],
+  ['login', 'authentication'],
+  ['register', 'authentication'],
+  ['reset-password', 'authentication'],
+  ['verify-email', 'authentication'],
+  ['mcp', 'authentication'],
+  ['certops', 'certops'],
+  ['control-center', 'dashboard'],
+  ['dashboard', 'dashboard'],
+  ['usage', 'dashboard'],
+  ['onboarding', 'onboarding'],
+  ['alert-preferences', 'settings'],
+  ['preferences', 'settings'],
+  ['system-settings', 'settings'],
+  ['workspace-preferences', 'settings'],
+  ['workspaces', 'workspaces'],
+  ['audit', 'workspaces'],
+]);
+
+export async function reportDashboardError(kind) {
+  if (kind !== 'render' && kind !== 'chunk-load') return null;
+  try {
+    const { pathname } = window.location;
+    const area = errorAreaByPage.get(pathname.split('/')[1]) || 'other';
+    const submit = () =>
+      apiClient.post(
+        '/api/diagnostics/dashboard',
+        { kind, area },
+        diagnosticsTransport
+      );
+    let response;
+    try {
+      response = await submit();
+    } catch (error) {
+      // This rejection occurs before the report is written. Other failures
+      // could follow a successful report, so only retry this explicit refusal.
+      if (
+        error?.response?.status !== 403 ||
+        error.response.data?.code !== 'EBADCSRFTOKEN'
+      ) {
+        return null;
+      }
+      const rejectedToken = error.config?.headers?.get?.('X-CSRF-Token');
+      const tokenWasRefreshed =
+        rejectedToken && csrfToken && rejectedToken !== csrfToken;
+      if (!tokenWasRefreshed && !(await getDiagnosticsCsrfToken(true)))
+        return null;
+      response = await submit();
+    }
+    return response.status === 204
+      ? getRequestReference(response.headers)
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 // Error handling utilities
 export const handleApiError = (error, customMessage = null) => {
@@ -457,21 +557,7 @@ export const handleApiError = (error, customMessage = null) => {
   }
 
   // Only display the UUID format generated by our API, never arbitrary header text.
-  const headers = error.response?.headers;
-  const requestId =
-    typeof headers?.get === 'function'
-      ? headers.get('x-request-id')
-      : Object.entries(headers || {}).find(
-          ([name]) => name.toLowerCase() === 'x-request-id'
-        )?.[1];
-  const reference =
-    typeof requestId === 'string' &&
-    requestId.length === 36 &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-      requestId
-    )
-      ? requestId
-      : null;
+  const reference = getRequestReference(error.response?.headers);
 
   // Show error toast (deduplicated) unless explicitly suppressed
   // For toast, show only short message (first sentence), full message goes to modal

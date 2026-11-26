@@ -65,6 +65,13 @@ function observedRevocationKnownSql(result, verdict) {
     (NOT (${observedRevocationFreshGoodSql(result)}) AND ${previous}->>'verdict' = '${verdict}' AND ${observedRevocationCredibleSql(previous)}))`;
 }
 
+// Late or clock-skewed good results must not erase verified revocation.
+function retainObservedRevocationOnUnverifiedGoodSql(previous, incoming) {
+  return `(${incoming}->>'verdict' = 'good' AND NOT ${observedRevocationFreshGoodSql(incoming)}
+    AND (${observedRevocationKnownSql(previous, "revoked")}
+      OR ${observedRevocationKnownSql(previous, "issuer_revoked")}))`;
+}
+
 // A chain check identifies the exact intermediate certificate, independently
 // of its name or public key. Re-express that proof as a direct revocation of
 // the intermediate when projecting that fingerprint's inventory record.
@@ -131,4 +138,11 @@ async function isObservedCertificateCompromised(client, workspaceId, fingerprint
   ));
 }
 
-module.exports = { classifyCertificateSecurity, observedRevocationKnownSql, observedRevocationPrioritySql, issuerEvidenceSql, isObservedCertificateCompromised };
+module.exports = {
+  classifyCertificateSecurity,
+  observedRevocationKnownSql,
+  observedRevocationPrioritySql,
+  retainObservedRevocationOnUnverifiedGoodSql,
+  issuerEvidenceSql,
+  isObservedCertificateCompromised,
+};

@@ -533,6 +533,70 @@ async function runProcesses(script, count = 3) {
     ),
   );
 }
+test("automatic preflight rolls back the assigned job and issuer sequence when audit fails", async () => {
+  const f = await fixture();
+  const scope = [f.workspaceId, f.issuerId];
+  await pool.query(
+    "DELETE FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='adcs-preflight'",
+    scope,
+  );
+  const readIssuer = async (client) =>
+    (
+      await client.query(
+        `SELECT i.preflight_seq::int, v.confirmed_at
+         FROM certificate_issuers i JOIN certificate_issuer_versions v
+           ON v.workspace_id=i.workspace_id AND v.issuer_id=i.id AND v.version=i.current_version
+         WHERE i.workspace_id=$1 AND i.id=$2`,
+        scope,
+      )
+    ).rows[0];
+  const readJobs = async (client) =>
+    (
+      await client.query(
+        `SELECT id, assigned_agent_id, preflight_seq::int FROM certificate_jobs
+         WHERE workspace_id=$1 AND subject_id=$2 AND operation='adcs-preflight'`,
+        scope,
+      )
+    ).rows;
+  const original = await readIssuer(pool);
+  const nextSequence = original.preflight_seq + 1;
+  const { dispatchPreflight } = require("../../apps/api/services/certops/certificateEnrollments");
+  const input = {
+    client: pool,
+    workspaceId: f.workspaceId,
+    issuerId: f.issuerId,
+    agentId: f.agentId,
+    caConfig: CA,
+    template: TEMPLATE,
+    automatic: true,
+    confirmedAt: original.confirmed_at,
+  };
+  const expectedJob = (id) => ({
+    id,
+    assigned_agent_id: f.agentId,
+    preflight_seq: nextSequence,
+  });
+  const failure = new Error("preflight audit write failed");
+  await assert.rejects(
+    dispatchPreflight({
+      ...input,
+      async audit({ client, action, metadata }) {
+        assert.equal(action, "CERTOPS_ISSUER_PREFLIGHT_DISPATCHED");
+        assert.deepEqual(await readJobs(client), [expectedJob(metadata.jobId)]);
+        assert.equal((await readIssuer(client)).preflight_seq, nextSequence);
+        throw failure;
+      },
+    }),
+    (error) => error === failure,
+  );
+  assert.deepEqual(await readJobs(pool), []);
+  assert.equal((await readIssuer(pool)).preflight_seq, original.preflight_seq);
+
+  const retried = await dispatchPreflight(input);
+  assert.deepEqual(await readJobs(pool), [expectedJob(retried.id)]);
+  assert.equal((await readIssuer(pool)).preflight_seq, nextSequence);
+});
+
 test(
   "independent API processes and scheduler processes dispatch one shared preflight",
   async () => {
@@ -582,6 +646,19 @@ test(
   },
   { timeout: 180000 },
 );
+test("preview sweeps leave existing live incidents for the next real sweep", async () => {
+  const f = await fixture();
+  assert.ok(await f.row());
+  await pool.query("UPDATE certops_management_periods SET automation_enabled=FALSE WHERE workspace_id=$1", [f.workspaceId]);
+  const { runRenewalSchedulerSweep } = require("../../apps/api/services/certops/renewalScheduler");
+  const preview = await runRenewalSchedulerSweep({ dbPool: pool, mode: "dry_run" });
+  assert.deepEqual(preview.errors, []);
+  assert.ok(await f.row(), "preview must not resolve the live incident");
+  const actual = await runRenewalSchedulerSweep({ dbPool: pool, mode: "real" });
+  assert.deepEqual(actual.errors, []);
+  assert.equal(await f.row(), undefined);
+});
+
 test("large shared issuer counts every due certificate without unbounded incident metadata", async () => {
   const f = await fixture(),
     started = performance.now();
@@ -978,7 +1055,7 @@ test("automatic preflight finds eligible agent 101 among 125 declarations", asyn
       {
         dbPool: pool,
         certificate,
-        mode: "execute",
+        mode: "real",
         env: process.env,
         preflightDispatcher: async (value) => calls.push(value),
       },
@@ -1307,3 +1384,58 @@ test(
     );
   },
 );
+
+test("automatic preflight rechecks and binds the selected target", async () => {
+  const f = await fixture();
+  const target = { type: "windows-cert-store", reference: f.certs[0].domain, store: "My" };
+  const scope = [f.workspaceId, f.issuerId];
+  await pool.query(
+    `UPDATE certops_agents SET agent_version='0.20.0',capabilities_updated_at=NOW(),
+      declared_capabilities='["adcs-enroll-v1","windows-store-only-adcs-v1","evidence-claim-binding-v1"]'::jsonb
+     WHERE workspace_id=$1 AND id=$2`,
+    [f.workspaceId, f.agentId],
+  );
+  await pool.query(
+    "DELETE FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='adcs-preflight'",
+    scope,
+  );
+  const version = (await pool.query(
+    "SELECT confirmed_at FROM certificate_issuer_versions WHERE workspace_id=$1 AND issuer_id=$2",
+    scope,
+  )).rows[0];
+  const { dispatchPreflight } = require("../../apps/api/services/certops/certificateEnrollments");
+  const options = {
+    client: pool, workspaceId: f.workspaceId, issuerId: f.issuerId, agentId: f.agentId,
+    caConfig: CA, template: TEMPLATE, confirmedAt: version.confirmed_at, automatic: true, target,
+  };
+  const declare = (selectors) => pool.query(
+    "UPDATE certops_agents SET declared_target_selectors=$3::jsonb,last_seen_at=NOW() WHERE workspace_id=$1 AND id=$2",
+    [f.workspaceId, f.agentId, JSON.stringify(selectors)],
+  );
+  const routing = async () => (await pool.query(
+    `SELECT id,assigned_agent_id,required_target_selector FROM certificate_jobs
+     WHERE workspace_id=$1 AND subject_id=$2 AND operation='adcs-preflight' ORDER BY preflight_seq`,
+    scope,
+  )).rows;
+
+  await declare([target.reference, f.certs[1].domain]);
+  const stale = await dispatchPreflight({
+    ...options,
+    beforeLock: () => declare([f.certs[1].domain]),
+  });
+  assert.equal(stale, null);
+  assert.deepEqual(await routing(), []);
+
+  await declare([target.reference]);
+  const automatic = await dispatchPreflight(options);
+  assert.deepEqual(await routing(), [{
+    id: automatic.id, assigned_agent_id: f.agentId, required_target_selector: target.reference,
+  }]);
+
+  await declare([f.certs[1].domain]);
+  const manual = await dispatchPreflight({ ...options, automatic: false });
+  assert.deepEqual(await routing(), [
+    { id: automatic.id, assigned_agent_id: f.agentId, required_target_selector: target.reference },
+    { id: manual.id, assigned_agent_id: f.agentId, required_target_selector: null },
+  ]);
+});

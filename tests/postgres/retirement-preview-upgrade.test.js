@@ -24,11 +24,21 @@ test("retirement preview upgrades through PagerDuty recovery and survives restar
       "auto_sync_owner_username",
       "certops_material_reconciliation",
       "distribution_pagerduty_recovery",
+      "store_issuance_explicit_renewal_consent",
+      "certops_acme_store_enrollment_identity",
+      "certops_adcs_expected_identity_receipts",
+      "certops_windows_iis_consent",
+      "certops_material_adcs_operation_union",
+      "certops_iis_absence_proofs",
+      "certops_enrollment_jobs_index",
       "certops_observed_revocation",
       "agent_credential_rotations",
       "agent_credential_rotation_ack",
+      "certops_adcs_preflight_lookup_index",
+      "certops_adcs_receipt_deadline",
       "auto_sync_creation_expiration",
       "shared_sso_schema",
+      "certops_acme_store_cancelled",
     ]);
     await runMigrations();
     assert.deepEqual((await pool.query("SELECT version,name FROM migrations ORDER BY version")).rows,upgraded);

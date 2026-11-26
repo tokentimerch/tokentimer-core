@@ -8,6 +8,9 @@ const KV_CLEANUP = "certops-azure-keyvault-janitor.yml";
 const OPERATOR = "certops-azure-operator-qualification.yml";
 const IMDS = "certops-azure-imds-qualification.yml";
 const IIS_ACCESS = "certops-iis-lab-access.yml";
+const STORE_PREPARE = "certops-adcs-store-noiis-prepare.yml";
+const STORE_PREFLIGHT = "certops-adcs-store-qualification-preflight.yml";
+const STORE_RECEIVER = "certops-adcs-store-private-receiver.yml";
 const PROVISION = Object.freeze([
   KV,
   OPERATOR,
@@ -21,6 +24,7 @@ const PROVISION = Object.freeze([
   "certops-retention24h-prepare.yml",
   "certops-adcs-ttl24h-prepare.yml",
   "certops-retention-cadence-prepare.yml",
+  STORE_PREPARE,
 ]);
 const LIFECYCLE = Object.freeze([
   KV_CLEANUP,
@@ -51,6 +55,12 @@ const IIS_CONDITIONS = {
   verifier: IIS_MAIN + " && " + IIS_READ_IF,
   cleanup: IIS_MAIN + " && (" + IIS_CHECK_IF + " || " + IIS_DELETE_IF + ")",
 };
+const STORE_MAIN = "github.repository == 'tokentimerch/tokentimer-core' && " + MAIN;
+const STORE_PROVISION_IF = STORE_MAIN + " && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'";
+const STORE_CLEANUP_IF =
+  "always() && needs.verify.result == 'success' && needs.prepare.result != 'success' && needs.prepare.outputs.cleanup_activation != '' && " +
+  STORE_MAIN + " && needs.prepare.outputs.cleanup_activation == needs.verify.outputs.receipt_sha256";
+const STORE_GROUP = "tt-certops-${{ github.run_id }}-${{ github.run_attempt }}";
 const LIFECYCLE_IF = MAIN;
 const SELF_APPROVAL = "TT_AZURE_LAB_SELF_APPROVAL";
 const SELF_APPROVAL_REFERENCE = "${{ secrets.CERTOPS_AZURE_LAB_SELF_APPROVAL }}";
@@ -60,6 +70,9 @@ function allowedCondition(name, value) {
   if (name === OPERATOR) return value === KEYVAULT_IF;
   if (name === IMDS) return value === IMDS_IF;
   if (name === IIS_ACCESS) return Object.values(IIS_CONDITIONS).includes(value);
+  if (name === STORE_PREPARE) return [STORE_PROVISION_IF, STORE_CLEANUP_IF].includes(value);
+  if (name === STORE_PREFLIGHT) return value === STORE_PROVISION_IF;
+  if (name === STORE_RECEIVER) return value === STORE_PROVISION_IF;
   return PROVISION.includes(name)
     ? value === PROVISION_IF
     : LIFECYCLE.includes(name) && value === LIFECYCLE_IF;
@@ -713,11 +726,178 @@ function iisAccessPolicy(workflow, errors) {
   }
 }
 
+function storePreparePolicy(workflow, errors) {
+  const keys = (record, fields) => record && same(Object.keys(record).sort(), [...fields].sort());
+  const { jobs, on, permissions, concurrency, env } = workflow;
+  const inputs = on?.workflow_dispatch?.inputs;
+  const inputNames = ["reviewed_workflow_sha", "media_source_sha", "media_receipt_sha256", "location"];
+  if (!keys(workflow, ["name", "on", "permissions", "concurrency", "env", "jobs"]) ||
+      !keys(on, ["workflow_dispatch"]) || !keys(on.workflow_dispatch, ["inputs"]) ||
+      !keys(inputs, [...inputNames, "manual_janitor_run_id", "prepare_recovery_infrastructure"]) ||
+      inputNames.some(input => !keys(inputs[input], ["description", "type", "required"]) ||
+        inputs[input].type !== "string" || inputs[input].required !== true) ||
+      !keys(inputs.manual_janitor_run_id, ["description", "type", "required"]) ||
+      inputs.manual_janitor_run_id.type !== "string" || inputs.manual_janitor_run_id.required !== false ||
+      !keys(inputs.prepare_recovery_infrastructure, ["description", "type", "required", "default"]) ||
+      inputs.prepare_recovery_infrastructure.type !== "boolean" ||
+      inputs.prepare_recovery_infrastructure.required !== false || inputs.prepare_recovery_infrastructure.default !== false ||
+      !same(permissions, { contents: "read" }) ||
+      !same(concurrency, { group: "certops-adcs-store-prepare-${{ github.run_id }}-${{ github.run_attempt }}", "cancel-in-progress": false }) ||
+      !same(env, { STORE_GROUP }) || !keys(jobs, ["register", "verify", "prepare", "cleanup-failed"])) {
+    errors.push("AD CS no-IIS lab requires its exact manual, run-owned preparation and cleanup workflow");
+    return;
+  }
+  const azure = Object.fromEntries(["AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"]
+    .map(key => [key, "${{ vars." + key + " }}"]));
+  const owner = "${{ needs.register.outputs.registration }}";
+  const receipt = "${{ needs.verify.outputs.receipt_sha256 }}";
+  const location = "${{ inputs.location }}";
+  const activation = "${{ needs.prepare.outputs.cleanup_activation }}";
+  const modes = {
+    register: {
+      timeout: 15, output: { registration: "${{ steps.register.outputs.registration }}" },
+      env: { GH_TOKEN: "${{ github.token }}", STORE_EXPECTED_SHA: "${{ inputs.reviewed_workflow_sha }}",
+        STORE_MEDIA_SOURCE: "${{ inputs.media_source_sha }}", STORE_MEDIA_RECEIPT_SHA: "${{ inputs.media_receipt_sha256 }}",
+        STORE_LOCATION: location },
+      command: "./infra/certops-adcs/store-noiis-registration.ps1 -Mode register",
+      stepId: "register",
+    },
+    verify: {
+      timeout: 10, needs: "register", cleanupIdentity: true, actionsRead: true,
+      output: { receipt: "${{ steps.verify.outputs.receipt }}", receipt_sha256: "${{ steps.verify.outputs.receipt_sha256 }}" },
+      env: { GH_TOKEN: "${{ github.token }}", STORE_REGISTRATION: owner,
+        STORE_MANUAL_JANITOR_RUN_ID: "${{ inputs.manual_janitor_run_id }}" },
+      command: "./infra/certops-adcs/store-noiis-registration.ps1 -Mode verify",
+      stepId: "verify", artifact: "disposable-store-registration-${{ github.run_id }}-${{ github.run_attempt }}",
+      paths: "qualification-results/store-noiis-registration.json\nqualification-results/store-noiis-registration.sha256\n",
+      missing: "error",
+    },
+    prepare: {
+      timeout: 180, needs: ["register", "verify"],
+      output: { cleanup_activation: "${{ steps.prepare.outputs.cleanup_activation }}" },
+      env: { STORE_LOCATION: location, STORE_REGISTRATION_RECEIPT: "${{ needs.verify.outputs.receipt }}",
+        STORE_REGISTRATION_SHA256: receipt, STORE_RECOVERY_INFRASTRUCTURE: "${{ inputs.prepare_recovery_infrastructure && '1' || '0' }}" },
+      command: [
+        "$path = Join-Path $env:RUNNER_TEMP 'store-registration.json'",
+        "try {",
+        "  [IO.File]::WriteAllText($path,$env:STORE_REGISTRATION_RECEIPT,[Text.UTF8Encoding]::new($false))",
+        "  ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:STORE_GROUP -Hours 4 -WindowsVersion 2022 -Language en-US -Location $env:STORE_LOCATION -StoreNoIisPrepare 1 -StoreRegistrationReceipt $path -StoreRegistrationSha256 $env:STORE_REGISTRATION_SHA256 -StoreRecoveryInfrastructure $env:STORE_RECOVERY_INFRASTRUCTURE",
+        "} finally {",
+        "  Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue",
+        "}",
+        "",
+      ].join("\n"),
+      stepId: "prepare", artifact: "disposable-store-noiis-preparation-${{ github.run_attempt }}",
+      paths: "qualification-results/store-noiis-infrastructure.json\nqualification-results/store-noiis-member.json\n",
+    },
+    "cleanup-failed": {
+      timeout: 20, needs: ["register", "verify", "prepare"], cleanupIdentity: true,
+      env: { STORE_REGISTRATION: owner, STORE_CLEANUP_ACTIVATION_SHA256: activation, STORE_REGISTRATION_SHA256: receipt },
+      command: "./infra/certops-adcs/store-noiis-registration.ps1 -Mode remove",
+      artifact: "disposable-store-noiis-cleanup-${{ github.run_attempt }}",
+      paths: "qualification-results/enterprise-adcs-cleanup.json",
+    },
+  };
+  for (const [id, mode] of Object.entries(modes)) {
+    const job = jobs[id];
+    const fields = ["if", "runs-on", "environment", "timeout-minutes", "permissions", "env", "steps"];
+    if (mode.needs !== undefined) fields.push("needs");
+    if (mode.output) fields.push("outputs");
+    const access = mode.actionsRead ? { contents: "read", actions: "read", "id-token": "write" } :
+      { contents: "read", "id-token": "write" };
+    if (!keys(job, fields) || job.if !== (id === "cleanup-failed" ? STORE_CLEANUP_IF : STORE_PROVISION_IF) ||
+        job.environment !== (mode.cleanupIdentity ? "certops-adcs-cleanup" : "certops-adcs-lab") ||
+        job["runs-on"] !== "ubuntu-24.04" || job["timeout-minutes"] !== mode.timeout ||
+        !same(job.needs, mode.needs) || !same(job.outputs, mode.output) ||
+        !same(job.permissions, access) || !same(job.env, { ...azure, ...mode.env }) ||
+        !Array.isArray(job.steps) || job.steps.length !== (mode.artifact ? 4 : 3)) {
+      errors.push(id + " must preserve the exact protected no-IIS lab identity, dependency and bounded run scope");
+      continue;
+    }
+    const [checkout, login, operation, upload] = job.steps;
+    const commandFields = mode.stepId ? ["name", "id", "shell", "run"] : ["name", "shell", "run"];
+    if (!keys(checkout, ["uses", "with"]) || !/^actions\/checkout@[a-f0-9]{40}$/.test(checkout.uses) ||
+        !same(checkout.with, { "persist-credentials": false }) ||
+        !same(login, { shell: "pwsh", run: "./infra/certops-adcs/login-oidc.ps1" }) ||
+        !keys(operation, commandFields) || operation.shell !== "pwsh" || operation.id !== mode.stepId ||
+        operation.run !== mode.command) {
+      errors.push(id + " may run only the audited no-IIS lab operation under the exact run ownership");
+    }
+    if (mode.artifact && (!keys(upload, ["name", "if", "uses", "with"]) || upload.if !== "always()" ||
+        !/^actions\/upload-artifact@[a-f0-9]{40}$/.test(upload.uses) ||
+        !same(upload.with, { name: mode.artifact, path: mode.paths, "if-no-files-found": mode.missing || "ignore", "retention-days": 1 }))) {
+      errors.push(id + " must preserve only its bounded no-IIS receipt on interruption");
+    }
+  }
+}
+
+function storeReceiverPolicy(workflow, errors) {
+  const { receiver } = workflow.jobs || {};
+  const { inputs } = workflow.on?.workflow_dispatch || {};
+  const names = {
+    STORE_REVIEWED_WORKFLOW_SHA: "reviewed_workflow_sha", STORE_PREPARE_WORKFLOW_SHA: "prepare_workflow_sha",
+    STORE_PREPARE_RUN_ID: "prepare_run_id", STORE_PREPARE_ATTEMPT: "prepare_attempt",
+    STORE_REGISTRATION_ARTIFACT_ID: "registration_artifact_id", STORE_PREPARATION_ARTIFACT_ID: "preparation_artifact_id",
+    STORE_MEDIA_SOURCE: "media_source_sha", STORE_MEDIA_RECEIPT_SHA: "media_receipt_sha256",
+  };
+  const env = Object.fromEntries(Object.entries(names).map(([key, name]) => [key, "${{ inputs." + name + " }}"]));
+  for (const key of ["AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"])
+    env[key] = "${{ vars." + key + " }}";
+  env.GH_TOKEN = "${{ github.token }}";
+  if (!same(Object.keys(workflow.on || {}), ["workflow_dispatch"]) ||
+      !same(Object.keys(workflow.jobs || {}), ["receiver"]) ||
+      !same(Object.keys(inputs || {}).sort(), Object.values(names).sort()) ||
+      Object.values(inputs || {}).some(input => input.required !== true || input.type !== "string" || Object.hasOwn(input, "default")) ||
+      !same(workflow.permissions, { contents: "read" }) ||
+      !same(workflow.concurrency, {
+        group: "certops-adcs-store-receiver-${{ inputs.prepare_run_id }}-${{ inputs.prepare_attempt }}", "cancel-in-progress": false,
+      }) ||
+      receiver?.if !== STORE_PROVISION_IF || receiver?.["runs-on"] !== "ubuntu-24.04" ||
+      receiver?.environment !== "certops-adcs-lab" || receiver?.["timeout-minutes"] !== 20 ||
+      !same(receiver?.permissions, { contents: "read", actions: "read", "id-token": "write" }) ||
+      !same(receiver?.env, env) || receiver?.steps?.length !== 4) {
+    errors.push("Private Store receiver requires its exact protected preparation, identity and lease guard");
+    return;
+  }
+  const [checkout, setup, deploy, upload] = receiver.steps;
+  if (!same(Object.keys(checkout).sort(), ["uses", "with"]) ||
+      !/^actions\/checkout@[a-f0-9]{40}$/.test(checkout.uses || "") ||
+      !same(checkout.with, { "persist-credentials": false }) ||
+      !same(Object.keys(setup).sort(), ["uses", "with"]) ||
+      !/^actions\/setup-node@[a-f0-9]{40}$/.test(setup.uses || "") ||
+      !same(setup.with, { "node-version": "24.22.3" }) ||
+      !same(Object.keys(deploy).sort(), ["name", "run", "shell"]) ||
+      deploy.shell !== "pwsh" || deploy.run !== "./infra/certops-adcs/provision-store-media-receiver.ps1" ||
+      !same(Object.keys(upload).sort(), ["if", "name", "uses", "with"]) ||
+      !/^actions\/upload-artifact@[a-f0-9]{40}$/.test(upload.uses || "") ||
+      upload.if !== "always()" || !same(upload.with, {
+        name: "disposable-store-private-receiver-${{ github.run_id }}-${{ github.run_attempt }}",
+        path: "qualification-results/store-private-media-receiver.json", "if-no-files-found": "ignore", "retention-days": 1,
+      })) errors.push("Private Store receiver may only provision the owned receiver and publish the sanitized receipt");
+}
+
 function validate(name, workflow) {
   const errors = [];
   if (name === IIS_ACCESS) {
     iisAccessPolicy(workflow, errors);
     return errors;
+  }
+  if (name === STORE_PREPARE) {
+    storePreparePolicy(workflow, errors);
+    return errors;
+  }
+  if (name === STORE_RECEIVER) {
+    storeReceiverPolicy(workflow, errors);
+    return errors;
+  }
+  if (name === STORE_PREFLIGHT) {
+    const verify = workflow.jobs?.verify;
+    if (!same(Object.keys(workflow.on || {}), ["workflow_dispatch"]) ||
+        !same(Object.keys(workflow.jobs || {}), ["verify"]) ||
+        !same(workflow.permissions, { contents: "read" }) ||
+        !same(verify?.permissions, { contents: "read", actions: "read" }) ||
+        verify?.environment !== "certops-adcs-lab" || verify?.if !== STORE_PROVISION_IF)
+      errors.push("Store preparation preflight must be read-only and require its protected main dispatch");
   }
   const known = PROVISION.includes(name) || LIFECYCLE.includes(name);
   const runs = Object.values(workflow.jobs || {}).flatMap((job) =>
@@ -800,6 +980,7 @@ module.exports = {
   IMDS_UPLOAD_IF,
   IIS_ACCESS,
   IIS_RECEIPT_PATH,
+  STORE_PREPARE,
   LIFECYCLE_IF,
   allowedCondition,
   validate,

@@ -1,7 +1,6 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const zlib = require("node:zlib");
@@ -56,31 +55,6 @@ function verifyProducer(run, jobs, artifact, { runId, artifactId, repoId }) {
   return run.head_sha;
 }
 
-async function download(artifactId, artifact, token) {
-  const response = await fetch(`https://api.github.com${API}/artifacts/${artifactId}/zip`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
-    redirect: "manual", signal: AbortSignal.timeout(60000),
-  });
-  assert.equal(response.status, 302);
-  const url = new URL(response.headers.get("location"));
-  assert.ok(url.protocol === "https:" && !url.port && !url.username && !url.password && !url.hash &&
-    (url.hostname.endsWith(".blob.core.windows.net") || url.hostname.endsWith(".actions.githubusercontent.com")));
-  // Never pass the GitHub token to the signed download URL or log that URL.
-  const archive = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(60000) });
-  assert.equal(archive.status, 200);
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of archive.body) {
-    size += chunk.length;
-    assert.ok(size <= artifact.size_in_bytes);
-    chunks.push(chunk);
-  }
-  const bytes = Buffer.concat(chunks);
-  assert.equal(size, artifact.size_in_bytes);
-  assert.equal(`sha256:${crypto.createHash("sha256").update(bytes).digest("hex")}`, artifact.digest);
-  return bytes;
-}
-
 function stage(bytes, directory, { candidateSha, artifactId, runId, packageSha256 }) {
   const files = zip.read(bytes);
   assert.deepEqual([...files.keys()].sort(), FILES);
@@ -122,7 +96,7 @@ async function main(runId, artifactId, packageSha256, directory, env = process.e
     lab.github(`${API}/artifacts/${artifactId}`, env),
   ]);
   const candidateSha = verifyProducer(run, jobs, artifact, { runId, artifactId, repoId: env.GITHUB_REPOSITORY_ID });
-  const bytes = await download(artifactId, artifact, env.GH_TOKEN);
+  const bytes = await zip.download(policy.REPOSITORY, artifactId, artifact, env.GH_TOKEN);
   return stage(bytes, directory, { candidateSha, artifactId, runId, packageSha256 });
 }
 

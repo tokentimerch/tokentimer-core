@@ -10,6 +10,10 @@ For native enrollment, pending approval/denial, renewal, recovery, IIS/CNG custo
 
 Set `CERTOPS_WINDOWS_LANGUAGE_ASSETS` to a JSON object keyed by OS/language, for example `2022/de-DE`, with `uri` and `sha256` for each official Server display-language CAB. Use a private HTTPS Azure Blob and a read-only SAS that remains valid through installation on both CA and member; refresh expired URLs before another dispatch. The checksum, installed resources and actual SYSTEM language are verified. A Basic language capability alone does not qualify a display-language slot.
 
+In the protected no-IIS preparation workflow, enable **prepare_recovery_infrastructure** to publish the isolated CA templates and start the private test API before the temporary domain credential is discarded. The receipt includes the controller TLS certificate SHA-256 and a fresh check that the member still has neither IIS nor the agent. This mode prepares infrastructure for the separately reviewed installed tests.
+
+Use **Prepare private Store media receiver** on a successful, unexpired preparation to create the private Blob endpoint and verify the original Windows member’s system identity. The workflow receipt gives the endpoint and principal fingerprint for the separate container-scoped access review. Assign the reader and authorize the exact custody handoff before transferring the sealed media.
+
 ## Windows service observation trial
 
 Pass `--prepare-for-observation <run>` to the signed bundled installer through the official launcher with a bare API origin. It leaves the LocalSystem service disabled and records a fresh 32-character lowercase hexadecimal run ID. Verify the installed package and the approved observer’s off-host readiness before enabling the service. Bind CA/CNG evidence to the actual SCM process ID, LocalSystem SID, UTC creation time and run ID. The host checks the observer before starting the worker and applies the Job limit on loss. Use a fresh run ID on restart. A committed workspace pause fences later API claims. Reconcile claims already in flight against independent evidence.

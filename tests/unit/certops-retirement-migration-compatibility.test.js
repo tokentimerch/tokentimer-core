@@ -118,7 +118,7 @@ test("retirement preview retains a recorded Store receipt deadline and appends I
   for (const tail of [[...base, recovery, observed, ...store],
     [...base, recovery, ...store.slice(0, 3), observed, store[3]], [...base, ...store, recovery, observed]]) {
     const recorded = [...preview, ...at(tail)];
-    const expected = [...recorded, ...at([...iis, "agent_credential_rotations", "agent_credential_rotation_ack", "certops_adcs_preflight_lookup_index", "auto_sync_creation_expiration", "shared_sso_schema"], 110 + tail.length)];
+    const expected = [...recorded, ...at([...iis, "agent_credential_rotations", "agent_credential_rotation_ack", "certops_adcs_preflight_lookup_index", "auto_sync_creation_expiration", "shared_sso_schema", "certops_acme_store_cancelled"], 110 + tail.length)];
     validateMigrationHistory(recorded);
     assert.deepEqual(identities(composeMigrations(migrations, recorded)), expected);
     validateMigrationHistory(expected);
@@ -155,7 +155,7 @@ test("released main retains identities before appending retirement", () => {
 });
 test("retirement preview with the preflight index retains its ledger when secure-agent tails arrive", () => {
   const earlierRegistry = migrations
-    .filter(({ name }) => !["distribution_pagerduty_recovery", "agent_credential_rotations", "agent_credential_rotation_ack", "certops_adcs_receipt_deadline", "auto_sync_creation_expiration", "shared_sso_schema"].includes(name))
+    .filter(({ name }) => !["distribution_pagerduty_recovery", "agent_credential_rotations", "agent_credential_rotation_ack", "certops_adcs_receipt_deadline", "auto_sync_creation_expiration", "shared_sso_schema", "certops_acme_store_cancelled"].includes(name))
     .map((row) => row.version >= 115 && row.version <= 122 ? { ...row, version: row.version - 1 } : row);
   const before = composeMigrations(earlierRegistry, preview);
   assert.equal(before.find((row) => row.name === "certops_adcs_preflight_lookup_index").version, 122);
@@ -170,6 +170,7 @@ test("retirement preview with the preflight index retains its ledger when secure
     { version: 126, name: "certops_adcs_receipt_deadline" },
     { version: 127, name: "auto_sync_creation_expiration" },
     { version: 128, name: "shared_sso_schema" },
+    { version: 129, name: "certops_acme_store_cancelled" },
   ]);
   assert.deepEqual(composeMigrations(registry, after), after);
   const forged = after.map((row) => ({ ...row }));
@@ -204,7 +205,8 @@ test("the applied SSO preview retains 115 on released and retirement-preview his
 });
 
 function independentAppends(firstVersion) {
-  return ledger.filter(({ version }) => version >= 115 && version <= 126 && version !== 122)
+  return ledger.filter(({ version }) =>
+    (version >= 115 && version <= 126 && version !== 122) || version === 129)
     .map(({ name }, index) => ({ version: firstVersion + index, name }));
 }
 

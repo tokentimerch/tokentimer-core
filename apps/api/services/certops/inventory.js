@@ -9,7 +9,11 @@ const {
 } = require("./parser");
 const { containsPrivateKeyMaterial, containsGenericSecretMaterial } = require("../../utils/secretMaterial");
 const { resolveListSort } = require("./listSorting");
-const { classifyCertificateSecurity, observedRevocationPrioritySql } = require("./certificateSecurity");
+const {
+  classifyCertificateSecurity,
+  observedRevocationPrioritySql,
+  retainObservedRevocationOnUnverifiedGoodSql,
+} = require("./certificateSecurity");
 const {
   CERT_RENEWAL_FAILED_ALERT_PREFIX,
   RETIRED_CERT_UNSENT_ALERT_STATUSES,
@@ -1348,6 +1352,11 @@ async function upsertAgentFilesystemInstance(client, options) {
          WHEN NOT (EXCLUDED.public_metadata ? 'observedRevocation')
            THEN CASE WHEN certificate_instances.public_metadata ? 'observedRevocation'
              THEN jsonb_build_object('observedRevocation', certificate_instances.public_metadata->'observedRevocation') ELSE '{}'::jsonb END
+         WHEN ${retainObservedRevocationOnUnverifiedGoodSql(
+           "certificate_instances.public_metadata->'observedRevocation'",
+           "EXCLUDED.public_metadata->'observedRevocation'",
+         )}
+           THEN jsonb_build_object('observedRevocation', certificate_instances.public_metadata->'observedRevocation')
          WHEN certificate_instances.public_metadata ? 'observedRevocation'
           AND (
             ( certificate_instances.public_metadata->'observedRevocation' ? 'revision' AND EXCLUDED.public_metadata->'observedRevocation' ? 'revision'

@@ -13,6 +13,7 @@ const {
 } = require("@tokentimer/config/network");
 
 const DEFAULT_TOTAL_TIMEOUT_MS = 20_000;
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 
 const BLOCKED_HOSTNAMES = new Set([
@@ -254,6 +255,7 @@ function performRequest(parsedUrl, resolvedIp, opts) {
   return new Promise((resolve, reject) => {
     let settled = false;
     const chunks = [];
+    let responseBytes = 0;
     const timeoutMs = resolveSafeFetchTimeoutMs(opts, env);
     let totalTimer;
 
@@ -285,10 +287,31 @@ function performRequest(parsedUrl, resolvedIp, opts) {
 
     const transport = isHttps ? https : http;
     const req = transport.request(reqOptions, (res) => {
+      res.on("error", () => finish(safeFetchError("unreachable", "IdP response failed")));
+      res.on("close", () => {
+        if (!res.complete) finish(safeFetchError("unreachable", "IdP response ended early"));
+      });
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return finish(null, { redirectTo: res.headers.location, status: res.statusCode });
+        finish(null, { redirectTo: res.headers.location, status: res.statusCode });
+        res.destroy();
+        return;
       }
-      res.on("data", (chunk) => chunks.push(chunk));
+      const rejectOversizedResponse = () => {
+        finish(safeFetchError("response_too_large", "IdP response exceeds the size limit"));
+        res.destroy();
+      };
+      if (Number(res.headers["content-length"]) > MAX_RESPONSE_BYTES) {
+        rejectOversizedResponse();
+        return;
+      }
+      res.on("data", (chunk) => {
+        responseBytes += chunk.length;
+        if (responseBytes > MAX_RESPONSE_BYTES) {
+          rejectOversizedResponse();
+          return;
+        }
+        chunks.push(chunk);
+      });
       res.on("end", () => {
         finish(null, {
           status: res.statusCode || 0,
@@ -346,7 +369,11 @@ async function safeFetch(urlString, opts = {}) {
 
     if (result.redirectTo && redirects < MAX_REDIRECTS) {
       redirects += 1;
-      currentUrl = new URL(result.redirectTo, parsed).toString();
+      try {
+        currentUrl = new URL(result.redirectTo, parsed).toString();
+      } catch {
+        return { ok: false, reason: "invalid_url" };
+      }
       continue;
     }
 

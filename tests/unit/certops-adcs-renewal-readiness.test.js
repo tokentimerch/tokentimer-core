@@ -123,7 +123,17 @@ describe("AD CS automatic renewal agent readiness", () => {
     assert.equal(requests[0].caConfig, CA_CONFIG);
     assert.equal(requests[0].template, TEMPLATE);
     assert.equal(requests[0].automatic, true);
+      assert.deepEqual(requests[0].target, CERTIFICATE.profile_public_metadata.renewalProfile.target);
   });
+    it("does not dispatch a live CA check for a dry-run renewal", async () => {
+      const pool = fakePool({ agentRows: [preflightEvidence({ createdAgoMs: 25 * HOUR_MS })] });
+      const requests = [];
+      await assert.rejects(createAutomaticAdcsRenewal({
+        dbPool: pool, certificate: CERTIFICATE, mode: "dry_run", env: {},
+        preflightDispatcher: async (request) => { requests.push(request); },
+      }), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
+      assert.deepEqual(requests, []);
+    });
   it("requires a fresh preflight on the owning store agent even after enrollment closed", async () => {
     const certificate = {
       ...CERTIFICATE,

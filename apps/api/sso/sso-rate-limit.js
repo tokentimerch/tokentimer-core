@@ -13,6 +13,11 @@ const DEFAULT_CALLBACK_FAILURE_WEIGHT = 2;
 /** @type {Map<string, { tokens: number, lastRefill: number }>} */
 const buckets = new Map();
 const MAX_BUCKETS = 10_000;
+const rejectedCallback = Symbol("rejectedSsoCallback");
+
+function markSsoCallbackFailure(res) {
+  res[rejectedCallback] = true;
+}
 
 function envInt(name, fallback) {
   const v = Number(process.env[name]);
@@ -129,10 +134,12 @@ function createSsoRateLimitMiddleware(opts = {}) {
         retryAfterSec: result.retryAfterSec,
       });
     }
-    if (phase === "callback") {
+    if (phase === "callback" && limits.failureWeight > 1) {
       res.on("finish", () => {
-        if (res.statusCode >= 400) {
-          consumeToken(key, limits, limits.failureWeight - 1);
+        if (res[rejectedCallback] || res.statusCode >= 400) {
+          const charged = consumeToken(key, limits, limits.failureWeight - 1);
+          // The refusal already happened, so deduct as much of its surcharge as remains.
+          if (!charged.allowed) buckets.get(key).tokens = 0;
         }
       });
     }
@@ -146,6 +153,7 @@ function _resetBucketsForTests() {
 
 module.exports = {
   createSsoRateLimitMiddleware,
+  markSsoCallbackFailure,
   consumeToken,
   clientIp,
   extractProviderSlug,
