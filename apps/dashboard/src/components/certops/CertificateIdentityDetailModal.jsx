@@ -1317,7 +1317,7 @@ function IdentityDetailSession({
       contactGroups={contactGroups}
       workspaceContacts={workspaceContacts}
       onTokenUpdated={setToken}
-      certOps={{ certificate: certificateFacts, instances: [] }}
+      certOps={{ certificate: certificateFacts, instances: locations }}
       compactTableSections
       propertyValueRows
       titleOverride={detail.commonName || detail.name}
