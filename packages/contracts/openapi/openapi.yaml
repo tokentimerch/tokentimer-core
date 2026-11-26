@@ -7596,7 +7596,7 @@ paths:
           schema: { type: string, maxLength: 256 }
         - in: query
           name: sort
-          schema: { type: string, enum: [expiry, name, certificate, status, source, keyLocality, created], default: expiry }
+          schema: { type: string, enum: [expiry, name, certificate, status, source, keyLocality, renewal, created], default: expiry }
         - in: query
           name: direction
           schema: { type: string, enum: [asc, desc], default: asc }

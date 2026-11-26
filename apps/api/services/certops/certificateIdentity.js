@@ -354,7 +354,47 @@ async function listCertificateIdentities({
       certificate: "display_name",
       status: "display_status",
       source: "source",
-      keyLocality: "key_mode",
+      // Place name for the stored custody mode. Scan-only places such as IIS
+      // are not columns on this row, so they stay out of the order.
+      keyLocality: `CASE
+        WHEN open_period_id IS NULL THEN NULL
+        WHEN key_mode IN ('agent-local', 'proxy-agent-local') THEN 'Local agent'
+        WHEN key_mode = 'os-store-managed' THEN 'OS store'
+        WHEN key_mode = 'vault-managed' THEN 'Vault'
+        WHEN key_mode = 'hsm-managed' THEN 'HSM'
+        WHEN key_mode = 'cert-manager-managed' THEN 'cert-manager'
+        WHEN key_mode = 'appliance-managed' THEN 'Appliance'
+        ELSE NULL
+      END`,
+      // 0 groups certificates the renewal badge can show as automatic.
+      // Incomplete profile details can still disagree with that badge.
+      renewal: `CASE
+        WHEN open_period_id IS NULL
+          OR profile_id IS NULL
+          OR not_after IS NULL
+          OR display_status IN ('revoked', 'decommissioned', 'provisioning')
+          OR managed_status IN ('revoked', 'decommissioned')
+          OR key_mode NOT IN ('agent-local', 'proxy-agent-local', 'os-store-managed', 'vault-managed')
+          THEN 1
+        WHEN EXISTS (
+          SELECT 1 FROM certificate_profiles cp
+          WHERE cp.workspace_id = workspace_id AND cp.id = profile_id
+            AND LOWER(COALESCE(cp.status, '')) IN ('disabled', 'archived')
+        ) THEN 1
+        WHEN key_mode = 'vault-managed' AND NOT EXISTS (
+          SELECT 1 FROM certificate_profiles cp
+          WHERE cp.workspace_id = workspace_id AND cp.id = profile_id
+            AND cp.public_metadata->'renewalProfile'->'publicationDestination' IS NOT NULL
+        ) THEN 1
+        WHEN NOT EXISTS (
+          SELECT 1 FROM certops_management_periods period
+          WHERE period.workspace_id = workspace_id
+            AND period.managed_certificate_id = managed_id
+            AND period.ended_at IS NULL
+            AND period.automation_enabled IS TRUE
+        ) THEN 1
+        ELSE 0
+      END`,
       created: "created_at",
     },
     defaultOrderBy: "not_after ASC NULLS LAST, kind ASC, id ASC",

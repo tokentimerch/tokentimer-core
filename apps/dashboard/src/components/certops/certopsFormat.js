@@ -201,6 +201,19 @@ export function observedRevocationDescriptor(result, now = Date.now()) {
   };
 }
 
+const QUIET_REVOCATION_LABELS = new Set([
+  'Revocation not checked',
+  'Revocation disabled',
+  'Revocation checked',
+]);
+
+/** List rows only surface revocation when the operator may need to act. */
+export function revocationNeedsAttention(descriptor) {
+  return (
+    Boolean(descriptor?.label) && !QUIET_REVOCATION_LABELS.has(descriptor.label)
+  );
+}
+
 export function daysUntil(value) {
   if (!value) return null;
   const date = new Date(value);
@@ -861,6 +874,91 @@ const KEY_MODE_LABELS = {
 export function keyModeLabel(keyMode) {
   if (!keyMode) return 'Not recorded';
   return KEY_MODE_LABELS[keyMode] || keyMode;
+}
+
+const KEY_MODE_PLACE = {
+  'agent-local': 'Local agent',
+  'proxy-agent-local': 'Local agent',
+  'os-store-managed': 'OS store',
+  'vault-managed': 'Vault',
+  'hsm-managed': 'HSM',
+  'cert-manager-managed': 'cert-manager',
+  'appliance-managed': 'Appliance',
+};
+
+const KEY_LOCALITY_PLACE_ORDER = [
+  'Local agent',
+  'Filesystem',
+  'OS store',
+  'IIS',
+  'HTTP.sys',
+  'Vault',
+  'HSM',
+  'cert-manager',
+  'Appliance',
+];
+
+function locationIsCurrent(location) {
+  if (!location || typeof location !== 'object' || location.historical)
+    return false;
+  return (
+    !location.presenceState || location.presenceState === 'confirmed_present'
+  );
+}
+
+function placeForLocation(location, keyMode) {
+  const kind = String(
+    location.locationKind || location.target?.locationKind || ''
+  ).toLowerCase();
+  if (kind === 'windows_store') return 'OS store';
+  if (kind === 'iis_binding') return 'IIS';
+  if (kind === 'http_sys') return 'HTTP.sys';
+  if (kind === 'filesystem') {
+    const source = String(location.source || '').toLowerCase();
+    if (
+      source.startsWith('agent') ||
+      keyMode === 'agent-local' ||
+      keyMode === 'proxy-agent-local'
+    ) {
+      return 'Local agent';
+    }
+    return 'Filesystem';
+  }
+  return null;
+}
+
+function isHumanPlaceLabel(label) {
+  const text = String(label || '').trim();
+  if (!text || text.length > 48) return false;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(text) || text.includes('://')) return false;
+  return true;
+}
+
+/**
+ * Short places where a private key is recorded. Custody mode and current
+ * observations combine, so one certificate can list several places.
+ */
+export function keyLocalityPlaces({
+  keyMode,
+  keyReference,
+  locations,
+} = {}) {
+  const found = new Set();
+  const modePlace = KEY_MODE_PLACE[keyMode];
+  if (modePlace) found.add(modePlace);
+  for (const location of Array.isArray(locations) ? locations : []) {
+    if (!locationIsCurrent(location)) continue;
+    const place = placeForLocation(location, keyMode);
+    if (place) found.add(place);
+  }
+  for (const label of parseStoredKeyReference(keyReference).locations) {
+    if (isHumanPlaceLabel(label)) found.add(label);
+  }
+  const ordered = KEY_LOCALITY_PLACE_ORDER.filter(place => found.has(place));
+  const extra = [...found].filter(
+    place => !KEY_LOCALITY_PLACE_ORDER.includes(place)
+  );
+  return [...ordered, ...extra];
 }
 
 /** Sentinel value for the import form "Custom..." key locality option. */

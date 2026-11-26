@@ -66,10 +66,23 @@ async function listDistributionGroups({ client, workspaceId, query = {} }) {
   const groups = (await client.query(`SELECT g.*,p.current_identity_id,p.ended_at AS period_ended_at,
     (g.state='active' AND p.ended_at IS NULL) AS active,
     latest.state AS publication_state,COALESCE(to_jsonb(latest.provider_version_ref),to_jsonb(latest.provider_version)) AS provider_version,latest.publishing_job_id,
-    latest.fingerprint_sha256,latest.valid_to,latest.published_at
+    latest.fingerprint_sha256,latest.valid_to,latest.published_at,
+    COALESCE(NULLIF(mc.common_name, ''), NULLIF((mc.subject_alt_names)[1], '')) AS certificate_name,
+    COALESCE(NULLIF(issuer.name, ''), NULLIF(issuer.hostname, '')) AS issuer_agent_name,
+    destinations.agent_names
     FROM certops_distribution_groups g
     JOIN certops_management_periods p ON p.workspace_id=g.workspace_id
       AND p.managed_certificate_id=g.managed_certificate_id AND p.id=g.management_period_id
+    LEFT JOIN managed_certificates mc ON mc.workspace_id=g.workspace_id AND mc.id=g.managed_certificate_id
+    LEFT JOIN certops_agents issuer ON issuer.workspace_id=g.workspace_id AND issuer.id=g.issuer_agent_id
+    LEFT JOIN LATERAL (
+      SELECT string_agg(label, ', ' ORDER BY label) AS agent_names FROM (
+        SELECT DISTINCT COALESCE(NULLIF(a.name, ''), NULLIF(a.hostname, '')) AS label
+        FROM certops_consumer_bindings b
+        JOIN certops_agents a ON a.workspace_id=b.workspace_id AND a.id=b.assigned_agent_id
+        WHERE b.workspace_id=g.workspace_id AND b.group_id=g.id AND b.state='active'
+      ) names WHERE label IS NOT NULL
+    ) destinations ON true
     LEFT JOIN LATERAL (SELECT v.state,v.provider_version,v.provider_version_ref,v.publishing_job_id,v.fingerprint_sha256,v.valid_to,v.published_at
       FROM certops_material_versions v WHERE v.workspace_id=g.workspace_id AND v.group_id=g.id
       ORDER BY v.created_at DESC,v.id DESC LIMIT 1) latest ON true

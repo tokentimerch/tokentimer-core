@@ -794,25 +794,44 @@ export default function CertificateDeployments({
   return (
     <Box ref={sectionRef}>
       <Section
-        title='Deployments'
+        title='Distribution'
         icon={Truck}
         enclosed
         headerAction={
-          <DeploymentHelp
-            label='Refresh status'
-            text={refreshStatusHelp}
-            busy={state.loading || state.refreshing}
-            onAction={() => {
-              state.refresh();
-              setRevision(r => r + 1);
-            }}
-          />
+          <HStack spacing={1} flexShrink={0}>
+            {group ? (
+              <Button
+                as={RouterLink}
+                to={`/certops/distribution?workspace=${encodeURIComponent(workspaceId)}&group=${encodeURIComponent(group.id)}`}
+                size='xs'
+                variant='outline'
+                h='28px'
+                px={2.5}
+                fontSize='xs'
+                fontWeight='semibold'
+                borderColor='dashboard.modal.border'
+                color='dashboard.modal.muted'
+                _hover={{ bg: 'dashboard.modal.border' }}
+              >
+                Manage
+              </Button>
+            ) : null}
+            <DeploymentHelp
+              label='Refresh status'
+              text={refreshStatusHelp}
+              busy={state.loading || state.refreshing}
+              onAction={() => {
+                state.refresh();
+                setRevision(r => r + 1);
+              }}
+            />
+          </HStack>
         }
       >
         <SectionBody>
           {state.error ? (
             <Text role='alert' fontSize='xs'>
-              Deployment information unavailable.{' '}
+              Distribution information unavailable.{' '}
               {state.data
                 ? 'Showing the last known data. Current state is unconfirmed.'
                 : 'Check your access and refresh to try again.'}
@@ -820,7 +839,7 @@ export default function CertificateDeployments({
           ) : null}
           {state.loading ? (
             <Text role='status' fontSize='sm'>
-              Loading deployments…
+              Loading distribution…
             </Text>
           ) : state.data && !groups.length ? (
             <Text fontSize='sm'>Not distributed</Text>
@@ -850,13 +869,6 @@ export default function CertificateDeployments({
               ) : null}
               {group ? (
                 <Box>
-                  <Link
-                    as={RouterLink}
-                    color='blue.500'
-                    to={`/certops/distribution?workspace=${encodeURIComponent(workspaceId)}&group=${encodeURIComponent(group.id)}`}
-                  >
-                    Manage distribution
-                  </Link>
                   <GroupDeployments
                     key={`${scope}/${group.id}`}
                     workspaceId={workspaceId}

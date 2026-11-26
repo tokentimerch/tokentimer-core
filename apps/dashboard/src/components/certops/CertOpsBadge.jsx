@@ -3,6 +3,7 @@ import { forwardRef, useEffect, useState } from 'react';
 import {
   certificateLifecycleDescriptor,
   observedRevocationDescriptor,
+  revocationNeedsAttention,
 } from './certopsFormat.js';
 import {
   badgeColorScheme,
@@ -65,7 +66,7 @@ export const CertificateLifecycleBadge = forwardRef(
   }
 );
 
-export function ObservedRevocationBadge({ result, ...props }) {
+export function ObservedRevocationBadge({ result, list = false, ...props }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const expiry = Date.parse(result?.validUntil);
@@ -80,6 +81,7 @@ export function ObservedRevocationBadge({ result, ...props }) {
     return () => clearTimeout(timer);
   }, [result?.validUntil]);
   const descriptor = observedRevocationDescriptor(result, now);
+  if (list && !revocationNeedsAttention(descriptor)) return null;
   return (
     <CertOpsBadge
       colorScheme={descriptor.scheme}

@@ -40,11 +40,14 @@ import {
 } from 'lucide-react';
 import { AssetSearchInput } from '../../components/AssetFilters.jsx';
 import DeploymentBadge from '../../components/certops/DeploymentBadge.jsx';
+import KeyLocalityPlaces, {
+  KEY_LOCALITY_HINT,
+} from '../../components/certops/KeyLocalityPlaces.jsx';
 import useDistributionSummaries from '../../components/certops/useDistributionSummaries.js';
+import useWorkspacePublishedVersion from '../../components/certops/useWorkspacePublishedVersion.js';
 import RenewalBadge from '../../components/certops/RenewalBadge.jsx';
 import RenewalScheduleFacts from '../../components/certops/RenewalScheduleFacts.jsx';
 import RenewalPathBadge from '../../components/certops/RenewalPathBadge.jsx';
-import KeyLocalityBadge from '../../components/certops/KeyLocalityBadge.jsx';
 import RetireCertificateModal from '../../components/certops/RetireCertificateModal.jsx';
 import SetupRenewalModal from '../../components/certops/SetupRenewalModal.jsx';
 import DetachRenewalProfileModal from '../../components/certops/DetachRenewalProfileModal.jsx';
@@ -129,13 +132,25 @@ function observedUsage(certificate) {
   });
 }
 
+const DISTRIBUTION_COLUMN_HINT =
+  'Agents on the assigned hosts retrieve the published certificate and install it. The control plane does not send it. This shows how many of those hosts have it.';
+
 const CERTIFICATE_TABLE_COLUMNS = [
   { key: 'certificate', label: 'Certificate' },
   { key: 'status', label: 'Status' },
   { key: 'expiry', label: 'Expiry' },
-  { key: 'renewal', label: 'Renewal', sortable: false },
-  { key: 'deployment', label: 'Deployment', sortable: false },
-  { key: 'keyLocality', label: 'Key locality' },
+  { key: 'renewal', label: 'Renewal' },
+  {
+    key: 'keyLocality',
+    label: 'Key locality',
+    hint: KEY_LOCALITY_HINT,
+  },
+  {
+    key: 'deployment',
+    label: 'Distribution',
+    sortable: false,
+    hint: DISTRIBUTION_COLUMN_HINT,
+  },
   { key: 'source', label: 'Source' },
 ];
 
@@ -402,10 +417,16 @@ export default function CertOpsCertificates() {
       return false;
     return true;
   });
+  const hasPublishedVersion = useWorkspacePublishedVersion(
+    enabled ? workspaceId : null
+  );
   const deployments = useDistributionSummaries(
-    enabled ? workspaceId : null,
+    hasPublishedVersion ? workspaceId : null,
     visibleCertificates
   );
+  const tableColumns = hasPublishedVersion
+    ? CERTIFICATE_TABLE_COLUMNS
+    : CERTIFICATE_TABLE_COLUMNS.filter(column => column.key !== 'deployment');
   const [focusDeployments, setFocusDeployments] = useState(false);
   const searchIconColor = useColorModeValue(
     'var(--chakra-colors-gray-500)',
@@ -872,13 +893,36 @@ export default function CertOpsCertificates() {
             >
               <Thead display={{ base: 'none', lg: 'table-header-group' }}>
                 <Tr>
-                  {CERTIFICATE_TABLE_COLUMNS.map(column =>
+                  {tableColumns.map(column =>
                     column.sortable === false ? (
-                      <Th key={column.key}>{column.label}</Th>
+                      <Th key={column.key}>
+                        {column.hint ? (
+                          <Tooltip
+                            label={column.hint}
+                            hasArrow
+                            placement='top'
+                            openDelay={250}
+                          >
+                            <Box
+                              as='span'
+                              tabIndex={0}
+                              cursor='help'
+                              borderBottomWidth='1px'
+                              borderBottomStyle='dotted'
+                              borderColor='currentColor'
+                            >
+                              {column.label}
+                            </Box>
+                          </Tooltip>
+                        ) : (
+                          column.label
+                        )}
+                      </Th>
                     ) : (
                       <CertOpsSortableHeader
                         key={column.key}
                         label={column.label}
+                        hint={column.hint}
                         sortKey={column.key}
                         sort={sort}
                         onSort={handleSort}
@@ -1014,6 +1058,7 @@ export default function CertOpsCertificates() {
                         py={{ base: 2.5, lg: '0.55rem' }}
                         bg={{ base: mobileMetaBg, lg: 'transparent' }}
                         borderBottomWidth={{ base: 0, lg: '1px' }}
+                        whiteSpace='normal'
                       >
                         <MobileFieldLabel color={muted}>
                           Status
@@ -1032,6 +1077,7 @@ export default function CertOpsCertificates() {
                         {hasObservedRevocationContext(certificate) ? (
                           <ObservedRevocationBadge
                             result={certificate.observedRevocation}
+                            list
                             ml={2}
                           />
                         ) : null}
@@ -1099,34 +1145,56 @@ export default function CertOpsCertificates() {
                         py={{ base: 2.5, lg: '0.55rem' }}
                         bg={{ base: mobileMetaBg, lg: 'transparent' }}
                         borderBottomWidth={{ base: 0, lg: '1px' }}
+                        whiteSpace='normal'
                       >
-                        <MobileFieldLabel color={muted}>
-                          Deployment
-                        </MobileFieldLabel>
-                        <DeploymentBadge
-                          summary={deployments.getSummary(certificate)}
-                          loading={deployments.loading}
-                          error={deployments.error}
-                          onClick={() => {
-                            setFocusDeployments(true);
-                            setDetailsTarget(certificate);
-                          }}
-                        />
-                      </Td>
-                      <Td
-                        px={{ base: 3.5, lg: 4 }}
-                        py={{ base: 2.5, lg: '0.55rem' }}
-                        bg={{ base: mobileMetaBg, lg: 'transparent' }}
-                        borderBottomWidth={{ base: 0, lg: '1px' }}
-                      >
-                        <MobileFieldLabel color={muted}>
-                          Key locality
-                        </MobileFieldLabel>
-                        <KeyLocalityBadge
+                        <Tooltip
+                          label={KEY_LOCALITY_HINT}
+                          hasArrow
+                          placement='top'
+                          openDelay={250}
+                          shouldWrapChildren
+                        >
+                          <MobileFieldLabel color={muted}>
+                            Key locality
+                          </MobileFieldLabel>
+                        </Tooltip>
+                        <KeyLocalityPlaces
                           keyMode={certificate.keyMode}
                           keyReference={certificate.keyReference}
+                          locations={certificate.locations}
                         />
                       </Td>
+                      {hasPublishedVersion ? (
+                        <Td
+                          px={{ base: 3.5, lg: 4 }}
+                          py={{ base: 2.5, lg: '0.55rem' }}
+                          bg={{ base: mobileMetaBg, lg: 'transparent' }}
+                          borderBottomWidth={{ base: 0, lg: '1px' }}
+                          whiteSpace='normal'
+                        >
+                          <Tooltip
+                            label={DISTRIBUTION_COLUMN_HINT}
+                            hasArrow
+                            placement='top'
+                            openDelay={250}
+                            shouldWrapChildren
+                          >
+                            <MobileFieldLabel color={muted}>
+                              Distribution
+                            </MobileFieldLabel>
+                          </Tooltip>
+                          <DeploymentBadge
+                            summary={deployments.getSummary(certificate)}
+                            loading={deployments.loading}
+                            error={deployments.error}
+                            attentionOnly
+                            onClick={() => {
+                              setFocusDeployments(true);
+                              setDetailsTarget(certificate);
+                            }}
+                          />
+                        </Td>
+                      ) : null}
                       <Td
                         gridColumn={{ base: '1 / -1', lg: 'auto' }}
                         px={{ base: 3.5, lg: 4 }}

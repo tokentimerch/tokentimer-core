@@ -215,7 +215,7 @@ describe('CertificateDetailsModal', () => {
     expect(screen.getByText('Valid from')).toBeInTheDocument();
   });
 
-  it('orders key locality before renewal and renewal-path badges', () => {
+  it('keeps renewal badges in the header and private key in the body', () => {
     renderModal({
       certOps: {
         certificate: {
@@ -229,13 +229,14 @@ describe('CertificateDetailsModal', () => {
       .getByRole('heading', { name: token.name })
       .closest('.chakra-modal__header');
     const text = header.textContent;
-    expect(text.indexOf('Agent-local')).toBeGreaterThan(text.indexOf('Active'));
-    expect(text.indexOf('Agent-local')).toBeLessThan(
-      text.indexOf('No auto-renewal')
+    expect(text).not.toContain('Agent-local');
+    expect(text.indexOf('No auto-renewal')).toBeGreaterThan(
+      text.indexOf('Active')
     );
     expect(text.indexOf('No auto-renewal')).toBeLessThan(
       text.indexOf('Renewal path')
     );
+    expect(screen.getAllByText('Key locality').length).toBeGreaterThan(0);
   });
 
   it('shows the full CSR reference beside its source without a workflow action', () => {
@@ -335,7 +336,7 @@ describe('CertificateDetailsModal', () => {
       screen.queryByRole('button', { name: 'Certificate actions' })
     ).not.toBeInTheDocument();
     expect(screen.getByText('Enabled')).toBeInTheDocument();
-    expect(screen.getAllByText('Agent-local').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Local agent').length).toBeGreaterThan(0);
     expect(
       screen.getByRole('heading', { name: 'Basic information' })
     ).toBeInTheDocument();

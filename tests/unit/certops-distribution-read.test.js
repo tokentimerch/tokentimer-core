@@ -92,6 +92,9 @@ test("historical identity detail can read publication history without marking en
   assert.match(sql, /history\.workspace_id=g\.workspace_id/);
   assert.match(sql, /history\.certificate_identity_id=ANY/);
   assert.match(sql, /p\.ended_at IS NULL\) AS active/);
+  assert.match(sql, /AS certificate_name/);
+  assert.match(sql, /AS issuer_agent_name/);
+  assert.match(sql, /destinations\.agent_names/);
 });
 
 test("single-group consumer read still uses the same convergence query and scoped agent labels", async () => {

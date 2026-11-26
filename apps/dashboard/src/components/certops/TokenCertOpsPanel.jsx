@@ -18,7 +18,7 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
 import CertificateTimeline from './CertificateTimeline.jsx';
-import KeyLocalityList from './KeyLocalityList.jsx';
+import KeyLocalityPlaces from './KeyLocalityPlaces.jsx';
 import RenewalBadge from './RenewalBadge.jsx';
 import RenewalPathBadge from './RenewalPathBadge.jsx';
 import {
@@ -173,9 +173,11 @@ function CertOpsPanelBody({ tokenId, workspaceId }) {
       </GridItem>
 
       <Field label='Key locality'>
-        <KeyLocalityList
+        <KeyLocalityPlaces
           keyMode={certificate.keyMode}
           keyReference={certificate.keyReference}
+          locations={certificate.locations}
+          empty='Not recorded'
         />
       </Field>
 

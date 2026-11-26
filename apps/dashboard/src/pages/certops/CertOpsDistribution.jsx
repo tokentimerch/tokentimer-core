@@ -51,14 +51,16 @@ import {
   Th,
   Thead,
   Tr,
+  useColorModeValue,
 } from '@chakra-ui/react';
-import { FiMoreHorizontal } from 'react-icons/fi';
+import { FiChevronDown, FiMoreHorizontal } from 'react-icons/fi';
 import {
   DashboardActionButton,
   DashboardPanel,
   DashboardPanelHeader,
   DashboardState,
 } from '../../components/DashboardPrimitives';
+import { Callout } from '../../components/onboarding/panels.jsx';
 import DashboardPagination from '../../components/DashboardPagination.jsx';
 import {
   DashboardModalFrame,
@@ -86,6 +88,241 @@ import { diagnosticExplanation } from '../../components/certops/distributionDiag
 import { formatDateTime } from '../../components/certops/certopsFormat.js';
 
 const label = value => String(value || 'Unknown').replaceAll('_', ' ');
+function verificationResultCopy(state) {
+  const key = String(state || '');
+  if (key === 'failed' || key === 'rejected') {
+    return 'The check did not confirm the published version.';
+  }
+  if (key === 'uncertain') {
+    return 'The check stopped before the result was known.';
+  }
+  if (key === 'verified' || key === 'completed' || key === 'installed') {
+    return 'Destinations reported the published version. Nothing new was deployed.';
+  }
+  return 'Checking the certificate already installed on each destination. This request does not deploy anything.';
+}
+const STORE_PROVIDER_LABEL = {
+  'vault-kv2': 'Vault KV',
+  'openbao-kv2': 'OpenBao KV',
+  'azure-key-vault': 'Azure Key Vault',
+};
+function agentSummary(value) {
+  const names = String(value || '')
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean);
+  if (!names.length) return null;
+  if (names.length === 1) return { text: names[0], title: names[0] };
+  return { text: `${names[0]} +${names.length - 1}`, title: names.join(', ') };
+}
+function distributionSourceParts(group) {
+  const provider = STORE_PROVIDER_LABEL[group.material_store_provider] || null;
+  const name = group.certificate_name || group.name || null;
+  const store =
+    group.material_store_ref && group.material_store_ref !== name
+      ? group.material_store_ref
+      : null;
+  const agents = agentSummary(group.agent_names || group.issuer_agent_name);
+  const status =
+    group.state && group.state !== 'active'
+      ? group.state
+      : group.active === false
+        ? 'ended'
+        : null;
+  const parts = [
+    name ? { key: 'name', text: name, tone: 'name' } : null,
+    store ? { key: 'store', text: store, tone: 'store', title: store } : null,
+    provider
+      ? { key: 'provider', text: provider, tone: 'provider', title: provider }
+      : null,
+    agents ? { key: 'agents', text: agents.text, tone: 'agents', title: agents.title } : null,
+    status ? { key: 'status', text: status, tone: 'status' } : null,
+  ].filter(Boolean);
+  return parts.length
+    ? parts
+    : [{ key: 'name', text: 'Distribution source', tone: 'name' }];
+}
+function SourceChip({ tone, title, children }) {
+  const { dashboard } = useDashboardTheme();
+  const tones = {
+    store: { bg: dashboard.bg.nested, color: dashboard.text.secondary },
+    provider: {
+      bg: dashboard.accent.interactiveSurface,
+      color: dashboard.accent.navActive,
+    },
+    agents: { bg: dashboard.purple.surface, color: dashboard.purple.icon },
+    status: {
+      bg: dashboard.callout.warningSurface,
+      color: dashboard.callout.warningText,
+    },
+  };
+  const style = tones[tone] || tones.store;
+  return (
+    <Box
+      as='span'
+      title={title}
+      px={1.5}
+      borderRadius='sm'
+      fontSize='xs'
+      fontWeight='medium'
+      lineHeight='18px'
+      maxW='240px'
+      whiteSpace='nowrap'
+      overflow='hidden'
+      textOverflow='ellipsis'
+      flexShrink={0}
+      {...style}
+    >
+      {children}
+    </Box>
+  );
+}
+function SourceParts({ group }) {
+  const { dashboard } = useDashboardTheme();
+  const parts = distributionSourceParts(group);
+  const name = parts.find(part => part.tone === 'name');
+  const rest = parts.filter(part => part.tone !== 'name');
+  return (
+    <Stack spacing={1} align='stretch' minW={0} w='100%'>
+      <Text
+        fontSize='sm'
+        fontWeight='semibold'
+        color={dashboard.text.primary}
+        noOfLines={1}
+        textAlign='left'
+      >
+        {name?.text || rest[0]?.text || 'Distribution source'}
+      </Text>
+      {name && rest.length ? (
+        <HStack spacing={1.5} minW={0} overflow='hidden'>
+          {rest.map(part => (
+            <SourceChip key={part.key} tone={part.tone} title={part.title}>
+              {part.text}
+            </SourceChip>
+          ))}
+        </HStack>
+      ) : null}
+    </Stack>
+  );
+}
+function DistributionSourceSelect({ groups, groupId, onChange }) {
+  const { dashboard } = useDashboardTheme();
+  const menuShadow = useColorModeValue(
+    '0 16px 40px rgba(15, 23, 42, 0.14), 0 2px 6px rgba(15, 23, 42, 0.06)',
+    '0 18px 44px rgba(0, 0, 0, 0.46), 0 2px 8px rgba(0, 0, 0, 0.28)'
+  );
+  const selected = groups.find(group => group.id === groupId) || groups[0];
+  return (
+    <Menu
+      matchWidth
+      autoSelect={false}
+      isLazy
+      placement='bottom-start'
+      strategy='fixed'
+      gutter={6}
+    >
+      <MenuButton
+        as={Button}
+        aria-label='Distribution source'
+        variant='outline'
+        w='100%'
+        h='auto'
+        minH='52px'
+        py={2}
+        px={3}
+        fontWeight='normal'
+        textAlign='left'
+        borderColor={dashboard.border.control}
+        bg={dashboard.bg.field}
+        rightIcon={
+          <Box
+            as={FiChevronDown}
+            transition='transform 160ms ease'
+            sx={{
+              '@media (prefers-reduced-motion: reduce)': { transition: 'none' },
+              'button[aria-expanded="true"] &': { transform: 'rotate(180deg)' },
+            }}
+          />
+        }
+        _hover={{ bg: dashboard.bg.panelHover }}
+        _expanded={{ bg: dashboard.bg.panelHover }}
+      >
+        <Box flex='1' minW={0}>
+          <SourceParts group={selected} />
+        </Box>
+      </MenuButton>
+      <Portal>
+        <MenuList
+          maxH='min(360px, 70vh)'
+          overflowX='hidden'
+          overflowY='auto'
+          p={1.5}
+          zIndex='popover'
+          bg={dashboard.bg.panel}
+          borderColor={dashboard.border.subtle}
+          borderRadius='lg'
+          boxShadow={menuShadow}
+          sx={{
+            '@media (prefers-reduced-motion: no-preference)': {
+              animation: 'distributionSourceIn 160ms cubic-bezier(0.16, 1, 0.3, 1)',
+            },
+            '@keyframes distributionSourceIn': {
+              from: { opacity: 0 },
+              to: { opacity: 1 },
+            },
+          }}
+        >
+          <Box
+            sx={{
+              '@media (prefers-reduced-motion: no-preference)': {
+                animation:
+                  'distributionSourceRise 180ms cubic-bezier(0.16, 1, 0.3, 1)',
+              },
+              '@keyframes distributionSourceRise': {
+                from: { opacity: 0, transform: 'translateY(-4px)' },
+                to: { opacity: 1, transform: 'none' },
+              },
+            }}
+          >
+            {groups.map(group => {
+              const active = group.id === selected?.id;
+              return (
+                <MenuItem
+                  key={group.id}
+                  onClick={() => onChange(group.id)}
+                  alignItems='center'
+                  borderRadius='md'
+                  px={2.5}
+                  py={2}
+                  sx={{
+                    backgroundColor: active
+                      ? `${dashboard.accent.interactiveSurface} !important`
+                      : 'transparent',
+                    boxShadow: active
+                      ? `inset 2px 0 0 ${dashboard.accent.navActive}`
+                      : 'none',
+                    _hover: {
+                      backgroundColor: `${dashboard.bg.panelHover} !important`,
+                    },
+                    _focus: {
+                      backgroundColor: `${
+                        active
+                          ? dashboard.accent.interactiveSurface
+                          : dashboard.bg.panelHover
+                      } !important`,
+                    },
+                  }}
+                >
+                  <SourceParts group={group} />
+                </MenuItem>
+              );
+            })}
+          </Box>
+        </MenuList>
+      </Portal>
+    </Menu>
+  );
+}
 const distributionPageSizes = [5, ...CERTOPS_PAGE_SIZE_OPTIONS];
 const jobsLink = (workspaceId, id) =>
   `/certops/jobs?workspace=${encodeURIComponent(workspaceId)}&job=${encodeURIComponent(id)}`;
@@ -449,6 +686,7 @@ function PolicyForm({ data, disabled, onSave }) {
 }
 
 function ConsumerForm({ consumer, agents, disabled, onSave, onCancel }) {
+  const { dashboard } = useDashboardTheme();
   const [binding, setBinding] = useState(() =>
     consumer
       ? {
@@ -510,6 +748,11 @@ function ConsumerForm({ consumer, agents, disabled, onSave, onCancel }) {
               }
             />
           </Field>
+          <Text fontSize='sm' color={dashboard.text.secondary} gridColumn='1 / -1'>
+            Shared private keys require explicit opt-in. Store credentials
+            remain on customer agents; enter only store and deployment profile
+            aliases here.
+          </Text>
           <NumberField
             name='Local profile revision'
             value={binding.profileRevision}
@@ -968,6 +1211,16 @@ function Management({
     [retention, setRetention] = useState(null),
     [confirmation, setConfirmation] = useState(null);
   const [pendingRollout, setPendingRollout] = useState(null);
+  useEffect(() => {
+    if (!error && !notice) return;
+    const noticeText = typeof notice === 'string' ? notice : '';
+    const verification =
+      noticeText.startsWith('Verification requested') &&
+      document.getElementById('distribution-verification-result');
+    (
+      verification || document.getElementById('distribution-action-result')
+    )?.scrollIntoView({ block: 'nearest' });
+  }, [error, notice]);
   const cancelRef = useRef(null),
     modalReturnFocusRef = useRef(null);
   const { data } = state,
@@ -1049,8 +1302,13 @@ function Management({
   const alertsEnabled = currentPolicy?.alerts?.enabled;
   const cleanupPolicy = currentPolicy?.retention;
   const activeRollouts = data.rollouts.filter(rollout =>
-    ['pending', 'deploying', 'paused'].includes(rollout.state)
+    ['pending', 'queued', 'deploying', 'verifying', 'paused'].includes(
+      rollout.state
+    )
   ).length;
+  const latestVerification = data.rollouts.find(
+    rollout => rollout.verification_only
+  );
   const selectedPublishedVersion = data.versions.some(
     item =>
       item.id === selectedVersion &&
@@ -1103,10 +1361,15 @@ function Management({
         setPendingRollout(null);
         return result;
       },
-      result =>
-        result.status === 'pending_approval'
-          ? 'Request created. Review and approve the exact version in Jobs.'
-          : 'Rollout requested. Consumer job evidence will confirm installation and verification.'
+      result => {
+        if (result?.status === 'pending_approval') {
+          return 'Request created. Review and approve the exact version in Jobs.';
+        }
+        if (verificationOnly) {
+          return 'Verification requested. It checks the certificate already installed on each destination and does not deploy a new one.';
+        }
+        return 'Rollout requested. Consumer job evidence will confirm installation and verification.';
+      }
     );
   };
   const confirm = (title, description, action) =>
@@ -1154,6 +1417,7 @@ function Management({
       ) : null}
       {error ? (
         <Alert
+          id='distribution-action-result'
           status='error'
           variant='error'
           borderRadius='md'
@@ -1164,7 +1428,7 @@ function Management({
           {error}
         </Alert>
       ) : null}
-      {pendingRollout ? (
+      {pendingRollout && !busy ? (
         <Alert status='warning' variant='warning' alignItems='flex-start'>
           <AlertIcon />
           <Stack spacing={2}>
@@ -1203,6 +1467,7 @@ function Management({
       ) : null}
       {notice ? (
         <Alert
+          id='distribution-action-result'
           status='info'
           variant='info'
           borderRadius='md'
@@ -1309,14 +1574,7 @@ function Management({
                   }
                 />
                 <Stack spacing={2} mt={3}>
-                  <Box bg={dashboard.bg.nested} borderRadius='lg' p={2}>
-                    <Text fontWeight='semibold' fontSize='sm'>
-                      Next step
-                    </Text>
-                    <Text color={dashboard.text.secondary} fontSize='sm'>
-                      {nextStep}
-                    </Text>
-                  </Box>
+                  <Callout title='Next step'>{nextStep}</Callout>
                   <Text fontSize='sm'>
                     Latest publication: {publicationState} · Evaluated{' '}
                     {formatDateTime(data.evaluated_at)}
@@ -1368,6 +1626,11 @@ function Management({
                             Boolean(pendingRollout) ||
                             !selectedPublishedVersion
                           }
+                          isLoading={
+                            busy &&
+                            Boolean(pendingRollout) &&
+                            !pendingRollout.body.verificationOnly
+                          }
                           colorScheme='blue'
                           onClick={() =>
                             confirm(
@@ -1390,6 +1653,7 @@ function Management({
                             Boolean(pendingRollout) ||
                             !selectedPublishedVersion
                           }
+                          isLoading={busy && pendingRollout?.body.verificationOnly === true}
                           onClick={() => requestRollout(true)}
                         >
                           Verify only
@@ -1399,6 +1663,7 @@ function Management({
                     <DashboardActionButton
                       variant='outline'
                       isDisabled={busy}
+                      isLoading={busy && !pendingRollout}
                       onClick={() =>
                         run(async () => {
                           const result = await distributionApi.preflight(
@@ -1413,6 +1678,55 @@ function Management({
                       Run safe preflight
                     </DashboardActionButton>
                   </HStack>
+                  {latestVerification ? (
+                    <Box
+                      id='distribution-verification-result'
+                      borderWidth='1px'
+                      borderLeftWidth='3px'
+                      borderColor={
+                        latestVerification.state === 'failed' ||
+                        latestVerification.state === 'rejected'
+                          ? dashboard.callout.dangerBorder
+                          : latestVerification.state === 'verified' ||
+                              latestVerification.state === 'completed' ||
+                              latestVerification.state === 'installed'
+                            ? dashboard.state.success
+                            : dashboard.accent.interactiveBorder
+                      }
+                      borderRadius='md'
+                      bg={dashboard.bg.nested}
+                      px={3}
+                      py={2.5}
+                    >
+                      <HStack spacing={2} align='center'>
+                        <CertOpsBadge
+                          colorScheme={
+                            latestVerification.state === 'failed' ||
+                            latestVerification.state === 'rejected'
+                              ? 'red'
+                              : latestVerification.state === 'verified' ||
+                                  latestVerification.state === 'completed' ||
+                                  latestVerification.state === 'installed'
+                                ? 'green'
+                                : 'blue'
+                          }
+                        >
+                          {label(latestVerification.state)}
+                        </CertOpsBadge>
+                        <Text fontSize='sm' fontWeight='semibold'>
+                          Verification only · generation{' '}
+                          {latestVerification.generation}
+                        </Text>
+                      </HStack>
+                      <Text
+                        mt={1}
+                        fontSize='sm'
+                        color={dashboard.text.secondary}
+                      >
+                        {verificationResultCopy(latestVerification.state)}
+                      </Text>
+                    </Box>
+                  ) : null}
                   <SimpleGrid
                     columns={{ base: 1, sm: 3 }}
                     spacing={3}
@@ -1438,51 +1752,117 @@ function Management({
                     />
                   </SimpleGrid>
                   {preflight ? (
-                    <Box>
-                      <Text fontWeight='semibold'>Non-mutating preflight</Text>
-                      <Text fontSize='sm'>
+                    <Box
+                      borderWidth='1px'
+                      borderColor={dashboard.border.subtle}
+                      borderRadius='md'
+                      bg={dashboard.bg.nested}
+                      p={3}
+                    >
+                      <Text
+                        fontSize='sm'
+                        fontWeight='semibold'
+                        color={dashboard.text.primary}
+                      >
+                        Non-mutating preflight
+                      </Text>
+                      <Text
+                        mt={1}
+                        fontSize='sm'
+                        color={dashboard.text.secondary}
+                      >
                         These checks cover control-plane metadata. Run the
                         customer-local dry run to check store authorization,
                         pinned material, filesystem permissions, service targets
                         and probes.
                       </Text>
-                      {preflight.consumers.map(value => (
-                        <Box key={value.bindingId}>
-                          <Text fontSize='sm'>
-                            {value.bindingId}:{' '}
-                            {value.diagnostics
-                              .map(item => diagnosticExplanation(item.code))
-                              .join('; ')}
-                          </Text>
-                          {value.publicIntent ? (
-                            <Button
-                              size='sm'
-                              mt={2}
-                              onClick={() => {
-                                const url = URL.createObjectURL(
-                                  new Blob(
-                                    [
-                                      JSON.stringify(
-                                        value.publicIntent,
-                                        null,
-                                        2
-                                      ),
-                                    ],
-                                    { type: 'application/json' }
-                                  )
-                                );
-                                const anchor = document.createElement('a');
-                                anchor.href = url;
-                                anchor.download = `${value.bindingId}.preflight.json`;
-                                anchor.click();
-                                URL.revokeObjectURL(url);
-                              }}
+                      <Stack spacing={2} mt={3}>
+                        {preflight.consumers.map(value => {
+                          const consumer = data.consumers.find(
+                            item => item.binding_id === value.bindingId
+                          );
+                          const profile =
+                            consumer?.deployment_profile_ref ||
+                            value.publicIntent?.deploymentProfileRef ||
+                            'Destination';
+                          return (
+                            <Box
+                              key={value.bindingId}
+                              borderWidth='1px'
+                              borderLeftWidth='3px'
+                              borderColor={dashboard.callout.warningBorder}
+                              borderRadius='md'
+                              bg={dashboard.callout.warningSurface}
+                              px={3}
+                              py={2.5}
                             >
-                              Download public preflight intent
-                            </Button>
-                          ) : null}
-                        </Box>
-                      ))}
+                              <Text
+                                fontSize='sm'
+                                fontWeight='semibold'
+                                color={dashboard.text.primary}
+                              >
+                                {profile}
+                              </Text>
+                              {consumer?.agent_name ? (
+                                <Text
+                                  fontSize='xs'
+                                  color={dashboard.text.secondary}
+                                >
+                                  {consumer.agent_name}
+                                  {consumer.agent_status
+                                    ? ` · ${consumer.agent_status}`
+                                    : ''}
+                                </Text>
+                              ) : null}
+                              <Text
+                                mt={1}
+                                fontSize='sm'
+                                color={dashboard.callout.warningText}
+                              >
+                                {value.diagnostics
+                                  .map(item =>
+                                    diagnosticExplanation(item.code)
+                                  )
+                                  .join(' ')}
+                              </Text>
+                              <Text
+                                mt={1}
+                                fontSize='xs'
+                                color={dashboard.text.muted}
+                              >
+                                Destination ID {value.bindingId}
+                              </Text>
+                              {value.publicIntent ? (
+                                <DashboardActionButton
+                                  mt={2}
+                                  variant='outline'
+                                  onClick={() => {
+                                    const url = URL.createObjectURL(
+                                      new Blob(
+                                        [
+                                          JSON.stringify(
+                                            value.publicIntent,
+                                            null,
+                                            2
+                                          ),
+                                        ],
+                                        { type: 'application/json' }
+                                      )
+                                    );
+                                    const anchor = document.createElement('a');
+                                    anchor.href = url;
+                                    anchor.download = `${value.bindingId}.preflight.json`;
+                                    anchor.click();
+                                    URL.revokeObjectURL(url);
+                                  }}
+                                >
+                                  Download public preflight intent
+                                </DashboardActionButton>
+                              ) : null}
+                            </Box>
+                          );
+                        })}
+                      </Stack>
                     </Box>
                   ) : null}
                 </Stack>
@@ -2717,42 +3097,35 @@ export default function CertOpsDistribution() {
             </DashboardActionButton>
           }
         />
-        <Stack
-          direction={{ base: 'column', md: 'row' }}
-          spacing={3}
-          align={{ base: 'stretch', md: 'end' }}
-        >
-          {groups.length ? (
-            <Box w={{ base: '100%', md: '420px' }} maxW='100%'>
+        {groups.length ? (
+          <Box maxW='720px'>
               <Field name='Distribution source'>
-                <Select
-                  aria-label='Distribution source'
-                  value={groupId}
-                  onChange={event => {
+                <DistributionSourceSelect
+                  groups={groups}
+                  groupId={groupId}
+                  onChange={nextGroupId => {
                     const next = new URLSearchParams(params);
-                    next.set('group', event.target.value);
+                    next.set('group', nextGroupId);
                     navigate({
                       pathname: location.pathname,
                       search: `?${next}`,
                       hash: location.hash,
                     });
                   }}
-                >
-                  {groups.map(group => (
-                    <option key={group.id} value={group.id}>
-                      {group.material_store_ref} · {group.id} ({group.state})
-                    </option>
-                  ))}
-                </Select>
+                />
+                {groupId ? (
+                  <Text
+                    mt={1}
+                    fontSize='xs'
+                    color={dashboard.text.secondary}
+                    overflowWrap='anywhere'
+                  >
+                    Source ID {groupId}
+                  </Text>
+                ) : null}
               </Field>
-            </Box>
-          ) : null}
-          <Text fontSize='sm' flex='1' pb={{ base: 0, md: 1 }}>
-            Shared private keys require explicit opt-in. Store credentials
-            remain on customer agents; enter only store and deployment profile
-            aliases here.
-          </Text>
-        </Stack>
+          </Box>
+        ) : null}
       </DashboardPanel>
       {state.loading ? (
         <DashboardState type='loading' title='Loading distribution sources' />

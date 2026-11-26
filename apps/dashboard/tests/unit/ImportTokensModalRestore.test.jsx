@@ -708,6 +708,17 @@ describe('Entra identity selection and saved filters', () => {
         identity.compareDocumentPosition(filters) &
           Node.DOCUMENT_POSITION_FOLLOWING
       ).toBeTruthy();
+      expect(
+        screen
+          .getByText(
+            integrationSubTab === 'manage' ? 'Sync filters' : 'Scan Filters'
+          )
+          .compareDocumentPosition(filters) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+      expect(
+        screen.getByRole('checkbox', { name: 'Scan App Registrations' })
+      ).toBeVisible();
       expect(identity).toBeVisible();
       expect(filters).toBeVisible();
     }

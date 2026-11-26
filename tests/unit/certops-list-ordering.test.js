@@ -7,6 +7,12 @@ const path = require("node:path");
 const { listManagedCertificates } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/inventory.js"),
 );
+const { listCertificateIdentities } = require(
+  path.resolve(
+    __dirname,
+    "../../apps/api/services/certops/certificateIdentity.js",
+  ),
+);
 const { listAgents } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/agentRegistry.js"),
 );
@@ -156,6 +162,35 @@ describe("CertOps paginated list ordering", () => {
       pageQuery(upcoming, "SELECT mc.id"),
       "ORDER BY mc.not_after ASC NULLS LAST, mc.common_name ASC, mc.id ASC",
     );
+  });
+
+  it("sorts certificate identities by renewal and stored key locality", async () => {
+    const db = recordingDb();
+    await listCertificateIdentities({
+      client: db,
+      workspaceId: WORKSPACE_ID,
+      sort: "renewal",
+      direction: "asc",
+      limit: 20,
+      offset: 0,
+    });
+    const renewalSql = db.queries.find((sql) => sql.includes("ORDER BY"));
+    assert.match(renewalSql, /ELSE 0 END ASC NULLS LAST/);
+    assert.match(renewalSql, /automation_enabled IS TRUE/);
+
+    const locality = recordingDb();
+    await listCertificateIdentities({
+      client: locality,
+      workspaceId: WORKSPACE_ID,
+      sort: "keyLocality",
+      direction: "asc",
+      limit: 20,
+      offset: 0,
+    });
+    const localitySql = locality.queries.find((sql) => sql.includes("ORDER BY"));
+    assert.match(localitySql, /THEN 'Local agent'/);
+    assert.match(localitySql, /THEN 'OS store'/);
+    assert.doesNotMatch(localitySql, /iis_binding/);
   });
 
   it("allowlists every direct certificate sort and orders before pagination", async () => {

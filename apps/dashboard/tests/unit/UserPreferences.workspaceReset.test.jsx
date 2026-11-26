@@ -223,4 +223,18 @@ describe('Preferences setup reset workspace continuity', () => {
     expect(screen.queryByRole('heading', { name: 'Setup guide' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Start over' })).toBeEnabled();
   });
+
+  it('saves job timeline order in this browser', async () => {
+    renderPreferences();
+    const order = await screen.findByRole('combobox', {
+      name: 'Timeline order',
+    });
+    expect(order).toHaveValue('oldest-first');
+    fireEvent.change(order, { target: { value: 'newest-first' } });
+    expect(window.localStorage.getItem('tt_certops_timeline_order')).toBe(
+      'newest-first'
+    );
+    fireEvent.change(order, { target: { value: 'oldest-first' } });
+    expect(window.localStorage.getItem('tt_certops_timeline_order')).toBeNull();
+  });
 });

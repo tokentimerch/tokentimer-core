@@ -28,7 +28,6 @@ import {
   Th,
   Td,
   Input,
-  Switch,
   Badge,
   Checkbox,
   Tooltip,
@@ -3821,72 +3820,83 @@ function ImportTokensModalContent({
                       setAzureADAuthMethod('token');
                     }}
                   />
-                  <HStack spacing={3} align='flex-start' flexWrap='wrap'>
-                    <VStack align='start' spacing={2}>
-                      <HStack>
-                        <Switch
-                          isChecked={
-                            managedIdentityMode === 'only'
-                              ? false
-                              : azureADIncludeApps
-                          }
-                          isDisabled={managedIdentityMode === 'only'}
-                          onChange={e =>
-                            setAzureADIncludeApps(e.target.checked)
-                          }
-                          colorScheme='blue'
-                        />
-                        <Text fontSize='sm'>Scan App Registrations</Text>
-                      </HStack>
-                      <HStack>
-                        <Switch
-                          isChecked={
-                            managedIdentityMode === 'only'
-                              ? true
-                              : azureADIncludeSPs
-                          }
-                          isDisabled={managedIdentityMode === 'only'}
-                          onChange={e => setAzureADIncludeSPs(e.target.checked)}
-                          colorScheme='blue'
-                        />
-                        <Text fontSize='sm'>Scan Service Principals</Text>
-                      </HStack>
-                    </VStack>
-                    {!autoSyncManageMode ? (
-                      <Button
-                        colorScheme='blue'
-                        onClick={doAzureADScan}
-                        isLoading={isScanning}
-                        alignSelf='flex-end'
-                      >
-                        Scan
-                      </Button>
-                    ) : null}
-                  </HStack>
-                  <FormControl>
-                    <FormLabel fontSize='sm'>Identity selection</FormLabel>
-                    <Select
-                      aria-label='Identity selection'
-                      value={managedIdentityMode}
-                      onChange={e => setManagedIdentityMode(e.target.value)}
+                  {!autoSyncManageMode ? (
+                    <Button
+                      colorScheme='blue'
+                      onClick={doAzureADScan}
+                      isLoading={isScanning}
+                      alignSelf='flex-start'
                     >
-                      <option value='all'>All identities</option>
-                      <option value='exclude'>
-                        Exclude managed identities
-                      </option>
-                      <option value='only'>Managed identities only</option>
-                    </Select>
-                    <Text fontSize='xs'>
-                      Managed identities only scans service principals and
-                      ignores the switches above. Name and location filters do
-                      not turn existing alerts off. Cleanup can still delete
-                      inventory those filters hide, so leave cleanup off while
-                      you change them.
+                      Scan
+                    </Button>
+                  ) : null}
+                  <Box
+                    border='1px solid'
+                    borderColor={border}
+                    borderRadius='md'
+                    p={3}
+                  >
+                    <Text fontSize='sm' fontWeight='medium' mb={3}>
+                      {autoSyncManageMode ? 'Sync filters' : 'Scan Filters'}
                     </Text>
-                  </FormControl>
+                    <VStack align='stretch' spacing={2}>
+                      <Checkbox
+                        isChecked={
+                          managedIdentityMode === 'only'
+                            ? false
+                            : azureADIncludeApps
+                        }
+                        isDisabled={managedIdentityMode === 'only'}
+                        onChange={e => setAzureADIncludeApps(e.target.checked)}
+                        size='sm'
+                      >
+                        Scan App Registrations
+                      </Checkbox>
+                      <Checkbox
+                        isChecked={
+                          managedIdentityMode === 'only'
+                            ? true
+                            : azureADIncludeSPs
+                        }
+                        isDisabled={managedIdentityMode === 'only'}
+                        onChange={e => setAzureADIncludeSPs(e.target.checked)}
+                        size='sm'
+                      >
+                        Scan Service Principals
+                      </Checkbox>
+                      <Box>
+                        <Text fontSize='sm' mb={1}>
+                          Identity selection
+                        </Text>
+                        <Select
+                          aria-label='Identity selection'
+                          size='sm'
+                          value={managedIdentityMode}
+                          onChange={e =>
+                            setManagedIdentityMode(e.target.value)
+                          }
+                        >
+                          <option value='all'>All identities</option>
+                          <option value='exclude'>
+                            Exclude managed identities
+                          </option>
+                          <option value='only'>Managed identities only</option>
+                        </Select>
+                        <Text fontSize='xs' color={muted} mt={1}>
+                          Managed identities only scans service principals and
+                          ignores the checkboxes above. Name and location
+                          filters do not turn existing alerts off. Cleanup can
+                          still delete inventory those filters hide, so leave
+                          cleanup off while you change them.
+                        </Text>
+                      </Box>
+                    </VStack>
+                  </Box>
                   <FilterRulesEditor
                     rules={azureADFilterRules}
                     onChange={setAzureADFilterRules}
+                    borderColor={border}
+                    helpTextColor={muted}
                   />
                   <FilterRulesSummary summary={azureADFilterSummary} />
                   {managedIdentityMode !== 'all' && (

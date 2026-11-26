@@ -260,6 +260,9 @@ it('distinguishes same-name certificates by fingerprint and current observed use
   expect(
     within(rows[0]).getByText('Observed: Windows certificate store')
   ).toBeInTheDocument();
+  expect(within(rows[0]).getByText('IIS')).toBeInTheDocument();
+  expect(within(rows[0]).getByText('OS store')).toBeInTheDocument();
+  expect(within(rows[1]).queryByText('OS store')).not.toBeInTheDocument();
   expect(
     within(rows[0]).queryByText('Observed: IIS · Default Web Site:444')
   ).not.toBeInTheDocument();
@@ -718,7 +721,7 @@ describe('CertOpsCertificates list states', () => {
     expect(screen.getByText('No auto-renewal')).toBeInTheDocument();
   });
 
-  it('preserves the server page order and leaves derived renewal state non-sortable', () => {
+  it('preserves the server page order and offers renewal and key locality sorts', () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({
         certificates: [
@@ -745,7 +748,11 @@ describe('CertOpsCertificates list states', () => {
       first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
     expect(screen.getByLabelText('Sort by Expiry')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Sort by Renewal')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Sort by Renewal')).toBeInTheDocument();
+    expect(screen.getByLabelText('Sort by Key locality')).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText('Sort by Distribution')
+    ).not.toBeInTheDocument();
   });
 
   it('requests ascending and descending server sorts and resets the offset', async () => {
@@ -776,6 +783,28 @@ describe('CertOpsCertificates list states', () => {
           offset: 0,
           sort: 'certificate',
           direction: 'desc',
+        })
+      );
+    });
+
+    fireEvent.click(screen.getByLabelText('Sort by Renewal'));
+    await waitFor(() => {
+      expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          offset: 0,
+          sort: 'renewal',
+          direction: 'asc',
+        })
+      );
+    });
+
+    fireEvent.click(screen.getByLabelText('Sort by Key locality'));
+    await waitFor(() => {
+      expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          offset: 0,
+          sort: 'keyLocality',
+          direction: 'asc',
         })
       );
     });
@@ -1785,6 +1814,15 @@ describe('CertOpsCertificates combined lifecycle filters', () => {
   });
 });
 
+it('hides the deployment column until the workspace has a published version', async () => {
+  useCertOpsCertificatesMock.mockReturnValue(
+    certState({ certificates: [certificate()] })
+  );
+  renderPage();
+  await waitFor(() => expect(distributionGetMock).toHaveBeenCalled());
+  expect(screen.queryByText('Distribution')).not.toBeInTheDocument();
+});
+
 it('opens the same certificate identity from its deployment summary and fetches consumers only on opening', async () => {
   const selected = certificate();
   useCertOpsCertificatesMock.mockReturnValue(
@@ -1808,21 +1846,29 @@ it('opens the same certificate identity from its deployment summary and fetches 
                   summary: { total: 5, verified: 3, pending: 2 },
                 },
               ]
-            : [],
+            : [
+                {
+                  id: 'group-test',
+                  publication_state: 'published',
+                  published_at: '2026-01-01T00:00:00.000Z',
+                },
+              ],
         }
       : { items: [] },
   }));
   renderPage();
-  expect(screen.getAllByText('Deployment').length).toBeGreaterThan(0);
+  expect(
+    (await screen.findAllByText('Distribution')).length
+  ).toBeGreaterThan(0);
   const summary = await screen.findByRole('button', {
-    name: /Open certificate deployments: 3\/5 verified. Partially complete/,
+    name: /Open distribution: 3 of 5 consumers are serving the published version/,
   });
   expect(
     distributionGetMock.mock.calls.some(([url]) => url.endsWith('/consumers'))
   ).toBe(false);
   fireEvent.click(summary);
   expect(
-    await screen.findByRole('heading', { name: 'Deployments' })
+    await screen.findByRole('heading', { name: 'Distribution' })
   ).toBeInTheDocument();
   await waitFor(() =>
     expect(getCertificateIdentityMock).toHaveBeenCalledWith(
@@ -1899,6 +1945,9 @@ it('distinguishes same-name certificates by fingerprint and current observed use
   expect(
     within(rows[0]).getByText('Observed: Windows certificate store')
   ).toBeInTheDocument();
+  expect(within(rows[0]).getByText('IIS')).toBeInTheDocument();
+  expect(within(rows[0]).getByText('OS store')).toBeInTheDocument();
+  expect(within(rows[1]).queryByText('OS store')).not.toBeInTheDocument();
   expect(
     within(rows[0]).queryByText('Observed: IIS · Default Web Site:444')
   ).not.toBeInTheDocument();

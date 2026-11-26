@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -10,6 +11,7 @@ import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import EvidenceTimeline from '../../src/components/certops/EvidenceTimeline.jsx';
+import { setTimelineOrder } from '../../src/components/certops/timelineOrderPreference.js';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 const {
@@ -291,8 +293,9 @@ describe('EvidenceTimeline', () => {
         )
         .map(node => node.textContent);
     const { unmount } = renderWithProviders(<EvidenceTimeline jobId='job-1' />);
-    const selector = screen.getByRole('combobox', { name: 'Timeline order' });
-    expect(selector).toHaveValue('oldest-first');
+    expect(
+      screen.queryByRole('combobox', { name: 'Timeline order' })
+    ).not.toBeInTheDocument();
     expect(visibleOrder()).toEqual([
       'Undated event',
       'First start',
@@ -302,7 +305,7 @@ describe('EvidenceTimeline', () => {
     const initialAttempt = screen.getByText('Attempt 2').closest('div');
     expect(initialAttempt.parentElement).toHaveTextContent('Second start');
 
-    fireEvent.change(selector, { target: { value: 'newest-first' } });
+    act(() => setTimelineOrder('newest-first'));
     expect(visibleOrder()).toEqual([
       'Deployment evidence',
       'Second start',
@@ -330,12 +333,8 @@ describe('EvidenceTimeline', () => {
       error: '',
     });
     renderWithProviders(<EvidenceTimeline jobId='job-2' refreshToken={1} />);
-    const secondSelector = screen.getByRole('combobox', {
-      name: 'Timeline order',
-    });
-    expect(secondSelector).toHaveValue('newest-first');
     expect(visibleOrder()[0]).toBe('Newly received event');
-    fireEvent.change(secondSelector, { target: { value: 'oldest-first' } });
+    act(() => setTimelineOrder('oldest-first'));
     expect(visibleOrder().at(-1)).toBe('Newly received event');
     expect(window.localStorage.getItem('tt_certops_timeline_order')).toBeNull();
   });

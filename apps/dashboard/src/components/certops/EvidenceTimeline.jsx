@@ -6,7 +6,6 @@ import {
   HStack,
   Icon,
   IconButton,
-  Select,
   Spinner,
   Text,
   Tooltip,
@@ -22,7 +21,8 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
-import { useMemo, useSyncExternalStore } from 'react';
+import { useMemo } from 'react';
+import { useTimelineOrder, NEWEST_FIRST } from './timelineOrderPreference.js';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import CopyableId from '../CopyableId.jsx';
 import {
@@ -50,48 +50,6 @@ import { indexAgentsByAnyId } from './certopsAgentLabel.js';
 import { truncationSummary } from './certopsPagination.js';
 
 const REDACTION_TOOLTIP = 'Sensitive values were removed before storage.';
-const ORDER_PREFERENCE_KEY = 'tt_certops_timeline_order';
-const OLDEST_FIRST = 'oldest-first';
-const NEWEST_FIRST = 'newest-first';
-let sessionOrder;
-
-function readTimelineOrder() {
-  if (sessionOrder) return sessionOrder;
-  try {
-    if (window.localStorage.getItem(ORDER_PREFERENCE_KEY) === NEWEST_FIRST) {
-      return NEWEST_FIRST;
-    }
-  } catch {
-    // Storage can be unavailable in private or restricted browsing.
-  }
-  return OLDEST_FIRST;
-}
-
-function subscribeToTimelineOrder(notify) {
-  const onStorage = event => {
-    if (event.key === ORDER_PREFERENCE_KEY || event.key === null) notify();
-  };
-  window.addEventListener('storage', onStorage);
-  window.addEventListener(ORDER_PREFERENCE_KEY, notify);
-  return () => {
-    window.removeEventListener('storage', onStorage);
-    window.removeEventListener(ORDER_PREFERENCE_KEY, notify);
-  };
-}
-
-function setTimelineOrder(order) {
-  try {
-    if (order === NEWEST_FIRST) {
-      window.localStorage.setItem(ORDER_PREFERENCE_KEY, order);
-    } else {
-      window.localStorage.removeItem(ORDER_PREFERENCE_KEY);
-    }
-    sessionOrder = undefined;
-  } catch {
-    sessionOrder = order;
-  }
-  window.dispatchEvent(new Event(ORDER_PREFERENCE_KEY));
-}
 
 /** Marker diameter; spine is centered through this column. */
 const TIMELINE_MARKER = 24;
@@ -357,11 +315,7 @@ export default function EvidenceTimeline({
   const { workspaceId } = useWorkspace();
   const canManage = useCertOpsCanManage();
   const { muted, border, dashboard } = useDashboardTheme();
-  const order = useSyncExternalStore(
-    subscribeToTimelineOrder,
-    readTimelineOrder,
-    () => OLDEST_FIRST
-  );
+  const order = useTimelineOrder();
   const failureBg = dashboard.callout.dangerSurface;
   const failureBorder = dashboard.callout.dangerBorder;
   const waitingBg = dashboard.callout.warningSurface;
@@ -567,22 +521,6 @@ export default function EvidenceTimeline({
       ) : null}
 
       <Divider borderColor={border} opacity={0.85} />
-      {items.length > 0 ? (
-        <HStack as='label' alignSelf='flex-end' spacing={2}>
-          <Text as='span' fontSize='xs' color={muted}>
-            Timeline order
-          </Text>
-          <Select
-            size='sm'
-            w='auto'
-            value={order}
-            onChange={event => setTimelineOrder(event.target.value)}
-          >
-            <option value={OLDEST_FIRST}>Oldest first (default)</option>
-            <option value={NEWEST_FIRST}>Newest first</option>
-          </Select>
-        </HStack>
-      ) : null}
       {timelineBody}
 
       {truncationNotes.length > 0 ? (

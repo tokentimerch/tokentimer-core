@@ -228,8 +228,11 @@ function AgentCompatibilityBadge({ compatibilityState, compatibilityRange }) {
   const minProtocol = range.minProtocolVersion || 'unknown';
   const hasRealMax =
     range.maxAgentVersion && !isUnboundedVersionCeiling(range.maxAgentVersion);
-  let title = 'This agent meets the versions this control plane accepts.';
-  if (key === 'blocked') {
+  // Unknown and any other unrecognized state must not reuse the success sentence.
+  let title = 'Compatibility could not be determined for this agent.';
+  if (key === 'compatible') {
+    title = 'This agent meets the versions this control plane accepts.';
+  } else if (key === 'blocked') {
     title = hasRealMax
       ? `This agent is outside the versions this control plane accepts (agent ${minAgent} to ${range.maxAgentVersion}, protocol ${minProtocol} and above). It cannot claim any job until it is upgraded.`
       : `This agent is below the minimum this control plane accepts (agent ${minAgent}, protocol ${minProtocol}). It cannot claim any job until it is upgraded.`;

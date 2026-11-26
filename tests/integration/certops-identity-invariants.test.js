@@ -2538,6 +2538,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       "source",
       "created",
       "keyLocality",
+      "renewal",
     ])
       for (const direction of ["asc", "desc"]) {
         const all = await listCertificateIdentities({
