@@ -10,6 +10,7 @@ const IMDS = "certops-azure-imds-qualification.yml";
 const IIS_ACCESS = "certops-iis-lab-access.yml";
 const STORE_PREPARE = "certops-adcs-store-noiis-prepare.yml";
 const STORE_PREFLIGHT = "certops-adcs-store-qualification-preflight.yml";
+const STORE_RECEIVER = "certops-adcs-store-private-receiver.yml";
 const PROVISION = Object.freeze([
   KV,
   OPERATOR,
@@ -71,6 +72,7 @@ function allowedCondition(name, value) {
   if (name === IIS_ACCESS) return Object.values(IIS_CONDITIONS).includes(value);
   if (name === STORE_PREPARE) return [STORE_PROVISION_IF, STORE_CLEANUP_IF].includes(value);
   if (name === STORE_PREFLIGHT) return value === STORE_PROVISION_IF;
+  if (name === STORE_RECEIVER) return value === STORE_PROVISION_IF;
   return PROVISION.includes(name)
     ? value === PROVISION_IF
     : LIFECYCLE.includes(name) && value === LIFECYCLE_IF;
@@ -829,6 +831,51 @@ function storePreparePolicy(workflow, errors) {
   }
 }
 
+function storeReceiverPolicy(workflow, errors) {
+  const { receiver } = workflow.jobs || {};
+  const { inputs } = workflow.on?.workflow_dispatch || {};
+  const names = {
+    STORE_REVIEWED_WORKFLOW_SHA: "reviewed_workflow_sha", STORE_PREPARE_WORKFLOW_SHA: "prepare_workflow_sha",
+    STORE_PREPARE_RUN_ID: "prepare_run_id", STORE_PREPARE_ATTEMPT: "prepare_attempt",
+    STORE_REGISTRATION_ARTIFACT_ID: "registration_artifact_id", STORE_PREPARATION_ARTIFACT_ID: "preparation_artifact_id",
+    STORE_MEDIA_SOURCE: "media_source_sha", STORE_MEDIA_RECEIPT_SHA: "media_receipt_sha256",
+  };
+  const env = Object.fromEntries(Object.entries(names).map(([key, name]) => [key, "${{ inputs." + name + " }}"]));
+  for (const key of ["AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"])
+    env[key] = "${{ vars." + key + " }}";
+  env.GH_TOKEN = "${{ github.token }}";
+  if (!same(Object.keys(workflow.on || {}), ["workflow_dispatch"]) ||
+      !same(Object.keys(workflow.jobs || {}), ["receiver"]) ||
+      !same(Object.keys(inputs || {}).sort(), Object.values(names).sort()) ||
+      Object.values(inputs || {}).some(input => input.required !== true || input.type !== "string" || Object.hasOwn(input, "default")) ||
+      !same(workflow.permissions, { contents: "read" }) ||
+      !same(workflow.concurrency, {
+        group: "certops-adcs-store-receiver-${{ inputs.prepare_run_id }}-${{ inputs.prepare_attempt }}", "cancel-in-progress": false,
+      }) ||
+      receiver?.if !== STORE_PROVISION_IF || receiver?.["runs-on"] !== "ubuntu-24.04" ||
+      receiver?.environment !== "certops-adcs-lab" || receiver?.["timeout-minutes"] !== 20 ||
+      !same(receiver?.permissions, { contents: "read", actions: "read", "id-token": "write" }) ||
+      !same(receiver?.env, env) || receiver?.steps?.length !== 4) {
+    errors.push("Private Store receiver requires its exact protected preparation, identity and lease guard");
+    return;
+  }
+  const [checkout, setup, deploy, upload] = receiver.steps;
+  if (!same(Object.keys(checkout).sort(), ["uses", "with"]) ||
+      !/^actions\/checkout@[a-f0-9]{40}$/.test(checkout.uses || "") ||
+      !same(checkout.with, { "persist-credentials": false }) ||
+      !same(Object.keys(setup).sort(), ["uses", "with"]) ||
+      !/^actions\/setup-node@[a-f0-9]{40}$/.test(setup.uses || "") ||
+      !same(setup.with, { "node-version": "24.22.3" }) ||
+      !same(Object.keys(deploy).sort(), ["name", "run", "shell"]) ||
+      deploy.shell !== "pwsh" || deploy.run !== "./infra/certops-adcs/provision-store-media-receiver.ps1" ||
+      !same(Object.keys(upload).sort(), ["if", "name", "uses", "with"]) ||
+      !/^actions\/upload-artifact@[a-f0-9]{40}$/.test(upload.uses || "") ||
+      upload.if !== "always()" || !same(upload.with, {
+        name: "disposable-store-private-receiver-${{ github.run_id }}-${{ github.run_attempt }}",
+        path: "qualification-results/store-private-media-receiver.json", "if-no-files-found": "ignore", "retention-days": 1,
+      })) errors.push("Private Store receiver may only provision the owned receiver and publish the sanitized receipt");
+}
+
 function validate(name, workflow) {
   const errors = [];
   if (name === IIS_ACCESS) {
@@ -837,6 +884,10 @@ function validate(name, workflow) {
   }
   if (name === STORE_PREPARE) {
     storePreparePolicy(workflow, errors);
+    return errors;
+  }
+  if (name === STORE_RECEIVER) {
+    storeReceiverPolicy(workflow, errors);
     return errors;
   }
   if (name === STORE_PREFLIGHT) {
