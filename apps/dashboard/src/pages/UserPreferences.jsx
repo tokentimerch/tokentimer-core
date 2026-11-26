@@ -9,6 +9,7 @@ import {
   Icon,
   Link,
   SimpleGrid,
+  Select,
   Switch,
   Text,
   useColorMode,
@@ -18,6 +19,7 @@ import {
 import {
   FiBookOpen,
   FiChevronRight,
+  FiClock,
   FiMoon,
   FiPlay,
   FiSettings,
@@ -40,6 +42,12 @@ import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { onboardingPath } from '../utils/onboardingPath.js';
 import { resetTourCompleted } from '../utils/tourStorage.js';
 import { SELF_HOSTED_DOCS_BASE } from '../utils/docsUrls';
+import {
+  NEWEST_FIRST,
+  OLDEST_FIRST,
+  setTimelineOrder,
+  useTimelineOrder,
+} from '../components/certops/timelineOrderPreference.js';
 
 function ThemePreviewStrip({ isDarkMode, border, bodySecondary, text }) {
   const shellBg = useColorModeValue('#e2e8f0', '#0f172a');
@@ -295,6 +303,7 @@ export default function UserPreferences({
   }, [isViewer, session?.id, workspaceId]);
 
   const isDarkMode = colorMode === 'dark';
+  const timelineOrder = useTimelineOrder();
 
   return (
     <>
@@ -325,7 +334,7 @@ export default function UserPreferences({
             <DashboardPanel p={{ base: 4, md: 5 }}>
               <PreferencesPanelHeader
                 title='Appearance'
-                description='Control the visual theme used across the app.'
+                description='Control the visual theme and how job timelines are ordered.'
                 bodySecondary={bodySecondary}
               />
               <FormControl display='flex' alignItems='center'>
@@ -367,6 +376,55 @@ export default function UserPreferences({
                     aria-label='Toggle light or dark mode'
                     flexShrink={0}
                   />
+                </HStack>
+              </FormControl>
+              <FormControl mt={4}>
+                <HStack
+                  justify='space-between'
+                  align={{ base: 'stretch', sm: 'center' }}
+                  flexDir={{ base: 'column', sm: 'row' }}
+                  w='full'
+                  spacing={4}
+                >
+                  <HStack spacing={3} minW={0}>
+                    <Circle
+                      size='36px'
+                      bg={appearanceIconBg}
+                      color={appearanceIconColor}
+                      flexShrink={0}
+                    >
+                      <Icon as={FiClock} boxSize={4} aria-hidden />
+                    </Circle>
+                    <Box minW={0}>
+                      <Text
+                        color={text}
+                        fontSize='sm'
+                        fontWeight='semibold'
+                        lineHeight='short'
+                      >
+                        Job timeline
+                      </Text>
+                      <Text
+                        fontSize='sm'
+                        color={bodySecondary}
+                        lineHeight='1.45'
+                      >
+                        Oldest events first, or the latest event at the top.
+                        Saved in this browser.
+                      </Text>
+                    </Box>
+                  </HStack>
+                  <Select
+                    size='sm'
+                    w={{ base: 'full', sm: '210px' }}
+                    flexShrink={0}
+                    aria-label='Timeline order'
+                    value={timelineOrder}
+                    onChange={event => setTimelineOrder(event.target.value)}
+                  >
+                    <option value={OLDEST_FIRST}>Oldest first</option>
+                    <option value={NEWEST_FIRST}>Newest first</option>
+                  </Select>
                 </HStack>
               </FormControl>
               <ThemePreviewStrip

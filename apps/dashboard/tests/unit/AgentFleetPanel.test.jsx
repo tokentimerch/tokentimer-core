@@ -504,6 +504,44 @@ describe('AgentFleetPanel', () => {
     );
   });
 
+  it('does not claim an unknown compatibility state meets the version requirements', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const agents = sampleAgents();
+    agents.push({
+      ...agents[0],
+      id: 'row-unknown',
+      agentId: 'agent-unknown-1',
+      name: 'unreported-agent',
+      compatibilityState: 'unknown',
+    });
+    agents.push({
+      ...agents[0],
+      id: 'row-missing',
+      agentId: 'agent-missing-1',
+      name: 'missing-state-agent',
+      compatibilityState: null,
+    });
+    useCertOpsAgentsMock.mockReturnValue(agentsState({ agents }));
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    const unknownBadges = screen.getAllByText('Unknown');
+    expect(unknownBadges).toHaveLength(2);
+    for (const badge of unknownBadges) {
+      expect(badge).toHaveAttribute(
+        'title',
+        'Compatibility could not be determined for this agent.'
+      );
+      expect(badge.getAttribute('title')).not.toContain(
+        'This agent meets the versions'
+      );
+    }
+    expect(screen.getByText('Compatible')).toHaveAttribute(
+      'title',
+      'This agent meets the versions this control plane accepts.'
+    );
+  });
+
   it('renders NTP sync state and pinned signing key columns', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsAgentsMock.mockReturnValue(

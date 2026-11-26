@@ -34,6 +34,7 @@ import {
   listIssuers,
 } from './certopsEnrollmentsApi';
 import LearnMorePanel from '../LearnMorePanel.jsx';
+import { Callout } from '../onboarding/panels.jsx';
 import { getJob } from './certopsJobsApi.js';
 import { failedPreflightMessage } from './adcsPreflightJob.js';
 import { ADCS_DOCS } from '../../utils/docsUrls.js';
@@ -546,20 +547,21 @@ export default function AdcsIssuerWizard({
                     enrollment can proceed.
                   </Text>
                 ) : (
-                  <Stack spacing={2} fontSize='sm'>
-                    <Text fontWeight='semibold'>Next steps</Text>
-                    <Text>
-                      Choose Check again on the issuer to run a fresh CA check
-                      after pinning the certificate.
-                    </Text>
-                    <Text>
-                      In Renewal profiles, choose New AD CS profile and attach
-                      it to a certificate already in inventory. Enrollment runs
-                      when the certificate reaches the profile lead time and an
-                      online agent that declares its DNS name has passed the
-                      post-pin CA check.
-                    </Text>
-                  </Stack>
+                  <Callout title='Next steps'>
+                    <Stack spacing={2}>
+                      <Text>
+                        Choose Check again on the issuer to run a fresh CA check
+                        after pinning the certificate.
+                      </Text>
+                      <Text>
+                        In Renewal profiles, choose New AD CS profile and attach
+                        it to a certificate already in inventory. Enrollment runs
+                        when the certificate reaches the profile lead time and an
+                        online agent that declares its DNS name has passed the
+                        post-pin CA check.
+                      </Text>
+                    </Stack>
+                  </Callout>
                 )}
               </Stack>
             ) : null}

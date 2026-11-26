@@ -24,8 +24,23 @@ export function CertOpsSortableHeader({
   sort,
   onSort,
   compact = false,
+  hint,
 }) {
   const isActive = sort?.key === sortKey;
+  const labelNode = hint ? (
+    <Tooltip label={hint} hasArrow placement='top' openDelay={250}>
+      <Text
+        as='span'
+        borderBottomWidth='1px'
+        borderBottomStyle='dotted'
+        borderColor='currentColor'
+      >
+        {label}
+      </Text>
+    </Tooltip>
+  ) : (
+    label
+  );
   return (
     <Th
       aria-sort={
@@ -44,7 +59,7 @@ export function CertOpsSortableHeader({
         onClick={() => onSort(sortKey)}
         aria-label={`Sort by ${label}`}
       >
-        {label}
+        {labelNode}
         <Text
           as='span'
           minW={compact ? '0' : '30px'}

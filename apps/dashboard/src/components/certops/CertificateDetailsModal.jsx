@@ -52,7 +52,7 @@ import CertificateDeployments from './CertificateDeployments.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
 import CertificateTimeline from './CertificateTimeline.jsx';
 import CertificateObservationHistory from './CertificateObservationHistory.jsx';
-import KeyLocalityList from './KeyLocalityList.jsx';
+import KeyLocalityPlaces from './KeyLocalityPlaces.jsx';
 import RenewalBadge from './RenewalBadge.jsx';
 import RenewalScheduleFacts from './RenewalScheduleFacts.jsx';
 import RenewalPathBadge from './RenewalPathBadge.jsx';
@@ -61,7 +61,7 @@ import {
   expiryDescriptor,
   AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
   formatDate,
-  privateKeySummary,
+  keyLocalityPlaces,
   renewalDescriptor,
   sourceLabel,
 } from './certopsFormat.js';
@@ -330,10 +330,12 @@ export default function CertificateDetailsModal({
     certificate?.renewal?.renewBeforeDays,
     certificate?.renewal?.renewsFrom
   );
-  const hasKeyLocality = hasAnyValue(
-    certificate?.keyMode,
-    certificate?.keyReference
-  );
+  const keyPlaces = keyLocalityPlaces({
+    keyMode: certificate?.keyMode,
+    keyReference: certificate?.keyReference,
+    locations: instances,
+  });
+  const hasKeyLocality = keyPlaces.length > 0;
   const hasCertificateDetails = hasAnyValue(
     domains,
     certificateIssuer,
@@ -409,11 +411,8 @@ export default function CertificateDetailsModal({
       : null,
     hasKeyLocality
       ? {
-          label: 'Private key',
-          value: privateKeySummary(
-            certificate?.keyMode,
-            certificate?.keyReference
-          ),
+          label: 'Key locality',
+          value: keyPlaces.join(', '),
         }
       : null,
   ].filter(Boolean);
@@ -930,10 +929,11 @@ export default function CertificateDetailsModal({
                 }
               >
                 {hasKeyLocality ? (
-                  <DetailRow label='Private key'>
-                    <KeyLocalityList
+                  <DetailRow label='Key locality'>
+                    <KeyLocalityPlaces
                       keyMode={certificate.keyMode}
                       keyReference={certificate.keyReference}
+                      locations={instances}
                     />
                   </DetailRow>
                 ) : null}

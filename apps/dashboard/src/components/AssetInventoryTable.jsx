@@ -49,8 +49,6 @@ import {
   ObservedRevocationBadge,
   hasObservedRevocationContext,
 } from './certops/CertOpsBadge.jsx';
-import DeploymentBadge from './certops/DeploymentBadge.jsx';
-import useDistributionSummaries from './certops/useDistributionSummaries.js';
 import { domainValueToUrl } from '../utils/domains.jsx';
 import { formatDate } from '../utils/apiClient';
 import { formatExpirationDate } from '../utils/dateUtils';
@@ -164,7 +162,7 @@ const COLUMN_META = {
   vendor: { label: 'Vendor', minW: '120px', sortable: true },
   license_type: { label: 'License Type', minW: '130px', sortable: true },
   expiresAt: { label: 'Expiration', minW: '130px', sortable: true },
-  status: { label: 'Status', minW: '148px', sortable: true },
+  status: { label: 'Status', minW: '110px', sortable: true },
   actions: { label: 'Actions', minW: '116px', sortable: false, align: 'right' },
 };
 
@@ -515,8 +513,12 @@ function AssetStatusPills({ token, getStatusMeta }) {
       : expiry;
   const managed = token.__managedCert;
   const lifecycle = certificateLifecycleDescriptor(managed);
+  const lifecycleKey = String(lifecycle.status || '').toLowerCase();
   const showLifecycle =
-    lifecycle.status && String(lifecycle.status).toLowerCase() !== expiry.key;
+    lifecycleKey &&
+    lifecycleKey !== 'active' &&
+    lifecycleKey !== 'expiring' &&
+    lifecycleKey !== expiry.key;
   const isLight = colorMode === 'light';
 
   return (
@@ -549,11 +551,10 @@ function AssetStatusPills({ token, getStatusMeta }) {
   );
 }
 
-function StatusBadge({ token, getStatusMeta, onOpenTokenModal }) {
+function StatusBadge({ token, getStatusMeta }) {
   return (
     <HStack spacing={2} flexWrap='wrap' align='center' whiteSpace='normal'>
       <AssetStatusPills token={token} getStatusMeta={getStatusMeta} />
-      <AssetDeploymentIndicator token={token} onOpen={onOpenTokenModal} />
       {token.monitor_health_status && (
         <Tooltip
           label={`${token.monitor_url || 'Endpoint'}: ${token.monitor_health_status}${
@@ -645,24 +646,6 @@ function LocationCell({ token, getTokenLocation, mutedTextColor }) {
   }
 
   return <TruncatedText text={location} maxLines={2} maxWidth='180px' />;
-}
-
-function AssetDeploymentIndicator({ token, onOpen }) {
-  if (!token.__linkedCertificateCount) return null;
-  return (
-    <DeploymentBadge
-      attentionOnly
-      summary={token.__deploymentSummary}
-      loading={token.__deploymentLoading}
-      error={token.__deploymentError}
-      certificateCount={
-        token.__linkedCertificateCount > 1
-          ? token.__distributedCertificateCount
-          : undefined
-      }
-      onClick={() => onOpen?.({ ...token, __focusDeployments: true })}
-    />
-  );
 }
 
 function NameCell({ token, mode, getCategoryVisual, mutedTextColor }) {
@@ -901,13 +884,7 @@ function renderDataCell({ column, token, mode, helpers }) {
     case 'expiresAt':
       return formatExpirationDate(token.expiresAt);
     case 'status':
-      return (
-        <StatusBadge
-          token={token}
-          getStatusMeta={getStatusMeta}
-          onOpenTokenModal={helpers.onOpenTokenModal}
-        />
-      );
+      return <StatusBadge token={token} getStatusMeta={getStatusMeta} />;
     case 'actions':
       return (
         <InventoryRowActions
@@ -1056,10 +1033,6 @@ function AssetInventoryMobileCard({
                     token={token}
                     getStatusMeta={helpers.getStatusMeta}
                   />
-                  <AssetDeploymentIndicator
-                    token={token}
-                    onOpen={helpers.onOpenTokenModal}
-                  />
                 </HStack>
               </Box>
             </Box>
@@ -1150,7 +1123,6 @@ function AssetInventoryMobileCard({
  */
 export default function AssetInventoryTable({
   tokens: inputTokens = [],
-  workspaceId,
   selectedCategories,
   inventoryMode: inventoryModeProp,
   sort,
@@ -1188,33 +1160,7 @@ export default function AssetInventoryTable({
   fetchTokensForCategory,
   categoryLoading = {},
 }) {
-  const certificateLinks = inputTokens
-    .filter(t => t.category === 'cert')
-    .flatMap(
-      t => t.__managedCertificates || (t.__managedCert ? [t.__managedCert] : [])
-    )
-    .map(certificate => ({ id: certificate.id }));
-  const deployments = useDistributionSummaries(workspaceId, certificateLinks);
-  const tokens = inputTokens.map(token => {
-    if (token.category !== 'cert') return token;
-    const linked =
-      token.__managedCertificates ||
-      (token.__managedCert ? [token.__managedCert] : []);
-    if (!linked.length) return token;
-    const summaries = linked.map(c =>
-      deployments.getSummary({ id: c.id, expectedIdentityId: c.identityId })
-    );
-    return {
-      ...token,
-      __linkedCertificateCount: linked.length,
-      __deploymentSummary: linked.length === 1 ? summaries[0] : null,
-      __distributedCertificateCount: summaries.filter(
-        summary => summary && summary.status !== 'not_distributed'
-      ).length,
-      __deploymentLoading: deployments.loading,
-      __deploymentError: deployments.error,
-    };
-  });
+  const tokens = inputTokens;
   const { colorMode } = useColorMode();
   const resolveVisual = useCallback(
     category => resolveCategoryVisual(category, colorMode === 'light'),

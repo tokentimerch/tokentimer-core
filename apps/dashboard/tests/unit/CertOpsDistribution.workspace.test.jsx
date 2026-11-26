@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, within, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import {
   MemoryRouter,
@@ -239,6 +239,28 @@ describe('Distribution links retain explicit workspace across saved selections a
       '?workspace=alpha#distribution-consumers'
     );
   });
+  it('names a distribution source by certificate, store and agent', async () => {
+    api.groups.mockResolvedValue({
+      groups: [
+        {
+          id: 'group-alpha',
+          state: 'active',
+          certificate_name: 'api.example.com',
+          material_store_ref: 'edge-store',
+          material_store_provider: 'vault-kv2',
+          agent_names: 'edge-lb-01',
+        },
+      ],
+    });
+    const page = within(tab('alpha').container);
+    const source = await page.findByLabelText('Distribution source');
+    expect(source).toHaveTextContent('api.example.com');
+    expect(source).toHaveTextContent('edge-store');
+    expect(source).toHaveTextContent('Vault KV');
+    expect(source).toHaveTextContent('edge-lb-01');
+    expect(source).not.toHaveTextContent('group-alpha');
+    expect(page.getByText('Source ID group-alpha')).toBeInTheDocument();
+  });
   it('keeps the selected view and workspace when changing source', async () => {
     api.groups.mockResolvedValue({
       groups: [
@@ -252,9 +274,8 @@ describe('Distribution links retain explicit workspace across saved selections a
       'aria-selected',
       'true'
     );
-    fireEvent.change(page.getByLabelText('Distribution source'), {
-      target: { value: 'second' },
-    });
+    fireEvent.click(page.getByLabelText('Distribution source'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'second' }));
     await waitFor(() =>
       expect(page.getByTestId('location')).toHaveTextContent(
         '/certops/distribution?workspace=alpha&group=second#distribution-incidents'

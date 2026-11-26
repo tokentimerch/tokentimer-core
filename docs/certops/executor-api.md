@@ -324,8 +324,8 @@ permanently redirects there) - Executor jobs panel + evidence timeline - for
 workspace managers/admins, with status badges, redaction markers, and audit
 links where available. See
 `apps/dashboard/src/components/certops/{JobStatusBadge,EvidenceTimeline,CertificateTimeline}.jsx`.
-Use **Timeline order** in an open job to switch between **Oldest first (default)**
-and **Newest first**. The browser remembers the choice across jobs and reloads.
+Use **Timeline order** under Preferences, Appearance, to switch between **Oldest first**
+and **Newest first**. The browser remembers the choice. It is not stored on the server.
 The jobs list and **Agent output** keep their own order.
 A job sitting at `pending_approval` shows inline **Approve**/**Reject**
 buttons on its row (manager/admin only, via `ApprovalDecisionModal.jsx` inside

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import AssetInventoryTable from '../../src/components/AssetInventoryTable.jsx';
 
@@ -106,23 +106,12 @@ describe('ambiguous certificate inventory actions', () => {
   );
 });
 
-it('adds a compact deployment indicator only for an authoritatively linked certificate token', async () => {
-  distributionGet.mockResolvedValue({
-    data: {
-      groups: [
-        {
-          id: 'group',
-          managed_certificate_id: 'managed-a',
-          current_identity_id: 'identity-shared',
-          summary: { total: 5, verified: 3, pending: 2 },
-        },
-      ],
-    },
-  });
+it('keeps rollout markers off the asset inventory', () => {
   const managed = {
     id: 'managed-a',
     identityId: 'identity-shared',
     status: 'active',
+    lifecycleStatus: 'active',
   };
   const asset = {
     id: 7,
@@ -132,29 +121,13 @@ it('adds a compact deployment indicator only for an authoritatively linked certi
     expiresAt: '2027-01-01',
     __managedCert: managed,
   };
-  const handlers = show(asset, 'workspace-a');
-  await waitFor(() =>
-    expect(screen.getAllByText('3 of 5 live').length).toBeGreaterThan(0)
-  );
+  show(asset, 'workspace-a');
+  expect(screen.queryByText('Active')).not.toBeInTheDocument();
+  expect(screen.queryByText('3 of 5 live')).not.toBeInTheDocument();
   expect(
-    screen.queryByRole('columnheader', { name: 'Deployment' })
+    screen.queryByRole('button', { name: /Open certificate deployments/ })
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Details' }));
-  expect(handlers.onOpenTokenModal).toHaveBeenCalledWith(
-    expect.objectContaining({ id: 7, __managedCert: managed })
-  );
-  const deployment = screen.getAllByRole('button', {
-    name: /Open certificate deployments: 3 of 5 live/,
-  })[0];
-  fireEvent.click(deployment);
-  expect(handlers.onOpenTokenModal).toHaveBeenLastCalledWith(
-    expect.objectContaining({ id: 7, __focusDeployments: true })
-  );
-  expect(distributionGet).toHaveBeenCalledTimes(1);
-  expect(distributionGet.mock.calls[0][1].params).toMatchObject({
-    managedCertificateIds: 'managed-a',
-    identityIds: undefined,
-  });
+  expect(distributionGet).not.toHaveBeenCalled();
 });
 
 it('does not fetch or display deployment for unrelated assets with the same domain', () => {

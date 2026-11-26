@@ -876,19 +876,89 @@ export function keyModeLabel(keyMode) {
   return KEY_MODE_LABELS[keyMode] || keyMode;
 }
 
+const KEY_MODE_PLACE = {
+  'agent-local': 'Local agent',
+  'proxy-agent-local': 'Local agent',
+  'os-store-managed': 'OS store',
+  'vault-managed': 'Vault',
+  'hsm-managed': 'HSM',
+  'cert-manager-managed': 'cert-manager',
+  'appliance-managed': 'Appliance',
+};
+
+const KEY_LOCALITY_PLACE_ORDER = [
+  'Local agent',
+  'Filesystem',
+  'OS store',
+  'IIS',
+  'HTTP.sys',
+  'Vault',
+  'HSM',
+  'cert-manager',
+  'Appliance',
+];
+
+function locationIsCurrent(location) {
+  if (!location || typeof location !== 'object' || location.historical)
+    return false;
+  return (
+    !location.presenceState || location.presenceState === 'confirmed_present'
+  );
+}
+
+function placeForLocation(location, keyMode) {
+  const kind = String(
+    location.locationKind || location.target?.locationKind || ''
+  ).toLowerCase();
+  if (kind === 'windows_store') return 'OS store';
+  if (kind === 'iis_binding') return 'IIS';
+  if (kind === 'http_sys') return 'HTTP.sys';
+  if (kind === 'filesystem') {
+    const source = String(location.source || '').toLowerCase();
+    if (
+      source.startsWith('agent') ||
+      keyMode === 'agent-local' ||
+      keyMode === 'proxy-agent-local'
+    ) {
+      return 'Local agent';
+    }
+    return 'Filesystem';
+  }
+  return null;
+}
+
+function isHumanPlaceLabel(label) {
+  const text = String(label || '').trim();
+  if (!text || text.length > 48) return false;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(text) || text.includes('://')) return false;
+  return true;
+}
+
 /**
- * One line for certificate details. Several places stay in the detail list.
+ * Short places where a private key is recorded. Custody mode and current
+ * observations combine, so one certificate can list several places.
  */
-export function privateKeySummary(keyMode, keyReference) {
-  const mode = keyMode ? keyModeLabel(keyMode) : '';
-  const { locations } = parseStoredKeyReference(keyReference);
-  if (!mode && locations.length === 0) return 'Not recorded';
-  if (locations.length === 0) return mode;
-  if (locations.length === 1)
-    return mode ? `${mode}, ${locations[0]}` : locations[0];
-  return mode
-    ? `${mode}, ${locations.length} places`
-    : `${locations.length} places`;
+export function keyLocalityPlaces({
+  keyMode,
+  keyReference,
+  locations,
+} = {}) {
+  const found = new Set();
+  const modePlace = KEY_MODE_PLACE[keyMode];
+  if (modePlace) found.add(modePlace);
+  for (const location of Array.isArray(locations) ? locations : []) {
+    if (!locationIsCurrent(location)) continue;
+    const place = placeForLocation(location, keyMode);
+    if (place) found.add(place);
+  }
+  for (const label of parseStoredKeyReference(keyReference).locations) {
+    if (isHumanPlaceLabel(label)) found.add(label);
+  }
+  const ordered = KEY_LOCALITY_PLACE_ORDER.filter(place => found.has(place));
+  const extra = [...found].filter(
+    place => !KEY_LOCALITY_PLACE_ORDER.includes(place)
+  );
+  return [...ordered, ...extra];
 }
 
 /** Sentinel value for the import form "Custom..." key locality option. */

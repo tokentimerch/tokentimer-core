@@ -249,7 +249,7 @@ it('handles absent distribution, missing consumers, failures and retry', async (
   get.mockRejectedValueOnce(new Error('offline'));
   fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(
-    'Deployment information unavailable'
+    'Distribution information unavailable'
   );
   mockData([]);
   fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
@@ -493,7 +493,7 @@ it('explains a GET-only Refresh status next to the heading and keeps existing de
   });
   expect(
     screen
-      .getByRole('heading', { name: 'Deployments' })
+      .getByRole('heading', { name: 'Distribution' })
       .closest('[data-compact-section-heading]')
   ).toContainElement(refresh);
   fireEvent.focus(refresh);

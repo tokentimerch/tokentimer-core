@@ -8,19 +8,49 @@ const view = props => (
   </ChakraProvider>
 );
 it.each([
-  ['verified', 3, '3 live', 'Verified and current'],
-  ['partial', 2, '2 of 3 live', 'Partially complete'],
-  ['failed', 0, 'Failed', 'Deployment failed'],
-  ['uncertain', 0, 'Uncertain', 'Deployment outcome uncertain'],
-  ['stale', 0, 'Outdated', 'Verification outdated'],
-  ['pending', 0, '3 pending', 'Pending verification'],
+  [
+    'verified',
+    3,
+    '3 live',
+    '3 of 3 consumers are serving the published version.',
+  ],
+  [
+    'partial',
+    2,
+    '2 of 3 live',
+    '2 of 3 consumers are serving the published version.',
+  ],
+  [
+    'failed',
+    0,
+    'Failed',
+    'The published version failed on these consumers.',
+  ],
+  [
+    'uncertain',
+    0,
+    'Uncertain',
+    'TokenTimer could not confirm whether these consumers are serving the published version.',
+  ],
+  [
+    'stale',
+    0,
+    'Outdated',
+    'Verification is out of date for these consumers.',
+  ],
+  [
+    'pending',
+    0,
+    '3 pending',
+    '3 of 3 consumers have not finished installing the published version.',
+  ],
 ])(
   'keeps %s compact and its full state accessible',
   (status, verified, label, description) => {
     const onClick = vi.fn();
     render(view({ summary: { total: 3, verified, status }, onClick }));
     const button = screen.getByRole('button', {
-      name: `Open certificate deployments: ${label}. ${verified}/3 verified. ${description}`,
+      name: `Open distribution: ${description}`,
     });
     expect(button).toHaveTextContent(label);
     expect(button).not.toHaveTextContent(description);
@@ -58,7 +88,9 @@ it('preserves the same indicator and dimensions throughout background refresh an
   rerender(view({ summary, error: 'offline', onClick }));
   expect(screen.getByRole('button')).toBe(node);
   expect(node).toHaveTextContent('Needs refresh');
-  expect(node).toHaveAccessibleName(/Last known.*Refresh unavailable/);
+  expect(node).toHaveAccessibleName(
+    /Last known: 3 of 5 consumers are serving the published version/
+  );
   expect(window.getComputedStyle(node).height).toBe(size);
 });
 it('stays blank while deployment status is loading and names a failed refresh', () => {
@@ -68,13 +100,13 @@ it('stays blank while deployment status is loading and names a failed refresh', 
   const node = screen.getByRole('button');
   expect(node).toHaveTextContent('Unavailable');
   expect(node).toHaveStyle({ height: '20px' });
-  expect(node).toHaveAccessibleName(/Deployment status unavailable/);
+  expect(node).toHaveAccessibleName(/Distribution status is unavailable/);
 });
 it('shows an explicit choice for multiple linked certificates', () => {
   render(view({ certificateCount: 2, onClick: vi.fn() }));
   expect(
     screen.getByRole('button', {
-      name: /2 distributed certificates. Select a certificate/,
+      name: /2 certificates are linked. Select one to see its distribution/,
     })
   ).toHaveTextContent('2 certs');
 });
@@ -87,6 +119,6 @@ it('does not advertise current verification when an older server snapshot expire
   );
   expect(screen.getByRole('button')).toHaveTextContent('Needs refresh');
   expect(screen.getByRole('button')).toHaveAccessibleName(
-    /Verification needs refresh/
+    /Distribution status needs a refresh/
   );
 });
