@@ -3056,6 +3056,7 @@ function Management({
 }
 
 export default function CertOpsDistribution() {
+  const { dashboard } = useDashboardTheme();
   const { workspaceId } = useWorkspace(),
     canManage = useCertOpsCanManage(),
     canAdmin = useCertOpsIsWorkspaceAdmin(),

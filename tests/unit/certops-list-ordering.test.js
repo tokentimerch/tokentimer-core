@@ -175,6 +175,7 @@ describe("CertOps paginated list ordering", () => {
       offset: 0,
     });
     const renewalSql = db.queries.find((sql) => sql.includes("ORDER BY"));
+    assert.match(renewalSql, /key_mode IS NULL/);
     assert.match(renewalSql, /ELSE 0 END ASC NULLS LAST/);
     assert.match(renewalSql, /automation_enabled IS TRUE/);
 

@@ -374,6 +374,7 @@ async function listCertificateIdentities({
           OR not_after IS NULL
           OR display_status IN ('revoked', 'decommissioned', 'provisioning')
           OR managed_status IN ('revoked', 'decommissioned')
+          OR key_mode IS NULL
           OR key_mode NOT IN ('agent-local', 'proxy-agent-local', 'os-store-managed', 'vault-managed')
           THEN 1
         WHEN EXISTS (
