@@ -9,6 +9,7 @@ const OPERATOR = "certops-azure-operator-qualification.yml";
 const IMDS = "certops-azure-imds-qualification.yml";
 const IIS_ACCESS = "certops-iis-lab-access.yml";
 const STORE_PREPARE = "certops-adcs-store-noiis-prepare.yml";
+const STORE_PREFLIGHT = "certops-adcs-store-qualification-preflight.yml";
 const PROVISION = Object.freeze([
   KV,
   OPERATOR,
@@ -69,6 +70,7 @@ function allowedCondition(name, value) {
   if (name === IMDS) return value === IMDS_IF;
   if (name === IIS_ACCESS) return Object.values(IIS_CONDITIONS).includes(value);
   if (name === STORE_PREPARE) return [STORE_PROVISION_IF, STORE_CLEANUP_IF].includes(value);
+  if (name === STORE_PREFLIGHT) return value === STORE_PROVISION_IF;
   return PROVISION.includes(name)
     ? value === PROVISION_IF
     : LIFECYCLE.includes(name) && value === LIFECYCLE_IF;
@@ -833,6 +835,15 @@ function validate(name, workflow) {
   if (name === STORE_PREPARE) {
     storePreparePolicy(workflow, errors);
     return errors;
+  }
+  if (name === STORE_PREFLIGHT) {
+    const verify = workflow.jobs?.verify;
+    if (!same(Object.keys(workflow.on || {}), ["workflow_dispatch"]) ||
+        !same(Object.keys(workflow.jobs || {}), ["verify"]) ||
+        !same(workflow.permissions, { contents: "read" }) ||
+        !same(verify?.permissions, { contents: "read", actions: "read" }) ||
+        verify?.environment !== "certops-adcs-lab" || verify?.if !== STORE_PROVISION_IF)
+      errors.push("Store preparation preflight must be read-only and require its protected main dispatch");
   }
   const known = PROVISION.includes(name) || LIFECYCLE.includes(name);
   const runs = Object.values(workflow.jobs || {}).flatMap((job) =>
