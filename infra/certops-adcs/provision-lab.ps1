@@ -100,7 +100,6 @@ function New-TemplateStageScript([string]$TemplatePath, [string]$DescriptorPath,
   [IO.File]::WriteAllText($Destination,$source,[Text.UTF8Encoding]::new($false))
 }
 function Get-StoreBoundedStageTimeout([int]$TimeoutSeconds) {
-  if($StoreRecoveryInfrastructure -eq '0'){return $TimeoutSeconds}
   $expiry = [DateTimeOffset]::Parse($storeRegistration.expiresAt,[Globalization.CultureInfo]::InvariantCulture)
   $remaining = [Math]::Floor(($expiry - [DateTimeOffset]::UtcNow).TotalSeconds)
   if($remaining -lt 1){throw 'The Store recovery preparation lease expired'}
@@ -108,7 +107,7 @@ function Get-StoreBoundedStageTimeout([int]$TimeoutSeconds) {
 }
 function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [string[]]$Parameters = @()) {
   $stageTimeout=if([IO.Path]::GetFileName($Script) -ceq 'domain-ca.ps1'){900}else{3600}
-  $stageTimeout=Get-StoreBoundedStageTimeout $stageTimeout
+  if($StoreRecoveryInfrastructure -eq '1'){$stageTimeout=Get-StoreBoundedStageTimeout $stageTimeout}
   if($Marker -eq 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' -and $Shard -eq 'all'){
     . (Join-Path $PSScriptRoot 'managed-campaign.ps1')
     $response=Invoke-CertOpsManagedCampaign -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Location $Location -Script ([IO.File]::ReadAllText($Script)) -Parameters $Parameters -RefreshAuthentication ${function:Refresh-LabAuthentication}
@@ -189,7 +188,8 @@ function Wait-LabDeployment {
 }
 function Start-ControlPlane() {
   Refresh-LabAuthentication
-  $timeout=Get-StoreBoundedStageTimeout 3600
+  $timeout=3600
+  if($StoreRecoveryInfrastructure -eq '1'){$timeout=Get-StoreBoundedStageTimeout $timeout}
   $response=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine control-plane -Script ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'control-plane.sh'))) -Parameters @("candidate=$candidateSha","journal_phase=$JournalPhaseExperiment","adcs_ttl24h=$AdcsTtl24hPrepare") -TimeoutSeconds $timeout -RefreshAuthentication ${function:Refresh-LabAuthentication}
   $message = ($response.value | ForEach-Object message) -join "`n"
   if (-not $message.Contains('CERTOPS_STAGE=private-https-control-plane-running')) { throw 'Private HTTPS control plane receipt absent' }
