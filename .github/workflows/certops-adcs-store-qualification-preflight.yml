@@ -1,0 +1,68 @@
+name: "CertOps / Verify prepared Store qualification inputs"
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_workflow_sha:
+        description: Exact reviewed Core main commit containing this workflow
+        type: string
+        required: true
+      prepare_workflow_sha:
+        description: Exact reviewed Core main commit that prepared the lab
+        type: string
+        required: true
+      prepare_run_id:
+        description: Successful protected no-IIS preparation run ID
+        type: string
+        required: true
+      prepare_attempt:
+        description: Exact successful preparation attempt
+        type: string
+        required: true
+      registration_artifact_id:
+        description: Independent registration artifact ID for that attempt
+        type: string
+        required: true
+      preparation_artifact_id:
+        description: No-IIS readiness artifact ID for that attempt
+        type: string
+        required: true
+      media_source_sha:
+        description: Reviewed signed Store media source commit
+        type: string
+        required: true
+      media_receipt_sha256:
+        description: Custodian-approved sealed media receipt SHA-256
+        type: string
+        required: true
+permissions: {}
+concurrency:
+  group: certops-adcs-store-preflight-${{ inputs.prepare_run_id }}-${{ inputs.prepare_attempt }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.repository == 'tokentimerch/tokentimer-core' && github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    environment: certops-adcs-lab
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STORE_REVIEWED_WORKFLOW_SHA: ${{ inputs.reviewed_workflow_sha }}
+      STORE_PREPARE_WORKFLOW_SHA: ${{ inputs.prepare_workflow_sha }}
+      STORE_PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+      STORE_PREPARE_ATTEMPT: ${{ inputs.prepare_attempt }}
+      STORE_REGISTRATION_ARTIFACT_ID: ${{ inputs.registration_artifact_id }}
+      STORE_PREPARATION_ARTIFACT_ID: ${{ inputs.preparation_artifact_id }}
+      STORE_MEDIA_SOURCE: ${{ inputs.media_source_sha }}
+      STORE_MEDIA_RECEIPT_SHA: ${{ inputs.media_receipt_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.22.3'
+      - name: Verify the protected preparation artifacts and original lab lease
+        run: node infra/certops-adcs/store-noiis-qualification-inputs.cjs
