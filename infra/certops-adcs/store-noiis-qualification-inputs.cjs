@@ -130,7 +130,23 @@ function verifyReceipts(registration, readiness, context, now) {
   assert.ok(created <= observed && observed <= now && now < expires, "Original lab lease is unavailable");
   const prepared = parse(readiness.get("store-noiis-infrastructure.json"));
   assert.equal(prepared.scope, "store-noiis-infrastructure-preparation");
-  assert.equal(prepared.status, "store-noiis-infrastructure-prepared");
+  const recoveryInfra = prepared.status === "store-noiis-recovery-infrastructure-prepared";
+  if (recoveryInfra) {
+    assert.match(prepared.controllerTlsCertificateSha256, DIGEST);
+    assert.deepEqual(prepared.stages, [
+      "CERTOPS_STAGE=protected-store-registration-and-expiry-read-back",
+      "CERTOPS_STAGE=forest-created-reboot-required",
+      "CERTOPS_STAGE=enterprise-ca-service-running",
+      "CERTOPS_STAGE=member-joined-reboot-required",
+      "CERTOPS_STAGE=store-noiis-clean-member-ready",
+      "CERTOPS_STAGE=isolated-template-matrix-published",
+      "CERTOPS_STAGE=private-https-control-plane-running",
+      "CERTOPS_STAGE=store-noiis-clean-member-ready",
+    ]);
+  } else {
+    assert.equal(prepared.status, "store-noiis-infrastructure-prepared");
+    assert.equal(prepared.controllerTlsCertificateSha256, undefined);
+  }
   assert.equal(prepared.resourceGroup, resourceGroup);
   assert.equal(prepared.registrationSha256, registrationDigest);
   assert.equal(prepared.memberReadinessSha256, hash(memberBytes));
@@ -164,6 +180,7 @@ function verifyReceipts(registration, readiness, context, now) {
     prepareWorkflowSha: context.prepareSha,
     mediaSource: context.mediaSource,
     custodyDigest: context.custodyDigest,
+    ...(recoveryInfra && { controllerTlsCertificateSha256: prepared.controllerTlsCertificateSha256 }),
   };
 }
 

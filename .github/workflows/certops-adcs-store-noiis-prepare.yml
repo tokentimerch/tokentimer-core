@@ -22,6 +22,11 @@ on:
         description: Azure location for the approved isolated campaign
         type: string
         required: true
+      prepare_recovery_infrastructure:
+        description: Also prepare the isolated CA templates and private test API without installing the agent
+        type: boolean
+        required: false
+        default: false
 concurrency:
   group: certops-adcs-store-prepare-${{ github.run_id }}-${{ github.run_attempt }}
   cancel-in-progress: false
@@ -117,6 +122,7 @@ jobs:
       STORE_LOCATION: ${{ inputs.location }}
       STORE_REGISTRATION_RECEIPT: ${{ needs.verify.outputs.receipt }}
       STORE_REGISTRATION_SHA256: ${{ needs.verify.outputs.receipt_sha256 }}
+      STORE_RECOVERY_INFRASTRUCTURE: ${{ inputs.prepare_recovery_infrastructure && '1' || '0' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -130,7 +136,7 @@ jobs:
           $path = Join-Path $env:RUNNER_TEMP 'store-registration.json'
           try {
             [IO.File]::WriteAllText($path,$env:STORE_REGISTRATION_RECEIPT,[Text.UTF8Encoding]::new($false))
-            ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:STORE_GROUP -Hours 4 -WindowsVersion 2022 -Language en-US -Location $env:STORE_LOCATION -StoreNoIisPrepare 1 -StoreRegistrationReceipt $path -StoreRegistrationSha256 $env:STORE_REGISTRATION_SHA256
+            ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:STORE_GROUP -Hours 4 -WindowsVersion 2022 -Language en-US -Location $env:STORE_LOCATION -StoreNoIisPrepare 1 -StoreRegistrationReceipt $path -StoreRegistrationSha256 $env:STORE_REGISTRATION_SHA256 -StoreRecoveryInfrastructure $env:STORE_RECOVERY_INFRASTRUCTURE
           } finally {
             Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
           }

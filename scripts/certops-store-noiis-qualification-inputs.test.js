@@ -191,3 +191,27 @@ test("joined receipts bind a live four-hour lease, clean member, approved media 
   otherReadiness.set("other-file.json", Buffer.from("{}"));
   assert.throws(() => verifyReceipts(otherRegistration, otherReadiness, context, now));
 });
+
+test("optional recovery readiness binds the private TLS fingerprint and final clean-member observation", () => {
+  const steps = [
+    "CERTOPS_STAGE=protected-store-registration-and-expiry-read-back",
+    "CERTOPS_STAGE=forest-created-reboot-required",
+    "CERTOPS_STAGE=enterprise-ca-service-running",
+    "CERTOPS_STAGE=member-joined-reboot-required",
+    "CERTOPS_STAGE=store-noiis-clean-member-ready",
+    "CERTOPS_STAGE=isolated-template-matrix-published",
+    "CERTOPS_STAGE=private-https-control-plane-running",
+    "CERTOPS_STAGE=store-noiis-clean-member-ready",
+  ];
+  const readiness = {
+    status: "store-noiis-recovery-infrastructure-prepared",
+    controllerTlsCertificateSha256: "f".repeat(64), stages: steps,
+  };
+  const proof = verifyReceipts(...preparation({ readiness }), context, now);
+  assert.equal(proof.controllerTlsCertificateSha256, readiness.controllerTlsCertificateSha256);
+  assert.throws(() => verifyReceipts(...preparation({ readiness: { ...readiness, stages: steps.slice(0, -1) } }), context, now));
+  assert.throws(() => verifyReceipts(...preparation({ readiness: { ...readiness, controllerTlsCertificateSha256: undefined } }), context, now));
+  assert.throws(() => verifyReceipts(...preparation({ readiness: {
+    ...readiness, status: "store-noiis-infrastructure-prepared",
+  } }), context, now));
+});

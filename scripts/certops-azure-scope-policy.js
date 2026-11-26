@@ -731,11 +731,14 @@ function storePreparePolicy(workflow, errors) {
   const inputNames = ["reviewed_workflow_sha", "media_source_sha", "media_receipt_sha256", "location"];
   if (!keys(workflow, ["name", "on", "permissions", "concurrency", "env", "jobs"]) ||
       !keys(on, ["workflow_dispatch"]) || !keys(on.workflow_dispatch, ["inputs"]) ||
-      !keys(inputs, [...inputNames, "manual_janitor_run_id"]) ||
+      !keys(inputs, [...inputNames, "manual_janitor_run_id", "prepare_recovery_infrastructure"]) ||
       inputNames.some(input => !keys(inputs[input], ["description", "type", "required"]) ||
         inputs[input].type !== "string" || inputs[input].required !== true) ||
       !keys(inputs.manual_janitor_run_id, ["description", "type", "required"]) ||
       inputs.manual_janitor_run_id.type !== "string" || inputs.manual_janitor_run_id.required !== false ||
+      !keys(inputs.prepare_recovery_infrastructure, ["description", "type", "required", "default"]) ||
+      inputs.prepare_recovery_infrastructure.type !== "boolean" ||
+      inputs.prepare_recovery_infrastructure.required !== false || inputs.prepare_recovery_infrastructure.default !== false ||
       !same(permissions, { contents: "read" }) ||
       !same(concurrency, { group: "certops-adcs-store-prepare-${{ github.run_id }}-${{ github.run_attempt }}", "cancel-in-progress": false }) ||
       !same(env, { STORE_GROUP }) || !keys(jobs, ["register", "verify", "prepare", "cleanup-failed"])) {
@@ -771,12 +774,12 @@ function storePreparePolicy(workflow, errors) {
       timeout: 180, needs: ["register", "verify"],
       output: { cleanup_activation: "${{ steps.prepare.outputs.cleanup_activation }}" },
       env: { STORE_LOCATION: location, STORE_REGISTRATION_RECEIPT: "${{ needs.verify.outputs.receipt }}",
-        STORE_REGISTRATION_SHA256: receipt },
+        STORE_REGISTRATION_SHA256: receipt, STORE_RECOVERY_INFRASTRUCTURE: "${{ inputs.prepare_recovery_infrastructure && '1' || '0' }}" },
       command: [
         "$path = Join-Path $env:RUNNER_TEMP 'store-registration.json'",
         "try {",
         "  [IO.File]::WriteAllText($path,$env:STORE_REGISTRATION_RECEIPT,[Text.UTF8Encoding]::new($false))",
-        "  ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:STORE_GROUP -Hours 4 -WindowsVersion 2022 -Language en-US -Location $env:STORE_LOCATION -StoreNoIisPrepare 1 -StoreRegistrationReceipt $path -StoreRegistrationSha256 $env:STORE_REGISTRATION_SHA256",
+        "  ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:STORE_GROUP -Hours 4 -WindowsVersion 2022 -Language en-US -Location $env:STORE_LOCATION -StoreNoIisPrepare 1 -StoreRegistrationReceipt $path -StoreRegistrationSha256 $env:STORE_REGISTRATION_SHA256 -StoreRecoveryInfrastructure $env:STORE_RECOVERY_INFRASTRUCTURE",
         "} finally {",
         "  Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue",
         "}",

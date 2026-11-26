@@ -24,6 +24,7 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [ValidateSet('all','issuance','renewals','pending-and-ca','templates-and-uncertain','uncertain-recovery')][string]$Shard='all',
   [ValidateSet('0','1')][string]$BundledWindowsRuntime='0',
   [ValidateSet('0','1')][string]$StoreNoIisPrepare='0',
+  [ValidateSet('0','1')][string]$StoreRecoveryInfrastructure='0',
   [string]$StoreRegistrationReceipt,
   [string]$StoreRegistrationSha256,
   [ValidateSet('Standard_D2s_v5','Standard_D2as_v5')][string]$VmSize = 'Standard_D2s_v5',
@@ -48,6 +49,7 @@ if($AdcsTtl24hPrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' 
 $storeRegistration = $null
 $storeMemberVmId = $null
 $storeGuestReceipt = $null
+$storeControllerTlsSha256 = $null
 $storeDeploymentScope = @()
 if($StoreNoIisPrepare -eq '1'){
   if($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or
@@ -60,7 +62,7 @@ if($StoreNoIisPrepare -eq '1'){
   . (Join-Path $PSScriptRoot 'store-noiis-prepare-guard.ps1')
   $storeRegistration = Read-CertOpsStoreRegistration -Path $StoreRegistrationReceipt -ExpectedSha256 $StoreRegistrationSha256 -ResourceGroup $ResourceGroup -Location $Location
   $storeDeploymentScope = @('--subscription',$env:AZURE_SUBSCRIPTION_ID)
-} elseif($PSBoundParameters.ContainsKey('StoreRegistrationReceipt') -or $PSBoundParameters.ContainsKey('StoreRegistrationSha256')){
+} elseif($StoreRecoveryInfrastructure -eq '1' -or $PSBoundParameters.ContainsKey('StoreRegistrationReceipt') -or $PSBoundParameters.ContainsKey('StoreRegistrationSha256')){
   throw 'Store registration is only accepted for explicit no-IIS preparation'
 }
 & (Join-Path $PSScriptRoot 'assert-lab-capacity.ps1') -Location $Location -VmSize $VmSize
@@ -97,8 +99,16 @@ function New-TemplateStageScript([string]$TemplatePath, [string]$DescriptorPath,
   $source='param([Parameter(Mandatory)][string]$DomainPassword)' + "`n& {`n" + $body + "`n} -DomainPassword `$DomainPassword -SafetyCasesBase64 '$payload'`n"
   [IO.File]::WriteAllText($Destination,$source,[Text.UTF8Encoding]::new($false))
 }
+function Get-StoreBoundedStageTimeout([int]$TimeoutSeconds) {
+  if($StoreRecoveryInfrastructure -eq '0'){return $TimeoutSeconds}
+  $expiry = [DateTimeOffset]::Parse($storeRegistration.expiresAt,[Globalization.CultureInfo]::InvariantCulture)
+  $remaining = [Math]::Floor(($expiry - [DateTimeOffset]::UtcNow).TotalSeconds)
+  if($remaining -lt 1){throw 'The Store recovery preparation lease expired'}
+  return [int][Math]::Min($TimeoutSeconds,$remaining)
+}
 function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [string[]]$Parameters = @()) {
   $stageTimeout=if([IO.Path]::GetFileName($Script) -ceq 'domain-ca.ps1'){900}else{3600}
+  $stageTimeout=Get-StoreBoundedStageTimeout $stageTimeout
   if($Marker -eq 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' -and $Shard -eq 'all'){
     . (Join-Path $PSScriptRoot 'managed-campaign.ps1')
     $response=Invoke-CertOpsManagedCampaign -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Location $Location -Script ([IO.File]::ReadAllText($Script)) -Parameters $Parameters -RefreshAuthentication ${function:Refresh-LabAuthentication}
@@ -179,7 +189,8 @@ function Wait-LabDeployment {
 }
 function Start-ControlPlane() {
   Refresh-LabAuthentication
-  $response=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine control-plane -Script ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'control-plane.sh'))) -Parameters @("candidate=$candidateSha","journal_phase=$JournalPhaseExperiment","adcs_ttl24h=$AdcsTtl24hPrepare") -RefreshAuthentication ${function:Refresh-LabAuthentication}
+  $timeout=Get-StoreBoundedStageTimeout 3600
+  $response=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine control-plane -Script ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'control-plane.sh'))) -Parameters @("candidate=$candidateSha","journal_phase=$JournalPhaseExperiment","adcs_ttl24h=$AdcsTtl24hPrepare") -TimeoutSeconds $timeout -RefreshAuthentication ${function:Refresh-LabAuthentication}
   $message = ($response.value | ForEach-Object message) -join "`n"
   if (-not $message.Contains('CERTOPS_STAGE=private-https-control-plane-running')) { throw 'Private HTTPS control plane receipt absent' }
   $match = [regex]::Match($message,'-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----')
@@ -239,8 +250,10 @@ try {
     if($preparedVmId -cne $originalVmId){throw 'Prepared Store member was replaced during guest readiness readback'}
     $storeGuestReceipt = Read-CertOpsStoreGuestReceipt -Encoded $publicStageData.CERTOPS_STORE_NOIIS_RECEIPT
     $storeMemberVmId = $preparedVmId
-    $reportStatus = 'store-noiis-infrastructure-prepared'
-    return
+    if($StoreRecoveryInfrastructure -eq '0'){
+      $reportStatus = 'store-noiis-infrastructure-prepared'
+      return
+    }
   }
   $templateStagePath=Join-Path $env:RUNNER_TEMP ("certops-templates-{0}.ps1" -f [Guid]::NewGuid().ToString('N'))
   try {
@@ -248,6 +261,23 @@ try {
     Invoke-Stage 'domain-ca' $templateStagePath 'CERTOPS_STAGE=isolated-template-matrix-published' @("DomainPassword=$password")
   } finally { Remove-Item -LiteralPath $templateStagePath -Force -ErrorAction SilentlyContinue }
   Start-ControlPlane
+  if($storeRegistration){
+    $storeGuestReceipt = $null
+    $publicStageData.Remove('CERTOPS_STORE_NOIIS_RECEIPT')
+    Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'store-noiis-clean-member.ps1') 'CERTOPS_STAGE=store-noiis-clean-member-ready'
+    if((Read-CertOpsStoreMemberVmId -Registration $storeRegistration) -cne $storeMemberVmId){
+      throw 'Prepared Store member was replaced during recovery infrastructure setup'
+    }
+    $storeGuestReceipt = Read-CertOpsStoreGuestReceipt -Encoded $publicStageData.CERTOPS_STORE_NOIIS_RECEIPT
+    $pem = [IO.File]::ReadAllText((Join-Path $env:RUNNER_TEMP 'certops-api-public.pem'))
+    $leaf = [Security.Cryptography.X509Certificates.X509Certificate2]::CreateFromPem($pem)
+    try {
+      $storeControllerTlsSha256 = $leaf.GetCertHashString([Security.Cryptography.HashAlgorithmName]::SHA256).ToLowerInvariant()
+    } finally { $leaf.Dispose() }
+    $null=Get-StoreBoundedStageTimeout 1
+    $reportStatus = 'store-noiis-recovery-infrastructure-prepared'
+    return
+  }
   if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){
     Refresh-LabAuthentication
     $browserResponse=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine control-plane -Script ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'browser-control-plane.sh'))) -Parameters @("candidate=$candidateSha") -RefreshAuthentication ${function:Refresh-LabAuthentication}
@@ -331,12 +361,13 @@ try {
   if($QualificationScope -eq 'operator-acceptance'){$scenarioReport='enterprise-adcs-package-acceptance.json'}
   if($storeRegistration){
     if($storeGuestReceipt){[IO.File]::WriteAllBytes((Join-Path (Resolve-Path 'qualification-results') 'store-noiis-member.json'),$storeGuestReceipt.bytes)}
-    @{scope='store-noiis-infrastructure-preparation';status=$reportStatus;resourceGroup=$ResourceGroup;
+      $storeReport = @{scope='store-noiis-infrastructure-preparation';status=$reportStatus;resourceGroup=$ResourceGroup;
       memberName='windows-agent';memberVmId=$storeMemberVmId;memberReadinessSha256=$storeGuestReceipt.sha256;
       workflowCommit=$candidateSha;sourceCommit=$storeRegistration.mediaSourceCommit;
       mediaReceiptSha256=$storeRegistration.mediaReceiptSha256;registrationSha256=$StoreRegistrationSha256;
-      expiresAt=$expiresAt;qualificationPassed=$false;agentInstalledByPreparation=$false;stages=@($receipts)} |
-      ConvertTo-Json -Depth 5 | Set-Content 'qualification-results/store-noiis-infrastructure.json'
+        expiresAt=$expiresAt;qualificationPassed=$false;agentInstalledByPreparation=$false;stages=@($receipts)}
+      if($storeControllerTlsSha256){$storeReport.controllerTlsCertificateSha256 = $storeControllerTlsSha256}
+      $storeReport | ConvertTo-Json -Depth 5 | Set-Content 'qualification-results/store-noiis-infrastructure.json'
   } else {
     @{ candidateSha=$candidateSha; scope='disposable-enterprise-adcs-infrastructure'; qualificationScope=$QualificationScope; status=$reportStatus; resourceGroup=$ResourceGroup; expiresAt=$expiresAt; scenarioReport=$scenarioReport; hierarchyRole=$HierarchyRole; noncoverage=@('CMC renewal','Additional uncertainty fault variants','Retention and adoption'); stages=@($receipts) } | ConvertTo-Json -Depth 6 | Set-Content 'qualification-results/enterprise-adcs-infrastructure.json'
   }

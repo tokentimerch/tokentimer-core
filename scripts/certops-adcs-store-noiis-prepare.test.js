@@ -1,7 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
-const { createHash } = require('node:crypto');
+const { createHash, X509Certificate } = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -186,7 +186,7 @@ test('rejects a foreign group, modified ownership or deployment/resource preexis
   refused({ deployments: ['/foreign/deployment'] }, /empty before the first deployment/);
 });
 
-test('Store opt-in cannot reach older templates, app, trust, or service activation', () => {
+test('default Store preparation stops before templates and every Store mode stops before trust or agent activation', () => {
   const source = fs.readFileSync(path.join(infra, files[0]), 'utf8');
   assert.match(source, /\$StoreNoIisPrepare='0'/);
   assert.match(source, /if\(-not \$storeRegistration\)\{\s*\$existing = az group exists/);
@@ -199,6 +199,7 @@ test('Store opt-in cannot reach older templates, app, trust, or service activati
   assert.match(prepare, /'store-noiis-clean-member\.ps1'/);
   assert.match(prepare, /'store-noiis-infrastructure-prepared'\s+return/);
   assert.doesNotMatch(prepare, /domain-verify|windows-tools|Start-ControlPlane|service|install/i);
+  assert.match(source.slice(stop), /Start-ControlPlane\s+if\(\$storeRegistration\)\{[\s\S]*?'store-noiis-recovery-infrastructure-prepared'\s+return\s+\}/);
   assert.match(source.slice(stop), /Invoke-Stage 'windows-agent'.*'domain-member\.ps1'.*DomainPassword=\$password"\)/);
   const probes = fs.readFileSync(path.join(infra, files[2]), 'utf8');
   assert.match(probes, /20348/);
@@ -409,7 +410,7 @@ test('protected workflow requires independent proof before any VM path and keeps
   assert.match(cleanup, /store-noiis-registration\.ps1 -Mode remove/);
 });
 
-function simulatePreparation(preexistingDeployment, replaceMember = false) {
+function simulatePreparation(preexistingDeployment, replaceMember = false, { recoveryInfra = false, missingFinalReceipt = false } = {}) {
   const temp = fs.mkdtempSync(path.join(fixtureRoot, 'tt-store-prepare-test-'));
   const { receipt, group } = fixture();
   const file = path.join(temp, 'registration.json');
@@ -418,6 +419,7 @@ function simulatePreparation(preexistingDeployment, replaceMember = false) {
   const memberId = '44444444-4444-4444-4444-444444444444';
   const guest = JSON.stringify({scope:'store-noiis-clean-member-readiness',windowsBuild:'20348',architecture:'x64',
     localSystem:true,ownedDomain:true,iisAbsent:true,agentServiceAbsent:true,caRpcPing:true});
+  const controllerPem = fs.readFileSync(path.resolve(__dirname, '../packages/agent/src/verify/fixtures/selfsigned.crt.pem'), 'utf8');
   const vm = {id:group.id + '/providers/Microsoft.Compute/virtualMachines/windows-agent',
     vmId:memberId,provisioningState:'Succeeded',tags:group.tags};
   const repoFiles = [files[0], files[1]];
@@ -432,6 +434,11 @@ function simulatePreparation(preexistingDeployment, replaceMember = false) {
     'store-noiis-clean-member.ps1': 'CERTOPS_STAGE=store-noiis-clean-member-ready',
   };
   for (const [name, marker] of Object.entries(stages)) fs.writeFileSync(path.join(temp, name), marker);
+  if (recoveryInfra) {
+    fs.writeFileSync(path.join(temp, 'templates.ps1'), 'CERTOPS_STAGE=isolated-template-matrix-published');
+    fs.writeFileSync(path.join(temp, 'safety-cases.json'), '{}');
+    fs.writeFileSync(path.join(temp, 'control-plane.sh'), 'CERTOPS_STAGE=private-https-control-plane-running');
+  }
   fs.writeFileSync(path.join(temp, 'arm-operation.ps1'), String.raw`
     function Invoke-CertOpsArmOperation {
       param($Uri,$Method,$Body,$SubscriptionId,$RefreshAuthentication,$TimeoutSeconds)
@@ -447,12 +454,28 @@ function simulatePreparation(preexistingDeployment, replaceMember = false) {
       if($Script -ceq 'CERTOPS_STAGE=member-joined-reboot-required' -and 'IisMode=absent' -cnotin $Parameters){
         throw 'No-IIS selector absent'
       }
+      if($env:TT_INFRA -eq '1' -and $Machine -ceq 'domain-ca' -and $Script.Contains('CERTOPS_STAGE=isolated-template-matrix-published')){
+        if($TimeoutSeconds -gt 3600 -or $Parameters.Count -ne 1 -or $Parameters[0] -notmatch '^DomainPassword='){
+          throw 'Unexpected template preparation parameters'
+        }
+        Add-Content -LiteralPath $env:TT_TRACE -Value 'CERTOPS_STAGE=isolated-template-matrix-published'
+        return @{value=@(@{message='CERTOPS_STAGE=isolated-template-matrix-published'})}
+      }
+      if($env:TT_INFRA -eq '1' -and $Machine -ceq 'control-plane' -and $Script -ceq 'CERTOPS_STAGE=private-https-control-plane-running'){
+        if($TimeoutSeconds -gt 3600 -or "candidate=$env:GITHUB_SHA" -cnotin $Parameters){
+          throw 'Unexpected control-plane preparation parameters'
+        }
+        Add-Content -LiteralPath $env:TT_TRACE -Value $Script
+        return @{value=@(@{message=$Script},@{message=$env:TT_PEM})}
+      }
       if($Script -cnotin @('CERTOPS_STAGE=forest-created-reboot-required','CERTOPS_STAGE=enterprise-ca-service-running',
         'CERTOPS_STAGE=member-joined-reboot-required','CERTOPS_STAGE=store-noiis-clean-member-ready')){
         throw 'Unexpected guest write or service activation'
       }
       Add-Content -LiteralPath $env:TT_TRACE -Value $Script
       if($Script -ceq 'CERTOPS_STAGE=store-noiis-clean-member-ready'){
+        $global:guestReads++
+        if($global:guestReads -eq 2 -and $env:TT_MISSING_FINAL -eq 'true'){return @{value=@(@{message=$Script})}}
         return @{value=@(@{message=$Script},@{message=('CERTOPS_STORE_NOIIS_RECEIPT=' + $env:TT_GUEST)})}
       }
       return @{value=@(@{message=$Script})}
@@ -463,6 +486,7 @@ function simulatePreparation(preexistingDeployment, replaceMember = false) {
   try {
     const result = ps(String.raw`
       $global:memberReads = 0
+      $global:guestReads = 0
       function az {
         $global:LASTEXITCODE = 0
         $call = "$($args[0]) $($args[1]) $(if($args[0] -eq 'deployment'){$args[2]})".Trim()
@@ -487,17 +511,18 @@ function simulatePreparation(preexistingDeployment, replaceMember = false) {
           default { throw 'Unexpected Azure call in preparation' }
         }
       }
-      & $env:TT_PROVISION -ResourceGroup 'tt-certops-1234-2' -Location 'swedencentral' -StoreNoIisPrepare 1 -StoreRegistrationReceipt $env:TT_FILE -StoreRegistrationSha256 $env:TT_DIGEST
+      & $env:TT_PROVISION -ResourceGroup 'tt-certops-1234-2' -Location 'swedencentral' -StoreNoIisPrepare 1 -StoreRegistrationReceipt $env:TT_FILE -StoreRegistrationSha256 $env:TT_DIGEST -StoreRecoveryInfrastructure $env:TT_INFRA
     `, {
       RUNNER_TEMP: temp, TT_PROVISION: path.join(temp, files[0]), TT_TRACE: trace, TT_FILE: file,
       TT_DIGEST: sha256(bytes), TT_GROUP: JSON.stringify(group), GITHUB_OUTPUT: output,
       TT_VM: JSON.stringify(vm), TT_REPLACE_VM: String(replaceMember), TT_GUEST: Buffer.from(guest).toString('base64'),
+      TT_INFRA: recoveryInfra ? '1' : '0', TT_PEM: controllerPem, TT_MISSING_FINAL: String(missingFinalReceipt),
       TT_DEPLOYMENTS: preexistingDeployment ? '["prior-deployment"]' : '[]',
     }, temp);
     const report = path.join(temp, 'qualification-results', 'store-noiis-infrastructure.json');
     const traceLines = fs.existsSync(trace) ? fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/) : [];
     const activation = fs.existsSync(output) ? fs.readFileSync(output, 'utf8').trim() : null;
-    return { result, trace: traceLines, activation, memberId, guest, report: fs.existsSync(report) ? JSON.parse(fs.readFileSync(report, 'utf8')) : null };
+    return { result, trace: traceLines, activation, memberId, guest, controllerPem, report: fs.existsSync(report) ? JSON.parse(fs.readFileSync(report, 'utf8')) : null };
   } finally {
     removeFixture(temp);
   }
@@ -533,4 +558,27 @@ test('replaced immutable VM identity cannot yield a guest preparation receipt', 
   assert.match(result.stderr, /replaced during guest readiness/);
   assert.equal(report.status, 'failed');
   assert.equal(report.memberReadinessSha256, null);
+});
+
+test('explicit recovery preparation reuses the isolated CA and API stages and rechecks the still-clean agent', () => {
+  const { result, trace, report, controllerPem } = simulatePreparation(false, false, { recoveryInfra: true });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(trace.slice(-6), [
+    'CERTOPS_STAGE=store-noiis-clean-member-ready', 'vm show',
+    'CERTOPS_STAGE=isolated-template-matrix-published', 'CERTOPS_STAGE=private-https-control-plane-running',
+    'CERTOPS_STAGE=store-noiis-clean-member-ready', 'vm show',
+  ]);
+  assert.equal(report.status, 'store-noiis-recovery-infrastructure-prepared');
+  assert.equal(report.controllerTlsCertificateSha256, sha256(new X509Certificate(controllerPem).raw));
+  assert.equal(report.agentInstalledByPreparation, false);
+  assert.equal(report.qualificationPassed, false);
+});
+
+test('recovery preparation cannot replay the first clean-member receipt after controller setup', () => {
+  const { result, report } = simulatePreparation(false, false, { recoveryInfra: true, missingFinalReceipt: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Bounded Store member readiness receipt required/);
+  assert.equal(report.status, 'failed');
+  assert.equal(report.memberReadinessSha256, null);
+  assert.equal(report.controllerTlsCertificateSha256, undefined);
 });
