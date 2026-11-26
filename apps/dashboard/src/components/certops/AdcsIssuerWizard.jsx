@@ -555,10 +555,10 @@ export default function AdcsIssuerWizard({
                       </Text>
                       <Text>
                         In Renewal profiles, choose New AD CS profile and attach
-                        it to a certificate already in inventory. Enrollment runs
-                        when the certificate reaches the profile lead time and an
-                        online agent that declares its DNS name has passed the
-                        post-pin CA check.
+                        it to a certificate already in inventory. Enrollment
+                        runs when the certificate reaches the profile lead time
+                        and an online agent that declares its DNS name has
+                        passed the post-pin CA check.
                       </Text>
                     </Stack>
                   </Callout>

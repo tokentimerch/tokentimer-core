@@ -938,11 +938,7 @@ function isHumanPlaceLabel(label) {
  * Short places where a private key is recorded. Custody mode and current
  * observations combine, so one certificate can list several places.
  */
-export function keyLocalityPlaces({
-  keyMode,
-  keyReference,
-  locations,
-} = {}) {
+export function keyLocalityPlaces({ keyMode, keyReference, locations } = {}) {
   const found = new Set();
   const modePlace = KEY_MODE_PLACE[keyMode];
   if (modePlace) found.add(modePlace);

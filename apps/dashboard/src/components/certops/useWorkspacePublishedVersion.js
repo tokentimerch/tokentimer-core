@@ -6,7 +6,8 @@ function hasPublishedVersion(group) {
   // The group list reports publication fields from the newest version only.
   // latest_material_version_id stays on the last version that was published.
   if (group.latest_material_version_id) return true;
-  if (group.published_at || group.publication_state === 'published') return true;
+  if (group.published_at || group.publication_state === 'published')
+    return true;
   return (group.versions || []).some(
     version => version && version.state === 'published'
   );
