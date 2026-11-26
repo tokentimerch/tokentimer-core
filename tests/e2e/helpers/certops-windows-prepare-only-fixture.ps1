@@ -13,7 +13,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($InstallerPath, [ref]$
 if ($errors.Count) { throw 'Installer syntax failed.' }
 $names = @('Get-UnlinkedInstallItem','Assert-TrustedInstallAccess','Get-ProtectedPackageFingerprint',
     'Assert-NoExistingPreparedInstall','Read-RestoredPreparationConfig','Get-WindowsServiceBinPath',
-    'Complete-PreparedInstall','Get-PackageDirectoryIdentity')
+    'Complete-PreparedInstall','Get-PackageDirectoryIdentity','Invoke-PackagedNode')
 foreach ($name in $names) {
     $definition = $ast.Find({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
@@ -21,6 +21,17 @@ foreach ($name in $names) {
     if (-not $definition) { throw "Installer function absent: $name" }
     . ([scriptblock]::Create($definition.Extent.Text))
 }
+
+$originCheck = @($ast.EndBlock.Statements | Where-Object {
+    $_ -is [Management.Automation.Language.IfStatementAst] -and
+    $_.Extent.Text.StartsWith('if ($script:PrepareOnly)') -and $_.Extent.Text.Contains('$restoredOrigin =')
+})
+if ($originCheck.Count -ne 1) { throw 'Restored server origin validation is missing.' }
+$validateRestoredOrigin = [scriptblock]::Create($originCheck[0].Extent.Text)
+$ValidateServerUrlJs = Join-Path (Split-Path -Parent $InstallerPath) 'validate-server-url.js'
+$script:PrepareOnly = $true
+$script:AllowInsecureLocalHttp = $false
+function Fail([string]$Message) { throw $Message }
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $script:AdministratorsSid = if ($identity.IsSystem) { 'S-1-5-32-544' } else { $identity.Owner.Value }
@@ -120,6 +131,11 @@ try {
     $before = (Snapshot-State) -join [char]10
     $config = Read-RestoredPreparationConfig
     if ($config.agentId -cne 'existing-agent') { throw 'Wrong restored identity.' }
+    $restoredConfig = $config
+    $script:ApiUrl = $restoredConfig.serverUrl
+    & $validateRestoredOrigin
+    $script:ApiUrl = 'https://different.invalid'
+    Assert-Refused { & $validateRestoredOrigin } '*restored agent server does not match --api-url*'
     Complete-PreparedInstall -Stage $stage -StagingIdentity $expected -BinaryPath $binaryPath
     if ($script:registration.StartMode -cne 'Disabled' -or $script:registration.ProcessId -ne 0 -or
         -not (Test-Path -LiteralPath $AppDir) -or (Test-Path -LiteralPath $stage) -or

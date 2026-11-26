@@ -13,18 +13,18 @@ $ErrorActionPreference='Stop'
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($env:TT_CA_TEST_SOURCE,[ref]$tokens,[ref]$errors)
 if ($errors.Count) { throw 'installer parser errors' }
-foreach ($name in @('Get-ExistingServiceEnvironment','Get-WindowsServiceCaOptions','Get-WindowsServiceBinPath','Get-ServiceCommandNodeInfo','Get-ServiceNodePath','Resolve-WindowsServiceCaOptions','Assert-ServiceCaRecoveryCommand','Get-MachineNodeOptions','Get-MachineNodeSystemCa','Get-WindowsServiceTrustEnvironment','Assert-ServiceTrustSnapshot','Assert-PendingServiceCaRecovery','Get-WindowsServiceEnvironmentValues','Set-ServiceEnvironment')) {
+foreach ($name in @('Get-ExistingServiceEnvironment','Get-WindowsServiceCaOptions','Get-WindowsServiceBinPath','Get-ServiceCommandNodeInfo','Get-ServiceNodePath','Get-WindowsServiceCaIntent','Resolve-WindowsServiceCaOptions','Assert-ServiceCaRecoveryCommand','Get-MachineNodeOptions','Get-MachineNodeSystemCa','Get-WindowsServiceTrustEnvironment','Assert-ServiceTrustSnapshot','Assert-PendingServiceCaRecovery','Get-WindowsServiceEnvironmentValues','Set-ServiceEnvironment')) {
     $fn=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
     if (-not $fn) { throw "missing helper $name" }
     Invoke-Expression $fn.Extent.Text
 }
 `;
 
-function run(script) {
+function run(script, environment = {}) {
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `${helpers}\n${script}`], {
-    encoding: "utf8", windowsHide: true, env: { ...process.env, TT_CA_TEST_SOURCE: installer },
+    encoding: "utf8", windowsHide: true, env: { ...process.env, ...environment, TT_CA_TEST_SOURCE: installer },
   });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(result.status, 0, result.error?.message || result.stderr || result.stdout);
   return result.stdout.trim();
 }
 
@@ -151,6 +151,39 @@ describe("Windows service CA arguments", { skip: process.platform !== "win32" },
     assert.deepEqual(info.CaOptions, ["--use-system-ca"]);
   });
 
+  test("service command parsing requires complete Windows paths and unambiguous boundaries", () => {
+    const drive = '"C:\\Agent Suite\\host.exe" --prepared-server-url "https://api.example" "D:\\Node Home\\node.exe" --use-system-ca "C:\\Agent Suite\\agent.js"';
+    const unc = '"\\\\server\\share\\host.exe" "\\\\server\\share\\node.exe" "\\\\server\\share\\agent.js"';
+    const invalid = [
+      '"host.exe" "C:\\node.exe" "C:\\agent.js"',
+      '"C:host.exe" "C:\\node.exe" "C:\\agent.js"',
+      '"C:\\host.exe" "C:node.exe" "C:\\agent.js"',
+      '"C:\\host.exe" "\\node.exe" "C:\\agent.js"',
+      '"C:\\host.exe" "C:\\node.exe" "agent.js"',
+      '"C:\\host.exe" "C:\\node.exe" "C:agent.js"',
+      '"\\\\server\\host.exe" "C:\\node.exe" "C:\\agent.js"',
+      '"\\\\.\\pipe\\host.exe" "C:\\node.exe" "C:\\agent.js"',
+      '"C:\\host.cmd" "C:\\node.exe" "C:\\agent.js"',
+      '"C:\\host.exe" "C:\\node.exe" "C:\\agent.cmd"',
+      '"C:\\host.exe""C:\\node.exe" "C:\\agent.js"',
+      '"C:\\host.exe" "C:\\node.exe" --trace-warnings "C:\\agent.js"',
+      '"C:\\host.exe"\n "C:\\node.exe" "C:\\agent.js"',
+      '"C:\\Agent\tSuite\\host.exe" "C:\\node.exe" "C:\\agent.js"',
+      '"C:\\host.exe" "C:\\node.exe" "C:\\agent.js"\x7f',
+    ];
+    assert.equal(run(`$cases=ConvertFrom-Json -InputObject $env:TT_CA_COMMAND_CASES
+    $parsed=Get-ServiceCommandNodeInfo -ServiceCommand $cases.drive
+    if ($parsed.PreparedServerUrl -cne 'https://api.example' -or $parsed.NodePath -cne 'D:\\Node Home\\node.exe' -or
+        ($parsed.CaOptions -join ' ') -cne '--use-system-ca') { throw 'valid quoted prepared command changed' }
+    if ((Get-ServiceCommandNodeInfo -ServiceCommand $cases.unc).NodePath -cne '\\\\server\\share\\node.exe') { throw 'complete UNC rejected' }
+    foreach ($command in $cases.invalid) {
+      $refused=$false
+      try { [void](Get-ServiceCommandNodeInfo -ServiceCommand $command) } catch { $refused=$true }
+      if (-not $refused) { throw "unsupported service command was accepted: $command" }
+    }
+    Write-Output 'safe'`, { TT_CA_COMMAND_CASES: JSON.stringify({ drive, unc, invalid }) }), "safe");
+  });
+
   test("service environment reader handles real absent registry key and value", () => {
     const info = JSON.parse(run(`$missingKey='HKCU:\\Software\\TokenTimer-Test-Missing-' + [guid]::NewGuid()
       [pscustomobject]@{absent=@(Get-ExistingServiceEnvironment -ServiceKey $missingKey).Count; missing=@(Get-ExistingServiceEnvironment -ServiceKey 'HKCU:\\Software').Count} | ConvertTo-Json -Compress`));
@@ -168,9 +201,50 @@ describe("Windows service CA arguments", { skip: process.platform !== "win32" },
       }
     }
     if ($observed -ne 8) { throw 'both argv-only and matching-env cases must execute' }
+    $command=Get-WindowsServiceBinPath -AppDirectory 'C:\\Agent' -NodeExecutable 'C:\\node.exe' -Architecture AMD64 -CaOptions @('--use-openssl-ca')
+    $refused=$false; try { [void](Resolve-WindowsServiceCaOptions -Existing @('NODE_OPTIONS=--use-bundled-ca') -NodeVersion ([version]'24.18.0') -ServiceCommand $command) } catch { $refused=$true }; if (-not $refused) { throw 'contradictory base CA sources accepted' }
     $command=Get-WindowsServiceBinPath -AppDirectory 'C:\\Agent' -NodeExecutable 'C:\\node.exe' -Architecture AMD64 -CaOptions @('--use-system-ca')
-    $refused=$false; try { [void](Resolve-WindowsServiceCaOptions -Existing @('NODE_OPTIONS=--use-bundled-ca') -NodeVersion ([version]'24.18.0') -ServiceCommand $command) } catch { $refused=$true }; if (-not $refused) { throw 'contradictory CA sources accepted' }
     foreach ($version in @('22.0.0','22.14.0')) { $refused=$false; try { [void](Resolve-WindowsServiceCaOptions -Existing @() -NodeVersion ([version]$version) -ServiceCommand $command) } catch { $refused=$true }; if (-not $refused) { throw 'old runtime accepted an existing system CA flag' } }
+    Write-Output 'safe'`), "safe");
+  });
+
+  test("reinstall preserves system CA intent across supported Node runtimes", () => {
+    const flags = JSON.parse(run(`$command='"C:\\host.exe" "C:\\node.exe" "C:\\agent.js"'
+    $rows=foreach ($version in @('22.18.0','22.19.0','24.5.0','24.6.0')) {
+      [pscustomobject]@{version=$version; flags=@(Resolve-WindowsServiceCaOptions -Existing @('NODE_USE_SYSTEM_CA=1') -NodeVersion ([version]$version) -ServiceCommand $command)}
+    }
+    $rows | ConvertTo-Json -Depth 4 -Compress`));
+    assert.deepEqual(flags, [
+      { version: "22.18.0", flags: ["--use-system-ca"] },
+      { version: "22.19.0", flags: [] },
+      { version: "24.5.0", flags: ["--use-system-ca"] },
+      { version: "24.6.0", flags: [] },
+    ]);
+    assert.equal(run(`$refused=$false
+    try { [void](Resolve-WindowsServiceCaOptions -Existing @('NODE_USE_SYSTEM_CA=1') -NodeVersion ([version]'22.14.0')) } catch { $refused=$_.Exception.Message -match 'cannot preserve NODE_USE_SYSTEM_CA=1' }
+    if (-not $refused) { throw 'an unsupported runtime accepted enabled system CA policy' }
+    Write-Output 'safe'`), "safe");
+  });
+
+  test("reinstall combines compatible CA choices and refuses conflicting system trust", () => {
+    assert.equal(run(`$bundled=Get-WindowsServiceBinPath -AppDirectory 'C:\\Agent' -NodeExecutable 'C:\\node.exe' -Architecture AMD64 -CaOptions @('--use-bundled-ca')
+    $system=Get-WindowsServiceBinPath -AppDirectory 'C:\\Agent' -NodeExecutable 'C:\\node.exe' -Architecture AMD64 -CaOptions @('--use-system-ca')
+    $disabled=Get-WindowsServiceBinPath -AppDirectory 'C:\\Agent' -NodeExecutable 'C:\\node.exe' -Architecture AMD64 -CaOptions @('--no-use-system-ca')
+    $cases=@(
+      @{command=$bundled; environment=@('NODE_OPTIONS=--use-system-ca'); version='24.18.0'; expected='--use-bundled-ca --use-system-ca'},
+      @{command=$bundled; environment=@('NODE_USE_SYSTEM_CA=1'); version='22.18.0'; expected='--use-bundled-ca --use-system-ca'},
+      @{command=$system; environment=@('NODE_OPTIONS=--use-bundled-ca --use-system-ca'); version='24.18.0'; expected='--use-system-ca --use-bundled-ca'},
+      @{command=$disabled; environment=@('NODE_OPTIONS=--no-use-system-ca','NODE_USE_SYSTEM_CA=1'); version='24.18.0'; expected='--no-use-system-ca'}
+    )
+    foreach ($case in $cases) {
+      $flags=@(Resolve-WindowsServiceCaOptions -Existing $case.environment -NodeVersion ([version]$case.version) -ServiceCommand $case.command)
+      if (($flags -join ' ') -cne $case.expected) { throw 'compatible CA settings were not preserved' }
+    }
+    foreach ($case in @(@{command=$system; setting='0'},@{command=$disabled; setting='1'})) {
+      $refused=$false
+      try { [void](Resolve-WindowsServiceCaOptions -Existing @("NODE_USE_SYSTEM_CA=$($case.setting)") -NodeVersion ([version]'24.18.0') -ServiceCommand $case.command) } catch { $refused=$_.Exception.Message -match 'CA settings differ' }
+      if (-not $refused) { throw 'conflicting command and system CA environment accepted' }
+    }
     Write-Output 'safe'`), "safe");
   });
 

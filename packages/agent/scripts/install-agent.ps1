@@ -473,14 +473,16 @@ function Get-WindowsServiceBinPath {
 
 function Get-ServiceCommandNodeInfo {
     param([Parameter(Mandatory)][string]$ServiceCommand)
-    $parts = [regex]::Matches($ServiceCommand, '"([^"]+)"|([^\s"]+)')
-    $rest = [regex]::Replace($ServiceCommand, '"([^"]+)"|([^\s"]+)', '')
-    if (-not [string]::IsNullOrWhiteSpace($rest)) { throw 'previous service command has unsupported quoting' }
-    if ($ServiceCommand -match '\\"') { throw 'previous service command has unsupported escaping' }
+    if ($ServiceCommand -match '[\x00-\x08\x0a-\x1f\x7f]' -or $ServiceCommand.Contains('\"')) {
+        throw 'previous service command has unsupported escaping or control characters'
+    }
+    $parts = [regex]::Matches($ServiceCommand, '"([^"]+)"|([^ \t"]+)')
+    $rest = [regex]::Replace($ServiceCommand, '"([^"]+)"|([^ \t"]+)', '')
+    if ($rest -notmatch '^[ \t]*$') { throw 'previous service command has unsupported quoting' }
     for ($i = 1; $i -lt $parts.Count; $i++) {
         $gapStart = $parts[$i - 1].Index + $parts[$i - 1].Length
         $gap = $ServiceCommand.Substring($gapStart, $parts[$i].Index - $gapStart)
-        if ($gap -notmatch '^\s+$') { throw 'previous service command has unsupported token boundaries' }
+        if ($gap -notmatch '^[ \t]+$') { throw 'previous service command has unsupported token boundaries' }
     }
     $tokens = @($parts | ForEach-Object { if ($_.Groups[1].Success) { $_.Groups[1].Value } else { $_.Groups[2].Value } })
     $nodeIndex = 1
@@ -498,8 +500,19 @@ function Get-ServiceCommandNodeInfo {
         }
         $caOptions += $tokens[$i]
     }
+    $hostPath = $tokens[0]
     $node = $tokens[$nodeIndex]
-    if (-not [IO.Path]::IsPathRooted($node) -or [IO.Path]::GetFileName($node) -ine 'node.exe') { throw 'previous service runtime path is invalid' }
+    $entry = $tokens[$tokens.Count - 1]
+    foreach ($path in @($hostPath, $node, $entry)) {
+        if ($path -notmatch '^(?:[A-Za-z]:[\\/]|\\\\(?![?.]\\)[^\\/:?"<>|]+\\[^\\/:?"<>|]+\\)' -or
+            $path -match '[\x00-\x1f\x7f]') {
+            throw 'previous service command paths must be absolute'
+        }
+    }
+    if ([IO.Path]::GetExtension($hostPath) -ine '.exe' -or [IO.Path]::GetFileName($node) -ine 'node.exe' -or
+        [IO.Path]::GetExtension($entry) -ine '.js') {
+        throw 'previous service command must name an executable host, node.exe and a JavaScript entrypoint'
+    }
     $lastSystemOption = @($caOptions | Where-Object { $_ -match '^--(?:no-)?use-system-ca$' } | Select-Object -Last 1)
     $direct = $lastSystemOption.Count -gt 0 -and $lastSystemOption[0] -ceq '--use-system-ca'
     return [pscustomobject]@{ NodePath = [IO.Path]::GetFullPath($node); DirectSystemCa = $direct; CaOptions = $caOptions; PreparedServerUrl = $preparedServerUrl }
@@ -508,6 +521,14 @@ function Get-ServiceCommandNodeInfo {
 function Get-ServiceNodePath {
     param([Parameter(Mandatory)][string]$ServiceCommand)
     return (Get-ServiceCommandNodeInfo -ServiceCommand $ServiceCommand).NodePath
+}
+
+function Get-WindowsServiceCaIntent {
+    param([string[]]$Options)
+    return [pscustomobject]@{
+        Base = $Options | Where-Object { $_ -cin @('--use-bundled-ca','--use-openssl-ca') } | Select-Object -Last 1
+        System = $Options | Where-Object { $_ -cin @('--use-system-ca','--no-use-system-ca') } | Select-Object -Last 1
+    }
 }
 
 function Resolve-WindowsServiceCaOptions {
@@ -528,12 +549,37 @@ function Resolve-WindowsServiceCaOptions {
             throw 'machine NODE_OPTIONS contains CA settings; configure explicit per-service trust before reinstalling'
         }
     }
-    if ($serviceOptions.Count -and $environmentOptions.Count -and
-        ($serviceOptions -join ' ') -cne ($environmentOptions -join ' ')) {
+    $serviceIntent = Get-WindowsServiceCaIntent -Options $serviceOptions
+    $environmentIntent = Get-WindowsServiceCaIntent -Options $environmentOptions
+    $systemSetting = @($Existing | Where-Object { $_ -match '^(?i:NODE_USE_SYSTEM_CA)=' })
+    $systemEnvironmentIntent = $environmentIntent.System
+    if (-not $systemEnvironmentIntent -and $systemSetting.Count) {
+        $systemEnvironmentIntent = if ($systemSetting[0] -ieq 'NODE_USE_SYSTEM_CA=1') { '--use-system-ca' } else { '--no-use-system-ca' }
+    }
+    if (($serviceIntent.Base -and $environmentIntent.Base -and $serviceIntent.Base -cne $environmentIntent.Base) -or
+        ($serviceIntent.System -and $systemEnvironmentIntent -and $serviceIntent.System -cne $systemEnvironmentIntent)) {
         throw 'service command and environment CA settings differ; reconcile them before reinstalling'
     }
-    if ($serviceOptions.Count) { return $serviceOptions }
-    return $environmentOptions
+
+    $resolved = @($serviceOptions)
+    foreach ($option in $environmentOptions) {
+        if (($option -cin @('--use-bundled-ca','--use-openssl-ca') -and -not $serviceIntent.Base) -or
+            ($option -cin @('--use-system-ca','--no-use-system-ca') -and -not $serviceIntent.System)) {
+            $resolved += $option
+        }
+    }
+    # Older supported Node builds recognize the flag before they recognize the environment variable.
+    $supportsSystemCaEnvironment = ($NodeVersion.Major -eq 22 -and $NodeVersion -ge [version]'22.19.0') -or
+        ($NodeVersion.Major -eq 24 -and $NodeVersion -ge [version]'24.6.0')
+    if ($systemEnvironmentIntent -ceq '--use-system-ca' -and -not $serviceIntent.System -and
+        -not $environmentIntent.System -and -not $supportsSystemCaEnvironment) {
+        try {
+            $resolved += Get-WindowsServiceCaOptions -Existing @('NODE_OPTIONS=--use-system-ca') -NodeVersion $NodeVersion
+        } catch {
+            throw 'the selected Node runtime cannot preserve NODE_USE_SYSTEM_CA=1; upgrade Node or configure an explicit CA bundle'
+        }
+    }
+    return $resolved
 }
 
 function Assert-ServiceCaRecoveryCommand {
@@ -1386,7 +1432,7 @@ $script:ApiUrl = $normalizedApiUrl.Trim()
 if ($script:PrepareOnly) {
     $restoredArgs = @($ValidateServerUrlJs, $restoredConfig.serverUrl)
     if ($script:AllowInsecureLocalHttp) { $restoredArgs += '--allow-insecure-local-http' }
-    $restoredOrigin = Invoke-InstallerNode -NodeArguments $restoredArgs 2>$null
+    $restoredOrigin = Invoke-PackagedNode -NodeArguments $restoredArgs 2>$null
     if ($LASTEXITCODE -ne 0 -or ([string]$restoredOrigin).Trim() -cne $script:ApiUrl) {
         Fail "restored agent server does not match --api-url"
     }
