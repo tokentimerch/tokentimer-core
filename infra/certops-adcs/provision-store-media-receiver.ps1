@@ -18,6 +18,9 @@ $expiry = [DateTimeOffset]::Parse($registration.expiresAt,[Globalization.Culture
 $subscription = $env:AZURE_SUBSCRIPTION_ID
 $group = $registration.resourceGroup
 $groupId = "/subscriptions/$subscription/resourceGroups/$group"
+$memberResourceId = "$groupId/providers/Microsoft.Compute/virtualMachines/windows-agent"
+$memberNicId = "$groupId/providers/Microsoft.Network/networkInterfaces/windows-agent-nic"
+$labSubnetId = "$groupId/providers/Microsoft.Network/virtualNetworks/qualification-private/subnets/qualification"
 $scope = @('--subscription',$subscription,'--only-show-errors')
 
 function Assert-ActiveLease {
@@ -30,6 +33,22 @@ function Assert-OriginalTarget {
   Assert-CertOpsStoreGroupIdentity -Registration $registration -Group ($raw | ConvertFrom-Json -DateKind String)
   if ((Read-CertOpsStoreMemberVmId -Registration $registration) -cne $prepared.memberVmId) {
     throw 'Original prepared Store member changed'
+  }
+  $attached = az vm show @scope --resource-group $group --name windows-agent --query 'networkProfile.networkInterfaces[].id' -o json
+  if ($LASTEXITCODE) { throw 'Could not verify the original member interface' }
+  $attached = $attached | ConvertFrom-Json -NoEnumerate
+  if ($attached -isnot [array] -or $attached.Count -ne 1 -or $attached[0] -ine $memberNicId) {
+    throw 'Expected a single original private member interface'
+  }
+  $adapter = az network nic show @scope --ids $memberNicId -o json
+  if ($LASTEXITCODE) { throw 'Could not read the original member interface' }
+  $adapter = $adapter | ConvertFrom-Json
+  $ip = $adapter.ipConfigurations
+  if ($adapter.id -ine $memberNicId -or $adapter.virtualMachine.id -ine $memberResourceId -or
+      $ip -isnot [array] -or $ip.Count -ne 1 -or $ip[0].subnet.id -ine $labSubnetId -or
+      $ip[0].privateIPAddress -cne '10.64.0.5' -or $ip[0].privateIPAllocationMethod -cne 'Static' -or
+      $null -ne $ip[0].publicIPAddress -or $ip[0].loadBalancerInboundNatRules -or $ip[0].loadBalancerBackendAddressPools) {
+    throw 'The original Store member is outside its private network scope'
   }
 }
 function Read-MemberIdentity {
@@ -45,6 +64,7 @@ function Read-MemberIdentity {
 }
 
 Assert-ActiveLease
+if ([DateTimeOffset]::UtcNow.AddMinutes(20) -ge $expiry) { throw 'The original lease is too short for the protected receiver job' }
 & (Join-Path $PSScriptRoot 'login-oidc.ps1')
 Assert-OriginalTarget
 $network = az network vnet show @scope --resource-group $group --name qualification-private --query '{id:id,peerings:virtualNetworkPeerings}' -o json
@@ -83,7 +103,7 @@ $endPoint = $endpointJson | ConvertFrom-Json
 $connection = @($endPoint.privateLinkServiceConnections)
 $interfaces = @($endPoint.networkInterfaces)
 if ($endPoint.provisioningState -cne 'Succeeded' -or $connection.Count -ne 1 -or $interfaces.Count -ne 1 -or
-    $endPoint.subnet.id -ine "$groupId/providers/Microsoft.Network/virtualNetworks/qualification-private/subnets/qualification" -or
+    $endPoint.subnet.id -ine $labSubnetId -or
     $connection[0].privateLinkServiceId -ine $storageId -or
     $connection[0].privateLinkServiceConnectionState.status -cne 'Approved' -or
     @($connection[0].groupIds).Count -ne 1 -or $connection[0].groupIds[0] -cne 'blob' -or

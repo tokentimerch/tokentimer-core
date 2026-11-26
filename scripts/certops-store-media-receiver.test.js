@@ -23,6 +23,8 @@ const provider = groupId + "/providers/";
 const storageId = provider + "Microsoft.Storage/storageAccounts/" + hostname.split(".")[0];
 const networkId = provider + "Microsoft.Network/virtualNetworks/qualification-private";
 const endpointId = provider + "Microsoft.Network/privateEndpoints/store-media-ingress";
+const memberResourceId = provider + "Microsoft.Compute/virtualMachines/windows-agent";
+const memberNicId = provider + "Microsoft.Network/networkInterfaces/windows-agent-nic";
 const receiverWorkflow = "certops-adcs-store-private-receiver.yml";
 
 test("receiver controls are bound to its exact manual protected job", () => {
@@ -52,7 +54,8 @@ function runFixture(t, mode = "exact") {
   for (const file of [script, "store-noiis-prepare-guard.ps1"])
     fs.copyFileSync(path.join(infra, file), path.join(root, file));
   fs.writeFileSync(path.join(root, "login-oidc.ps1"), "Add-Content -LiteralPath $env:STORE_TRACE -Value 'login'");
-  const expiresAt = new Date(Date.now() + (mode === "expired" ? -5000 : 60000)).toISOString();
+  const remaining = { expired: -5000, short: 60000 }[mode] ?? 30 * 60000;
+  const expiresAt = new Date(Date.now() + remaining).toISOString();
   const registration = {
     resourceGroup: group, runId: "12345", runAttempt: "1", workflowCommit: "a".repeat(40),
     subscriptionSha256: sha(subscription), provisionClientSha256: sha(mode === "wrong-principal" ? "foreign" : clientId),
@@ -70,8 +73,16 @@ function runFixture(t, mode = "exact") {
   };
   const data = {
     group: { id: groupId, name: group, location: registration.location, properties: { provisioningState: "Succeeded" }, tags },
-    vm: { id: provider + "Microsoft.Compute/virtualMachines/windows-agent",
+    vm: { id: memberResourceId,
       vmId: mode === "replaced" ? "d4873706-e97d-4efe-b609-999999999999" : memberId, provisioningState: "Succeeded", tags },
+    attached: [mode === "changed-nic" ? "unexpected" : memberNicId],
+    memberNic: {
+      id: memberNicId, virtualMachine: { id: memberResourceId }, ipConfigurations: [{
+        subnet: { id: networkId + "/subnets/qualification" },
+        privateIPAddress: "10.64.0.5", privateIPAllocationMethod: "Static",
+        publicIPAddress: mode === "public-member" ? { id: "foreign" } : null,
+      }],
+    },
     network: { id: networkId, peerings: mode === "peered" ? [{ id: "foreign" }] : [] },
     outputs: {
       blobHostname: { value: hostname }, endpointResourceId: { value: endpointId },
@@ -107,6 +118,8 @@ function az {
     'vm show' {
       if ($args -contains '{vmId:vmId,identity:identity}') {
         @{vmId=$fixture.vm.vmId;identity=$script:identity}
+      } elseif ($args -contains 'networkProfile.networkInterfaces[].id') {
+        return (ConvertTo-Json -InputObject @($fixture.attached) -Compress)
       } else { $fixture.vm }
     }
     'network vnet show' { $fixture.network }
@@ -116,7 +129,9 @@ function az {
     }
     'storage account show' { $fixture.storage }
     'network private-endpoint show' { $fixture.endpoint }
-    'network nic show' { return '10.64.0.7' }
+    'network nic show' {
+      if ($fixture.memberNic.id -in $args) { $fixture.memberNic } else { return '10.64.0.7' }
+    }
     'vm identity assign' {
       if ('windows-agent' -cnotin $args -or $fixture.group.name -cnotin $args) { throw 'Unexpected identity scope' }
       $script:identity=$fixture.identity
@@ -154,10 +169,20 @@ test("receiver prepares the original private endpoint without a grant or transfe
   assert.equal(receipt.qualificationPassed, false);
 });
 
-test("wrong credential, expired lease, foreign VM and peered network refuse before deployment", t => {
-  for (const mode of ["wrong-principal", "expired", "replaced", "peered"]) {
+test("unsafe leases, identities and networks refuse before deployment", t => {
+  const refusals = {
+    "wrong-principal": /original Store provisioning identity/,
+    expired: /lease expired/,
+    short: /lease is too short/,
+    replaced: /Original prepared Store member changed/,
+    peered: /original unpeered Store network/,
+    "public-member": /outside its private network scope/,
+    "changed-nic": /single original private member interface/,
+  };
+  for (const [mode, reason] of Object.entries(refusals)) {
     const { execution, operations, receipt } = runFixture(t, mode);
     assert.notEqual(execution.status, 0, mode);
+    assert.match(execution.stderr, reason, mode);
     assert.ok(!operations.includes("deployment group create"), mode);
     assert.equal(receipt, null, mode);
   }
