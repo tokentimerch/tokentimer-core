@@ -81,6 +81,11 @@ test("intake accepts only the exact protected main dispatch and reviewed source 
     STORE_MEDIA_SOURCE: context.mediaSource, STORE_MEDIA_RECEIPT_SHA: context.custodyDigest,
   };
   assert.deepEqual(readContext(env), context);
+  const receiver = ".github/workflows/certops-adcs-store-private-receiver.yml";
+  assert.throws(() => readContext(env, receiver));
+  const receiverEnv = { ...env, GITHUB_WORKFLOW_REF: "tokentimerch/tokentimer-core/" + receiver + "@refs/heads/main" };
+  assert.throws(() => readContext(receiverEnv));
+  assert.deepEqual(readContext(receiverEnv, receiver), context);
   for (const mutation of [
     { GITHUB_REPOSITORY: "other/tokentimer-core" }, { GITHUB_REF: "refs/heads/test" },
     { GITHUB_EVENT_NAME: "pull_request_target" }, { GITHUB_WORKFLOW_REF: "other" },

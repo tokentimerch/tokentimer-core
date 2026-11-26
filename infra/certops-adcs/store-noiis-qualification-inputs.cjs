@@ -7,6 +7,7 @@ const artifactZip = require("../../scripts/certops-artifact-zip.cjs");
 const REPOSITORY = "tokentimerch/tokentimer-core";
 const REF = "refs/heads/main";
 const WORKFLOW = ".github/workflows/certops-adcs-store-qualification-preflight.yml";
+const RECEIVER_WORKFLOW = ".github/workflows/certops-adcs-store-private-receiver.yml";
 const PREPARE = ".github/workflows/certops-adcs-store-noiis-prepare.yml";
 const REQUIRED_JOBS = ["register", "verify", "prepare"];
 const ID = /^[1-9][0-9]{0,15}$/;
@@ -16,12 +17,13 @@ const VM_ID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const REPORT_LIMIT = 64 * 1024;
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
-function readContext(env) {
+function readContext(env, workflow = WORKFLOW) {
+  assert.ok(workflow === WORKFLOW || workflow === RECEIVER_WORKFLOW);
   assert.equal(env.GITHUB_ACTIONS, "true");
   assert.equal(env.GITHUB_REPOSITORY, REPOSITORY);
   assert.equal(env.GITHUB_EVENT_NAME, "workflow_dispatch");
   assert.equal(env.GITHUB_REF, REF);
-  assert.equal(env.GITHUB_WORKFLOW_REF, REPOSITORY + "/" + WORKFLOW + "@" + REF);
+  assert.equal(env.GITHUB_WORKFLOW_REF, REPOSITORY + "/" + workflow + "@" + REF);
   assert.equal(env.GITHUB_SHA, env.STORE_REVIEWED_WORKFLOW_SHA);
   assert.equal(env.GITHUB_WORKFLOW_SHA, env.GITHUB_SHA);
   assert.ok(env.GH_TOKEN, "GitHub read token required");
@@ -184,8 +186,8 @@ function verifyReceipts(registration, readiness, context, now) {
   };
 }
 
-async function verifyInputs(env = process.env) {
-  const context = readContext(env);
+async function verifyInputs(env = process.env, workflow = WORKFLOW) {
+  const context = readContext(env, workflow);
   const read = async route => {
     const response = await fetch("https://api.github.com/repos/" + REPOSITORY + route, {
       redirect: "error", signal: AbortSignal.timeout(30000),
@@ -218,13 +220,19 @@ async function verifyInputs(env = process.env) {
     artifactZip.download(REPOSITORY, context.registrationId, registration, env.GH_TOKEN, REPORT_LIMIT),
     artifactZip.download(REPOSITORY, context.preparationId, readiness, env.GH_TOKEN, REPORT_LIMIT),
   ]);
-  return verifyReceipts(artifactZip.read(registrationZip), artifactZip.read(readinessZip), context, Date.now());
+  const registered = artifactZip.read(registrationZip);
+  const prepared = verifyReceipts(registered, artifactZip.read(readinessZip), context, Date.now());
+  return workflow === RECEIVER_WORKFLOW
+    ? { prepared, registration: parse(registered.get("store-noiis-registration.json")) }
+    : prepared;
 }
 
 module.exports = { readContext, assertVerifiedCommit, verifyRun, verifyArtifact, verifyReceipts, verifyInputs };
 if (require.main === module) {
-  verifyInputs().then(() => {
-    console.log("Verified the signed workflow inputs and exact protected no-IIS preparation artifacts.");
+  const receiver = process.argv.length === 3 && process.argv[2] === "--receiver";
+  verifyInputs(process.env, receiver ? RECEIVER_WORKFLOW : WORKFLOW).then(proof => {
+    console.log(receiver ? JSON.stringify(proof) :
+      "Verified the signed workflow inputs and exact protected no-IIS preparation artifacts.");
   }).catch(() => {
     console.error("CERTOPS_STORE_PREPARATION_INPUTS_REJECTED");
     process.exitCode = 1;
