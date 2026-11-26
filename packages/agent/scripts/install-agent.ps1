@@ -1471,7 +1471,7 @@ $script:ApiUrl = $normalizedApiUrl.Trim()
 if ($script:PrepareOnly) {
     $restoredArgs = @($ValidateServerUrlJs, $restoredConfig.serverUrl)
     if ($script:AllowInsecureLocalHttp) { $restoredArgs += '--allow-insecure-local-http' }
-    $restoredOrigin = Invoke-InstallerNode -NodeArguments $restoredArgs 2>$null
+    $restoredOrigin = Invoke-PackagedNode -NodeArguments $restoredArgs 2>$null
     if ($LASTEXITCODE -ne 0 -or ([string]$restoredOrigin).Trim() -cne $script:ApiUrl) {
         Fail "restored agent server does not match --api-url"
     }
