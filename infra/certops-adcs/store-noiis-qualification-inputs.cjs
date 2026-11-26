@@ -182,15 +182,15 @@ async function verifyInputs(env = process.env) {
     return response.json();
   };
   const runRoute = "/actions/runs/" + context.runId;
-  const originals = [context.workflowSha, context.prepareSha, context.mediaSource];
+  const signedCommits = new Set([context.workflowSha, context.prepareSha, context.mediaSource]);
   const readCommit = async sha => assertVerifiedCommit(await read("/commits/" + sha), sha);
   const [run, jobs, registration, readiness] = await Promise.all([
     read(runRoute),
     read(runRoute + "/attempts/" + context.attempt + "/jobs?per_page=100"),
     read("/actions/artifacts/" + context.registrationId),
     read("/actions/artifacts/" + context.preparationId),
-    ...new Set(originals.map(sha => sha)),
-  ].slice(0, 4).concat([...new Set(originals)].map(readCommit)));
+    ...Array.from(signedCommits, readCommit),
+  ]);
   verifyRun(run, jobs, context);
   const now = Date.now();
   verifyArtifact(registration, context.registrationId,
