@@ -3,7 +3,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
+const { readFileSync } = require("node:fs");
+const { createRequire } = require("node:module");
+const { join } = require("node:path");
 const { download } = require("./certops-artifact-zip.cjs");
+const { validateWorkflow } = require("./certops-workflow-security");
 const { readContext, assertVerifiedCommit, verifyRun, verifyArtifact, verifyReceipts } =
   require("../infra/certops-adcs/store-noiis-qualification-inputs.cjs");
 
@@ -21,6 +25,22 @@ const originalMember = {
   scope: "store-noiis-clean-member-readiness", windowsBuild: "20348", architecture: "x64",
   localSystem: true, ownedDomain: true, iisAbsent: true, agentServiceAbsent: true, caRpcPing: true,
 };
+
+test("the preflight passes the repository workflow guard with read-only permissions and the exact main condition", () => {
+  const yaml = createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+  const name = "certops-adcs-store-qualification-preflight.yml";
+  const workflow = yaml.load(readFileSync(join(__dirname, "../.github/workflows", name), "utf8"));
+  assert.deepEqual(validateWorkflow(workflow, name), []);
+  for (const mutate of [
+    value => { value.permissions = {}; },
+    value => { value.jobs.verify.if = "always()"; },
+    value => { value.jobs.verify.permissions["id-token"] = "write"; },
+  ]) {
+    const denied = structuredClone(workflow);
+    mutate(denied);
+    assert.ok(validateWorkflow(denied, name).length);
+  }
+});
 
 function preparation({ registration = {}, readiness = {}, member = {} } = {}) {
   const report = json({

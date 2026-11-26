@@ -34,7 +34,8 @@ on:
         description: Custodian-approved sealed media receipt SHA-256
         type: string
         required: true
-permissions: {}
+permissions:
+  contents: read
 concurrency:
   group: certops-adcs-store-preflight-${{ inputs.prepare_run_id }}-${{ inputs.prepare_attempt }}
   cancel-in-progress: false
