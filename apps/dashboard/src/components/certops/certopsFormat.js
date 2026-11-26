@@ -201,6 +201,19 @@ export function observedRevocationDescriptor(result, now = Date.now()) {
   };
 }
 
+const QUIET_REVOCATION_LABELS = new Set([
+  'Revocation not checked',
+  'Revocation disabled',
+  'Revocation checked',
+]);
+
+/** List rows only surface revocation when the operator may need to act. */
+export function revocationNeedsAttention(descriptor) {
+  return (
+    Boolean(descriptor?.label) && !QUIET_REVOCATION_LABELS.has(descriptor.label)
+  );
+}
+
 export function daysUntil(value) {
   if (!value) return null;
   const date = new Date(value);
@@ -861,6 +874,21 @@ const KEY_MODE_LABELS = {
 export function keyModeLabel(keyMode) {
   if (!keyMode) return 'Not recorded';
   return KEY_MODE_LABELS[keyMode] || keyMode;
+}
+
+/**
+ * One line for certificate details. Several places stay in the detail list.
+ */
+export function privateKeySummary(keyMode, keyReference) {
+  const mode = keyMode ? keyModeLabel(keyMode) : '';
+  const { locations } = parseStoredKeyReference(keyReference);
+  if (!mode && locations.length === 0) return 'Not recorded';
+  if (locations.length === 0) return mode;
+  if (locations.length === 1)
+    return mode ? `${mode}, ${locations[0]}` : locations[0];
+  return mode
+    ? `${mode}, ${locations.length} places`
+    : `${locations.length} places`;
 }
 
 /** Sentinel value for the import form "Custom..." key locality option. */

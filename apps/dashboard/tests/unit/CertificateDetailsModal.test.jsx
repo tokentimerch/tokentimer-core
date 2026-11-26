@@ -215,7 +215,7 @@ describe('CertificateDetailsModal', () => {
     expect(screen.getByText('Valid from')).toBeInTheDocument();
   });
 
-  it('orders key locality before renewal and renewal-path badges', () => {
+  it('keeps renewal badges in the header and private key in the body', () => {
     renderModal({
       certOps: {
         certificate: {
@@ -229,13 +229,14 @@ describe('CertificateDetailsModal', () => {
       .getByRole('heading', { name: token.name })
       .closest('.chakra-modal__header');
     const text = header.textContent;
-    expect(text.indexOf('Agent-local')).toBeGreaterThan(text.indexOf('Active'));
-    expect(text.indexOf('Agent-local')).toBeLessThan(
-      text.indexOf('No auto-renewal')
+    expect(text).not.toContain('Agent-local');
+    expect(text.indexOf('No auto-renewal')).toBeGreaterThan(
+      text.indexOf('Active')
     );
     expect(text.indexOf('No auto-renewal')).toBeLessThan(
       text.indexOf('Renewal path')
     );
+    expect(screen.getAllByText('Private key').length).toBeGreaterThan(0);
   });
 
   it('shows the full CSR reference beside its source without a workflow action', () => {
@@ -510,7 +511,7 @@ describe('CertificateDetailsModal', () => {
 
     expect(screen.getByText('Serial number')).toBeInTheDocument();
     expect(screen.queryByText('Certificate state')).not.toBeInTheDocument();
-    expect(screen.getAllByText('Key locality').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Private key').length).toBeGreaterThan(0);
     expect(screen.getByText('Managed certificate ID')).toBeInTheDocument();
     expect(screen.getByText('SHA-256 fingerprint')).toBeInTheDocument();
     expect(screen.queryByText('Technical details')).not.toBeInTheDocument();
@@ -852,7 +853,7 @@ describe('CertificateDetailsModal', () => {
     expect(screen.queryByText('Valid from')).not.toBeInTheDocument();
     expect(screen.queryByText('Valid to')).not.toBeInTheDocument();
     expect(screen.queryByText('Auto-renewal')).not.toBeInTheDocument();
-    expect(screen.queryByText('Key locality')).not.toBeInTheDocument();
+    expect(screen.queryByText('Private key')).not.toBeInTheDocument();
     expect(screen.queryByText('Section')).not.toBeInTheDocument();
     expect(screen.getByText('Contact groups')).toBeInTheDocument();
     expect(screen.getByText('Use workspace default')).toBeInTheDocument();

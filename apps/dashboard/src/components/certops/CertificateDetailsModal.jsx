@@ -52,7 +52,6 @@ import CertificateDeployments from './CertificateDeployments.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
 import CertificateTimeline from './CertificateTimeline.jsx';
 import CertificateObservationHistory from './CertificateObservationHistory.jsx';
-import KeyLocalityBadge from './KeyLocalityBadge.jsx';
 import KeyLocalityList from './KeyLocalityList.jsx';
 import RenewalBadge from './RenewalBadge.jsx';
 import RenewalScheduleFacts from './RenewalScheduleFacts.jsx';
@@ -62,7 +61,7 @@ import {
   expiryDescriptor,
   AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
   formatDate,
-  keyModeLabel,
+  privateKeySummary,
   renewalDescriptor,
   sourceLabel,
 } from './certopsFormat.js';
@@ -410,8 +409,11 @@ export default function CertificateDetailsModal({
       : null,
     hasKeyLocality
       ? {
-          label: 'Key locality',
-          value: keyModeLabel(certificate?.keyMode),
+          label: 'Private key',
+          value: privateKeySummary(
+            certificate?.keyMode,
+            certificate?.keyReference
+          ),
         }
       : null,
   ].filter(Boolean);
@@ -534,12 +536,6 @@ export default function CertificateDetailsModal({
                   {hasObservedRevocationContext(certificate) ? (
                     <ObservedRevocationBadge
                       result={certificate.observedRevocation}
-                    />
-                  ) : null}
-                  {hasKeyLocality ? (
-                    <KeyLocalityBadge
-                      keyMode={certificate.keyMode}
-                      keyReference={certificate.keyReference}
                     />
                   ) : null}
                   {hasRenewalData ? (
@@ -934,7 +930,7 @@ export default function CertificateDetailsModal({
                 }
               >
                 {hasKeyLocality ? (
-                  <DetailRow label='Key locality'>
+                  <DetailRow label='Private key'>
                     <KeyLocalityList
                       keyMode={certificate.keyMode}
                       keyReference={certificate.keyReference}

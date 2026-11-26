@@ -172,7 +172,7 @@ function CertOpsPanelBody({ tokenId, workspaceId }) {
         ) : null}
       </GridItem>
 
-      <Field label='Key locality'>
+      <Field label='Private key'>
         <KeyLocalityList
           keyMode={certificate.keyMode}
           keyReference={certificate.keyReference}

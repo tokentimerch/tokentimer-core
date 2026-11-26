@@ -164,7 +164,7 @@ const COLUMN_META = {
   vendor: { label: 'Vendor', minW: '120px', sortable: true },
   license_type: { label: 'License Type', minW: '130px', sortable: true },
   expiresAt: { label: 'Expiration', minW: '130px', sortable: true },
-  status: { label: 'Status', minW: '110px', sortable: true },
+  status: { label: 'Status', minW: '148px', sortable: true },
   actions: { label: 'Actions', minW: '116px', sortable: false, align: 'right' },
 };
 
@@ -543,16 +543,17 @@ function AssetStatusPills({ token, getStatusMeta }) {
         </Tooltip>
       ) : null}
       {hasObservedRevocationContext(managed) ? (
-        <ObservedRevocationBadge result={managed.observedRevocation} />
+        <ObservedRevocationBadge result={managed.observedRevocation} list />
       ) : null}
     </>
   );
 }
 
-function StatusBadge({ token, getStatusMeta }) {
+function StatusBadge({ token, getStatusMeta, onOpenTokenModal }) {
   return (
-    <HStack spacing={2} flexWrap='wrap'>
+    <HStack spacing={2} flexWrap='wrap' align='center' whiteSpace='normal'>
       <AssetStatusPills token={token} getStatusMeta={getStatusMeta} />
+      <AssetDeploymentIndicator token={token} onOpen={onOpenTokenModal} />
       {token.monitor_health_status && (
         <Tooltip
           label={`${token.monitor_url || 'Endpoint'}: ${token.monitor_health_status}${
@@ -648,37 +649,23 @@ function LocationCell({ token, getTokenLocation, mutedTextColor }) {
 
 function AssetDeploymentIndicator({ token, onOpen }) {
   if (!token.__linkedCertificateCount) return null;
-  const summary = token.__deploymentSummary;
-  const empty =
-    !token.__deploymentLoading &&
-    !token.__deploymentError &&
-    !token.__distributedCertificateCount;
   return (
-    <Box flexShrink={0} minW='48px' h='20px'>
-      {!empty ? (
-        <DeploymentBadge
-          summary={summary}
-          loading={token.__deploymentLoading}
-          error={token.__deploymentError}
-          certificateCount={
-            token.__linkedCertificateCount > 1
-              ? token.__distributedCertificateCount
-              : undefined
-          }
-          onClick={() => onOpen?.({ ...token, __focusDeployments: true })}
-        />
-      ) : null}
-    </Box>
+    <DeploymentBadge
+      attentionOnly
+      summary={token.__deploymentSummary}
+      loading={token.__deploymentLoading}
+      error={token.__deploymentError}
+      certificateCount={
+        token.__linkedCertificateCount > 1
+          ? token.__distributedCertificateCount
+          : undefined
+      }
+      onClick={() => onOpen?.({ ...token, __focusDeployments: true })}
+    />
   );
 }
 
-function NameCell({
-  token,
-  mode,
-  getCategoryVisual,
-  mutedTextColor,
-  onOpenTokenModal,
-}) {
+function NameCell({ token, mode, getCategoryVisual, mutedTextColor }) {
   const nameColor = useColorModeValue('gray.900', 'white');
   const visual = getCategoryVisual(token.category);
   const VisualIcon = visual.icon;
@@ -707,19 +694,16 @@ function NameCell({
         >
           {token.name}
         </Text>
-        {subtitle || token.__linkedCertificateCount ? (
-          <HStack spacing={2} justify='space-between' minW={0} h='20px'>
-            <Text
-              minW={0}
-              title={subtitle}
-              color={mutedTextColor}
-              fontSize='xs'
-              noOfLines={1}
-            >
-              {subtitle}
-            </Text>
-            <AssetDeploymentIndicator token={token} onOpen={onOpenTokenModal} />
-          </HStack>
+        {subtitle ? (
+          <Text
+            minW={0}
+            title={subtitle}
+            color={mutedTextColor}
+            fontSize='xs'
+            noOfLines={1}
+          >
+            {subtitle}
+          </Text>
         ) : null}
       </Box>
     </HStack>
@@ -834,7 +818,6 @@ function renderDataCell({ column, token, mode, helpers }) {
           mode={mode}
           getCategoryVisual={helpers.getCategoryVisual}
           mutedTextColor={mutedTextColor}
-          onOpenTokenModal={helpers.onOpenTokenModal}
         />
       );
     case 'type':
@@ -918,7 +901,13 @@ function renderDataCell({ column, token, mode, helpers }) {
     case 'expiresAt':
       return formatExpirationDate(token.expiresAt);
     case 'status':
-      return <StatusBadge token={token} getStatusMeta={getStatusMeta} />;
+      return (
+        <StatusBadge
+          token={token}
+          getStatusMeta={getStatusMeta}
+          onOpenTokenModal={helpers.onOpenTokenModal}
+        />
+      );
     case 'actions':
       return (
         <InventoryRowActions
@@ -1042,21 +1031,15 @@ function AssetInventoryMobileCard({
               >
                 {token.name}
               </Text>
-              <HStack spacing={2} justify='space-between' minW={0}>
-                <Text
-                  color={helpers.secondaryTextColor}
-                  fontSize='sm'
-                  lineHeight='short'
-                  mt={1}
-                  noOfLines={1}
-                >
-                  {helpers.getAssetTypeLabel(token)}
-                </Text>
-                <AssetDeploymentIndicator
-                  token={token}
-                  onOpen={helpers.onOpenTokenModal}
-                />
-              </HStack>
+              <Text
+                color={helpers.secondaryTextColor}
+                fontSize='sm'
+                lineHeight='short'
+                mt={1}
+                noOfLines={1}
+              >
+                {helpers.getAssetTypeLabel(token)}
+              </Text>
               {nameSubtitle ? (
                 <Text
                   color={helpers.mutedTextColor}
@@ -1072,6 +1055,10 @@ function AssetInventoryMobileCard({
                   <AssetStatusPills
                     token={token}
                     getStatusMeta={helpers.getStatusMeta}
+                  />
+                  <AssetDeploymentIndicator
+                    token={token}
+                    onOpen={helpers.onOpenTokenModal}
                   />
                 </HStack>
               </Box>

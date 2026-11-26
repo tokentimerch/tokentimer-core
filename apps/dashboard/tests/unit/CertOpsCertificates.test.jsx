@@ -1815,7 +1815,7 @@ it('opens the same certificate identity from its deployment summary and fetches 
   renderPage();
   expect(screen.getAllByText('Deployment').length).toBeGreaterThan(0);
   const summary = await screen.findByRole('button', {
-    name: /Open certificate deployments: 3\/5 verified. Partially complete/,
+    name: /Open certificate deployments: 3 of 5 live/,
   });
   expect(
     distributionGetMock.mock.calls.some(([url]) => url.endsWith('/consumers'))

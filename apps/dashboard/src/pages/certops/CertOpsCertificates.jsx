@@ -44,7 +44,6 @@ import useDistributionSummaries from '../../components/certops/useDistributionSu
 import RenewalBadge from '../../components/certops/RenewalBadge.jsx';
 import RenewalScheduleFacts from '../../components/certops/RenewalScheduleFacts.jsx';
 import RenewalPathBadge from '../../components/certops/RenewalPathBadge.jsx';
-import KeyLocalityBadge from '../../components/certops/KeyLocalityBadge.jsx';
 import RetireCertificateModal from '../../components/certops/RetireCertificateModal.jsx';
 import SetupRenewalModal from '../../components/certops/SetupRenewalModal.jsx';
 import DetachRenewalProfileModal from '../../components/certops/DetachRenewalProfileModal.jsx';
@@ -135,7 +134,6 @@ const CERTIFICATE_TABLE_COLUMNS = [
   { key: 'expiry', label: 'Expiry' },
   { key: 'renewal', label: 'Renewal', sortable: false },
   { key: 'deployment', label: 'Deployment', sortable: false },
-  { key: 'keyLocality', label: 'Key locality' },
   { key: 'source', label: 'Source' },
 ];
 
@@ -1014,6 +1012,7 @@ export default function CertOpsCertificates() {
                         py={{ base: 2.5, lg: '0.55rem' }}
                         bg={{ base: mobileMetaBg, lg: 'transparent' }}
                         borderBottomWidth={{ base: 0, lg: '1px' }}
+                        whiteSpace='normal'
                       >
                         <MobileFieldLabel color={muted}>
                           Status
@@ -1032,6 +1031,7 @@ export default function CertOpsCertificates() {
                         {hasObservedRevocationContext(certificate) ? (
                           <ObservedRevocationBadge
                             result={certificate.observedRevocation}
+                            list
                             ml={2}
                           />
                         ) : null}
@@ -1099,6 +1099,7 @@ export default function CertOpsCertificates() {
                         py={{ base: 2.5, lg: '0.55rem' }}
                         bg={{ base: mobileMetaBg, lg: 'transparent' }}
                         borderBottomWidth={{ base: 0, lg: '1px' }}
+                        whiteSpace='normal'
                       >
                         <MobileFieldLabel color={muted}>
                           Deployment
@@ -1111,20 +1112,6 @@ export default function CertOpsCertificates() {
                             setFocusDeployments(true);
                             setDetailsTarget(certificate);
                           }}
-                        />
-                      </Td>
-                      <Td
-                        px={{ base: 3.5, lg: 4 }}
-                        py={{ base: 2.5, lg: '0.55rem' }}
-                        bg={{ base: mobileMetaBg, lg: 'transparent' }}
-                        borderBottomWidth={{ base: 0, lg: '1px' }}
-                      >
-                        <MobileFieldLabel color={muted}>
-                          Key locality
-                        </MobileFieldLabel>
-                        <KeyLocalityBadge
-                          keyMode={certificate.keyMode}
-                          keyReference={certificate.keyReference}
                         />
                       </Td>
                       <Td
