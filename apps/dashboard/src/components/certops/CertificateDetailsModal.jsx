@@ -520,9 +520,6 @@ export default function CertificateDetailsModal({
               hasAnyValue(
                 certificate?.status,
                 hasRenewalData ? certificate?.renewal : null,
-                hasKeyLocality
-                  ? certificate?.keyMode || certificate?.keyReference
-                  : null,
                 certificate?.renewalPathState &&
                   certificate.renewalPathState !== 'healthy'
                   ? certificate.renewalPathState

@@ -176,7 +176,7 @@ function CertOpsPanelBody({ tokenId, workspaceId }) {
         <KeyLocalityPlaces
           keyMode={certificate.keyMode}
           keyReference={certificate.keyReference}
-          locations={certificate.locations}
+          locations={instances}
           empty='Not recorded'
         />
       </Field>
