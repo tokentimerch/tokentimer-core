@@ -126,6 +126,8 @@ const { createReplayCache } = require("./replay");
 const { createClockOffsetEstimator } = require("./clock");
 const { checkNtpSynced } = require("./ntp");
 const { generateKeyPairToFile, discardStagedKey, generateCsr } = require("./keys");
+const { ADMISSION_DENIED, createOperationAdmission, guardNativeExec, takeAdmissionBinding } = require("./observation-admission");
+const OBSERVED_STORE_ACTIONS = new Set(["noop", "adcs-preflight", "adcs-installation-proof", "renew", "continue-enrollment"]);
 const {
   resolveJobIssuerKind,
   assertIssuanceOutcome,
@@ -2178,6 +2180,12 @@ async function handleSignedJob({
       leaseState,
     };
     const leaseHeartbeat = startExecutionLeaseRenewal(leaseOpts);
+    const observationInterrupted = () => ({
+      status: "orphaned_unknown_effect",
+      preserveObservedJournal: true,
+      retryableInterrupt: true,
+      errorMessage: "Required observation lost; reconcile the durable enrollment before retrying",
+    });
     let outcome;
     try {
       outcome = await withJobConsole(jobLogSession, () => executeJob({
@@ -2190,10 +2198,15 @@ async function handleSignedJob({
         leaseClient: client,
         leaseState,
         executionContext: materialRecoveryOnly ? { ...executionContext, materialRecoveryOnly: true } : executionContext,
-        signal: leaseHeartbeat.signal,
+        signal: executionContext.observedAdmission
+          ? AbortSignal.any([leaseHeartbeat.signal, executionContext.observedAdmission])
+          : leaseHeartbeat.signal,
         log,
         jobLog: jobLogSession?.logger,
       }));
+      if (executionContext.observedAdmission?.aborted && outcome?.status !== "awaiting_issuer") {
+        outcome = observationInterrupted();
+      }
       const heartbeatAbort = leaseHeartbeat.getAbort();
       // Lease loss after a "clean" terminal must not be reported as success.
       // awaiting_issuer is intentionally omitted: the CA request and RequestId
@@ -2213,10 +2226,10 @@ async function handleSignedJob({
         name: err?.name,
         code: err?.code,
       });
-      outcome = {
-        status: "failed",
-        errorMessage: boundErrorMessage(`job execution failed: ${err.message}`),
-      };
+      outcome = executionContext.observedAdmission &&
+        (err?.code === ADMISSION_DENIED || executionContext.observedAdmission.aborted)
+        ? observationInterrupted()
+        : { status: "failed", errorMessage: boundErrorMessage(`job execution failed: ${err.message}`) };
     } finally {
       stopPeriodicLeaseRenewal(leaseHeartbeat);
     }
@@ -2271,7 +2284,8 @@ async function handleSignedJob({
       log,
     });
 
-    if (stateDir && outcome && typeof outcome.status === "string") {
+    if (stateDir && outcome && typeof outcome.status === "string" &&
+        !outcome.preserveObservedJournal && !executionContext.observedAdmission?.aborted) {
       try {
         clearJournalOnTerminal({
           stateDir,
@@ -2437,6 +2451,11 @@ async function executeJob({
 }) {
   const { execution } = executionContext;
   const action = job.action;
+  if (executionContext.observedAdmission &&
+      (!OBSERVED_STORE_ACTIONS.has(action) ||
+        (action !== "noop" && action !== "adcs-preflight" && job?.target?.type !== "windows-cert-store"))) {
+    return { status: "blocked", errorMessage: "Observed qualification accepts only AD CS Store jobs and read-only preflight" };
+  }
   const iisAddress = job?.target?.type === "windows-iis" ? job.target.binding?.address : null;
   if (iisAddress != null && iisAddress !== "*" && iisAddress !== "0.0.0.0") {
     if (typeof iisAddress !== "string" || iisAddress.includes("%") || require("node:net").isIP(iisAddress) === 0 || job.target.binding?.sniHost) {
@@ -2692,6 +2711,9 @@ async function executeJob({
   let resolvedIssuerKind = null;
   if (action === "renew" || action === "continue-enrollment" || action === "adcs-installation-proof") {
     resolvedIssuerKind = resolveJobIssuerKind(job);
+    if (executionContext.observedAdmission && resolvedIssuerKind.kind !== "adcs") {
+      return { status: "blocked", errorMessage: "Observed qualification requires an AD CS issuer" };
+    }
     if (resolvedIssuerKind.error) {
       return { status: "blocked", errorMessage: boundErrorMessage(resolvedIssuerKind.error) };
     }
@@ -7369,6 +7391,7 @@ function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, 
  * @returns {Promise<void>}
  */
 async function runAgent(_argv, { signal: externalSignal } = {}) {
+  const admissionBinding = takeAdmissionBinding();
   const configDir = resolveConfigDir();
   const config = loadAgentConfig({ configDir });
 
@@ -7414,6 +7437,13 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
 
   const controller = new AbortController();
   const stop = () => controller.abort();
+  const admit = admissionBinding ? createOperationAdmission(admissionBinding, stop) : null;
+  if (admit && executionContext) {
+    executionContext.observedAdmission = controller.signal;
+    const observedExec = guardNativeExec(admit, controller.signal);
+    executionContext.windowsExecFileImpl = observedExec;
+    executionContext.adcsExecFileImpl = observedExec;
+  }
   if (externalSignal) {
     if (externalSignal.aborted) return;
     externalSignal.addEventListener("abort", stop, { once: true });
@@ -7461,6 +7491,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
       allowInsecureLocalHttp: config.allowInsecureLocalHttp,
       onServerDate,
       sequenceAllocator,
+      ...(admit ? { beforeClaim: () => admit("claim", controller.signal) } : {}),
     });
 
   // For a not-yet-registered agent the envelope needs a client-generated
@@ -7638,9 +7669,10 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
               defaultAgentLogger.error("outbox retention pass failed; will retry", err);
             }
           }
+          const supportedActions = resolveClaimSupportedActions(executionContext);
           const jobs = await client.claim({
             maxJobs: 1,
-            supportedActions: resolveClaimSupportedActions(executionContext),
+            supportedActions: admit ? supportedActions.filter((action) => OBSERVED_STORE_ACTIONS.has(action)) : supportedActions,
             supportedDnsProviders,
           });
           for (const job of jobs) {

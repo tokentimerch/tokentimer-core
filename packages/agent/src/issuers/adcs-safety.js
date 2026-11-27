@@ -60,9 +60,15 @@ function createEnrollmentSafetyGuard({ now = Date.now } = {}) {
     let refreshed = false;
     const age = entry ? now() - entry.observedAt : Infinity;
     if (forceRefresh || !entry || age < 0 || age > SAFETY_REUSE_MS) {
+      const execFileImpl = executionContext.observedAdmission
+        ? executionContext.windowsExecFileImpl
+        : executionContext.adcsPreflightExecFileImpl;
+      if (executionContext.observedAdmission && !execFileImpl) {
+        return refusal("ADCS_CA_CONFIG_UNSAFE", "Observed AD CS preflight requires guarded native execution");
+      }
       const result = await executeAdcsPreflight({ job: { mode: "real", transport: snapshot.transport,
         caConfig: snapshot.caConfig, template: snapshot.template }, rules: executionContext.adcsEnrollmentRules,
-      probe: executionContext.adcsPreflightImpl, execFileImpl: executionContext.adcsPreflightExecFileImpl,
+      probe: executionContext.adcsPreflightImpl, execFileImpl,
       info });
       if (result.status !== "succeeded") return refusal("ADCS_CA_CONFIG_UNSAFE", "Current native issuer preflight could not complete");
       entry = { observedAt: now(), preflightResult: result.preflightResult };

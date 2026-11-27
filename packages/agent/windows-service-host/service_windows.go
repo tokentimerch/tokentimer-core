@@ -48,9 +48,12 @@ const agentRetiredExitCode = 86
 // decision (how to signal the child, how long to wait) lives in host.go
 // so it stays unit-testable without a real SCM.
 type tokenTimerAgentService struct {
-	host        *agentHost
-	stopTimeout time.Duration
-	log         *hostLogger
+	host            *agentHost
+	stopTimeout     time.Duration
+	log             *hostLogger
+	openObservation func() (serviceObservation, error)
+	observationRun  string
+	observationDir  string
 }
 
 // Execute implements svc.Handler. Its control flow follows the documented
@@ -69,10 +72,68 @@ func (s *tokenTimerAgentService) Execute(args []string, r <-chan svc.ChangeReque
 
 	changes <- svc.Status{State: svc.StartPending}
 
-	if err := s.host.start(); err != nil {
-		s.log.Printf("service start failed: %v", err)
-		changes <- svc.Status{State: svc.Stopped}
-		return false, 1
+	var lost <-chan error
+	var admission *observedAdmission
+	if s.openObservation == nil {
+		if err := s.host.start(); err != nil {
+			s.log.Printf("service start failed: %v", err)
+			changes <- svc.Status{State: svc.Stopped}
+			return false, 1
+		}
+	} else {
+		observer, err := s.openObservation()
+		if err != nil {
+			s.log.Printf("required observation unavailable; worker not started: %v", err)
+			return false, 0
+		}
+		defer observer.close()
+		if err := observer.check(); err != nil {
+			s.log.Printf("required observation unavailable; worker not started: %v", err)
+			return false, 0
+		}
+		if err := observer.reserve(); err != nil {
+			s.log.Printf("observation run not admitted; worker not started: %v", err)
+			return false, 0
+		}
+		admission = &observedAdmission{observer: observer, failure: make(chan error, 1), onLoss: s.host.interruptObservedChild}
+		var binding string
+		if s.observationRun != "" {
+			journal, release, err := openAdmissionJournal(s.observationDir, s.observationRun)
+			if err != nil {
+				s.log.Printf("observation journal unavailable; worker not started: %v", err)
+				return false, 0
+			}
+			defer release()
+			defer journal.Close()
+			broker, err := startAdmissionBroker(admission, s.observationRun, journal, s.host.pid)
+			if err != nil {
+				s.log.Printf("observation admission unavailable; worker not started: %v", err)
+				return false, 0
+			}
+			defer broker.close()
+			binding = broker.binding()
+		}
+		armed := make(chan struct{})
+		stop := make(chan struct{})
+		done := make(chan struct{})
+		go watchServiceObservation(admission, armed, stop, done)
+		defer func() {
+			close(stop)
+			<-done
+		}()
+		if err := s.host.startChild(func() error {
+			// Until the child resumes, only startup can probe the observer.
+			// Return failure to startChild, which owns the suspended job.
+			if err := observer.check(); err != nil {
+				return err
+			}
+			close(armed)
+			return nil
+		}, admission.lockResume, binding); err != nil {
+			s.log.Printf("observed worker start refused: %v", err)
+			return false, 0
+		}
+		lost = admission.failure
 	}
 
 	changes <- svc.Status{State: svc.Running, Accepts: accepted}
@@ -87,6 +148,11 @@ func (s *tokenTimerAgentService) Execute(args []string, r <-chan svc.ChangeReque
 			case svc.Interrogate:
 				changes <- req.CurrentStatus
 			case svc.Stop, svc.Shutdown:
+				if admission != nil {
+					admission.revoke()
+					s.stopObserved(changes, lost)
+					return false, 0
+				}
 				changes <- svc.Status{State: svc.StopPending}
 				_ = s.host.stopGracefully(s.stopTimeout)
 				changes <- svc.Status{State: svc.Stopped}
@@ -99,7 +165,17 @@ func (s *tokenTimerAgentService) Execute(args []string, r <-chan svc.ChangeReque
 				// response rather than silently dropping it.
 				changes <- req.CurrentStatus
 			}
+		case err := <-lost:
+			s.stopObserved(changes, nil)
+			s.log.Printf("required observation lost: %v", err)
+			return false, 0
 		case err := <-childExitCh:
+			if admission != nil {
+				admission.revoke()
+				s.stopObserved(changes, nil)
+				s.log.Printf("observed worker exited; new observation run required: %v", err)
+				return false, 0
+			}
 			// The child exited without this host asking it to: a crash,
 			// or the agent's own clean self-exit (including the
 			// AGENT_RETIRED_EXIT_CODE=86 self-exit paired with
@@ -152,11 +228,65 @@ func (s *tokenTimerAgentService) Execute(args []string, r <-chan svc.ChangeReque
 	}
 }
 
+// watchServiceObservation keeps one session and never reconnects after loss.
+func watchServiceObservation(admission *observedAdmission, armed, stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+	select {
+	case <-armed:
+	case <-stop:
+		return
+	}
+	ticker := time.NewTicker(observationInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			if err := admission.check(); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// stopObserved honors a requested graceful stop only while observation is
+// available. Every path then terminates and checks the job, even if Node exited.
+func (s *tokenTimerAgentService) stopObserved(changes chan<- svc.Status, lost <-chan error) {
+	fenced := s.host.prepareObservedStop()
+	changes <- svc.Status{State: svc.StopPending}
+	var observationErr error
+	if lost != nil && fenced {
+		select {
+		case observationErr = <-lost:
+		case <-s.host.exited:
+		default:
+			if err := s.host.sendCtrlBreak(s.host.pid()); err == nil {
+				timer := time.NewTimer(s.stopTimeout)
+				select {
+				case observationErr = <-lost:
+				case <-s.host.exited:
+				case <-timer.C:
+				}
+				timer.Stop()
+			}
+		}
+	}
+	if err := s.host.stopObservedChild(); err != nil {
+		s.log.Printf("observed worker drainage unverified: %v", err)
+	} else {
+		s.log.Printf("observed job empty and retained processes exited; service stopping without automatic retry")
+	}
+	if observationErr != nil {
+		s.log.Printf("required observation lost during SCM stop: %v", observationErr)
+	}
+}
+
 // runAsService blocks for the lifetime of the service by calling
 // svc.Run, which internally calls StartServiceCtrlDispatcher and blocks
 // until Execute returns.
-func runAsService(host *agentHost, stopTimeout time.Duration, log *hostLogger) {
-	handler := &tokenTimerAgentService{host: host, stopTimeout: stopTimeout, log: log}
+func runAsService(handler *tokenTimerAgentService) {
+	log := handler.log
 	if err := svc.Run(serviceName, handler); err != nil {
 		log.Printf("svc.Run failed: %v", err)
 	}

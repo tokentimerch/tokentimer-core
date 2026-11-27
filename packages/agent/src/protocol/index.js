@@ -584,7 +584,7 @@ async function resolveCredential(getCredential) {
   return typeof getCredential === "function" ? await getCredential() : null;
 }
 
-function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredential, signal, requestTimeoutMs = REQUEST_TIMEOUT_MS, fetchImpl = fetch, allowInsecureLocalHttp = false, onServerDate = null, sequenceAllocator = null } = {}) {
+function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredential, signal, requestTimeoutMs = REQUEST_TIMEOUT_MS, fetchImpl = fetch, allowInsecureLocalHttp = false, onServerDate = null, sequenceAllocator = null, beforeClaim = null } = {}) {
   const baseUrl = parseServerUrl(serverUrl, { allowInsecureLocalHttp });
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 120_000) {
     throw new AgentProtocolError("requestTimeoutMs must be an integer between 1 and 120000", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
@@ -628,8 +628,17 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
   // a higher sequence before a lower one and get the lower one rejected as
   // a regression.
   let sendQueue = Promise.resolve();
-  function enqueueSequencedSend(performSend) {
-    const run = sendQueue.then(() => performSend(nextSequence()));
+  function enqueueSequencedSend(performSend, admit = null) {
+    const run = admit
+      ? sendQueue.then(async () => {
+        await admit();
+        if (signal?.aborted) {
+          throw new AgentProtocolError("claim canceled before dispatch", AGENT_PROTOCOL_ERROR_CODES.NETWORK_ERROR,
+            { cause: signal.reason });
+        }
+        return performSend(nextSequence());
+      })
+      : sendQueue.then(() => performSend(nextSequence()));
     // Keep the chain alive whether the send succeeds or fails; failures
     // propagate to the caller through `run` itself.
     sendQueue = run.then(
@@ -834,6 +843,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
             : {}),
         },
       })),
+      beforeClaim,
     );
     if (!ok) throw new AgentProtocolError(`claim failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     if (json !== null && !isPlainObject(json)) throw new AgentProtocolError("claim response must be an object", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);

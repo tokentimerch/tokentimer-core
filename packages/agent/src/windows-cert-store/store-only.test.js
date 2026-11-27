@@ -185,6 +185,19 @@ test("store installation journals before accept and verifies exact key after it"
   assert.deepEqual(item.calls, ["inspect", "store-accept", "journal:accept", "accept", "inspect", "store-acceptance-receipt", "receipt", "release"]);
 });
 
+test("observation loss after acceptance preserves the install journal for reconciliation", async () => {
+  const item = installation();
+  let reads = 0;
+  item.options.inspectImpl = async () => {
+    if (++reads === 1) return { status: "absent" };
+    throw Object.assign(new Error("observer lost"), { code: "OBSERVATION_ADMISSION_DENIED" });
+  };
+  const result = await installStoreOnlyCertificate(item.options);
+  assert.equal(result.status, "failed");
+  assert.equal(result.retryableInterrupt, true);
+  assert.deepEqual(item.calls, ["store-accept", "journal:accept", "accept", "release"]);
+});
+
 test("recovery never repeats accept when a certificate is absent or already installed", async () => {
   const absent = installation({ mode: "recovery", inspectImpl: async () => ({ status: "absent" }) });
   assert.equal((await installStoreOnlyCertificate(absent.options)).status, "failed");

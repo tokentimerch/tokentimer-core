@@ -13,7 +13,8 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($InstallerPath, [ref]$
 if ($errors.Count) { throw 'Installer syntax failed.' }
 $names = @('Get-UnlinkedInstallItem','Assert-TrustedInstallAccess','Get-ProtectedPackageFingerprint',
     'Assert-NoExistingPreparedInstall','Read-RestoredPreparationConfig','Get-WindowsServiceBinPath',
-    'Complete-PreparedInstall','Get-PackageDirectoryIdentity','Invoke-PackagedNode')
+    'Complete-PreparedInstall','Complete-ObservedInstall','Assert-DisabledServiceRegistration',
+    'Get-PackageDirectoryIdentity','Get-WindowsServiceEnvironmentValues','Parse-Arguments','Invoke-PackagedNode')
 foreach ($name in $names) {
     $definition = $ast.Find({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
@@ -31,7 +32,6 @@ $validateRestoredOrigin = [scriptblock]::Create($originCheck[0].Extent.Text)
 $ValidateServerUrlJs = Join-Path (Split-Path -Parent $InstallerPath) 'validate-server-url.js'
 $script:PrepareOnly = $true
 $script:AllowInsecureLocalHttp = $false
-function Fail([string]$Message) { throw $Message }
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $script:AdministratorsSid = if ($identity.IsSystem) { 'S-1-5-32-544' } else { $identity.Owner.Value }
@@ -41,6 +41,8 @@ $script:TrustedInstallerSid = 'S-1-5-80-956008885-3418522649-1831038044-18532926
 $script:PackageFingerprintName = '.tokentimer-install-sha256'
 $script:WorkspaceId = 'workspace-fixture'
 $script:NodeExe = $NodeExecutable
+$script:ObservationRunId = ''
+$script:BootstrapToken = 'ttboot_public_fixture'
 $ServiceName = 'PreparedFixture'
 $ServiceDisplayName = 'Prepared fixture'
 $fixtureParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
@@ -58,8 +60,10 @@ function Get-CimInstance($ClassName, $Filter, $ErrorAction) {
     return $script:registration
 }
 function New-Service($Name, $BinaryPathName, $DisplayName, $StartupType, $ErrorAction) {
-    if ($Name -cne $ServiceName -or $StartupType -cne 'Disabled' -or
-        $script:registration -or (Test-Path -LiteralPath $AppDir)) { throw 'Service was not created disabled before promotion.' }
+    if ($Name -cne $ServiceName -or $StartupType -cne 'Disabled' -or $script:registration -or
+        (Test-Path -LiteralPath $AppDir) -ne [bool]$script:ObservationRunId) {
+        throw 'Service was not created disabled at the expected preparation stage.'
+    }
     $script:registration = [pscustomobject]@{
         StartMode = $StartupType
         State = 'Stopped'
@@ -68,13 +72,25 @@ function New-Service($Name, $BinaryPathName, $DisplayName, $StartupType, $ErrorA
         PathName = $BinaryPathName
     }
 }
-function Set-ServiceEnvironment($ConfigDir, $Token) {
-    if ($ConfigDir -cne $StateDir -or $Token -cne '' -or $script:registration.StartMode -cne 'Disabled') {
+function Set-ServiceEnvironment($ConfigDir, $Token, $Existing) {
+    $expectedToken = if ($script:ObservationRunId) { $script:BootstrapToken } else { '' }
+    if ($ConfigDir -cne $StateDir -or $Token -cne $expectedToken -or $script:registration.StartMode -cne 'Disabled') {
         throw 'Unexpected bootstrap or config path.'
     }
     if ($script:interrupt) { throw 'injected interruption after CreateService' }
+    $script:scmEnvironment = @(Get-WindowsServiceEnvironmentValues -Existing $Existing -ConfigDir $ConfigDir -Token $Token)
     if ($script:occupyDestination) { [IO.File]::WriteAllText($AppDir, 'late unrelated occupant') }
 }
+function Get-ExistingServiceEnvironment([string]$ServiceKey) {
+    if ($ServiceKey -cne "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName") {
+        throw 'Unexpected registry inspection.'
+    }
+    if ($script:omitObservationBinding) {
+        return @($script:scmEnvironment | Where-Object { $_ -notlike 'TOKENTIMER_AGENT_HOST_OBSERVATION_RUN=*' })
+    }
+    return $script:scmEnvironment
+}
+function Fail([string]$Message) { throw $Message }
 function Start-Service { throw 'Preparation must not call Start-Service.' }
 function Stop-Service { throw 'Preparation must not call Stop-Service.' }
 function Remove-Service { throw 'Preparation must not delete a service.' }
@@ -85,6 +101,8 @@ function New-Fixture([string]$Name) {
     $script:StateDir = Join-Path $InstallRoot 'state'
     $script:stage = Join-Path $InstallRoot "app.staging.$PID"
     $script:registration = $null
+    $script:scmEnvironment = @()
+    $script:omitObservationBinding = $false
     $script:interrupt = $false
     $script:occupyDestination = $false
     $null = [IO.Directory]::CreateDirectory($StateDir)
@@ -136,6 +154,7 @@ try {
     & $validateRestoredOrigin
     $script:ApiUrl = 'https://different.invalid'
     Assert-Refused { & $validateRestoredOrigin } '*restored agent server does not match --api-url*'
+    $script:ApiUrl = $restoredConfig.serverUrl
     Complete-PreparedInstall -Stage $stage -StagingIdentity $expected -BinaryPath $binaryPath
     if ($script:registration.StartMode -cne 'Disabled' -or $script:registration.ProcessId -ne 0 -or
         -not (Test-Path -LiteralPath $AppDir) -or (Test-Path -LiteralPath $stage) -or
@@ -183,6 +202,67 @@ try {
     $credential.SetAccessControl($acl)
     [IO.File]::WriteAllText((Join-Path $StateDir 'registration.pending.json'), '{}')
     Assert-Refused { Read-RestoredPreparationConfig } '*incomplete bootstrap or registration*'
+
+    foreach ($invalid in @(@('--prepare-for-observation'), @('--prepare-for-observation', 'A' * 32))) {
+        Assert-Refused { Parse-Arguments -Arguments $invalid } '*32-character lowercase hexadecimal run ID*'
+    }
+    $runId = '0123456789abcdef' * 2
+    Parse-Arguments -Arguments @('--prepare-for-observation', $runId)
+    if ($script:ObservationRunId -cne $runId) { throw 'The requested observation run was not retained.' }
+    Assert-Refused { Parse-Arguments -Arguments @('--prepare-for-observation', $runId) } '*requires one*'
+    $mode = $ast.EndBlock.Statements | Where-Object {
+        $_.Extent.Text.StartsWith('if ($script:ObservationRunId -and (-not $script:RequiresBundledRuntime')
+    }
+    $script:RequiresBundledRuntime = $false
+    $script:DryRun = $false
+    $script:Uninstall = $false
+    $script:PrepareOnly = $false
+    Assert-Refused { & ([scriptblock]::Create($mode.Extent.Text)) } '*fresh bundled installation*'
+    $script:RequiresBundledRuntime = $true
+    & ([scriptblock]::Create($mode.Extent.Text))
+    $authorized = $ast.Find({ param($node)
+        $node -is [Management.Automation.Language.IfStatementAst] -and
+        $node.Extent.Text.StartsWith('if ($script:ObservationRunId -and $null -eq $script:AuthorizedLauncherTransaction')
+    }, $true)
+    $intent = $ast.Find({ param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Assert-AuthorizedLauncherOrNoIntent'
+    }, $true)
+    $start = $ast.EndBlock.Statements | Where-Object {
+        $_.Extent.Text.StartsWith('if ($script:ObservationRunId) {') -and $_.Extent.Text.Contains('Complete-ObservedInstall')
+    }
+    if (-not $authorized -or -not $intent -or -not $start -or
+        $intent.Extent.EndOffset -ge $authorized.Extent.StartOffset -or $authorized.Extent.EndOffset -ge $start.Extent.StartOffset) {
+        throw 'The verified launcher guard must precede observation preparation.'
+    }
+    $script:AuthorizedLauncherTransaction = $null
+    Assert-Refused { & ([scriptblock]::Create($authorized.Extent.Text)) } '*verified launcher transaction*'
+    if ($start.Extent.Text -match '(?i)\b(?:Start-Service|Restart-Service)\b' -or
+        -not $start.Find({ param($node) $node -is [Management.Automation.Language.ExitStatementAst] }, $true)) {
+        throw 'Observation preparation must return before normal service startup.'
+    }
+
+    foreach ($outcome in @('success', 'registry-write-fails', 'readback-fails')) {
+        New-Fixture "observed $outcome"
+        Rename-Item -LiteralPath $stage -NewName (Split-Path -Leaf $AppDir)
+        $before = (Snapshot-State) -join [char]10
+        if ($outcome -ceq 'registry-write-fails') {
+            $script:interrupt = $true
+            Assert-Refused { Complete-ObservedInstall -BinaryPath $binaryPath } '*injected interruption*'
+        } elseif ($outcome -ceq 'readback-fails') {
+            $script:omitObservationBinding = $true
+            Assert-Refused { Complete-ObservedInstall -BinaryPath $binaryPath } '*run binding could not be verified*'
+        } else {
+            Complete-ObservedInstall -BinaryPath $binaryPath
+            if ($script:scmEnvironment -cnotcontains "TOKENTIMER_AGENT_HOST_OBSERVATION_RUN=$runId" -or
+                $script:scmEnvironment -cnotcontains "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=$script:BootstrapToken") {
+                throw 'Prepared SCM environment lost its observation binding or deferred bootstrap.'
+            }
+        }
+        if ($script:registration.StartMode -cne 'Disabled' -or $script:registration.State -cne 'Stopped' -or
+            $script:registration.ProcessId -ne 0 -or ((Snapshot-State) -join [char]10) -cne $before) {
+            throw 'Observed preparation started the service or changed its protected state.'
+        }
+    }
     'prepare-only-filesystem-controls-pass'
 } finally {
     $resolved = [IO.Path]::GetFullPath($fixture)

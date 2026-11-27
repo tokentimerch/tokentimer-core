@@ -14,6 +14,10 @@ In the protected no-IIS preparation workflow, enable **prepare_recovery_infrastr
 
 Use **Prepare private Store media receiver** on a successful, unexpired preparation to create the private Blob endpoint and verify the original Windows member’s system identity. The workflow receipt gives the endpoint and principal fingerprint for the separate container-scoped access review. Assign the reader and authorize the exact custody handoff before transferring the sealed media.
 
+## Windows service observation trial
+
+Pass `--prepare-for-observation <run>` to the signed bundled installer through the official launcher with a bare API origin. It leaves the LocalSystem service disabled and records a fresh 32-character lowercase hexadecimal run ID. Verify the installed package and the approved observer’s off-host readiness before enabling the service. Bind CA/CNG evidence to the actual SCM process ID, LocalSystem SID, UTC creation time and run ID. The host checks the observer before starting the worker and applies the Job limit on loss. Use a fresh run ID on restart. A committed workspace pause fences later API claims. Reconcile claims already in flight against independent evidence.
+
 ## Results and cleanup
 
 **Shards.** The `shard` input defaults to `all`: one serial lab, the only mode that produces release evidence. `parallel` provisions five labs at once (`issuance`, `renewals`, `pending-and-ca`, `templates-and-uncertain`, `uncertain-recovery`; 30 vCPUs, so check regional quota) and a failure in one shard cannot hide the scenarios of another. Shards are diagnostic: their reports are `not-qualified`/`experimental`, each is checked only for completing every scenario it owns, and none can fill a native release slot. Shards apply to the plain comprehensive scope only; `issuance` also carries the production worker and package acceptance. The scenario-to-shard map is `tests/e2e/helpers/certops-adcs-shards.js`, and a unit test fails if a mandatory scenario has no owner.

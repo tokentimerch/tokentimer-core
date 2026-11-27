@@ -50,6 +50,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { Worker } = require("node:worker_threads");
+const { ADMISSION_DENIED } = require("../observation-admission");
 
 const {
   assertNoPrivateKeyMaterial,
@@ -670,7 +671,7 @@ const EXEC_ABORT_DRAIN_MS = 5_000;
 
 function execWithoutShell(execFileImpl, argv, timeoutMs, signal) {
   const [file, ...args] = argv;
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     if (signal && signal.aborted) {
       resolve({
         exitCode: null,
@@ -696,6 +697,10 @@ function execWithoutShell(execFileImpl, argv, timeoutMs, signal) {
       }
       if (signal && onAbort) {
         signal.removeEventListener("abort", onAbort);
+      }
+      if (result.execError?.code === ADMISSION_DENIED) {
+        reject(result.execError);
+        return;
       }
       // Prefer the abort shape so callers never see a kill() exit code as success.
       if (aborted) {

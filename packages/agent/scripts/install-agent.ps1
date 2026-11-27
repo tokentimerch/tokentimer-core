@@ -21,7 +21,7 @@
 #      single-use and is NEVER echoed back to the terminal by this script.
 #   5. Installs a native Windows Service (sc.exe / New-Service; no NSSM or
 #      other third-party service wrapper) running as LocalSystem per
-#      ADR-0012 decision 11, then starts it.
+#      ADR-0012 decision 11, then starts it unless preparing for observation.
 #   6. Preserves existing Windows Error Reporting policy. DumpType=0 is a
 #      custom dump, not suppression; Windows dump containment remains unqualified.
 #   7. On an upgrade (the service already exists), health-checks the
@@ -93,6 +93,7 @@ $script:CaBundle = ""
 $script:DryRun = $false
 $script:Uninstall = $false
 $script:PrepareOnly = $false
+$script:ObservationRunId = ""
 $script:WritePaths = New-Object System.Collections.Generic.List[string]
 $script:ReloadServices = New-Object System.Collections.Generic.List[string]
 $script:WritePathsFile = ""
@@ -664,6 +665,16 @@ function Set-ServiceEnvironment {
     New-ItemProperty -Path $key -Name "Environment" -PropertyType MultiString -Value $values -Force | Out-Null
 }
 
+function Assert-DisabledServiceRegistration {
+    param([Parameter(Mandatory)][string]$BinaryPath)
+    $prepared = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
+    if (-not $prepared -or $prepared.StartMode -ne 'Disabled' -or $prepared.State -ne 'Stopped' -or
+        $prepared.ProcessId -ne 0 -or $prepared.PathName -cne $BinaryPath -or
+        $prepared.StartName -notin @('LocalSystem', 'NT AUTHORITY\SYSTEM')) {
+        throw 'the prepared service registration could not be verified'
+    }
+}
+
 function Complete-PreparedInstall {
     param([Parameter(Mandatory)][string]$Stage, [Parameter(Mandatory)][string]$StagingIdentity,
         [Parameter(Mandatory)][string]$BinaryPath)
@@ -677,15 +688,25 @@ function Complete-PreparedInstall {
     New-Service -Name $ServiceName -BinaryPathName $BinaryPath -DisplayName $ServiceDisplayName `
         -StartupType Disabled -ErrorAction Stop | Out-Null
     Set-ServiceEnvironment -ConfigDir $StateDir -Token ''
-    $prepared = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
-    if (-not $prepared -or $prepared.StartMode -ne 'Disabled' -or $prepared.State -ne 'Stopped' -or
-        $prepared.ProcessId -ne 0 -or $prepared.PathName -cne $BinaryPath -or
-        $prepared.StartName -notin @('LocalSystem', 'NT AUTHORITY\SYSTEM')) {
-        throw 'the prepared service registration could not be verified'
-    }
+    Assert-DisabledServiceRegistration -BinaryPath $BinaryPath
     # A direct rename refuses an occupied destination instead of treating it
     # as a predecessor. Never enter the upgrade/rollback path in this mode.
     Rename-Item -LiteralPath $Stage -NewName (Split-Path -Leaf $AppDir) -ErrorAction Stop
+}
+
+function Complete-ObservedInstall {
+    param([Parameter(Mandatory)][string]$BinaryPath)
+    # Leave no start window between SCM registration and the protected binding.
+    New-Service -Name $ServiceName -BinaryPathName $BinaryPath -DisplayName $ServiceDisplayName `
+        -StartupType Disabled -ErrorAction Stop | Out-Null
+    $entry = "TOKENTIMER_AGENT_HOST_OBSERVATION_RUN=$($script:ObservationRunId)"
+    Set-ServiceEnvironment -ConfigDir $StateDir -Token $script:BootstrapToken -Existing @($entry)
+    Assert-DisabledServiceRegistration -BinaryPath $BinaryPath
+    $environment = @(Get-ExistingServiceEnvironment -ServiceKey "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName")
+    $bindings = @($environment | Where-Object { $_ -match '^TOKENTIMER_AGENT_HOST_OBSERVATION_RUN=' })
+    if ($bindings.Count -ne 1 -or $bindings[0] -cne $entry) {
+        throw 'the prepared observation run binding could not be verified'
+    }
 }
 
 # Runs (or prints, under -DryRun) a non-secret action. Never pass the
@@ -771,6 +792,9 @@ Options:
   --prepare-only         Prepare a disabled service from a verified package
                          and a protected, already enrolled state directory.
                          Requires no existing agent app or service.
+  --prepare-for-observation <id>
+                         Verified bundled install through the official launcher.
+                         Leave the fresh service disabled with the given observation run ID.
   --uninstall            For the generic archive only, stop and remove
                          the TokenTimerAgent service and
                          the app dir. The state dir (credential, keys) is
@@ -851,6 +875,14 @@ function Parse-Arguments {
             '^--allow-insecure-local-http$' { $script:AllowInsecureLocalHttp = $true; $i += 1; continue }
             '^--dry-run$' { $script:DryRun = $true; $i += 1; continue }
             '^--prepare-only$' { $script:PrepareOnly = $true; $i += 1; continue }
+            '^--prepare-for-observation$' {
+                if ($script:ObservationRunId -or $i + 1 -ge $Arguments.Count -or
+                    $Arguments[$i + 1] -cnotmatch '^[a-f0-9]{32}$') {
+                    Fail '--prepare-for-observation requires one 32-character lowercase hexadecimal run ID'
+                }
+                $script:ObservationRunId = $Arguments[$i + 1]
+                $i += 2; continue
+            }
             '^--uninstall$' { $script:Uninstall = $true; $i += 1; continue }
             '^(-h|--help)$' { Show-Usage; exit 0 }
             default { Fail "unknown argument: $arg (see --help)" }
@@ -864,6 +896,10 @@ if ($script:RequiresBundledRuntime -and $script:PrepareOnly) {
 }
 if ($script:PrepareOnly -and ($script:DryRun -or $script:Uninstall -or $script:BootstrapToken -or $script:CaBundle)) {
     Fail "--prepare-only requires restored state without --dry-run, --uninstall, a bootstrap token or --ca-bundle"
+}
+if ($script:ObservationRunId -and (-not $script:RequiresBundledRuntime -or
+    $script:DryRun -or $script:PrepareOnly -or $script:Uninstall)) {
+    Fail '--prepare-for-observation requires a fresh bundled installation through the official launcher'
 }
 
 # ------------------------------------------------------------- OS/arch gate
@@ -1068,6 +1104,9 @@ if (-not $script:DryRun) {
             Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1')) -NoClobber -ErrorAction Stop
             Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1')) -NoClobber -ErrorAction Stop
             Assert-AuthorizedLauncherOrNoIntent
+            if ($script:ObservationRunId -and $null -eq $script:AuthorizedLauncherTransaction) {
+                throw '--prepare-for-observation requires the verified launcher transaction'
+            }
         } catch { Fail "recovery_required: launcher authorization failed ($($_.Exception.Message))" }
     }
 }
@@ -1506,6 +1545,14 @@ $machineNodeSystemCa = Get-MachineNodeSystemCa
 $effectiveServiceEnvironment = @(Get-WindowsServiceTrustEnvironment -Existing $serviceEnvironment -MachineSystemCa $machineNodeSystemCa)
 $script:ServiceTrustSnapshot = [pscustomobject]@{Exists=[bool]$serviceAtCaPreflight; Command=$previousCaCommand; Environment=@($serviceEnvironment); MachineOptions=$machineNodeOptions; MachineSystemCa=$machineNodeSystemCa}
 $script:NodeCaOptions = @(Resolve-WindowsServiceCaOptions -Existing $effectiveServiceEnvironment -NodeVersion $runtimeVersion -ServiceCommand $previousCaCommand -MachineOptions $machineNodeOptions)
+
+$observationBinPath = ''
+if ($script:ObservationRunId) {
+    try {
+        $observationBinPath = Get-WindowsServiceBinPath -AppDirectory $AppDir -NodeExecutable $script:InstalledNodeExe `
+            -Architecture $arch -CaOptions $script:NodeCaOptions -PreparedServerUrl $script:ApiUrl
+    } catch { Fail "observation preparation requires a valid bare API origin ($($_.Exception.Message))" }
+}
 
 # --------------------------------------------------- platform module helper
 # Reuses the package's own src/platform module (already ACL-tested; see
@@ -2257,8 +2304,10 @@ if (-not $script:DryRun -and -not (Test-Path -LiteralPath $serviceHostExe)) {
         "or was not built with 'pnpm run build:windows-service-host' before packaging"
     )
 }
-$binPath = Get-WindowsServiceBinPath -AppDirectory $AppDir -NodeExecutable $script:InstalledNodeExe -Architecture $arch `
-    -CaOptions $script:NodeCaOptions -PreparedServerUrl $script:PreviousPreparedServerUrl
+$binPath = if ($script:ObservationRunId) { $observationBinPath } else {
+    Get-WindowsServiceBinPath -AppDirectory $AppDir -NodeExecutable $script:InstalledNodeExe -Architecture $arch `
+        -CaOptions $script:NodeCaOptions -PreparedServerUrl $script:PreviousPreparedServerUrl
+}
 
 # sc.exe's binPath= value here is three separately-quoted path segments
 # (host exe, node.exe, entry script). An earlier fix wrapped the whole
@@ -2299,6 +2348,13 @@ if ($script:DryRun) {
 
 # Revalidation narrows non-cooperating changes; it is not an atomic SCM CAS.
 Assert-ServiceTrustSnapshot -Expected $script:ServiceTrustSnapshot
+if ($script:ObservationRunId) {
+    try { Complete-ObservedInstall -BinaryPath $binPath }
+    catch { Fail "recovery_required: observation preparation incomplete; preserve the installed application and service for review ($($_.Exception.Message))" }
+    Write-Log 'Prepared the disabled service. Verify the installed candidate and arm independent observation before enabling it.'
+    if ($null -ne $script:NodeRuntimeLock) { $script:NodeRuntimeLock.Dispose(); $script:NodeRuntimeLock = $null }
+    exit 0
+}
 if ($script:RequiresBundledRuntime) {
     # New-Service fails if another service appears; never reconfigure it.
     New-Service -Name $ServiceName -BinaryPathName $binPath -DisplayName $ServiceDisplayName `
