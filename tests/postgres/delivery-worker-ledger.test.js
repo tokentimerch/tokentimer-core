@@ -779,12 +779,51 @@ test("bulk requeue retries a repaired webhook without resending its successful s
   assert.equal(blocked.status, "partial");
   assert.deepEqual(blocked.channels.retry, []);
   assert.deepEqual(hits, { good: 1, repair: 1 });
+  const partialAudit = await pool.query(
+    `SELECT metadata FROM audit_events
+      WHERE workspace_id = $1 AND target_id = $2 AND action = 'ALERT_PARTIAL_SUCCESS'`,
+    [fixture.workspaceId, fixture.tokenId],
+  );
+  assert.equal(partialAudit.rowCount, 1);
+  assert.equal(partialAudit.rows[0].metadata.failed_webhook_count, 1);
+  assert.equal(partialAudit.rows[0].metadata.queue_status, "partial");
+  assert.equal(partialAudit.rows[0].metadata.channel, "webhooks");
+  assert.equal(Object.hasOwn(partialAudit.rows[0].metadata, "errors"), false);
+  assert.equal(JSON.stringify(partialAudit.rows[0].metadata).includes("HTTP 401"), false);
   const { requeueAlertsCore } = require("../../apps/api/services/alertQueue");
   assert.equal(await requeueAlertsCore({ userId: fixture.userId, workspaceId: fixture.workspaceId }), 1);
   await run();
   const resolved = await loadAlert(alertId);
   assert.equal(resolved.status, "sent");
   assert.deepEqual(hits, { good: 1, repair: 2 });
+  const partialAuditAfterRetry = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM audit_events
+      WHERE workspace_id = $1 AND target_id = $2 AND action = 'ALERT_PARTIAL_SUCCESS'`,
+    [fixture.workspaceId, fixture.tokenId],
+  );
+  assert.equal(partialAuditAfterRetry.rows[0].n, 1);
+});
+
+test("a webhook failure with no successful endpoint does not record partial success", async () => {
+  migrate();
+  const fixture = await createWorkspace("webhook-total-failure", {
+    contact: {}, group: { webhook_names: ["Bad"] },
+    webhooks: [{ name: "Bad", kind: "generic", url: "https://bad.example.test/hook" }],
+  });
+  const alertId = await enqueue(fixture, ["webhooks"]);
+  const { deliveryWorkerJob } = await import("../../apps/worker/src/delivery-worker.js");
+  await deliveryWorkerJob({
+    closePool: false,
+    incidentEmailSender: async () => ({ success: true }),
+    webhookSender: async () => ({ success: false, status: 401, error: "HTTP 401" }),
+  });
+  assert.equal((await loadAlert(alertId)).status, "blocked");
+  const partialAudit = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM audit_events
+      WHERE workspace_id = $1 AND target_id = $2 AND action = 'ALERT_PARTIAL_SUCCESS'`,
+    [fixture.workspaceId, fixture.tokenId],
+  );
+  assert.equal(partialAudit.rows[0].n, 0);
 });
 
 test("email worker reuses member proof without consent and blocks after membership removal", async () => {
