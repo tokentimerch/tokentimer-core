@@ -2131,8 +2131,10 @@ export async function deliveryWorkerJob({
         let newAttemptsWebhooks = Number(alert.attempts_webhooks || 0);
         let newAttemptsWhatsApp = Number(alert.attempts_whatsapp || 0);
 
-        // Track partial failures for webhooks to improve observability
+        // Track partial failures for webhooks to improve observability.
+        // The count is set only when at least one endpoint succeeded.
         let webhookPartialErrors = [];
+        let partialWebhookFailureCount = 0;
 
         for (const channel of finalChannels) {
           let success = false;
@@ -2819,6 +2821,9 @@ export async function deliveryWorkerJob({
                 if (errors.length > 0) {
                   webhookPartialErrors = errors.slice();
                 }
+                if (partialSuccess) {
+                  partialWebhookFailureCount = transientEndpoints + permanentEndpoints;
+                }
                 deliveryEndpoints = webhookEndpoints;
               }
             } else if (channel === "whatsapp") {
@@ -3468,6 +3473,7 @@ export async function deliveryWorkerJob({
             : partialMsg;
         }
 
+        let queuePersisted = false;
         if (newStatus === "sent") {
           const sentRes = await client.query(
             `UPDATE alert_queue 
@@ -3492,7 +3498,10 @@ export async function deliveryWorkerJob({
               "Skipped sent terminal write: another worker took ownership",
               { alertId: alert.id },
             );
-          } else if (alert.workspace_id) {
+          } else {
+            queuePersisted = true;
+          }
+          if (queuePersisted && alert.workspace_id) {
             await resolveOperationalNotification(
               client,
               alert.workspace_id,
@@ -3503,22 +3512,6 @@ export async function deliveryWorkerJob({
               alert.workspace_id,
               `delivery_degraded:${alert.id}`,
             );
-          }
-          // Emit an audit event for partial successes to aid diagnostics
-          if (webhookPartialErrors.length > 0) {
-            await writeAlertAudit(client, alert, {
-              subjectUserId: alert.user_id,
-              action: "ALERT_PARTIAL_SUCCESS",
-              targetId: alert.token_id,
-              metadata: {
-                channel: "webhooks",
-                errors: webhookPartialErrors,
-                workspace_name: alert.workspace_name,
-                token_name: alert.name,
-                contact_group_id: contactGroupId,
-                contact_group_name: contactGroupName,
-              },
-            });
           }
         } else {
           if (deliveryOutcome.retry && !nextAttemptTimestamp && process.env.NODE_ENV === "test") {
@@ -3617,7 +3610,10 @@ export async function deliveryWorkerJob({
               "Skipped failed/blocked terminal write: another worker took ownership",
               { alertId: alert.id },
             );
-          } else if (blockDueToEligibility && alert.workspace_id) {
+          } else {
+            queuePersisted = true;
+          }
+          if (queuePersisted && blockDueToEligibility && alert.workspace_id) {
             await raiseOperationalNotification(client, {
               workspaceId: alert.workspace_id,
               tokenId: alert.token_id,
@@ -3731,6 +3727,31 @@ export async function deliveryWorkerJob({
                 error: _err.message,
               });
             }
+          }
+        }
+
+        if (queuePersisted && partialWebhookFailureCount > 0) {
+          try {
+            await writeAlertAudit(client, alert, {
+              subjectUserId: alert.user_id,
+              action: "ALERT_PARTIAL_SUCCESS",
+              targetId: alert.token_id,
+              channel: "webhooks",
+              metadata: {
+                channel: "webhooks",
+                failed_webhook_count: partialWebhookFailureCount,
+                queue_status: newStatus,
+                workspace_name: alert.workspace_name,
+                token_name: alert.name,
+                contact_group_id: contactGroupId,
+                contact_group_name: contactGroupName,
+              },
+            });
+          } catch (error) {
+            logger.warn("Partial webhook audit write failed", {
+              alertId: alert.id,
+              code: error.code,
+            });
           }
         }
 

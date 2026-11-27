@@ -1389,6 +1389,10 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.token_name) parts.push(`Token: ${md.token_name}`);
       if (md.alert_id) parts.push(`Alert ID: ${md.alert_id}`);
       if (md.channel) parts.push(`Channel: ${md.channel}`);
+      if (Number.isInteger(md.failed_webhook_count))
+        parts.push(`Failed webhooks: ${md.failed_webhook_count}`);
+      if (['sent', 'partial', 'failed', 'blocked'].includes(md.queue_status))
+        parts.push(`Queue status: ${md.queue_status}`);
       if (md.channels)
         parts.push(
           `Channels: ${Array.isArray(md.channels) ? md.channels.join(', ') : md.channels}`
