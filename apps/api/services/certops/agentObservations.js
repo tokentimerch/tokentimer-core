@@ -1235,7 +1235,7 @@ async function persistAgentJobEvidenceBatch({
         for (const field of item.metadata || []) {
           if (!field || typeof field.name !== "string" || !field.name.trim()) throw observationError("Invalid replay metadata");
           const name = field.name.trim();
-          if (names.has(name) || ["redaction", "agentId", "created_by_agent_id", "createdByAgentId", "summary", "fingerprintSha256", "evidenceId"].includes(name)) throw observationError("Ambiguous replay metadata");
+          if (names.has(name) || ["__proto__", "redaction", "agentId", "created_by_agent_id", "createdByAgentId", "summary", "fingerprintSha256", "evidenceId"].includes(name)) throw observationError("Ambiguous replay metadata");
           names.add(name);
         }
         if (["adcs.expected-identity", "acme-store-receipt"].includes(metadataMapFromItem(item).step)) throw observationError("Receipt evidence requires separate witness verification");

@@ -38,6 +38,6 @@ test("production evidence ingestion then terminal replay does not write twice", 
   assert.equal((await observations.persistAgentJobEvidenceBatch(args)).evidenceCount, 1);
   await pool.query("UPDATE certificate_jobs SET status='succeeded',completed_at=now(),lease_expires_at=now()-interval '1 minute' WHERE id=$1", [jobId]);
   assert.equal((await observations.persistAgentJobEvidenceBatch(args)).duplicate, true);
-  for (const changed of [{ ...evidence, summary: "different" }, { ...evidence, observedAt: "2026-11-27T15:00:01Z" }, { ...evidence, evidenceId: "missing" }, { ...evidence, metadata: [{ name: "step", value: "adcs.expected-identity" }] }]) await assert.rejects(observations.persistAgentJobEvidenceBatch({ ...args, evidenceItems: [changed] }));
+  for (const changed of [{ ...evidence, summary: "different" }, { ...evidence, observedAt: "2026-11-27T15:00:01Z" }, { ...evidence, evidenceId: "missing" }, { ...evidence, metadata: [{ name: "step", value: "adcs.expected-identity" }] }, { ...evidence, metadata: [...evidence.metadata, { name: "__proto__", value: "added" }] }]) await assert.rejects(observations.persistAgentJobEvidenceBatch({ ...args, evidenceItems: [changed] }));
   assert.equal(Number((await pool.query("SELECT count(*) AS n FROM certificate_evidence WHERE job_id=$1", [jobId])).rows[0].n), 1);
 }, { timeout: 30000 });
