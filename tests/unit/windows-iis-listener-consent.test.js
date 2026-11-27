@@ -130,6 +130,7 @@ test("IIS consent, snapshot and claim retain exact listener selector", async () 
   for (const [address, sni, key, netsh] of [
     ["192.0.2.10", null, "ipport:192.0.2.10:443", "ipport=192.0.2.10:443"],
     ["::1", null, "ipport:[::1]:443", "ipport=[::1]:443"],
+    ["::", null, "ipport:[::]:443", "ipport=[::]:443"],
     ["0.0.0.0", null, "ipport:0.0.0.0:443", "ipport=0.0.0.0:443"],
     [undefined, null, "ipport:0.0.0.0:443", "ipport=0.0.0.0:443"],
     [
@@ -166,6 +167,8 @@ test("invalid or incompatible observed addresses fail closed", async () => {
   for (const [address, sni] of [
     ["not-ip", null],
     ["192.0.2.10", "www.example.test"],
+    ["::1", "www.example.test"],
+    ["::", "www.example.test"],
   ]) {
     const f = fixture(address, sni, "ipport:0.0.0.0:443");
     await assert.rejects(
