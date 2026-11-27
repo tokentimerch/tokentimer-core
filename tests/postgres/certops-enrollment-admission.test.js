@@ -1393,6 +1393,13 @@ test("IIS consent requires a fresh matching Store agent and rejects existing ren
     const check = { client,agent: { id:f.agentId,workspaceId:f.workspaceId },jobId:enrollment.jobId,
       claimId:claim,consumerId:created.id,authorizationRevision:created.authorizationRevision };
     assert.equal(await authorize(check), true);
+    // A historical wildcard consent cannot follow a later specific listener.
+    await pool.query("UPDATE certificate_targets SET public_metadata=jsonb_set(public_metadata,'{boundAddress}',to_jsonb('192.0.2.10'::text)) WHERE id=$1", [target.id]);
+    assert.deepEqual(await snapshot(snapshotArgs), []);
+    assert.equal(await authorize(check), false);
+    await pool.query("UPDATE certificate_targets SET public_metadata=jsonb_set(public_metadata,'{boundAddress}',to_jsonb('0.0.0.0'::text)) WHERE id=$1", [target.id]);
+    assert.equal(await authorize(check), true);
+    await pool.query("UPDATE certificate_targets SET public_metadata=public_metadata - 'boundAddress' WHERE id=$1", [target.id]);
     await pool.query("UPDATE certificate_targets SET public_metadata=public_metadata || '{\"observationOnly\":true}'::jsonb WHERE id=$1", [target.id]);
     assert.equal(await authorize(check), false);
     await pool.query("UPDATE certificate_targets SET public_metadata=public_metadata - 'observationOnly' WHERE id=$1", [target.id]);
