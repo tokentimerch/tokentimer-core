@@ -121,6 +121,18 @@ function refusal(message) {
   return error;
 }
 
+// An older explicit-IP observation may lack its address metadata. Never treat
+// a source reference that names an address as an authorized wildcard.
+function observedIisBinding(row) {
+  const address = row.public_metadata?.boundAddress;
+  if (address == null && !row.windows_sni_host &&
+      typeof row.source_ref === "string" && /\/iis_binding\/[^/]*@/.test(row.source_ref)) {
+    throw new Error("IIS listener address is unavailable");
+  }
+  return { address: address ?? "*", store: "My", site: row.windows_site,
+    port: row.windows_port, ...(row.windows_sni_host ? { sniHost: row.windows_sni_host } : {}) };
+}
+
 // Caller supplies a checked-out client with an open transaction and write
 // authorization. The source rows and selector are resolved server-side.
 async function enableWindowsIisConsumer({ client, workspaceId, periodId, targetId, actorUserId, audit = writeAudit }) {
@@ -154,7 +166,7 @@ async function enableWindowsIisConsumer({ client, workspaceId, periodId, targetI
   if (storeRegistrations.some(item => item.agent_id === owner.deployed_agent_id && item.period_id !== periodId)) {
     throw refusal("Resolve the duplicate Windows Store registrations before enabling IIS updates.");
   }
-  const targetResult = await client.query(`SELECT ct.id,ct.windows_store,ct.windows_site,ct.windows_port,ct.windows_sni_host,
+  const targetResult = await client.query(`SELECT ct.id,ct.source_ref,ct.windows_store,ct.windows_site,ct.windows_port,ct.windows_sni_host,
       ct.public_metadata, ci.observed_fingerprint_sha256, ci.presence_state, ci.captured_at,
       EXISTS (SELECT 1 FROM certops_management_periods bp
         WHERE bp.workspace_id=ci.workspace_id AND bp.managed_certificate_id=ci.managed_certificate_id
@@ -181,7 +193,9 @@ async function enableWindowsIisConsumer({ client, workspaceId, periodId, targetI
     throw refusal(decision.deployment === "conflict" ? "Detach the existing IIS renewal profile or stop managing that IIS registration first." :
       "The IIS binding is missing, stale, changed, or cannot be confirmed.");
   }
-  const selector = iisSelectorKey({ port: target.windows_port, sniHost: target.windows_sni_host });
+  let selector;
+  try { selector = iisSelectorKey(observedIisBinding(target)); }
+  catch { throw refusal("The observed IIS binding address is invalid."); }
   const inFlight = await client.query(`SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND assigned_agent_id=$2
     AND status IN ('pending_approval','approved','pending','claimed','running') AND payload->'target'->>'type'='windows-iis'
     AND payload->'target'->'binding'->>'port'=$3
@@ -247,7 +261,7 @@ async function disableWindowsIisConsumer({ client, workspaceId, consumerId, acto
 async function authorizeWindowsIisConsumer({ client, agent, jobId, claimId, consumerId, authorizationRevision }) {
   if (!client || !agent?.id || !agent?.workspaceId || !jobId || !claimId || !consumerId ||
       !Number.isSafeInteger(authorizationRevision) || authorizationRevision < 1) return false;
-  const result = await client.query(`SELECT c.selector_key,ct.windows_port,ct.windows_sni_host
+  const result = await client.query(`SELECT c.selector_key,ct.source_ref,ct.windows_port,ct.windows_sni_host,ct.public_metadata
     FROM certops_windows_iis_renewal_consumers c
     JOIN certops_windows_store_renewal_owners o ON o.workspace_id=c.workspace_id AND o.id=c.owner_id AND o.agent_id=c.agent_id
     JOIN certops_management_periods p ON p.workspace_id=o.workspace_id AND p.id=o.management_period_id
@@ -280,7 +294,7 @@ async function authorizeWindowsIisConsumer({ client, agent, jobId, claimId, cons
     LIMIT 1`, [agent.workspaceId,consumerId,jobId,agent.id,authorizationRevision,claimId]);
   const row = result.rows[0];
   if (!row) return false;
-  try { return iisSelectorKey({ port: row.windows_port, sniHost: row.windows_sni_host }) === row.selector_key; }
+  try { return iisSelectorKey(observedIisBinding(row)) === row.selector_key; }
   catch { return false; }
 }
 
@@ -291,7 +305,7 @@ async function snapshotWindowsIisConsumers({ client, workspaceId, certificateId,
   const result = await client.query(`SELECT c.id AS consumer_id,c.authorization_revision,c.selector_key,
       o.id AS owner_id,o.management_period_id,mc.fingerprint_sha256,mc.status AS certificate_status,
       a.status AS agent_status,a.last_seen_at,a.created_at,a.agent_id AS agent_public_id,
-      ct.id AS target_id,ct.windows_store,ct.windows_site,ct.windows_port,ct.windows_sni_host,ct.public_metadata,
+      ct.id AS target_id,ct.source_ref,ct.windows_store,ct.windows_site,ct.windows_port,ct.windows_sni_host,ct.public_metadata,
       ci.observed_fingerprint_sha256,ci.presence_state,ci.captured_at,
       EXISTS (SELECT 1 FROM certificate_instances conflict_ci JOIN certops_management_periods bp
         ON bp.workspace_id=conflict_ci.workspace_id AND bp.managed_certificate_id=conflict_ci.managed_certificate_id
@@ -318,10 +332,8 @@ async function snapshotWindowsIisConsumers({ client, workspaceId, certificateId,
   for (const row of result.rows) {
     if (row.public_metadata?.agentId !== row.agent_public_id || row.public_metadata?.observationOnly === true || !row.windows_site || row.certificate_status === "revoked" || row.certificate_status === "decommissioned") continue;
     const captured=row.captured_at ? new Date(row.captured_at).getTime() : NaN;
-    const binding={ address:"*",store:"My",site:row.windows_site,port:row.windows_port,
-      ...(row.windows_sni_host ? { sniHost:row.windows_sni_host } : {}) };
-    let selector;
-    try { selector=iisSelectorKey(binding); } catch { continue; }
+    let binding, selector;
+    try { binding=observedIisBinding(row); selector=iisSelectorKey(binding); } catch { continue; }
     if (selector !== row.selector_key) continue;
     const state=classifyBinding({
       owner:{ workspaceId,agentId,managementPeriodId:row.management_period_id,storeName:"My",
