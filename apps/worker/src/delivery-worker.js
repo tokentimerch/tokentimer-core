@@ -3512,7 +3512,8 @@ export async function deliveryWorkerJob({
               targetId: alert.token_id,
               metadata: {
                 channel: "webhooks",
-                errors: webhookPartialErrors,
+                failed_webhook_count: webhookPartialErrors.length,
+                queue_status: newStatus,
                 workspace_name: alert.workspace_name,
                 token_name: alert.name,
                 contact_group_id: contactGroupId,
