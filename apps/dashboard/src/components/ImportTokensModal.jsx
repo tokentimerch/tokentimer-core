@@ -3872,9 +3872,7 @@ function ImportTokensModalContent({
                           aria-label='Identity selection'
                           size='sm'
                           value={managedIdentityMode}
-                          onChange={e =>
-                            setManagedIdentityMode(e.target.value)
-                          }
+                          onChange={e => setManagedIdentityMode(e.target.value)}
                         >
                           <option value='all'>All identities</option>
                           <option value='exclude'>

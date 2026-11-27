@@ -135,7 +135,14 @@ function distributionSourceParts(group) {
     provider
       ? { key: 'provider', text: provider, tone: 'provider', title: provider }
       : null,
-    agents ? { key: 'agents', text: agents.text, tone: 'agents', title: agents.title } : null,
+    agents
+      ? {
+          key: 'agents',
+          text: agents.text,
+          tone: 'agents',
+          title: agents.title,
+        }
+      : null,
     status ? { key: 'status', text: status, tone: 'status' } : null,
   ].filter(Boolean);
   return parts.length
@@ -264,7 +271,8 @@ function DistributionSourceSelect({ groups, groupId, onChange }) {
           boxShadow={menuShadow}
           sx={{
             '@media (prefers-reduced-motion: no-preference)': {
-              animation: 'distributionSourceIn 160ms cubic-bezier(0.16, 1, 0.3, 1)',
+              animation:
+                'distributionSourceIn 160ms cubic-bezier(0.16, 1, 0.3, 1)',
             },
             '@keyframes distributionSourceIn': {
               from: { opacity: 0 },
@@ -748,7 +756,11 @@ function ConsumerForm({ consumer, agents, disabled, onSave, onCancel }) {
               }
             />
           </Field>
-          <Text fontSize='sm' color={dashboard.text.secondary} gridColumn='1 / -1'>
+          <Text
+            fontSize='sm'
+            color={dashboard.text.secondary}
+            gridColumn='1 / -1'
+          >
             Shared private keys require explicit opt-in. Store credentials
             remain on customer agents; enter only store and deployment profile
             aliases here.
@@ -1653,7 +1665,10 @@ function Management({
                             Boolean(pendingRollout) ||
                             !selectedPublishedVersion
                           }
-                          isLoading={busy && pendingRollout?.body.verificationOnly === true}
+                          isLoading={
+                            busy &&
+                            pendingRollout?.body.verificationOnly === true
+                          }
                           onClick={() => requestRollout(true)}
                         >
                           Verify only
@@ -1820,9 +1835,7 @@ function Management({
                                 color={dashboard.callout.warningText}
                               >
                                 {value.diagnostics
-                                  .map(item =>
-                                    diagnosticExplanation(item.code)
-                                  )
+                                  .map(item => diagnosticExplanation(item.code))
                                   .join(' ')}
                               </Text>
                               <Text
@@ -3100,31 +3113,31 @@ export default function CertOpsDistribution() {
         />
         {groups.length ? (
           <Box maxW='720px'>
-              <Field name='Distribution source'>
-                <DistributionSourceSelect
-                  groups={groups}
-                  groupId={groupId}
-                  onChange={nextGroupId => {
-                    const next = new URLSearchParams(params);
-                    next.set('group', nextGroupId);
-                    navigate({
-                      pathname: location.pathname,
-                      search: `?${next}`,
-                      hash: location.hash,
-                    });
-                  }}
-                />
-                {groupId ? (
-                  <Text
-                    mt={1}
-                    fontSize='xs'
-                    color={dashboard.text.secondary}
-                    overflowWrap='anywhere'
-                  >
-                    Source ID {groupId}
-                  </Text>
-                ) : null}
-              </Field>
+            <Field name='Distribution source'>
+              <DistributionSourceSelect
+                groups={groups}
+                groupId={groupId}
+                onChange={nextGroupId => {
+                  const next = new URLSearchParams(params);
+                  next.set('group', nextGroupId);
+                  navigate({
+                    pathname: location.pathname,
+                    search: `?${next}`,
+                    hash: location.hash,
+                  });
+                }}
+              />
+              {groupId ? (
+                <Text
+                  mt={1}
+                  fontSize='xs'
+                  color={dashboard.text.secondary}
+                  overflowWrap='anywhere'
+                >
+                  Source ID {groupId}
+                </Text>
+              ) : null}
+            </Field>
           </Box>
         ) : null}
       </DashboardPanel>
