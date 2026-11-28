@@ -3494,9 +3494,10 @@ async function assertEvidenceClaimOwnership({
   agent,
   jobId,
   claimId = null,
+  allowTerminalStoreReplay = false,
 } = {}) {
   const result = await dbPool.query(
-    `SELECT claimed_by_agent_id, claim_id, attempt_count, operation, payload, status,
+    `SELECT claimed_by_agent_id, claim_id, attempt_count, operation, payload, status, completed_at,
             (lease_expires_at > clock_timestamp()) AS lease_live
        FROM certificate_jobs
       WHERE id = $1
@@ -3527,6 +3528,9 @@ async function assertEvidenceClaimOwnership({
   if (row.payload?.target?.type === "windows-cert-store") {
     if (!claimId || !row.claim_id) {
       throw serviceError("Store installation evidence requires the current claim", CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH);
+    }
+    if (allowTerminalStoreReplay === true && row.status === "succeeded" && row.completed_at) {
+      return { claimId: row.claim_id, attemptCount: row.attempt_count, terminalReplayOnly: true };
     }
     if (!["claimed", "running"].includes(row.status) || row.lease_live !== true) {
       throw serviceError("Store installation claim has expired", CERTOPS_AGENT_LEASE_INVALID);

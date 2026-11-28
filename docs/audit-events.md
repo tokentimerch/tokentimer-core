@@ -59,7 +59,7 @@ Delivery events include `alert_id` and `alert_key` when an alert exists. Workspa
 - `ALERT_QUEUED` records `daysUntil`, `threshold`, and `dueDate`. `ALERT_NOT_QUEUED_NO_CHANNEL` records `reason` and `threshold`.
 - `ALERT_CHANNELS_UPDATED` records `from` and `to` channel sets.
 - `ALERT_DELIVERY_DEFERRED` records `reason`, `threshold`, and `next_attempt_at`.
-- `ALERT_SENT` records `days` and `channels`. `ALERT_SEND_FAILED` records `days`, `error`, and `attempts`. `ALERT_PARTIAL_SUCCESS` records `channel` and `errors`.
+- `ALERT_SENT` records `days` and `channels`. `ALERT_SEND_FAILED` records `days`, `error`, and `attempts`. `ALERT_PARTIAL_SUCCESS` records `channel`, `failed_webhook_count`, and `queue_status` when some webhook endpoints succeed and others fail. It does not include webhook error text.
 - `ALERT_RETRY_SCHEDULED` records `days`, `next_attempt_at`, and `channels_to_retry`. `ALERT_MANUAL_RETRY` records `reason`. `ALERTS_BULK_REQUEUED` records `updated` and `scope`.
 - `ALERT_BLOCKED_MAX_ATTEMPTS` records `days` and the attempt count for each delivery channel. `ALERT_BLOCKED_WHATSAPP_ERROR` records `days` and has `whatsapp` in its `channel` column.
 - `WEEKLY_DIGEST_SENT` records `contact_group_id`, `contact_group_name`, `tokens_count`, `channels`, and `week_start_date`.

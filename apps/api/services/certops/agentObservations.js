@@ -22,6 +22,7 @@ const { createHash } = require("node:crypto");
 const { pool } = require("../../db/database");
 const { assertCurrentAgentCredential } = require("./agentCredentialFence");
 const { assertNoPrivateKeyMaterial } = require("../../utils/secretMaterial");
+const { normalizePublicObject } = require("./jobs");
 const {
   parsePublicCertificateMaterial,
   parseSubjectAltNames,
@@ -1215,7 +1216,50 @@ async function persistAgentJobEvidenceBatch({
       agent,
       jobId,
       claimId,
+      allowTerminalStoreReplay: true,
     });
+
+    // A committed Store result can be retried after its response is lost.
+    // Its outbox sends evidence first, so admit only a byte-independent match
+    // to already committed evidence. Never execute receipt side effects here.
+    if (binding.terminalReplayOnly === true) {
+      const ids = new Set();
+      for (const item of evidenceItems) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) throw observationError("Invalid replay item");
+        const evidenceId = item.evidenceId;
+        if (typeof evidenceId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(evidenceId)) throw observationError("Invalid replay evidenceId");
+        if (ids.has(evidenceId)) throw observationError("Duplicate replay item");
+        ids.add(evidenceId);
+        if (item.metadata != null && !Array.isArray(item.metadata)) throw observationError("Invalid replay metadata");
+        const names = new Set();
+        for (const field of item.metadata || []) {
+          if (!field || typeof field.name !== "string" || !field.name.trim()) throw observationError("Invalid replay metadata");
+          const name = field.name.trim();
+          if (names.has(name) || ["__proto__", "redaction", "agentId", "created_by_agent_id", "createdByAgentId", "summary", "fingerprintSha256", "evidenceId"].includes(name)) throw observationError("Ambiguous replay metadata");
+          names.add(name);
+        }
+        if (["adcs.expected-identity", "acme-store-receipt"].includes(metadataMapFromItem(item).step)) throw observationError("Receipt evidence requires separate witness verification");
+        const metadata = normalizePublicObject({ ...metadataMapFromItem(item), summary: item.summary ?? null,
+          fingerprintSha256: item.fingerprintSha256 ?? null, agentId: agent.agentId, evidenceId }, "metadata");
+        delete metadata.redaction;
+        delete metadata.created_by_agent_id;
+        delete metadata.createdByAgentId;
+        assertNoPrivateKeyMaterial(metadata);
+        assertNoPrivateKeyMaterial(item.eventType);
+        const found = await client.query(`SELECT id FROM certificate_evidence
+          WHERE workspace_id=$1 AND job_id=$2 AND created_by_agent_id=$3 AND client_evidence_id=$4
+            AND claim_id=$5 AND attempt_count=$6 AND evidence_type=$7 AND metadata=$8::jsonb
+            AND observed_at IS NOT DISTINCT FROM $9::timestamptz
+            AND subject_type IS NULL AND subject_id IS NULL AND redacted_output IS NULL
+            AND output_truncated=false AND output_sha256 IS NULL AND output_size_bytes IS NULL
+            AND created_by_user_id IS NULL AND created_by_api_token_id IS NULL
+          FOR SHARE`, [agent.workspaceId, jobId, agent.id, evidenceId, binding.claimId,
+          binding.attemptCount, item.eventType, JSON.stringify(metadata), item.observedAt ?? null]);
+        if (found.rows.length !== 1) throw observationError("Terminal evidence replay differs from committed evidence");
+      }
+      await client.query("COMMIT");
+      return { ok: true, evidenceCount: evidenceItems.length, items: [], duplicate: true };
+    }
 
     const created = [];
     const expectedIdentityReceipts = [];
